@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import type { PublicProfileDto } from "../api/contract";
-import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet } from "../api/outcome";
+import { netFromPayoutAndStake } from "../api/outcome";
 import { seasonRange } from "../api/season";
+import { Avatar } from "../components/Avatar";
 import { BotBadge, ErrorState, Skeleton } from "../components/Common";
-import { DirectionGlyph } from "../components/icons";
+import { ResultTile } from "../components/ResultTile";
 import { formatDateTimeUtc, formatPercent, formatPlayAmount } from "../format";
 
 /** `SeasonRecordDto` has no "growth" field of its own — derive it the same way the "Richest"
@@ -75,8 +76,11 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
 
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <h1>
-        {profile.player.displayName} <BotBadge isBot={profile.player.isBot} />
+      <h1 style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <Avatar name={profile.player.nickname} />
+        <span>
+          {profile.player.displayName} <BotBadge isBot={profile.player.isBot} />
+        </span>
       </h1>
 
       {profile.seasonRecord && (
@@ -106,45 +110,26 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
       {profile.history.length === 0 ? (
         <p className="muted">No rounds played yet.</p>
       ) : (
-        <table className="data-table data-table--responsive">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Type</th>
-              <th>Direction</th>
-              <th>Leverage</th>
-              <th>Result</th>
-            </tr>
-          </thead>
-          <tbody>
-            {profile.history.map((h) => {
-              // Net result (>0 won, <0 lost, =0 even), never `payout > 0` alone — the bug Alex
-              // reported (2026-09-25): a losing round that still returned some equity (e.g. 80.15
-              // PLAY back on a 100 PLAY stake) showed as "Won" here. `ProfileRoundEntryDto`
-              // already carries the exact `stake`/`payout`, no derivation needed.
-              const net = netFromPayoutAndStake(h.payout, h.stake);
-              const outcome = outcomeFromNet(net);
-              return (
-                <tr key={h.roundId} className="clickable">
-                  <td data-label="Date">
-                    <Link to={`/round/${h.roundId}`}>{formatDateTimeUtc(h.settledAtMs)}</Link>
-                  </td>
-                  <td data-label="Type">{h.interval === "HOURLY" ? "Hourly" : "Daily"}</td>
-                  <td data-label="Direction">
-                    <DirectionGlyph direction={h.direction} /> {h.direction}
-                  </td>
-                  <td data-label="Leverage">x{h.leverage}</td>
-                  <td data-label="Result">
-                    <span className={h.liquidated ? "outcome-lost" : outcomeClassName(outcome)}>
-                      {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY
-                      {h.liquidated && " · liquidated"}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="result-tiles">
+          {profile.history.map((h) => (
+            // Net result (>0 won, <0 lost, =0 even), never `payout > 0` alone — the bug Alex
+            // reported (2026-09-25): a losing round that still returned some equity (e.g. 80.15
+            // PLAY back on a 100 PLAY stake) showed as "Won" here. `ProfileRoundEntryDto`
+            // already carries the exact `stake`/`payout`, no derivation needed. Outcome is icon +
+            // color + text together (`ResultTile`), never color-only (audit.md's Profile
+            // section).
+            <ResultTile
+              key={h.roundId}
+              roundId={h.roundId}
+              interval={h.interval}
+              direction={h.direction}
+              leverage={h.leverage}
+              net={netFromPayoutAndStake(h.payout, h.stake)}
+              liquidated={h.liquidated}
+              dateLabel={formatDateTimeUtc(h.settledAtMs)}
+            />
+          ))}
+        </div>
       )}
     </div>
   );

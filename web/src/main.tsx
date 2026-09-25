@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { ApiProvider } from "./api/ApiContext";
 import "./index.css";
+import "./fx/fx.css";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("#root element not found");

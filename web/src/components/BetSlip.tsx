@@ -11,8 +11,10 @@ import {
   type LiquidationPreviewDto,
   type RoundBetting,
 } from "../api/contract";
-import { formatPercent, formatPlayAmount, formatUsd } from "../format";
+import { formatPlayAmount } from "../format";
 import { DirectionGlyph } from "./icons";
+import { LeverageDial } from "./LeverageDial";
+import { LiquidationBar } from "./LiquidationBar";
 
 interface BetSlipProps {
   round: RoundBetting;
@@ -163,12 +165,16 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
   const overBalance = stakeNum > effectiveBalance;
   const disabled = submitting || !stake || belowMin || overBalance;
 
-  const setQuickStake = (fraction: number | "min") => {
-    if (fraction === "min") {
-      setStake(Number(MIN_STAKE_PLAY).toFixed(0));
-      return;
-    }
+  const setQuickStake = (fraction: number) => {
     setStake(Math.floor(effectiveBalance * fraction).toFixed(0));
+  };
+
+  /** Stake chips (direction.md §4 "Chips, not bare inputs") — additive, like casino chips on a
+   *  table: +100/+500/+1000 add to whatever's already staked, clamped to the effective balance;
+   *  MAX (`setQuickStake(1)`) still goes all-in in one tap. */
+  const addStake = (amount: number) => {
+    const next = Math.min(effectiveBalance, (Number(stake) || 0) + amount);
+    setStake(next.toFixed(0));
   };
 
   const submit = async () => {
@@ -217,22 +223,20 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
       </div>
 
       <div className="field">
-        <label htmlFor="leverage-input">Leverage: x{leverage}</label>
-        <input
-          id="leverage-input"
-          type="range"
-          min={LEVERAGE_MIN}
-          max={LEVERAGE_MAX}
-          step={1}
-          value={leverage}
-          onChange={(e) => setLeverage(Number(e.target.value))}
-        />
+        <label htmlFor="leverage-input" className="visually-hidden">
+          Leverage
+        </label>
+        <LeverageDial id="leverage-input" value={leverage} min={LEVERAGE_MIN} max={LEVERAGE_MAX} onChange={setLeverage} />
       </div>
 
       <div className="field">
         <label htmlFor="stake-input">Stake (PLAY)</label>
+        <div className="stake-hero num-lg mono" aria-hidden="true">
+          {formatPlayAmount(stakeNum, { decimals: 0 })} PLAY
+        </div>
         <input
           id="stake-input"
+          className="stake-input-secondary"
           type="number"
           inputMode="decimal"
           min={0}
@@ -240,17 +244,17 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
           value={stake}
           onChange={(e) => setStake(e.target.value)}
         />
-        <div className="quick-amounts">
-          <button type="button" onClick={() => setQuickStake("min")}>
-            MIN
+        <div className="stake-chips">
+          <button type="button" className="stake-chip" onClick={() => addStake(100)}>
+            +100
           </button>
-          <button type="button" onClick={() => setQuickStake(0.25)}>
-            25%
+          <button type="button" className="stake-chip" onClick={() => addStake(500)}>
+            +500
           </button>
-          <button type="button" onClick={() => setQuickStake(0.5)}>
-            50%
+          <button type="button" className="stake-chip" onClick={() => addStake(1000)}>
+            +1000
           </button>
-          <button type="button" onClick={() => setQuickStake(1)}>
+          <button type="button" className="stake-chip stake-chip--max" onClick={() => setQuickStake(1)}>
             MAX
           </button>
         </div>
@@ -275,8 +279,11 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
               What's this?
             </Link>
           </p>
-          <p className="mono">Liquidation price: {formatUsd(preview.liquidationPrice)}</p>
-          <p className="mono">{formatPercent(preview.percentToLiquidation)} move to liquidation</p>
+          <LiquidationBar
+            entryPrice={preview.entryPriceUsed}
+            liquidationPrice={preview.liquidationPrice}
+            percentToLiquidation={preview.percentToLiquidation}
+          />
           <p className="faint">
             Estimated from the current price — your real entry price is set when the round starts.
           </p>

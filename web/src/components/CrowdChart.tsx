@@ -1,15 +1,17 @@
 import { useMemo, useState } from "react";
 import {
+  Area,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
-  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import type { DotItemDotProps } from "recharts/types/util/types";
 import type { CrowdHistoryPointDto } from "../api/contract";
 import { formatUsd } from "../format";
 
@@ -62,6 +64,17 @@ export function CrowdChart({ history, variant = "full" }: CrowdChartProps) {
 
   const boundaries = useMemo(() => visible.filter((p) => p.seasonBoundary !== null), [visible]);
 
+  // live-round.md §5: the rightmost "crowd" point pops in (scale 0→1) when a new one arrives,
+  // instead of the whole line just redrawing — every other point renders invisibly (r=0) so this
+  // stays a single `dot` render prop rather than a second overlay series. Keyed by the point's
+  // own `atMs` so React only remounts (and replays the CSS pop animation) when that point is
+  // actually new, not on every unrelated re-render.
+  const renderCrowdDot = ({ cx, cy, index, payload }: DotItemDotProps) => {
+    const point = payload as CrowdHistoryPointDto | undefined;
+    if (cx == null || cy == null || index !== visible.length - 1) return null;
+    return <circle key={point?.atMs ?? index} className="crowd-chart__pop-dot" cx={cx} cy={cy} r={4} fill={COLOR_CROWD} />;
+  };
+
   return (
     <div className="crowd-chart">
       {variant === "full" ? (
@@ -80,7 +93,7 @@ export function CrowdChart({ history, variant = "full" }: CrowdChartProps) {
 
       <div style={{ width: "100%", height: variant === "full" ? 360 : 240, marginTop: 12 }}>
         <ResponsiveContainer>
-          <LineChart data={visible} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+          <ComposedChart data={visible} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
             <CartesianGrid stroke="#2b3346" strokeDasharray="3 3" />
             <XAxis dataKey="atMs" tickFormatter={formatAxisDate} stroke="#a7b0c4" minTickGap={40} tick={{ fontSize: 12 }} />
             <YAxis stroke="#a7b0c4" tick={{ fontSize: 12 }} tickFormatter={(v: number) => `$${Math.round(v / 1000)}k`} width={56} />
@@ -93,10 +106,25 @@ export function CrowdChart({ history, variant = "full" }: CrowdChartProps) {
             {boundaries.map((b) => (
               <ReferenceLine key={b.roundId} x={b.atMs} stroke="#3a4460" strokeDasharray="2 4" />
             ))}
-            <Line type="monotone" dataKey="crowdCapital" name="crowdCapital" stroke={COLOR_CROWD} dot={false} strokeWidth={2.5} isAnimationActive={false} />
+            {/* Crowd — the "hero" series (direction.md §0): drop-shadow glow + a soft fill under
+             *  the line, the other two series stay plain <Line>s so the chart doesn't turn into a
+             *  wall of color (live-round.md §5). */}
+            <Area
+              type="monotone"
+              dataKey="crowdCapital"
+              name="crowdCapital"
+              stroke={COLOR_CROWD}
+              fill={COLOR_CROWD}
+              fillOpacity={0.12}
+              strokeWidth={2.5}
+              dot={renderCrowdDot}
+              activeDot={{ r: 4 }}
+              isAnimationActive={false}
+              className="crowd-chart__crowd-area"
+            />
             <Line type="monotone" dataKey="btcHoldCapital" name="btcHoldCapital" stroke={COLOR_BTC} dot={false} strokeWidth={1.5} strokeDasharray="5 3" isAnimationActive={false} />
             <Line type="monotone" dataKey="antiCrowdCapital" name="antiCrowdCapital" stroke={COLOR_ANTI} dot={false} strokeWidth={1.5} isAnimationActive={false} />
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
     </div>

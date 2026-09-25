@@ -183,8 +183,12 @@ export function Countdown({
   prefix?: string;
 }) {
   const remaining = Math.max(0, targetMs - nowMs);
+  // Escalation in the last 10s/3s (docs/product/design/live-round.md §4) — a real, existing
+  // timer reading more urgently as it actually runs out, not a fabricated pressure timer
+  // (game-designer.md's "Честность" redline covers invented urgency, not an honest one).
+  const tier = remaining <= 3000 ? "countdown--critical" : remaining <= 10000 ? "countdown--warn" : "";
   return (
-    <span className="countdown mono">
+    <span className={`countdown mono ${tier}`}>
       {prefix}
       {formatCountdown(remaining)}
     </span>

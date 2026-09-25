@@ -6,6 +6,12 @@ import { totalInPlayStake } from "../api/inPlay";
 import { formatPlayAmount } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 import { DemoBanner, ServerInfoBanner } from "./Common";
+import { CoinIcon, SpeakerOnIcon, SpeakerMuteIcon, VibrationOnIcon, VibrationOffIcon } from "./icons";
+import { useSettlementWatcher } from "../fx/useSettlementWatcher";
+import { ResultMomentHost } from "../fx/ResultMomentHost";
+import { RollingDigits } from "../fx/RollingDigits";
+import { useFxSettings } from "../fx/fxSettings";
+import { primeAudioContext } from "../fx/sound";
 
 const NAV_LINKS = [
   { to: "/", label: "Home", end: true },
@@ -44,11 +50,49 @@ function BalancePill() {
   if (!player || balance === null) return null;
   return (
     <NavLink to="/wallet" className="balance-pill">
-      <span>{formatPlayAmount(balance)} PLAY</span>
+      <CoinIcon className="balance-pill__coin" />
+      {/* Rolls on ANY change, not only while a result moment is on screen — the direct answer to
+       *  Alex's "чтобы сумма выигрыша или проигрыша... сразу это проявлялось"
+       *  (implementation-plan.md §2). */}
+      <span className="balance-pill__amount">
+        <RollingDigits value={Number(balance)} format={(n) => `${formatPlayAmount(n)} PLAY`} durationMs={500} />
+      </span>
       {inPlay !== null && inPlay > 0 && (
         <span className="balance-pill__in-play">+{formatPlayAmount(inPlay, { decimals: 0 })} in play</span>
       )}
     </NavLink>
+  );
+}
+
+/** Sound/haptics toggle pair (direction.md §6) — lives in the header, next to the profile menu. */
+function FxToggles() {
+  const fx = useFxSettings();
+  return (
+    <div className="lab-row" style={{ gap: 6 }}>
+      <button
+        type="button"
+        className="fx-toggle"
+        aria-pressed={fx.sfxEnabled}
+        aria-label={fx.sfxEnabled ? "Mute sound" : "Unmute sound"}
+        title={fx.sfxEnabled ? "Sound on" : "Sound off"}
+        onClick={() => {
+          if (!fx.sfxEnabled) primeAudioContext();
+          fx.setSfxEnabled(!fx.sfxEnabled);
+        }}
+      >
+        {fx.sfxEnabled ? <SpeakerOnIcon /> : <SpeakerMuteIcon />}
+      </button>
+      <button
+        type="button"
+        className="fx-toggle"
+        aria-pressed={fx.hapticsEnabled}
+        aria-label={fx.hapticsEnabled ? "Turn off vibration" : "Turn on vibration"}
+        title={fx.hapticsEnabled ? "Vibration on" : "Vibration off"}
+        onClick={() => fx.setHapticsEnabled(!fx.hapticsEnabled)}
+      >
+        {fx.hapticsEnabled ? <VibrationOnIcon /> : <VibrationOffIcon />}
+      </button>
+    </div>
   );
 }
 
@@ -126,6 +170,7 @@ function Header() {
           ))}
         </nav>
         <div className="app-header__right">
+          <FxToggles />
           <BalancePill />
           {player ? (
             <ProfileMenu />
@@ -159,6 +204,10 @@ function Header() {
 }
 
 export function Layout() {
+  // Global settlement-event watcher (implementation-plan.md §3) — runs regardless of which page
+  // is mounted below, so a result moment fires "видно с любой страницы" (game-designer.md).
+  useSettlementWatcher();
+
   return (
     <div className="page">
       <a href="#main-content" className="skip-link">
@@ -176,6 +225,8 @@ export function Layout() {
         <div className="container">Herd — crowd vs market. A toy-money demo on Chia testnet11.</div>
       </footer>
       <ConnectWalletModal />
+      {/* Portal-ish host (result-moment.md §1) — outside <Outlet/>, on top of everything. */}
+      <ResultMomentHost />
     </div>
   );
 }

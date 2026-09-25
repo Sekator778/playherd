@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useApi, useSession } from "../api/ApiContext";
 import type {
   DepositRequestDto,
@@ -9,6 +9,8 @@ import type {
 } from "../api/contract";
 import { EmptyState, ErrorState, Skeleton } from "../components/Common";
 import { formatDateTimeUtc, formatPlayAmount } from "../format";
+import { RollingDigits } from "../fx/RollingDigits";
+import { ArrowDownTrayIcon, ArrowUpTrayIcon, ChipIcon, EqualsDiscIcon, GiftIcon, MinusDiscIcon, RefundIcon, TrophyIcon } from "../components/icons";
 
 const LEDGER_LABEL: Record<LedgerEntryType, string> = {
   STARTER_PACK: "Starter pack",
@@ -19,6 +21,59 @@ const LEDGER_LABEL: Record<LedgerEntryType, string> = {
   WITHDRAWAL: "Withdrawal requested",
   WITHDRAWAL_REFUND: "Withdrawal refunded",
 };
+
+/** direction.md §3's icon pattern, applied per ledger-entry-type (§4 names Wallet's ledger as one
+ *  of the "long list" screens it targets) — was plain text-only rows, indistinguishable from a
+ *  bank statement. `SETTLEMENT` has no fixed glyph of its own: it reuses the same win/loss/even
+ *  icons as the result-moment card, keyed off the entry's own signed `delta`. */
+function ledgerIcon(entry: LedgerEntryDto): ReactNode {
+  switch (entry.type) {
+    case "STARTER_PACK":
+      return <GiftIcon />;
+    case "STAKE_DEBIT":
+      return <ChipIcon />;
+    case "STAKE_REFUND":
+    case "WITHDRAWAL_REFUND":
+      return <RefundIcon />;
+    case "DEPOSIT":
+      return <ArrowDownTrayIcon />;
+    case "WITHDRAWAL":
+      return <ArrowUpTrayIcon />;
+    case "SETTLEMENT": {
+      const delta = Number(entry.delta);
+      return delta > 0 ? <TrophyIcon /> : delta < 0 ? <MinusDiscIcon /> : <EqualsDiscIcon />;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Balance — the Wallet page's hero number (direction.md §0/§4): rolls on every change via the
+ *  same `RollingDigits` the result-moment card and header balance pill use, and flashes its
+ *  border win/loss-colored for one cycle when it moves (`value-flash-up`/`-down`, fx.css) — the
+ *  same treatment `live-round.md` §5 gives the Crowd page's stat tiles. */
+function BalanceCard({ balance }: { balance: string }) {
+  const numeric = Number(balance);
+  const prevRef = useRef(numeric);
+  const [flashClass, setFlashClass] = useState("");
+
+  useEffect(() => {
+    if (prevRef.current === numeric) return;
+    setFlashClass(numeric > prevRef.current ? "value-flash-up" : "value-flash-down");
+    prevRef.current = numeric;
+    const t = window.setTimeout(() => setFlashClass(""), 450);
+    return () => window.clearTimeout(t);
+  }, [numeric]);
+
+  return (
+    <div className={`card ${flashClass}`}>
+      <div className="stat-tile__label">Balance</div>
+      <div className="stat-tile__value" style={{ fontSize: 32 }}>
+        <RollingDigits value={numeric} durationMs={500} format={(n) => `${formatPlayAmount(n)} PLAY`} />
+      </div>
+    </div>
+  );
+}
 
 function WithdrawForm({ balance, onDone }: { balance: string; onDone: () => void }) {
   const api = useApi();
@@ -168,12 +223,7 @@ function WalletContent() {
   return (
     <div className="two-col">
       <div className="stack" style={{ gap: 16 }}>
-        <div className="card">
-          <div className="stat-tile__label">Balance</div>
-          <div className="stat-tile__value" style={{ fontSize: 32 }}>
-            {formatPlayAmount(account.balance)} PLAY
-          </div>
-        </div>
+        <BalanceCard balance={account.balance} />
         <h3>Activity</h3>
         {ledger.length === 0 ? (
           <EmptyState>No activity yet — your starter pack will appear here once you sign in.</EmptyState>
@@ -182,10 +232,15 @@ function WalletContent() {
             <ul className="list-card">
               {ledger.map((e) => (
                 <li key={e.sequence} className="list-row">
-                  <span>
-                    {LEDGER_LABEL[e.type]}
-                    <br />
-                    <span className="faint">{formatDateTimeUtc(e.atMs)}</span>
+                  <span className="list-row__main">
+                    <span className="list-row__icon" aria-hidden="true" style={{ color: Number(e.delta) >= 0 ? "var(--up)" : "var(--down)" }}>
+                      {ledgerIcon(e)}
+                    </span>
+                    <span>
+                      {LEDGER_LABEL[e.type]}
+                      <br />
+                      <span className="faint">{formatDateTimeUtc(e.atMs)}</span>
+                    </span>
                   </span>
                   <span className="mono" style={{ color: Number(e.delta) >= 0 ? "var(--up)" : "var(--down)" }}>
                     {formatPlayAmount(e.delta, { decimals: 3, sign: true })} PLAY

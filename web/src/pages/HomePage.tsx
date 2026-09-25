@@ -7,55 +7,33 @@ import type { HomeSummaryDto, Interval, ProfileRoundEntryDto } from "../api/cont
 import { RATING_ROUNDS_THRESHOLD } from "../api/contract";
 import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { BetSlip } from "../components/BetSlip";
-import { BotBadge, Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton } from "../components/Common";
-import { DirectionGlyph } from "../components/icons";
+import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton } from "../components/Common";
 import { LazyCrowdChart } from "../components/LazyCrowdChart";
+import { LeaderboardList, type LeaderboardEntry } from "../components/Leaderboard";
 import { IntervalTabs } from "../components/RoundParts";
+import { ResultTile } from "../components/ResultTile";
 import { formatPlayAmount, formatPercent } from "../format";
 
 /** Task item 1: "polling every 2 s for rounds/home/serverInfo while visible". */
 const POLL_MS = 2000;
 
-function RichRow({ entry }: { entry: HomeSummaryDto["topRich"][number] }) {
-  return (
-    <li className="list-row">
-      <Link to={`/profile/${entry.player.playerId}`}>
-        #{entry.rank} {entry.player.displayName}
-      </Link>{" "}
-      <BotBadge isBot={entry.player.isBot} />
-      <span className="mono">{formatPlayAmount(entry.growth, { decimals: 0, sign: true })} PLAY</span>
-    </li>
-  );
+/** Same `LeaderboardList` the Ratings page uses (direction.md §4: "тот же компонент
+ *  переиспользуется на Home") — the top-5 preview, not a separate row style. */
+function richEntries(list: HomeSummaryDto["topRich"]): LeaderboardEntry[] {
+  return list.map((e) => ({
+    rank: e.rank,
+    player: e.player,
+    value: `${formatPlayAmount(e.growth, { decimals: 0, sign: true })} PLAY`,
+    valueClassName: outcomeClassName(outcomeFromNet(Number(e.growth))),
+  }));
 }
 
-function ProphetRow({ entry }: { entry: HomeSummaryDto["topProphets"][number] }) {
-  return (
-    <li className="list-row">
-      <Link to={`/profile/${entry.player.playerId}`}>
-        #{entry.rank} {entry.player.displayName}
-      </Link>{" "}
-      <BotBadge isBot={entry.player.isBot} />
-      <span className="mono">{formatPercent(entry.accuracy)}</span>
-    </li>
-  );
-}
-
-/** Task: "small 'Your last results' list on Home (net per round)" — same net-result logic as
- *  everywhere else (`api/outcome.ts`), so a losing round that still returned some equity never
- *  reads as a win here either. */
-function LastResultRow({ entry }: { entry: ProfileRoundEntryDto }) {
-  const net = netFromPayoutAndStake(entry.payout, entry.stake);
-  return (
-    <li className="list-row">
-      <Link to={`/round/${entry.roundId}`}>
-        {entry.interval === "HOURLY" ? "Hourly" : "Daily"} · <DirectionGlyph direction={entry.direction} />{" "}
-        {entry.direction} · x{entry.leverage}
-      </Link>
-      <span className={entry.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(net))}>
-        {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY{entry.liquidated && " · liquidated"}
-      </span>
-    </li>
-  );
+function prophetEntries(list: HomeSummaryDto["topProphets"]): LeaderboardEntry[] {
+  return list.map((e) => ({
+    rank: e.rank,
+    player: e.player,
+    value: formatPercent(e.accuracy),
+  }));
 }
 
 export function HomePage() {
@@ -114,7 +92,7 @@ export function HomePage() {
       <section className="home-section home-section--round">
         <IntervalTabs value={interval} onChange={setInterval_} />
         <div className="two-col" style={{ marginTop: 16 }}>
-          <div className="card">
+          <div className="card card--hero">
             <h2>Current round</h2>
             <RoundStatusBadge phase={running.phase} />
             {running.phase === "RUNNING" && (
@@ -140,11 +118,19 @@ export function HomePage() {
         {player && lastResults && lastResults.length > 0 && (
           <div className="card" style={{ marginTop: 16 }}>
             <h3>Your last results</h3>
-            <ul className="list-card">
-              {lastResults.map((entry) => (
-                <LastResultRow key={entry.roundId} entry={entry} />
+            <div className="result-tiles">
+              {lastResults.map((entry: ProfileRoundEntryDto) => (
+                <ResultTile
+                  key={entry.roundId}
+                  roundId={entry.roundId}
+                  interval={entry.interval}
+                  direction={entry.direction}
+                  leverage={entry.leverage}
+                  net={netFromPayoutAndStake(entry.payout, entry.stake)}
+                  liquidated={entry.liquidated}
+                />
               ))}
-            </ul>
+            </div>
           </div>
         )}
       </section>
@@ -165,11 +151,7 @@ export function HomePage() {
             {home.topRich.length === 0 ? (
               <p className="muted">No one has qualified yet — play {RATING_ROUNDS_THRESHOLD} rounds this season to appear here.</p>
             ) : (
-              <ul className="list-card">
-                {home.topRich.map((e) => (
-                  <RichRow key={e.player.playerId} entry={e} />
-                ))}
-              </ul>
+              <LeaderboardList entries={richEntries(home.topRich)} />
             )}
             <p>
               <Link to="/ratings">Full ratings →</Link>
@@ -180,11 +162,7 @@ export function HomePage() {
             {home.topProphets.length === 0 ? (
               <p className="muted">No one has qualified yet — play {RATING_ROUNDS_THRESHOLD} rounds this season to appear here.</p>
             ) : (
-              <ul className="list-card">
-                {home.topProphets.map((e) => (
-                  <ProphetRow key={e.player.playerId} entry={e} />
-                ))}
-              </ul>
+              <LeaderboardList entries={prophetEntries(home.topProphets)} />
             )}
             <p>
               <Link to="/ratings">Full ratings →</Link>

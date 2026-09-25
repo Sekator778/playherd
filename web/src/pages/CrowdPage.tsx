@@ -5,7 +5,7 @@ import type { CrowdAccountDto } from "../api/contract";
 import { CROWD_STARTING_CAPITAL_USD } from "../api/contract";
 import { ErrorState, OracleDisclosureLine, OracleStatusLine, Skeleton } from "../components/Common";
 import { LazyCrowdChart } from "../components/LazyCrowdChart";
-import { StatTile } from "../components/RoundParts";
+import { LiveStatTile } from "../components/RoundParts";
 import { formatPercent, formatUpdatedAtUtc, formatUsd } from "../format";
 
 export function CrowdPage() {
@@ -59,9 +59,13 @@ export function CrowdPage() {
     <div className="stack" style={{ gap: 20 }}>
       <h1>Crowd account vs the market</h1>
       <div className="grid-3">
-        <StatTile label="Capital" value={formatUsd(crowd.capital)} />
-        <StatTile label="Return since day one" value={formatPercent(returnSinceDayOne, { sign: true })} />
-        <StatTile label="This season" value={thisSeason ? formatPercent(thisSeason.returnPct, { sign: true }) : "—"} />
+        <LiveStatTile label="Capital" value={Number(crowd.capital)} format={(n) => formatUsd(n)} />
+        <LiveStatTile label="Return since day one" value={returnSinceDayOne} format={(n) => formatPercent(n, { sign: true })} />
+        <LiveStatTile
+          label="This season"
+          value={thisSeason ? thisSeason.returnPct : null}
+          format={(n) => formatPercent(n, { sign: true })}
+        />
       </div>
       <LazyCrowdChart history={crowd.history} variant="full" />
       {updatedAt !== null && <p className="faint">{formatUpdatedAtUtc(updatedAt)}</p>}

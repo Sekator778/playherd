@@ -17,6 +17,8 @@ import {
   Skeleton,
 } from "../components/Common";
 import { CancellationNotice, CrowdPositionCard, PositionsList } from "../components/RoundParts";
+import { liquidationLiveCardClass } from "../components/LiquidationBar";
+import { RollingDigits } from "../fx/RollingDigits";
 import { formatPercent, formatPlayAmount, formatUsd } from "../format";
 
 const POLL_MS = 2000;
@@ -72,9 +74,15 @@ export function RoundPage() {
   const ownPosition =
     round.phase !== "BETTING" && player ? round.positions.find((p) => p.playerId === player.playerId) : undefined;
 
+  // Round-start reveal (live-round.md §3): the hero card and the positions stage below both play
+  // a one-shot flip-in the moment they first mount in a post-BETTING shape — a `key` that only
+  // changes once, at the BETTING→RUNNING transition, forces that mount (React would otherwise
+  // keep reusing the same DOM node across phases and never replay the entrance).
+  const revealedKey = round.phase === "BETTING" ? "betting" : "revealed";
+
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <div className="stack" style={{ gap: 8 }}>
+      <div key={`hero-${revealedKey}`} className={`card card--hero stack ${revealedKey === "revealed" ? "reveal-flip-in" : ""}`} style={{ gap: 8 }}>
         <RoundStatusBadge phase={round.phase} />
         {round.phase === "BETTING" && (
           <Countdown nowMs={nowMs} targetMs={round.window.startMs} prefix="Closes in " />
@@ -102,7 +110,7 @@ export function RoundPage() {
           if (ownPosition.liquidated) {
             const net = -Number(stake);
             return (
-              <div className="card own-outcome own-outcome--liquidated">
+              <div className="card card--hero own-outcome own-outcome--liquidated">
                 <div className="net-result">
                   <span className="outcome-lost">
                     {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY · liquidated
@@ -115,7 +123,7 @@ export function RoundPage() {
           if (round.phase === "SETTLED" && ownPosition.payout !== null) {
             const net = netFromPayoutAndStake(ownPosition.payout, stake);
             return (
-              <div className="card own-outcome">
+              <div className="card card--hero own-outcome">
                 <div className="net-result">
                   <span className={outcomeClassName(outcomeFromNet(net))}>
                     {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY
@@ -138,12 +146,19 @@ export function RoundPage() {
           const pctToLiq = referencePrice
             ? percentToLiquidation(referencePrice.price, ownPosition.liquidationPrice)
             : null;
+          // Live-round.md §2: the own-position hero card pulses as the price approaches the
+          // liquidation price — same heat rhythm the pre-bet `LiquidationBar` already uses.
+          const pulseClass = pctToLiq !== null ? liquidationLiveCardClass(pctToLiq) : "";
           return (
-            <div className="card own-outcome">
+            <div className={`card card--hero own-outcome ${pulseClass}`}>
               {live ? (
                 <div className="net-result">
                   <span className={outcomeClassName(outcomeFromNet(live.toNumber()))}>
-                    {formatPlayAmount(live.toNumber(), { decimals: 2, sign: true })} PLAY
+                    <RollingDigits
+                      value={live.toNumber()}
+                      durationMs={400}
+                      format={(n) => `${formatPlayAmount(n, { decimals: 2, sign: true })} PLAY`}
+                    />
                   </span>{" "}
                   <span className="net-result__secondary">unrealized</span>
                 </div>
@@ -169,7 +184,7 @@ export function RoundPage() {
             </>
           )}
           {(round.phase === "RUNNING" || round.phase === "SETTLED") && (
-            <>
+            <div className="stack reveal-flip-in" style={{ gap: 16 }}>
               <p className="mono">Open price: {formatUsd(round.openPrice)}</p>
               <OracleDisclosureLine />
               {round.phase === "SETTLED" && <ResultsHashLine roundId={round.roundId} resultsHash={round.resultsHash} />}
@@ -179,7 +194,7 @@ export function RoundPage() {
                 settled={round.phase === "SETTLED"}
                 referencePrice={referencePrice}
               />
-            </>
+            </div>
           )}
         </div>
         <div className="stack" style={{ gap: 16 }}>

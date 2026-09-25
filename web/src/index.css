@@ -56,6 +56,82 @@
   line-height: 1.5;
 }
 
+/* Game-feel tokens (docs/product/design/direction.md §1) — additive layer on top of the tokens
+   above; nothing above is removed or replaced. Hex values are pre-computed WCAG relative-
+   luminance contrast ratios, not eyeballed — see direction.md §1's table and the "Правило
+   применения loss/liq-текста" note right after it before using `--loss-neon`/`--liq-magenta` as
+   small/regular-weight text on `--bg-elevated-2`. */
+:root {
+  --win-neon: #3cff8a;
+  --win-neon-strong: #17b95c;
+  --win-glow: rgba(60, 255, 138, 0.55);
+
+  --loss-neon: #ff3b3b;
+  --loss-neon-strong: #c81e1e;
+  --loss-glow: rgba(255, 59, 59, 0.55);
+
+  --liq-magenta: #ff2e9f;
+  --liq-magenta-strong: #b3006e;
+  --liq-glow: rgba(255, 46, 159, 0.6);
+
+  /* Same hex as --focus-ring, renamed for coin/ember contexts so CSS reads by meaning. */
+  --gold: var(--focus-ring);
+  --gold-strong: #e6a92e;
+  --gold-glow: rgba(255, 209, 102, 0.55);
+
+  /* Leverage/liquidation "heat" ramp (x2..x40) — direction.md §1, thresholds in
+     `LeverageDial.tsx`/`LiquidationBar.tsx`. */
+  --heat-1: var(--win-neon);
+  --heat-2: #b6e23c;
+  --heat-3: var(--gold);
+  --heat-4: #ff9142;
+  --heat-5: var(--loss-neon);
+
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-expo: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-shake: cubic-bezier(0.36, 0.07, 0.19, 0.97);
+
+  --dur-instant: 100ms;
+  --dur-fast: 180ms;
+  --dur-base: 300ms;
+  --dur-crack: 220ms;
+
+  /* HUD number scale — direction.md §2: every game number (balance, stake, leverage, P&L,
+     countdown, capital, liquidation price) uses one of these, tabular-nums, never the body-text
+     scale. */
+  --num-xl: 44px;
+  --num-xl-mobile: 34px;
+  --num-lg: 28px;
+  --num-md: 18px;
+}
+
+/* HUD typography (direction.md §2) — no web font: the audit found `font-family: "Inter"` above
+   was never actually loaded (dead declaration, system stack was rendering all along); the fix is
+   scale/weight/tabular-nums on the numbers that matter, not a network font. */
+.num-xl,
+.num-lg,
+.num-md {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.num-xl {
+  font-size: var(--num-xl-mobile);
+  font-weight: 900;
+}
+@media (min-width: 640px) {
+  .num-xl {
+    font-size: var(--num-xl);
+  }
+}
+.num-lg {
+  font-size: var(--num-lg);
+}
+.num-md {
+  font-size: var(--num-md);
+}
+
 *,
 *::before,
 *::after {
@@ -219,20 +295,51 @@ ol {
   text-align: center;
   padding: 10px 16px;
   letter-spacing: 0.01em;
+  position: relative;
+  overflow: hidden;
+}
+/* direction.md §5: "technical border of the studio", not a broken alert box — texture only, same
+   text/color/contrast/position as before. Never animated (redline: not a WCAG 2.3.1 flicker). */
+.demo-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0 2px, transparent 2px 14px);
+  opacity: 0.06;
+  pointer-events: none;
+}
+
+/* Meta rail (direction.md §5) — the honesty markers (replay banner, oracle/multi-account
+   disclosure lines, results hash) share one visual language: small mono text, no card/fill of
+   its own, thin top border, sitting right under the block it explains. Nothing here loses
+   visibility, shrinks below this size or moves into an accordion — only the visual weight of the
+   *container* changes, from "another card" to "instrument service line". */
+.meta-line,
+.disclaimer-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.disclaimer-line {
+  margin: 8px 0 0;
 }
 
 /* Replay-mode banner (task item 4 — ServerInfoDto) -------------------------- */
 
 .replay-banner {
-  background: var(--bg-elevated-2);
-  color: var(--accent-text);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  font-size: 13px;
+  background: none;
+  color: var(--text-faint);
+  border: none;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
   font-weight: 600;
   text-align: center;
   padding: 8px 14px;
   margin-bottom: 16px;
+  letter-spacing: 0.02em;
 }
 
 /* Bot badge (task item 4 — PlayerSummaryDto.isBot) -------------------------- */
@@ -341,23 +448,44 @@ ol {
     font-size: 13px;
   }
   .balance-pill {
-    padding: 5px 8px;
-    font-size: 12px;
+    padding: 6px 10px;
+    font-size: 14px;
+    gap: 6px;
+  }
+  .balance-pill__coin {
+    width: 16px;
+    height: 16px;
   }
 }
 
+/* Balance as a HUD "hero chip" (audit.md's Header section, direction.md §4's hero zone) — bigger,
+   tabular-nums, a coin glyph so the one number that's actually money reads differently from the
+   profile-nickname pill next to it, not the same grey chip twice. */
 .balance-pill {
   display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   background: var(--bg-elevated-2);
   border: 1px solid var(--border-strong);
-  padding: 6px 12px;
+  padding: 8px 14px;
   border-radius: var(--radius-pill);
-  font-weight: 700;
-  font-size: 13px;
+  font-weight: 800;
+  font-size: var(--num-md);
   text-decoration: none;
   color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(255, 209, 102, 0.08);
+  transition: box-shadow var(--dur-fast) ease;
+}
+.balance-pill:hover {
+  box-shadow: inset 0 0 0 1px rgba(255, 209, 102, 0.22);
+}
+.balance-pill__coin {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.balance-pill__amount {
+  font-variant-numeric: tabular-nums;
 }
 .balance-pill__in-play {
   font-weight: 600;
@@ -449,6 +577,17 @@ ol {
   padding: 14px 16px;
 }
 
+/* One weight class above the rest (direction.md §4, "Always one card = one weight class") — the
+   hero zone of a screen (current round, own round outcome, round "stage" status), not a new
+   component, a modifier on the same `.card`. */
+.card--hero {
+  border-color: var(--border-strong);
+  box-shadow:
+    var(--shadow-card),
+    0 0 0 1px rgba(145, 71, 255, 0.14),
+    0 0 36px -16px rgba(145, 71, 255, 0.4);
+}
+
 .section-title {
   font-size: 13px;
   font-weight: 700;
@@ -517,40 +656,78 @@ ol {
   font-size: 18px;
 }
 
-/* Direction buttons (Р-33) — big, bright, icon + text (never color-only). */
+/* Direction buttons (Р-33) — big, bright, icon + text (never color-only). audit.md's Bet slip
+   finding: the unselected side used to be the same neutral grey as any secondary button — "two
+   opposing market sides looked like an on/off toggle". Fix (direction.md §4 "Stage/split-camp"):
+   BOTH sides always carry their own color at every state, idle just "cooler"/lower-contrast than
+   selected — never plain grey. Tactile states below: idle (tinted) → hover (brighter border,
+   lift) → active/pressed (press down) → selected (full saturated fill + glow). */
 .direction-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 6px;
   flex: 1;
-  padding: 18px 10px;
+  min-height: 92px;
+  padding: 20px 10px;
   border-radius: var(--radius-md);
   border: 2px solid var(--border-strong);
   background: var(--bg-elevated-2);
   color: var(--text);
   font-weight: 800;
-  font-size: 20px;
+  font-size: 21px;
   letter-spacing: 0.03em;
   cursor: pointer;
+  transition:
+    transform var(--dur-instant) ease,
+    box-shadow var(--dur-fast) ease,
+    border-color var(--dur-fast) ease,
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease;
 }
 .direction-btn__icon {
-  font-size: 22px;
+  font-size: 28px;
   line-height: 1;
+}
+.direction-btn--up {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.32);
+  color: var(--up);
+}
+.direction-btn--down {
+  background: rgba(248, 113, 113, 0.08);
+  border-color: rgba(248, 113, 113, 0.32);
+  color: var(--down);
+}
+.direction-btn--up:hover:not(.direction-btn--selected) {
+  border-color: var(--up);
+  background: rgba(34, 197, 94, 0.14);
+  transform: translateY(-1px);
+}
+.direction-btn--down:hover:not(.direction-btn--selected) {
+  border-color: var(--down);
+  background: rgba(248, 113, 113, 0.14);
+  transform: translateY(-1px);
+}
+.direction-btn:active {
+  transform: translateY(1px) scale(0.98);
 }
 .direction-btn--up.direction-btn--selected {
   background: var(--up-bg);
   border-color: var(--up-strong);
-  color: var(--up);
+  color: var(--win-neon);
+  box-shadow:
+    0 0 0 1px var(--up-strong),
+    0 10px 26px -10px var(--win-glow);
 }
 .direction-btn--down.direction-btn--selected {
   background: var(--down-bg);
   border-color: var(--down-strong);
-  color: var(--down);
-}
-.direction-btn:hover:not(.direction-btn--selected) {
-  border-color: var(--text-faint);
+  color: var(--loss-neon);
+  box-shadow:
+    0 0 0 1px var(--down-strong),
+    0 10px 26px -10px var(--loss-glow);
 }
 
 .direction-row {
@@ -641,7 +818,10 @@ ol {
 }
 
 .net-result {
-  font-size: 20px;
+  font-size: var(--num-lg);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 .net-result__secondary {
   color: var(--text-muted);
@@ -724,25 +904,54 @@ ol {
   font-weight: 600;
 }
 
-.quick-amounts {
+/* Stake — a hero number the player can read from across the table (direction.md §4 "Chips, not
+   bare inputs") plus a row of tappable casino-style chips, not lonely quick-amount links; the
+   exact-entry `<input>` stays for precision but drops a visual weight class below the chips. */
+.stake-hero {
+  margin-bottom: 8px;
+}
+.stake-input-secondary {
+  background: var(--bg) !important;
+  color: var(--text-muted) !important;
+  font-size: 14px !important;
+}
+.stake-chips {
   display: flex;
   gap: 8px;
-  margin-top: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
 }
-.quick-amounts button {
-  flex: 1;
+.stake-chip {
+  flex: 1 1 0;
+  min-width: 64px;
   background: var(--bg-elevated-2);
   border: 1px solid var(--border-strong);
-  color: var(--text-muted);
-  border-radius: var(--radius-sm);
-  padding: 6px 4px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.quick-amounts button:hover {
+  border-radius: var(--radius-pill);
+  padding: 11px 6px;
+  font-size: 13px;
+  font-weight: 800;
   color: var(--text);
-  border-color: var(--text-faint);
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  transition:
+    transform var(--dur-instant) ease,
+    border-color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
+}
+.stake-chip:hover {
+  border-color: var(--accent-text);
+}
+.stake-chip:active {
+  transform: translateY(1px) scale(0.97);
+}
+.stake-chip--max {
+  background: var(--accent);
+  border-color: var(--accent-strong);
+  color: white;
+}
+.stake-chip--max:hover {
+  filter: brightness(1.1);
+  border-color: var(--accent-strong);
 }
 
 /* Tables / lists ------------------------------------------------------------------ */
@@ -823,6 +1032,19 @@ ol {
   border-radius: var(--radius-md);
   background: var(--bg-elevated-2);
 }
+/* Wallet ledger row (direction.md §3's per-entry icon pattern) — icon + label as one flex group
+   so `.list-row`'s own `space-between` still splits exactly two things: this group and the
+   amount, regardless of the icon in between. */
+.list-row__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.list-row__icon {
+  display: flex;
+  flex: none;
+}
 
 /* Tabs ---------------------------------------------------------------------------- */
 
@@ -865,12 +1087,6 @@ ol {
   text-align: center;
 }
 
-.disclaimer-line {
-  font-size: 12px;
-  color: var(--text-faint);
-  margin: 8px 0 0;
-}
-
 .stat-tile {
   background: var(--bg-elevated-2);
   border: 1px solid var(--border);
@@ -886,14 +1102,45 @@ ol {
   margin-bottom: 6px;
 }
 .stat-tile__value {
-  font-size: 24px;
+  font-size: var(--num-lg);
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .countdown {
   font-variant-numeric: tabular-nums;
   font-weight: 800;
   font-size: 20px;
+  transition:
+    color var(--dur-fast) ease,
+    font-size var(--dur-fast) ease;
+}
+/* Countdown escalation, last 10s/3s (live-round.md §4) — a real, existing timer (bet close /
+   round resolve) reading more urgently as it actually runs out; not a fabricated pressure timer
+   (game-designer.md's "Честность" redline is about invented urgency, not an honest one). */
+.countdown--warn {
+  color: var(--warning);
+  font-size: var(--num-lg);
+}
+.countdown--critical {
+  color: var(--loss-neon);
+  font-size: var(--num-lg);
+  animation: countdown-pulse 1s ease-in-out infinite;
+}
+@keyframes countdown-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .countdown--critical {
+    animation: none;
+  }
 }
 
 .home-layout {
@@ -973,4 +1220,437 @@ footer.app-footer {
   text-align: center;
   color: var(--text-faint);
   font-size: 13px;
+}
+
+/* Avatar --------------------------------------------------------------------------- */
+/* Decorative only (docs/product/design/direction.md §4/§3) — the adjacent nickname/BOT badge
+   text is always the real source of identity, never the color alone. */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 14px;
+  border-radius: 50%;
+  font-weight: 800;
+  color: var(--bg);
+  flex: none;
+  line-height: 1;
+}
+
+/* Leverage dial ---------------------------------------------------------------------- */
+/* live-round.md §1 — replaces the unstyled native range input with a "power dial": filled track
+   colored by the heat ramp, big tabular-nums value above it. Stays a real `<input type=range>`
+   under the hood for keyboard/screen-reader semantics — only visually restyled. */
+.leverage-dial__value {
+  font-size: var(--num-lg);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--heat-color, var(--heat-1));
+  transition: color var(--dur-fast) ease;
+  margin-bottom: 8px;
+}
+.leverage-dial input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    90deg,
+    var(--heat-color, var(--heat-1)) 0%,
+    var(--heat-color, var(--heat-1)) var(--fill-pct, 0%),
+    var(--bg-elevated-2) var(--fill-pct, 0%),
+    var(--bg-elevated-2) 100%
+  );
+  outline: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+  margin: 4px 0;
+}
+.leverage-dial input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 3px solid var(--heat-color, var(--heat-1));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) ease;
+}
+.leverage-dial input[type="range"]::-moz-range-track {
+  height: 14px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated-2);
+}
+.leverage-dial input[type="range"]::-moz-range-progress {
+  height: 14px;
+  border-radius: var(--radius-pill);
+  background: var(--heat-color, var(--heat-1));
+}
+.leverage-dial input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 3px solid var(--heat-color, var(--heat-1));
+  cursor: pointer;
+}
+.leverage-dial__zone {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--heat-color, var(--heat-1));
+  transition: color var(--dur-fast) ease;
+}
+/* Flame zone (x34-40, live-round.md §1's table) — subtle pulse near max leverage, exactly what
+   Alex asked for ("плечо должно нагреваться... чтобы была динамика"). */
+.leverage-dial--flame input[type="range"] {
+  animation: leverage-flame-pulse 500ms ease-in-out infinite;
+}
+@keyframes leverage-flame-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.3);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .leverage-dial--flame input[type="range"] {
+    animation: none;
+  }
+}
+
+/* Liquidation distance bar ------------------------------------------------------------ */
+/* live-round.md §2 — replaces two lines of plain text with a meter: entry price / liquidation
+   price as endpoints, fill = how much room is left, colored by the same heat ramp. */
+.liq-bar {
+  margin-top: 4px;
+}
+.liq-bar__labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+  gap: 8px;
+}
+.liq-bar__labels span:last-child {
+  text-align: right;
+}
+.liq-bar__track {
+  position: relative;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.liq-bar__fill {
+  position: absolute;
+  inset: 0;
+  width: var(--fill-pct, 50%);
+  background: var(--heat-color, var(--heat-1));
+  border-radius: inherit;
+  transition:
+    width var(--dur-base) ease,
+    background var(--dur-fast) ease;
+}
+/* Zone pulse cadence follows live-round.md §2's table exactly (1.6s watch → 1.0s close → 0.6s
+   critical) — same rhythm the existing `badge--live` pulse already uses, for consistency. */
+.liq-bar--watch .liq-bar__track {
+  animation: liq-bar-pulse 1.6s ease-in-out infinite;
+}
+.liq-bar--close .liq-bar__track {
+  animation: liq-bar-pulse 1s ease-in-out infinite;
+}
+.liq-bar--critical .liq-bar__track {
+  animation: liq-bar-pulse 0.6s ease-in-out infinite;
+  box-shadow: 0 0 0 1px var(--liq-magenta);
+}
+@keyframes liq-bar-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .liq-bar__track {
+    animation: none !important;
+  }
+}
+.liq-bar__caption {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 6px;
+}
+
+/* Round "stage" — split camp (direction.md §4 "Stage/split-camp"; audit.md's Round section) ---- */
+/* UP and DOWN are always two visually separated zones, even when one side is empty — never one
+   merged grey list of who bet which way. */
+.stage {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+@media (min-width: 560px) {
+  .stage {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.stage__panel {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  padding: 14px;
+}
+.stage__panel--up {
+  background: linear-gradient(180deg, var(--up-bg) 0%, var(--bg-elevated) 70%);
+  border-color: var(--up-strong);
+}
+.stage__panel--down {
+  background: linear-gradient(180deg, var(--down-bg) 0%, var(--bg-elevated) 70%);
+  border-color: var(--down-strong);
+}
+.stage__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 800;
+  font-size: 15px;
+  margin-bottom: 10px;
+  letter-spacing: 0.02em;
+}
+.stage__heading--up {
+  color: var(--up);
+}
+.stage__heading--down {
+  color: var(--down);
+}
+.stage__heading__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.stage__empty {
+  padding: 10px 2px;
+  margin: 0;
+}
+.stage__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.player-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(4, 6, 10, 0.28);
+}
+.player-chip__avatar {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+}
+.player-chip__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+  text-decoration: none;
+}
+.player-chip__name:hover {
+  text-decoration: underline;
+}
+.player-chip__lev {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: none;
+}
+.player-chip__result {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 13px;
+  flex: none;
+}
+
+/* Leaderboard cards (direction.md §4 "Leaderboard cards, not tables") -------------------------- */
+.leaderboard {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.leaderboard-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated-2);
+}
+.leaderboard-card__rank {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 12px;
+  flex: none;
+  background: var(--bg);
+  color: var(--text-muted);
+}
+.leaderboard-card--gold .leaderboard-card__rank {
+  background: var(--gold);
+  color: #3a2c0c;
+  box-shadow: 0 0 14px var(--gold-glow);
+}
+.leaderboard-card--silver .leaderboard-card__rank {
+  background: #c9d2e0;
+  color: #20242e;
+}
+.leaderboard-card--bronze .leaderboard-card__rank {
+  background: #d99a5b;
+  color: #2c1a08;
+}
+.leaderboard-card__avatar {
+  width: 30px;
+  height: 30px;
+  font-size: 13px;
+}
+.leaderboard-card__body {
+  flex: 1;
+  min-width: 0;
+}
+.leaderboard-card__name {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+.leaderboard-card__name:hover {
+  text-decoration: underline;
+}
+.leaderboard-card__meta {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.leaderboard-card__value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 15px;
+  flex: none;
+  text-align: right;
+}
+
+/* Result tiles (Profile/Home history — direction.md §4, audit.md's Profile section) ------------ */
+/* Outcome is always icon + color + text together, never color alone. */
+.result-tiles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.result-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated-2);
+  text-decoration: none;
+  color: inherit;
+}
+.result-tile:hover {
+  border-color: var(--border-strong);
+}
+.result-tile__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.result-tile--won .result-tile__icon {
+  background: var(--up-bg);
+  color: var(--win-neon);
+}
+.result-tile--lost .result-tile__icon {
+  background: var(--down-bg);
+  color: var(--loss-neon);
+}
+.result-tile--liquidated .result-tile__icon {
+  background: rgba(255, 46, 159, 0.14);
+  color: var(--liq-magenta);
+}
+.result-tile--even .result-tile__icon {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+.result-tile__body {
+  flex: 1;
+  min-width: 0;
+}
+.result-tile__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.result-tile__meta {
+  display: block;
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.result-tile__net {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 16px;
+  flex: none;
+  text-align: right;
+}
+.result-tile__tag {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Ratings "your rank" hero line (direction.md §4 hero zone) ------------------------------------ */
+.ratings-hero {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ratings-hero__label {
+  color: var(--text-muted);
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }

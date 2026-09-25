@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import type { RatingsDto, SeasonId } from "../api/contract";
-import { BotBadge, ErrorState, MultiAccountDisclosureLine, Skeleton } from "../components/Common";
+import { ErrorState, MultiAccountDisclosureLine, Skeleton } from "../components/Common";
+import { LeaderboardList, type LeaderboardEntry } from "../components/Leaderboard";
+import { outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { formatPercent, formatPlayAmount } from "../format";
 
 function currentSeasonId(): SeasonId {
@@ -58,10 +59,24 @@ export function RatingsPage() {
 
   if (error && !ratings) return <ErrorState onRetry={load} />;
 
+  // Hero zone (direction.md §4): the player's own rank in the tab they're looking at, if they're
+  // in it — derived from data already fetched for the list below, nothing fabricated.
+  const ownRank =
+    player && ratings
+      ? (tab === "RICH" ? ratings.rich : ratings.prophets).find((r) => r.player.playerId === player.playerId)?.rank
+      : undefined;
+
   return (
     <div className="stack" style={{ gap: 16 }}>
       <h1>Ratings</h1>
       <MultiAccountDisclosureLine />
+
+      {ownRank !== undefined && (
+        <div className="card card--hero ratings-hero">
+          <span className="ratings-hero__label">Your rank · {tab === "RICH" ? "Richest" : "Prophets"}</span>
+          <span className="num-lg">#{ownRank}</span>
+        </div>
+      )}
 
       {player && ratings && myRoundsPlayed !== null && myRoundsPlayed < ratings.roundsThreshold && (
         <div className="card card--tight">
@@ -99,58 +114,31 @@ export function RatingsPage() {
         ratings.rich.length === 0 ? (
           <p className="muted">No one has qualified yet — play {ratings.roundsThreshold} rounds this season to appear here.</p>
         ) : (
-          <table className="data-table data-table--responsive">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Player</th>
-                <th>Balance change</th>
-                <th>Rounds</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ratings.rich.map((r) => (
-                <tr key={r.player.playerId}>
-                  <td data-label="Rank">#{r.rank}</td>
-                  <td data-label="Player">
-                    <Link to={`/profile/${r.player.playerId}`}>{r.player.displayName}</Link> <BotBadge isBot={r.player.isBot} />
-                  </td>
-                  <td data-label="Balance change" className="mono">
-                    {formatPlayAmount(r.growth, { decimals: 0, sign: true })} PLAY
-                  </td>
-                  <td data-label="Rounds">{r.roundsPlayed}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <LeaderboardList
+            entries={ratings.rich.map(
+              (r): LeaderboardEntry => ({
+                rank: r.rank,
+                player: r.player,
+                value: `${formatPlayAmount(r.growth, { decimals: 0, sign: true })} PLAY`,
+                valueClassName: outcomeClassName(outcomeFromNet(Number(r.growth))),
+                meta: `${r.roundsPlayed} rounds`,
+              }),
+            )}
+          />
         )
       ) : ratings.prophets.length === 0 ? (
         <p className="muted">No one has qualified yet — play {ratings.roundsThreshold} rounds this season to appear here.</p>
       ) : (
-        <table className="data-table data-table--responsive">
-          <thead>
-            <tr>
-              <th>Rank</th>
-              <th>Player</th>
-              <th>Direction accuracy</th>
-              <th>Rounds</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ratings.prophets.map((r) => (
-              <tr key={r.player.playerId}>
-                <td data-label="Rank">#{r.rank}</td>
-                <td data-label="Player">
-                  <Link to={`/profile/${r.player.playerId}`}>{r.player.displayName}</Link> <BotBadge isBot={r.player.isBot} />
-                </td>
-                <td data-label="Direction accuracy" className="mono">
-                  {formatPercent(r.accuracy)}
-                </td>
-                <td data-label="Rounds">{r.roundsPlayed}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <LeaderboardList
+          entries={ratings.prophets.map(
+            (r): LeaderboardEntry => ({
+              rank: r.rank,
+              player: r.player,
+              value: formatPercent(r.accuracy),
+              meta: `${r.roundsPlayed} rounds`,
+            }),
+          )}
+        />
       )}
     </div>
   );

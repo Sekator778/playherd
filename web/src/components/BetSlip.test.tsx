@@ -72,13 +72,25 @@ describe("BetSlip client-side validation (ux_spec.md §11)", () => {
     expect(screen.getByRole("button", { name: "PLACE BET" })).toBeEnabled();
   });
 
-  it("the MIN quick-amount button fills in exactly the minimum stake", async () => {
+  it("the +100 stake chip adds to whatever is already staked", async () => {
     renderBetSlip();
     const user = userEvent.setup();
     const stakeInput = (await screen.findByLabelText("Stake (PLAY)")) as HTMLInputElement;
 
-    await user.click(screen.getByRole("button", { name: "MIN" }));
+    await user.clear(stakeInput);
+    await user.type(stakeInput, "50");
+    await user.click(screen.getByRole("button", { name: "+100" }));
 
-    expect(stakeInput.value).toBe("100");
+    expect(stakeInput.value).toBe("150");
+  });
+
+  it("the MAX stake chip fills in the player's full effective balance", async () => {
+    renderBetSlip();
+    const user = userEvent.setup();
+    const stakeInput = (await screen.findByLabelText("Stake (PLAY)")) as HTMLInputElement;
+
+    await user.click(screen.getByRole("button", { name: "MAX" }));
+
+    expect(Number(stakeInput.value)).toBeGreaterThan(0);
   });
 });

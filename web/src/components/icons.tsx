@@ -20,3 +20,199 @@ export function DownGlyph({ className = "" }: { className?: string }) {
 export function DirectionGlyph({ direction, className }: { direction: "UP" | "DOWN"; className?: string }) {
   return direction === "UP" ? <UpGlyph className={className} /> : <DownGlyph className={className} />;
 }
+
+/**
+ * Outcome icons (docs/product/design/direction.md §3 "Outcome chips") — same inline-SVG pattern
+ * as the glyphs above, `currentColor` so each sits in its own `.result-tile--*`/`.player-chip`
+ * color. Always paired with colored text/a label next to it (never the only signal, per
+ * `.claude/agents/game-designer.md`'s "Честность") — these are decoration for an outcome that is
+ * already stated in words nearby, so `aria-hidden`.
+ */
+export function TrophyIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+      <path
+        d="M7 4h10v3.2A5 5 0 0 1 12 12.2 5 5 0 0 1 7 7.2V4Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7 5.2H4.2v.8a4 4 0 0 0 4 4M17 5.2H19.8v.8a4 4 0 0 1-4 4"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 12.2V15m-2.6 3h5.2m-4.5 0 .5-3h3l.5 3"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Liquidation — a snapped crack, not a slow fracture (result-moment.md §2: "щелчок, не
+ *  нарастание"). */
+export function CrackIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.4" opacity="0.5" />
+      <path
+        d="M12.5 4.5 9.5 11l3 1-2.5 7.5 6.5-9.5-3-1.2 2-3.3-3 .5Z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="0.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Plain loss/even — a neutral minus disc, never just red text with no shape. */
+export function MinusDiscIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8.3 12h7.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** EVEN — a neutral equals disc, distinct from `MinusDiscIcon`'s single bar (LOSS) so the two
+ *  outcomes don't share a silhouette (result-moment.md §0's fourth, neutral kind). */
+export function EqualsDiscIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8.3 10.2h7.4M8.3 13.8h7.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Sound/haptics toggle glyphs (direction.md §3 "same inline-SVG pattern...") — replace the raw
+ *  platform emoji that used to sit in `Layout.tsx`'s `FxToggles` and `ResultCard.tsx`'s sound
+ *  button; on Android those rendered as a small, visually indistinct dark badge rather than a
+ *  recognizable icon (captured live on-device 2026-09-25). `currentColor` so each button's own
+ *  text color drives it, same as every other icon on this page. */
+export function SpeakerOnIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+      <path d="M4 9.5v5h3.4L12 18V6L7.4 9.5H4Z" fill="currentColor" />
+      <path
+        d="M16 9.2a4 4 0 0 1 0 5.6M18.6 6.6a7.8 7.8 0 0 1 0 10.8"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+export function SpeakerMuteIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+      <path d="M4 9.5v5h3.4L12 18V6L7.4 9.5H4Z" fill="currentColor" />
+      <path d="M16.2 9.8 20.2 14.2M20.2 9.8 16.2 14.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function VibrationOnIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+      <rect x="8.5" y="5" width="7" height="14" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M4.5 9v6M2.2 10.5v3M19.5 9v6M21.8 10.5v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function VibrationOffIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+      <rect x="8.5" y="5" width="7" height="14" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M5.5 5.5l13 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Wallet ledger per-entry-type icons (direction.md §3's inline-SVG pattern; §4 names Wallet's
+ *  ledger as one of the "long list" screens this pattern applies to) — replaces the bare text
+ *  label the ledger used to show for every row regardless of what kind of entry it was. */
+export function GiftIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <rect x="4" y="10" width="16" height="9" rx="1" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M4 10h16M12 10v9" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M12 10c-1.6-3.4-6-3-6-.4S9 10 12 10c3-0-6.4-2.8-6-.4S13.6 6.6 12 10Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** A poker-chip disc — staking PLAY on a round. */
+export function ChipIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="7.5" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="3.6" stroke="currentColor" strokeWidth="1.3" opacity="0.6" />
+      <path d="M12 3.6v2.6M12 17.8v2.6M3.6 12h2.6M17.8 12h2.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A refund/undo arrow — shared by stake and withdrawal refunds. */
+export function RefundIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <path d="M4.6 8.6A8 8 0 1 1 4 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M6.2 5.4 4.6 8.6l3.4 1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** PLAY arriving into the balance (deposit). */
+export function ArrowDownTrayIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <path d="M12 4v10m0 0 3.4-3.4M12 14l-3.4-3.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 17.5h14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** PLAY leaving the balance (withdrawal). */
+export function ArrowUpTrayIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <path d="M12 14V4m0 0-3.4 3.4M12 4l3.4 3.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 17.5h14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** The HUD balance's coin glyph (direction.md §3) — fixed gold tokens, not `currentColor`: a coin
+ *  is gold everywhere it appears, unlike the outcome icons above which inherit their container's
+ *  semantic color. */
+export function CoinIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="var(--gold)" stroke="var(--gold-strong)" strokeWidth="1.4" />
+      <circle cx="12" cy="12" r="5.6" fill="none" stroke="var(--gold-strong)" strokeWidth="1" opacity="0.55" />
+      <path
+        d="M9.3 9.2c.4-.9 1.3-1.5 2.5-1.5 1.5 0 2.5.8 2.5 1.9 0 .9-.7 1.4-1.7 1.7l-.9.25c-1.1.3-1.8.9-1.8 1.9 0 1.2 1.1 2 2.5 2 1.2 0 2.2-.5 2.6-1.5"
+        stroke="var(--bg)"
+        strokeWidth="1.2"
+        fill="none"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
