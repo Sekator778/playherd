@@ -207,7 +207,10 @@ Ratings / How it works.
   позиция вошедшего игрока) — красная плашка: **"LIQUIDATED — you lost your whole stake."** (Р-7).
   То же для позиции толпы отдельной плашкой: **"Crowd account liquidated this round."**
 - **Settled** (`phase: "SETTLED"`) — бейдж **"SETTLED"**, заголовок
-  **"BTC closed {UP/DOWN} — {open} → {close}"**, для своей позиции (если участвовал) —
+  **"BTC closed {UP/DOWN/FLAT} — {open} → {close}"** (usability-фикс 2026-09-25: `FLAT`, когда
+  `close === open` — без этого варианта плоское закрытие показывало бы «UP», хотя Р-27 явно
+  трактует его как «ни туда ни сюда» — `directionCorrect` для такого раунда `null` и он исключён
+  из знаменателя рейтинга Prophets), для своей позиции (если участвовал) —
   **"You won {payout} PLAY"** / **"You lost your stake"** / **"Liquidated — stake lost."**, для
   каждой публичной позиции — итог (won/lost/liquidated), карточка толпы с итоговым капиталом
   до/после.
@@ -343,7 +346,11 @@ Ratings / How it works.
   **"Player not found."**
 - **Empty** (ещё не сыграно ни одного раунда) — **"No rounds played yet."**
 - **Not signed in** (только для `/profile/me`) — вместо контента: **"Connect your wallet to see your profile."**,
-  кнопка **"CONNECT WALLET"**.
+  кнопка **"CONNECT WALLET"**. Это единственное место на публичных страницах, где не вошедший
+  посетитель мог бы запустить подпись кошелька с телефона — usability-фикс 2026-09-25: на mobile
+  вместо рабочей кнопки та же заглушка, что у Wallet (§8): **"Wallet needs Sage on desktop — open
+  this page there."**, ссылка **"Back to Home"** (сам вход — Sage-действие, desktop-only, Р-31).
+  Уже вошедший профиль (`mine && player`) на mobile открывается как обычно — сюда не относится.
 
 ### Копирайт
 
@@ -494,6 +501,11 @@ mock-режиме — мгновенная имитация без реальн�
    - **"{percentToLiquidation}% move to liquidation"**
    - мелким текстом под карточкой: **"Estimated from the current price — your real entry price is set when the round starts."**
      (честность про разницу preview/реальной цены входа, см. `MarketReferenceDto` в контракте).
+   - заголовок карточки **"Liquidation preview"** со ссылкой **"What's this?"** рядом (usability-фикс
+     2026-09-25: leverage/liquidation — незнакомые термины для новичка с бэкграундом
+     Manifold/Twitch Predictions, `ux_walkthrough.md` вопрос 4) → `/how-it-works#liquidation`,
+     открывается в новой вкладке, чтобы не терять заполненную форму ставки; без отдельного шага
+     подтверждения.
 5. **Submit** — кнопка **"PLACE BET"** (или **"UPDATE BET"** в режиме редактирования, §4).
 
 ### Валидация (клиентская — зеркалит `LedgerBook`/`Leverage` на сервере, контракт §"Engine constants")
