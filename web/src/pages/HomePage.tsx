@@ -1,12 +1,14 @@
 import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
-import { useApi } from "../api/ApiContext";
+import { useApi, useSession } from "../api/ApiContext";
 import { usePoll } from "../api/usePoll";
 import { useClock } from "../api/useClock";
-import type { HomeSummaryDto, Interval } from "../api/contract";
+import type { HomeSummaryDto, Interval, ProfileRoundEntryDto } from "../api/contract";
 import { RATING_ROUNDS_THRESHOLD } from "../api/contract";
+import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { BetSlip } from "../components/BetSlip";
 import { BotBadge, Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton } from "../components/Common";
+import { DirectionGlyph } from "../components/icons";
 import { LazyCrowdChart } from "../components/LazyCrowdChart";
 import { IntervalTabs } from "../components/RoundParts";
 import { formatPlayAmount, formatPercent } from "../format";
@@ -38,12 +40,32 @@ function ProphetRow({ entry }: { entry: HomeSummaryDto["topProphets"][number] })
   );
 }
 
+/** Task: "small 'Your last results' list on Home (net per round)" — same net-result logic as
+ *  everywhere else (`api/outcome.ts`), so a losing round that still returned some equity never
+ *  reads as a win here either. */
+function LastResultRow({ entry }: { entry: ProfileRoundEntryDto }) {
+  const net = netFromPayoutAndStake(entry.payout, entry.stake);
+  return (
+    <li className="list-row">
+      <Link to={`/round/${entry.roundId}`}>
+        {entry.interval === "HOURLY" ? "Hourly" : "Daily"} · <DirectionGlyph direction={entry.direction} />{" "}
+        {entry.direction} · x{entry.leverage}
+      </Link>
+      <span className={entry.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(net))}>
+        {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY{entry.liquidated && " · liquidated"}
+      </span>
+    </li>
+  );
+}
+
 export function HomePage() {
   const api = useApi();
+  const { player } = useSession();
   const nowMs = useClock(1000);
   const [interval, setInterval_] = useState<Interval>("HOURLY");
   const [home, setHome] = useState<HomeSummaryDto | null>(null);
   const [error, setError] = useState(false);
+  const [lastResults, setLastResults] = useState<ProfileRoundEntryDto[] | null>(null);
 
   const load = useCallback(() => {
     api
@@ -55,7 +77,19 @@ export function HomePage() {
       .catch(() => setError(true));
   }, [api]);
 
+  const loadLastResults = useCallback(() => {
+    if (!player) {
+      setLastResults(null);
+      return;
+    }
+    api
+      .myProfile()
+      .then((p) => setLastResults(p.history.slice(0, 5)))
+      .catch(() => setLastResults(null));
+  }, [api, player]);
+
   usePoll(load, POLL_MS, [load]);
+  usePoll(loadLastResults, POLL_MS, [loadLastResults]);
 
   if (error && !home) {
     return <ErrorState onRetry={load} />;
@@ -103,6 +137,16 @@ export function HomePage() {
             </div>
           )}
         </div>
+        {player && lastResults && lastResults.length > 0 && (
+          <div className="card" style={{ marginTop: 16 }}>
+            <h3>Your last results</h3>
+            <ul className="list-card">
+              {lastResults.map((entry) => (
+                <LastResultRow key={entry.roundId} entry={entry} />
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section className="home-section home-section--chart">

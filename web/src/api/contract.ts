@@ -200,6 +200,18 @@ export interface PositionDto {
   entryPrice: UsdStr;
   liquidationPrice: UsdStr;
   pnl: UsdStr | null;
+  /**
+   * Additive (2026-09-25 UI bug fix — see `docs/product/ux_spec.md` §4/§7, "net result"): the
+   * original PLAY stake this position was opened with (`Bet.stake` before `GameEngine` turns it
+   * into `Position.size` at round start, round_engine_design.md §4.9). Without this, the only way
+   * to show a position's net PLAY change (`payout - stake`) is `initialMargin(size, entryPrice,
+   * leverage)` (`liquidation.ts`) — the exact inverse of `sizeForMargin`, but lossy across the two
+   * roundings (5dp size, then 2dp margin): e.g. stake 100 PLAY at x10 leverage/entry 83451.00
+   * round-trips to 99.97, not 100.00. Optional so a `RealApi` build that predates this field still
+   * works (falls back to that derivation, `api/outcome.ts`'s `positionStakeStr`) — but the server
+   * should start sending it since it already has the exact number (`Bet.stake`) with no need to
+   * derive anything. */
+  stake?: PlayAmountStr;
 }
 
 /** A position as shown to OTHER players once revealed at round start (Р-22): identity attached,
@@ -358,6 +370,11 @@ export interface PlayerAccountDto {
   playerId: string;
   balance: PlayAmountStr;
   currentSeason: SeasonId;
+  /** Additive (2026-09-25 bug fix, backend): total stake currently sitting in bets that have not
+   *  settled yet (the BETTING and RUNNING rounds of both series) — already debited from `balance`
+   *  but not yet won or lost. Optional so a `RealApi` build that predates this field still works
+   *  (falls back to not showing it) — but the server should start sending it. */
+  inPlay?: PlayAmountStr;
 }
 
 export interface SeasonRecordDto {

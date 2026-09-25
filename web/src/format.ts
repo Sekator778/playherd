@@ -16,13 +16,15 @@ export function formatPlayAmount(
   return `${sign}${formatted}`;
 }
 
-export function formatUsd(amount: string | number, opts: { decimals?: number } = {}): string {
+export function formatUsd(amount: string | number, opts: { decimals?: number; sign?: boolean } = {}): string {
   const n = typeof amount === "string" ? Number(amount) : amount;
   const decimals = opts.decimals ?? 2;
-  return `$${new Intl.NumberFormat("en-US", {
+  const formatted = new Intl.NumberFormat("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
-  }).format(n)}`;
+  }).format(Math.abs(n));
+  const sign = opts.sign ? (n < 0 ? "-" : n > 0 ? "+" : "") : n < 0 ? "-" : "";
+  return `${sign}$${formatted}`;
 }
 
 export function formatPercent(fraction: number, opts: { decimals?: number; sign?: boolean } = {}): string {

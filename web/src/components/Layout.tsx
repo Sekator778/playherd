@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { useClock } from "../api/useClock";
+import { totalInPlayStake } from "../api/inPlay";
 import { formatPlayAmount } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 import { DemoBanner, ServerInfoBanner } from "./Common";
@@ -17,14 +18,23 @@ function BalancePill() {
   const api = useApi();
   const { player } = useSession();
   const [balance, setBalance] = useState<string | null>(null);
+  // Sum of the player's stakes still tied up in an open or running round (Alex's report,
+  // 2026-09-25): the free balance alone made a player who'd just won, then staked the payout on
+  // the next round, look like they'd lost — nothing said the missing PLAY was reserved, not
+  // gone. Built from `rounds()` (already-returned data, `api/inPlay.ts`), no contract change.
+  const [inPlay, setInPlay] = useState<number | null>(null);
   const tick = useClock(4000);
 
   useEffect(() => {
     if (!player) return;
     let cancelled = false;
-    api.myAccount().then((acc) => {
-      if (!cancelled) setBalance(acc.balance);
-    });
+    Promise.all([api.myAccount(), api.rounds("HOURLY"), api.rounds("DAILY")]).then(
+      ([acc, hourly, daily]) => {
+        if (cancelled) return;
+        setBalance(acc.balance);
+        setInPlay(totalInPlayStake(player.playerId, hourly, daily));
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -34,7 +44,10 @@ function BalancePill() {
   if (!player || balance === null) return null;
   return (
     <NavLink to="/wallet" className="balance-pill">
-      {formatPlayAmount(balance)} PLAY
+      <span>{formatPlayAmount(balance)} PLAY</span>
+      {inPlay !== null && inPlay > 0 && (
+        <span className="balance-pill__in-play">+{formatPlayAmount(inPlay, { decimals: 0 })} in play</span>
+      )}
     </NavLink>
   );
 }

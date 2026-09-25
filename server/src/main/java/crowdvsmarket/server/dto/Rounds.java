@@ -23,10 +23,15 @@ public final class Rounds {
                                 String size, String entryPrice, String liquidationPrice, String pnl) {
     }
 
+    /** {@code stake}: additive (bug fix, contract.ts's already-declared optional
+     *  {@code PositionDto.stake} — see its comment there) — the original PLAY stake this position
+     *  was opened with ({@code Bet.stake}/{@code PlayerRoundOutcome.stake}), exact, so a client
+     *  never has to lossily re-derive it to show a position's net PLAY change
+     *  ({@code payout - stake}). */
     public record PublicPositionDto(String playerId, String roundId, Enums.Direction direction, int leverage,
                                       String size, String entryPrice, String liquidationPrice, String pnl,
-                                      Identity.PlayerSummaryDto player, boolean liquidated, String payout,
-                                      Boolean directionCorrect) {
+                                      String stake, Identity.PlayerSummaryDto player, boolean liquidated,
+                                      String payout, Boolean directionCorrect) {
     }
 
     public record CrowdRoundPositionDto(String roundId, Enums.Direction direction, int leverage, String margin,

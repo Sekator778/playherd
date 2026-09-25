@@ -94,7 +94,7 @@ public class GameService {
     @Inject
     OracleRecordRepository oracleRecords;
     @Inject
-    ChainSvcClient chainSvc;
+    crowdvsmarket.server.chain.OracleStatusCache oracleStatusCache;
     @Inject
     crowdvsmarket.server.persistence.ServerMetaRepository serverMeta;
 
@@ -334,8 +334,8 @@ public class GameService {
 
             positionDtos.add(new Rounds.PublicPositionDto(outcome.playerId(), window.roundId(), toDto(outcome.direction()),
                     outcome.leverage(), size.toPlainString(), entryPrice.toPlainString(), liquidationPrice.toPlainString(),
-                    pnl.toPlainString(), playerSummary, outcome.liquidated(), PlayAmount.fromMoney(outcome.payout()).toMoney().toPlainString(),
-                    directionCorrect));
+                    pnl.toPlainString(), outcome.stake().toMoney().toPlainString(), playerSummary, outcome.liquidated(),
+                    PlayAmount.fromMoney(outcome.payout()).toMoney().toPlainString(), directionCorrect));
 
             hashEntries.add(new crowdvsmarket.server.util.ResultsHasher.PositionEntry(outcome.playerId(),
                     toDto(outcome.direction()).name(), outcome.leverage(), outcome.stake().mojos(),
@@ -524,7 +524,7 @@ public class GameService {
             positions.add(new Rounds.PublicPositionDto(bet.playerId(), window.roundId(), toDto(bet.direction()),
                     bet.leverage().value(), position.size().toPlainString(), openPrice.toPlainString(),
                     position.liquidationPrice().toPlainString(), pnl == null ? null : pnl.toPlainString(),
-                    playerSummary, liquidatedSoFar, null, null));
+                    bet.stake().toMoney().toPlainString(), playerSummary, liquidatedSoFar, null, null));
             BigDecimal stake = bet.stake().toMoney();
             if (bet.direction() == crowdvsmarket.engine.round.Direction.UP) {
                 upStake = upStake.add(stake);
@@ -619,7 +619,29 @@ public class GameService {
         } catch (java.util.NoSuchElementException e) {
             balance = PlayAmount.ZERO;
         }
-        return new Ledger.PlayerAccountDto(playerId, balance.toMoney().toPlainString(), Season.of(Instant.now()).id());
+        return new Ledger.PlayerAccountDto(playerId, balance.toMoney().toPlainString(), Season.of(Instant.now()).id(),
+                inPlayStake(playerId).toMoney().toPlainString());
+    }
+
+    /** Bug fix: sum of {@code playerId}'s stakes across every not-yet-settled round of both
+     *  series — the BETTING round (bet placed, round not started) and the RUNNING one (position
+     *  opened, not yet resolved) each contribute at most one bet (Р-13). */
+    private PlayAmount inPlayStake(String playerId) {
+        PlayAmount total = PlayAmount.ZERO;
+        for (crowdvsmarket.engine.market.Interval interval : crowdvsmarket.engine.market.Interval.values()) {
+            GameEngine engine = hub.engine(interval);
+            total = total.plus(stakeInRound(engine, roundProgress.next(interval).roundId(), playerId));
+            total = total.plus(stakeInRound(engine, roundProgress.bettingWindow(interval).roundId(), playerId));
+        }
+        return total;
+    }
+
+    private static PlayAmount stakeInRound(GameEngine engine, String roundId, String playerId) {
+        return engine.betBook().betsFor(roundId).stream()
+                .filter(b -> b.playerId().equals(playerId))
+                .map(Bet::stake)
+                .findFirst()
+                .orElse(PlayAmount.ZERO);
     }
 
     private void ensurePlayerKnown(String playerId) {
@@ -885,7 +907,9 @@ public class GameService {
     // ---------------------------------------------------------------------------------------
 
     public ServerInfo.ServerInfoDto serverInfo() {
-        ChainSvcClient.OracleStatus status = chainSvc.oracleStatus();
+        // Bug fix: never call the chainsvc client synchronously here — read the background-
+        // refreshed cache instead (OracleStatusCache's own javadoc has the full story).
+        ChainSvcClient.OracleStatus status = oracleStatusCache.get();
         int pendingRecords = status != null ? status.pendingRecords() : oracleRecords.pendingCount();
         ServerInfo.OracleInfoDto oracle = new ServerInfo.OracleInfoDto(config.oracleNetwork(), config.oracleLauncherId(),
                 status == null ? null : status.lastConfirmedSeq(), status == null ? null : status.lastConfirmedHeight(),

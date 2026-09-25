@@ -4,9 +4,12 @@ import type {
   CrowdRoundPositionDto,
   CrowdRoundResultDto,
   Interval,
+  MarketReferenceDto,
   PublicPositionDto,
 } from "../api/contract";
-import { formatPlayAmount, formatUsd } from "../format";
+import { LONG, SHORT, percentToLiquidation, sizeForMargin, unrealizedPnl, type Side } from "../api/liquidation";
+import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
+import { formatPercent, formatPlayAmount, formatUsd } from "../format";
 import { BotBadge, EmptyState, ResultsHashLine, RoundStatusBadge } from "./Common";
 import { DirectionGlyph } from "./icons";
 
@@ -32,13 +35,31 @@ export function StatTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function PositionsList({ positions, settled }: { positions: PublicPositionDto[]; settled: boolean }) {
+export function PositionsList({
+  positions,
+  settled,
+  referencePrice,
+}: {
+  positions: PublicPositionDto[];
+  settled: boolean;
+  /** RUNNING only: live reference price for each position's unrealized P&L (task: "live
+   *  unrealized P&L ... updating every poll"). Undefined/null while SETTLED or not yet loaded. */
+  referencePrice?: MarketReferenceDto | null;
+}) {
   if (positions.length === 0) return <EmptyState>No positions in this round.</EmptyState>;
   return (
     <ul className="list-card">
       {positions.map((p) => {
-        const won = settled && !p.liquidated && p.payout !== null && Number(p.payout) > 0;
-        const lost = settled && !p.liquidated && p.payout !== null && Number(p.payout) === 0;
+        // Net result (>0 won, <0 lost, =0 even) — never `payout > 0` alone, which showed a
+        // losing position that still got some equity back as a "win" (Alex's report,
+        // 2026-09-25). `positionStakeStr` prefers the server-sent exact stake, falling back to a
+        // (lossy) derivation only if it's absent (`api/outcome.ts`).
+        const stake = positionStakeStr(p);
+        const net = settled && p.payout !== null ? netFromPayoutAndStake(p.payout, stake) : null;
+        const live =
+          !settled && referencePrice
+            ? unrealizedPnl(p.size, p.entryPrice, p.direction === "UP" ? LONG : SHORT, referencePrice.price)
+            : null;
         return (
           <li key={p.playerId} className="list-row">
             <span>
@@ -46,9 +67,17 @@ export function PositionsList({ positions, settled }: { positions: PublicPositio
               <Link to={`/profile/${p.playerId}`}>{p.player.displayName}</Link> <BotBadge isBot={p.player.isBot} />
             </span>
             <span>
-              {p.liquidated && <span className="outcome-liquidated">Liquidated</span>}
-              {won && <span className="outcome-won">Won {formatPlayAmount(p.payout!, { decimals: 0 })} PLAY</span>}
-              {lost && <span className="outcome-lost">Lost</span>}
+              {settled && net !== null && (
+                <span className={p.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(net))}>
+                  {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY
+                  {p.liquidated && " · liquidated"}
+                </span>
+              )}
+              {!settled && live && (
+                <span className={`mono ${outcomeClassName(outcomeFromNet(live.toNumber()))}`}>
+                  {formatPlayAmount(live.toNumber(), { decimals: 2, sign: true })} PLAY
+                </span>
+              )}
             </span>
           </li>
         );
@@ -60,9 +89,12 @@ export function PositionsList({ positions, settled }: { positions: PublicPositio
 interface CrowdPositionCardProps {
   phase: "RUNNING" | "SETTLED";
   crowd: CrowdRoundPositionDto | CrowdRoundResultDto | null;
+  /** RUNNING only — same reference price passed to `PositionsList` (task: "live unrealized P&L
+   *  ... of the crowd account"). */
+  referencePrice?: MarketReferenceDto | null;
 }
 
-export function CrowdPositionCard({ phase, crowd }: CrowdPositionCardProps) {
+export function CrowdPositionCard({ phase, crowd, referencePrice }: CrowdPositionCardProps) {
   if (!crowd || (phase === "SETTLED" && "traded" in crowd && !crowd.traded)) {
     return (
       <div className="card">
@@ -74,12 +106,30 @@ export function CrowdPositionCard({ phase, crowd }: CrowdPositionCardProps) {
 
   if (phase === "RUNNING") {
     const c = crowd as CrowdRoundPositionDto;
+    const side: Side = c.direction === "UP" ? LONG : SHORT;
+    // `CrowdRoundPositionDto` has no `size` field, but `margin` is exactly the input the server
+    // fed into the same `sizeForMargin` formula to get it (`mockRounds.ts`'s
+    // `crowdRunningPosition`) — recomputing it here reproduces that size exactly, unlike
+    // `PositionDto.stake`'s case (there the DTO only exposes the *output*, `size`, so recovering
+    // the input needs a lossy inverse — see `outcome.ts`).
+    const size = referencePrice ? sizeForMargin(c.margin, c.leverage, c.entryPrice) : null;
+    const live = size ? unrealizedPnl(size, c.entryPrice, side, referencePrice!.price) : null;
+    const pctToLiq = referencePrice ? percentToLiquidation(referencePrice.price, c.liquidationPrice) : null;
     return (
       <div className="card">
         <h3>Crowd account's position</h3>
         <p>
           <DirectionGlyph direction={c.direction} /> {c.direction} · x{c.leverage}
         </p>
+        {live && (
+          <div className="net-result">
+            <span className={outcomeClassName(outcomeFromNet(live.toNumber()))}>
+              {formatUsd(live.toNumber(), { sign: true })}
+            </span>{" "}
+            <span className="net-result__secondary">unrealized</span>
+          </div>
+        )}
+        {pctToLiq !== null && <p className="mono muted">{formatPercent(pctToLiq)} to liquidation</p>}
         <p className="mono muted">Margin: {formatUsd(c.margin)}</p>
         <p className="mono muted">Entry price: {formatUsd(c.entryPrice)}</p>
         <p className="mono muted">Liquidation price: {formatUsd(c.liquidationPrice)}</p>
@@ -88,6 +138,7 @@ export function CrowdPositionCard({ phase, crowd }: CrowdPositionCardProps) {
   }
 
   const c = crowd as CrowdRoundResultDto;
+  const net = Number(c.capitalAfter) - Number(c.capitalBefore);
   return (
     <div className="card">
       <h3>Crowd account's position</h3>
@@ -97,6 +148,11 @@ export function CrowdPositionCard({ phase, crowd }: CrowdPositionCardProps) {
           <DirectionGlyph direction={c.direction} /> {c.direction} · x{c.leverage}
         </p>
       )}
+      <div className="net-result">
+        <span className={c.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(net))}>
+          {formatUsd(net, { sign: true })}
+        </span>
+      </div>
       <p className="mono muted">Capital before: {formatUsd(c.capitalBefore)}</p>
       <p className="mono muted">Capital after: {formatUsd(c.capitalAfter)}</p>
     </div>

@@ -40,6 +40,15 @@ public class RoundSchedulerService {
     @Scheduled(every = "1s")
     void tick() {
         long now = System.currentTimeMillis();
+        if (!roundProgress.isSeeded(Interval.HOURLY) || !roundProgress.isSeeded(Interval.DAILY)) {
+            // Startup race (bug fix, see RoundProgress#isSeeded): this @Scheduled tick can be
+            // armed and fire on its own executor thread before EngineRebuildService's
+            // StartupEvent-observer rebuild() (main thread) has seeded RoundProgress for both
+            // series. Skip this tick entirely rather than let bots/round-resolution/oracle-publish
+            // below throw IllegalStateException for it — the very next tick (1s later) finds both
+            // series seeded and resumes normally, every subsystem included.
+            return;
+        }
         try {
             botService.tick(now);
         } catch (Exception e) {

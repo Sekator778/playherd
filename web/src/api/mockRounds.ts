@@ -113,6 +113,7 @@ function toPublicPosition(
     entryPrice: ohlc.open,
     liquidationPrice: liqPrice.toFixed(2),
     pnl,
+    stake: bet.stake, // exact — no need for callers to derive it (contract.ts's PositionDto.stake)
     player: playerFor(bet.playerId, own),
     liquidated,
     payout,

@@ -348,7 +348,7 @@ ol {
 
 .balance-pill {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   background: var(--bg-elevated-2);
   border: 1px solid var(--border-strong);
@@ -358,6 +358,11 @@ ol {
   font-size: 13px;
   text-decoration: none;
   color: var(--text);
+}
+.balance-pill__in-play {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .profile-menu {
@@ -629,6 +634,19 @@ ol {
 .outcome-liquidated {
   color: var(--danger-text);
   font-weight: 700;
+}
+.outcome-even {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.net-result {
+  font-size: 20px;
+}
+.net-result__secondary {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: 2px;
 }
 
 /* Skeletons ------------------------------------------------------------------ */

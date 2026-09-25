@@ -153,11 +153,21 @@ class GameFlowIntegrationTest {
         rpc(player1, "placeBet", bet1);
         rpc(player2, "placeBet", bet2);
 
+        // --- bug fix: PlayerAccountDto.inPlay exposes the stake sitting in this not-yet-settled
+        // bet (Alex's report: the UI had no way to show what's currently "in play"). ---
+        JsonNode myAccountWhileBetting = rpc(player1, "myAccount");
+        assertThat(new java.math.BigDecimal(myAccountWhileBetting.path("inPlay").asText()))
+                .isEqualByComparingTo("500.000");
+
         // --- still hidden while betting: only the headcount is visible, even to the bettors
         // themselves via the *other* player's read (no session at all here) ---
         JsonNode duringBetting = rpc(null, "round", bettingRoundId);
         assertThat(duringBetting.path("phase").asText()).isEqualTo("BETTING");
-        assertThat(duringBetting.path("participantCount").asInt()).isEqualTo(2);
+        // >= 2, not == 2 (bug fix, BotService#scheduleBots): bots now correctly place bets inside
+        // their betting window too (previously they almost never did — see its javadoc), so this
+        // same window can also carry some of the profile's 8 bots' bets by the time this call
+        // lands, in addition to the two human players placed above.
+        assertThat(duringBetting.path("participantCount").asInt()).isGreaterThanOrEqualTo(2);
         assertThat(duringBetting.has("positions")).isFalse();
 
         // --- wait for that exact round to settle ---
@@ -176,10 +186,16 @@ class GameFlowIntegrationTest {
                 sawPlayer1 = true;
                 assertThat(p.path("direction").asText()).isEqualTo("UP");
                 assertThat(p.path("leverage").asInt()).isEqualTo(5);
+                // bug fix: PublicPositionDto.stake — the exact original stake, so a client can
+                // show net PLAY result (payout - stake) without lossily re-deriving it (Alex's
+                // report: "I don't see anyone winning, everyone loses bets" — ux_spec.md §4/§7's
+                // fix needs this number from the server).
+                assertThat(p.path("stake").asText()).isEqualTo("500.000");
             }
             if (p.path("playerId").asText().equals(player2.playerId())) {
                 sawPlayer2 = true;
                 assertThat(p.path("direction").asText()).isEqualTo("DOWN");
+                assertThat(p.path("stake").asText()).isEqualTo("300.000");
             }
         }
         assertThat(sawPlayer1).isTrue();
@@ -190,6 +206,8 @@ class GameFlowIntegrationTest {
         java.math.BigDecimal balanceAfter = new java.math.BigDecimal(myAccountAfter.path("balance").asText());
         assertThat(balanceAfter).isGreaterThanOrEqualTo(java.math.BigDecimal.ZERO);
         assertThat(balanceAfter).isNotEqualByComparingTo(new java.math.BigDecimal(balanceBefore)); // stake moved
+        // bug fix: the bet settled, so it's no longer "in play".
+        assertThat(new java.math.BigDecimal(myAccountAfter.path("inPlay").asText())).isEqualByComparingTo("0.000");
 
         // --- results.json byte-for-byte hashes to resultsHash (Р-41) ---
         String resultsHash = settled.path("resultsHash").asText();

@@ -42,6 +42,12 @@ struct FakeChainClientInner {
     /// Every `push_tx` call returns this outcome; tests flip it between
     /// calls to simulate a failed-then-retried push.
     next_push_outcome: PushOutcome,
+    /// Artificial delay every trait method sleeps before returning --
+    /// stands in for a slow/stuck coinset, so a test can prove
+    /// `Publisher::status()` answers without waiting on whatever chain call
+    /// a concurrent `tick()` is in the middle of (task fix, see
+    /// `status_answers_while_a_publish_is_in_flight`).
+    delay: Duration,
 }
 
 pub struct FakeChainClient(Mutex<FakeChainClientInner>);
@@ -58,7 +64,12 @@ impl FakeChainClient {
                 status: Some("SUCCESS".to_string()),
                 error: None,
             },
+            delay: Duration::ZERO,
         }))
+    }
+
+    fn set_delay(&self, delay: Duration) {
+        self.0.lock().unwrap().delay = delay;
     }
 
     fn set_confirmed(&self, coin_id: Bytes32, height: u32) {
@@ -96,25 +107,37 @@ impl FakeChainClient {
 
 impl ChainClient for FakeChainClient {
     fn coin_record(&self, coin_id: Bytes32) -> impl Future<Output = Result<CoinRecordInfo>> + Send {
-        let info = self
-            .0
-            .lock()
-            .unwrap()
-            .coin_records
-            .get(&coin_id)
-            .copied()
-            .unwrap_or(CoinRecordInfo {
-                exists: false,
-                confirmed_height: None,
-                spent: false,
-                spent_height: None,
-            });
-        async move { Ok(info) }
+        let (info, delay) = {
+            let inner = self.0.lock().unwrap();
+            (
+                inner.coin_records.get(&coin_id).copied().unwrap_or(CoinRecordInfo {
+                    exists: false,
+                    confirmed_height: None,
+                    spent: false,
+                    spent_height: None,
+                }),
+                inner.delay,
+            )
+        };
+        async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            Ok(info)
+        }
     }
 
     fn fee_estimate_mojos(&self, _cost: u64, _target_time_secs: u32) -> impl Future<Output = Result<u64>> + Send {
-        let fee = self.0.lock().unwrap().fee_mojos;
-        async move { Ok(fee) }
+        let (fee, delay) = {
+            let inner = self.0.lock().unwrap();
+            (inner.fee_mojos, inner.delay)
+        };
+        async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            Ok(fee)
+        }
     }
 
     fn find_funding_coin(
@@ -122,10 +145,16 @@ impl ChainClient for FakeChainClient {
         master_sk: &SecretKey,
         min_amount: u64,
     ) -> impl Future<Output = Result<(WalletKey, Coin)>> + Send {
-        let amount = self.0.lock().unwrap().funding_amount;
+        let (amount, delay) = {
+            let inner = self.0.lock().unwrap();
+            (inner.funding_amount, inner.delay)
+        };
         let wallet_key = derive_wallet_key(master_sk, 0);
         let coin = Coin::new(Bytes32::from([7u8; 32]), wallet_key.puzzle_hash, amount);
         async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
             if amount < min_amount {
                 anyhow::bail!("fake funding coin has {amount} mojos, need >= {min_amount}");
             }
@@ -134,15 +163,30 @@ impl ChainClient for FakeChainClient {
     }
 
     fn balance(&self, _master_sk: &SecretKey) -> impl Future<Output = Result<u64>> + Send {
-        let amount = self.0.lock().unwrap().funding_amount;
-        async move { Ok(amount) }
+        let (amount, delay) = {
+            let inner = self.0.lock().unwrap();
+            (inner.funding_amount, inner.delay)
+        };
+        async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            Ok(amount)
+        }
     }
 
     fn push_tx(&self, _bundle: SpendBundle) -> impl Future<Output = Result<PushOutcome>> + Send {
-        let mut inner = self.0.lock().unwrap();
-        inner.push_calls += 1;
-        let outcome = inner.next_push_outcome.clone();
-        async move { Ok(outcome) }
+        let (outcome, delay) = {
+            let mut inner = self.0.lock().unwrap();
+            inner.push_calls += 1;
+            (inner.next_push_outcome.clone(), inner.delay)
+        };
+        async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            Ok(outcome)
+        }
     }
 }
 
@@ -191,6 +235,7 @@ fn set_up(retry_backoff: Duration) -> Result<Fixture> {
         retry_backoff,
         max_retry_attempts: 3,
         fee_target_time_secs: 60,
+        balance_snapshot: tokio::sync::RwLock::new(None),
     };
 
     Ok(Fixture { _tmp: tmp, publisher })
@@ -376,6 +421,52 @@ async fn refuses_to_build_on_stale_spent_current_coin() -> Result<()> {
     let result = fx.publisher.tick().await;
     assert!(result.is_err(), "must refuse to spend an already-spent current_coin");
     assert_eq!(fx.publisher.chain.push_call_count(), 0);
+
+    Ok(())
+}
+
+/// Task fix: `GET /v1/oracle/status` must answer immediately even while a
+/// publish (`tick()`) is genuinely in the middle of a slow/stuck chain call
+/// -- it used to make its own `chain.balance()` round-trip inline
+/// (`c2_cli::chain::balance`: 20 sequential, un-timed-out coinset lookups),
+/// so a slow coinset made the whole handler hang along with it. `status()`
+/// now only reads local files plus the `balance_snapshot` cache, never the
+/// chain directly.
+#[tokio::test]
+async fn status_answers_while_a_publish_is_in_flight() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.enqueue(vec![record(1)])?;
+
+    // Every chain call the fake makes (including the `coin_record` check
+    // `tick()`'s `start_new_batch` does before building a new spend) now
+    // sleeps 2s -- comfortably longer than `status()` must ever be allowed
+    // to take.
+    fx.publisher.chain.set_delay(Duration::from_secs(2));
+
+    // Drive `tick()` (slow: 3 delayed chain calls back to back, ~6s total)
+    // and `status()` concurrently on the same task. `tokio::join!` doesn't
+    // return until *both* branches finish, so timing is taken inside the
+    // `status()` branch itself -- from when it starts (the same poll cycle
+    // `tick()`'s first delayed chain call suspends on) to when it completes
+    // -- rather than around the whole `join!`, which would just measure
+    // `tick()`'s much longer runtime.
+    let (tick_outcome, (status, status_elapsed)) = tokio::join!(fx.publisher.tick(), async {
+        let started = std::time::Instant::now();
+        let status = fx.publisher.status().await;
+        (status, started.elapsed())
+    });
+    let status = status?;
+
+    assert!(
+        status_elapsed < Duration::from_millis(500),
+        "status() took {status_elapsed:?} while a publish was in flight -- status must not block on the \
+         chain call a publish is making"
+    );
+    assert_eq!(status.pending_records, 1, "status still reflects the live queue, not a stale snapshot");
+
+    // The slow tick() itself still completes correctly once its delays
+    // elapse -- this fix only decouples status(), it doesn't change tick().
+    assert_eq!(tick_outcome?, TickOutcome::Broadcast { records: 1, accepted: true });
 
     Ok(())
 }

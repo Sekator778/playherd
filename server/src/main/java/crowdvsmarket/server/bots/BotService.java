@@ -72,9 +72,21 @@ public class BotService {
     private void scheduleBots(Interval interval, RoundWindow window) {
         Map<String, Long> schedule = new HashMap<>();
         long duration = window.endMs() - window.startMs();
+        // Bug fix (bots stopped betting): betting for `window` is open for the whole PREVIOUS
+        // round's duration (Р-19) — i.e. from window.startMs() - duration (when the currently
+        // running round started) up to window.startMs() (when betting closes and `window` itself
+        // starts running). The old code added the offset onto window.startMs() instead of onto
+        // that betting-open instant, so every computed fire time landed AFTER betting for
+        // `window` had already closed; roundProgress had by then advanced past `window`, so
+        // GameService#placeBet always rejected it with "round not open for betting" by the time
+        // the (already too late) fire time arrived. In practice this made a bot's odds of ever
+        // firing inside the ~1s gap before the schedule got overwritten by the next round's
+        // roughly (1s / (0.9*duration)) per bot per window — bots appeared to have "stopped
+        // betting" almost entirely, restart or not.
+        long bettingOpensAt = window.startMs() - duration;
         for (PlayerDirectory.Row bot : players.bots()) {
             long offset = (long) (random.nextDouble() * duration * 0.9); // leave margin before close
-            schedule.put(bot.playerId(), window.startMs() + offset);
+            schedule.put(bot.playerId(), bettingOpensAt + offset);
         }
         fireSchedule.put(interval, schedule);
     }

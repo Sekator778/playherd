@@ -30,6 +30,17 @@ public final class RoundProgress {
         }
     }
 
+    /** True once {@link #seed} has run for {@code interval} — false only in the brief startup
+     *  window before {@code EngineRebuildService.rebuild()} (a {@code StartupEvent} observer on
+     *  the main thread) has seeded it. {@code RoundSchedulerService}'s {@code @Scheduled} tick
+     *  runs on its own executor thread and can be armed before that observer completes (bug fix:
+     *  the two used to race — the tick would call {@link #next}/{@link #bettingWindow}, throw,
+     *  and log "RoundProgress not seeded for X" every second until rebuild() won the race);
+     *  callers reachable from the scheduler thread check this first instead. */
+    public boolean isSeeded(Interval interval) {
+        return (interval == Interval.HOURLY ? nextHourly : nextDaily) != null;
+    }
+
     public RoundWindow next(Interval interval) {
         RoundWindow w = interval == Interval.HOURLY ? nextHourly : nextDaily;
         if (w == null) {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import type { PublicProfileDto } from "../api/contract";
+import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { seasonRange } from "../api/season";
 import { BotBadge, ErrorState, Skeleton } from "../components/Common";
 import { DirectionGlyph } from "../components/icons";
@@ -117,8 +118,12 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
           </thead>
           <tbody>
             {profile.history.map((h) => {
-              const won = !h.liquidated && Number(h.payout) > 0;
-              const lost = !h.liquidated && Number(h.payout) === 0;
+              // Net result (>0 won, <0 lost, =0 even), never `payout > 0` alone — the bug Alex
+              // reported (2026-09-25): a losing round that still returned some equity (e.g. 80.15
+              // PLAY back on a 100 PLAY stake) showed as "Won" here. `ProfileRoundEntryDto`
+              // already carries the exact `stake`/`payout`, no derivation needed.
+              const net = netFromPayoutAndStake(h.payout, h.stake);
+              const outcome = outcomeFromNet(net);
               return (
                 <tr key={h.roundId} className="clickable">
                   <td data-label="Date">
@@ -130,9 +135,10 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
                   </td>
                   <td data-label="Leverage">x{h.leverage}</td>
                   <td data-label="Result">
-                    {h.liquidated && <span className="outcome-liquidated">Liquidated</span>}
-                    {won && <span className="outcome-won">Won</span>}
-                    {lost && <span className="outcome-lost">Lost</span>}
+                    <span className={h.liquidated ? "outcome-lost" : outcomeClassName(outcome)}>
+                      {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY
+                      {h.liquidated && " · liquidated"}
+                    </span>
                   </td>
                 </tr>
               );

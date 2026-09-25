@@ -49,6 +49,7 @@ async fn main() -> Result<()> {
         retry_backoff: config.retry_backoff,
         max_retry_attempts: config.max_retry_attempts,
         fee_target_time_secs: 60,
+        balance_snapshot: tokio::sync::RwLock::new(None),
     });
 
     // Background oracle-publisher loop: advances in-flight spends /
@@ -67,6 +68,26 @@ async fn main() -> Result<()> {
                     Ok(outcome) => tracing::debug!(?outcome, "publisher tick"),
                     Err(e) => tracing::error!("publisher tick failed: {e:#}"),
                 }
+            }
+        });
+    }
+
+    // Separate background loop refreshing `operatorBalanceMojos` for
+    // `GET /v1/oracle/status` (see `Publisher::balance_snapshot`'s doc
+    // comment for the bug this fixes). Deliberately its own loop, not folded
+    // into the tick loop above: `chain::balance`'s coinset scan (20
+    // sequential address lookups, `ADDRESS_GAP`) is the slowest chain call
+    // this service makes, and it must never delay `tick()`'s own
+    // confirmation/retry timing (**предложение**: reuses `publisher_tick`'s
+    // interval, no new config surface).
+    {
+        let publisher = Arc::clone(&publisher);
+        let tick = config.publisher_tick;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tick);
+            loop {
+                interval.tick().await;
+                publisher.refresh_balance_snapshot().await;
             }
         });
     }

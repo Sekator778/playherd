@@ -83,6 +83,17 @@ pub struct Publisher<C: ChainClient> {
     /// instruction: "fees from coinset get_fee_estimate with the dry-run
     /// cost"). **предложение**: 60s, see `Config::retry_backoff` doc.
     pub fee_target_time_secs: u32,
+    /// `GET /v1/oracle/status`'s `operatorBalanceMojos`, refreshed out of
+    /// band by `refresh_balance_snapshot` (called from `main.rs`'s own
+    /// background loop, decoupled from `tick()`). `status()` only ever reads
+    /// this cache -- it must never itself await a coinset round-trip (task
+    /// fix: `status()` used to call `self.chain.balance(...)` directly,
+    /// which is `c2_cli::chain::balance`'s 20 sequential, un-timed-out
+    /// `get_coin_records_by_puzzle_hash` calls -- slow or stalled coinset
+    /// made `GET /v1/oracle/status` hang along with it; `/health` was
+    /// unaffected because it never touches chain state). **предложение**:
+    /// caching the balance instead of computing it per-request.
+    pub balance_snapshot: tokio::sync::RwLock<Option<String>>,
 }
 
 impl<C: ChainClient> Publisher<C> {
@@ -100,15 +111,17 @@ impl<C: ChainClient> Publisher<C> {
         Ok(accepted)
     }
 
-    /// `GET /v1/oracle/status`'s handler.
+    /// `GET /v1/oracle/status`'s handler. Must never await a network call:
+    /// everything here is either a local file read (`QueueFile::load`,
+    /// `load_oracle_state` -- fast, and the queue/state files are exactly
+    /// what a concurrent `enqueue`/`tick` is durably writing, so this still
+    /// reflects the live queue) or a read of `balance_snapshot`, the cache
+    /// `refresh_balance_snapshot` fills in from off to the side. See
+    /// `balance_snapshot`'s doc comment for why (task fix).
     pub async fn status(&self) -> Result<OracleStatusResponse> {
         let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
         let oracle_state = load_oracle_state(&self.data_dir, &self.operator_name).ok();
-
-        let operator_balance_mojos = match load_operator_master_sk(&self.data_dir, &self.operator_name) {
-            Ok(master_sk) => self.chain.balance(&master_sk).await.ok().map(|mojos| mojos.to_string()),
-            Err(_) => None,
-        };
+        let operator_balance_mojos = self.balance_snapshot.read().await.clone();
 
         let in_flight_records = queue.in_flight.as_ref().map(|f| f.records.len()).unwrap_or(0);
 
@@ -124,6 +137,21 @@ impl<C: ChainClient> Publisher<C> {
             in_flight_bundle_id: queue.in_flight.as_ref().map(|f| f.bundle_id.clone()),
             operator_balance_mojos,
         })
+    }
+
+    /// Refreshes `balance_snapshot` from the chain -- the one network call
+    /// `status()` used to make inline. `main.rs` runs this on its own
+    /// periodic background loop, independent of `tick()`'s, so a slow or
+    /// stuck coinset balance scan can never delay `tick()`'s in-flight-spend
+    /// confirmation checks either (both loops only ever share this
+    /// `RwLock`, held just long enough to swap the cached value, never
+    /// across a network call).
+    pub async fn refresh_balance_snapshot(&self) {
+        let snapshot = match load_operator_master_sk(&self.data_dir, &self.operator_name) {
+            Ok(master_sk) => self.chain.balance(&master_sk).await.ok().map(|mojos| mojos.to_string()),
+            Err(_) => None,
+        };
+        *self.balance_snapshot.write().await = snapshot;
     }
 
     /// Runs one iteration of the publisher state machine (see module doc).
