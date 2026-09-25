@@ -1,0 +1,32 @@
+[package]
+name = "sim-spike"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+# The umbrella crate (feature-gates the action-layer / CHIP-0035 drivers used
+# to look up RewardDistributor::Managed for item (e); not otherwise used
+# directly since we import each sub-crate below by name, matching how
+# chia-sdk-driver's own tests do it).
+chia-wallet-sdk = { version = "=0.36.0", features = ["action-layer", "chip-0035"] }
+chia-sdk-test = "=0.36.0"
+chia-sdk-driver = "=0.36.0"
+chia-sdk-types = "=0.36.0"
+# Pinned per task instructions (peer/RPC client); not used by any test here
+# since everything runs against the offline Simulator, no testnet11 peer.
+chia-sdk-client = "=0.36.0"
+chia-protocol = "=0.36.1"
+chia-puzzles = "=0.20.3"
+chia-puzzle-types = "=0.36.1"
+chia-consensus = "=0.36.1"
+# Already pulled in transitively (chia-protocol/chia-consensus both require
+# =0.36.1); named directly so lib.rs can build a `SpendBundle` without going
+# through a re-export.
+chia-bls = "=0.36.1"
+clvmr = "=0.16.4"
+clvm-utils = "=0.36.1"
+anyhow = "1"
+indexmap = "2.11"
+
+[dev-dependencies]

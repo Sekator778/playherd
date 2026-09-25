@@ -1,0 +1,22 @@
+# Java / Maven
+engine/target/
+*.class
+
+# Rust
+chain/target/
+
+# Node
+node_modules/
+web/dist/
+
+# OS / IDE
+.DS_Store
+.idea/
+*.iml
+.vscode/
+
+# Secrets — never commit keys, wallets, API keys
+*.pem
+*.key
+.env
+.env.*

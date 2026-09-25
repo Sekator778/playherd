@@ -1,0 +1,109 @@
+# chain/ — Chia Rust SDK: simulator spike + testnet11 CLI
+
+Week 1 (`PLAN.md` §5) Chia Rust SDK (`chia-wallet-sdk` family) work: an
+offline compile/design spike against `chia-sdk-test::Simulator`
+(`sim-spike/`), and a real testnet11 CLI built on the same proven patterns
+(`c2-cli/`, binary `c2`). Write-ups:
+[`docs/research/week1_chain_spike.md`](../docs/research/week1_chain_spike.md) (day 1 spike),
+[`docs/research/week1_chain_access.md`](../docs/research/week1_chain_access.md) (network access routes, Р-11 oracle design),
+[`docs/research/week1_testnet_cli.md`](../docs/research/week1_testnet_cli.md) (`c2-cli` command reference, key derivation, offer format),
+[`docs/research/week1_testnet_results.md`](../docs/research/week1_testnet_results.md) (every real testnet11 action this CLI performed: tx/coin ids, block heights, costs, fees, kill-criteria status).
+
+## Layout
+
+- `Cargo.toml` — cargo workspace root (`resolver = "2"`, `edition = "2024"`),
+  members `sim-spike` and `c2-cli`.
+- `sim-spike/` — offline compile/design spike, unchanged since day 1.
+  - `src/lib.rs` — `measure_bundle_cost`, a helper that measures a spend
+    bundle's real consensus CLVM cost (byte + execution + condition cost)
+    from public `chia-consensus`/`chia-sdk-types` building blocks, because
+    `chia-sdk-test::Simulator` itself does not expose spend cost.
+  - `tests/standard_coin.rs` — fund and spend a plain p2 (standard) coin.
+  - `tests/cat_play.rs` — issue the PLAY CAT (genesis-by-coin-id,
+    single-issuance TAIL) and transfer part of it. Prints the asset id.
+  - `tests/oracle_singleton.rs` — minimal "managed resolver" oracle: a
+    singleton controlled by one manager key, spent 3 times, each spend
+    recreating the singleton and emitting a puzzle announcement encoding
+    `(price, timestamp, sequence)` as CLVM; a second, independent coin in
+    the same bundle asserts that announcement. Prints the CLVM cost of the
+    singleton spend alone and of the whole bundle, per round.
+  - `tests/offer_play_xch.rs` — makes and takes a PLAY CAT ↔ XCH offer
+    entirely inside the simulator, using `chia-sdk-driver`'s action-system
+    (`Spends`/`Action`/`Offer`).
+- `c2-cli/` — the `c2` binary: a real testnet11 CLI for the PLAY CAT / oracle
+  singleton / offers primitives, built on the exact same builder functions
+  its own simulator tests exercise (`src/builders/{send,issue,offer,oracle,fee}.rs`).
+  Commands (all spending commands are dry-run unless `--push`; see
+  `docs/research/week1_testnet_cli.md` for the full reference and
+  `week1_testnet_results.md` for real testnet11 runs of every one of them):
+  - `keygen` / `address` / `balance` — key management and read-only balance
+    (coinset.org, no account needed).
+  - `send` — plain XCH transfer to any `txch1...` address.
+  - `issue-play` — mints the PLAY CAT (single-issuance genesis-by-coin-id
+    TAIL; 1 PLAY = 1000 CAT mojos).
+  - `offer-make` / `offer-take` — PLAY ↔ TXCH offers (`offer1...`, byte-exact
+    with the reference wallet's compression format); `offer-make` can offer
+    less than a wallet's full cached PLAY coin, with the remainder returned
+    as CAT change in the same spend.
+  - `oracle-launch` / `oracle-publish` — the minimal oracle singleton of
+    decision Р-11 (manager-key signature + self-recreation +
+    `CREATE_PUZZLE_ANNOUNCEMENT(price, timestamp, sequence)`, no Action
+    Layer). `oracle-publish --from-hyperliquid` reads BTC `markPx` and the
+    current time live from Hyperliquid's public `/info` endpoint instead of
+    taking `--price`/`--ts` (`src/hyperliquid.rs`; index looked up by name in
+    `meta.universe`, never hardcoded).
+  - A nonzero `--fee` on `oracle-publish` is paid by a *second* ordinary
+    coin in the same bundle (`src/builders/fee.rs`), because the recreated
+    singleton always carries exactly 1 mojo and can't reserve a fee itself
+    without breaking its own value conservation.
+  - Every dry-run/pushed spend prints the exact `push_tx` JSON body plus its
+    CLVM cost breakdown (`src/cost.rs`, `src/spend_json.rs`). Local caches
+    a command needs from an earlier one (`~/.c2/testnet11/<name>.play.json`,
+    `<name>.oracle.json`) are only ever updated once a spend has actually
+    been broadcast (`--push`, and only on a successful `push_tx`) — never on
+    a dry run, which creates nothing on chain.
+  - Keys: `~/.c2/testnet11/<name>.json` (`0600`, dir `0700`), mnemonic never
+    printed. `keygen` refuses to overwrite an existing name.
+
+## Running
+
+```sh
+cd chain
+cargo test --workspace              # warm run
+cargo clean && cargo test --workspace  # cold build + test (no network; needs crates.io cache)
+cargo build --workspace             # binary at target/debug/c2
+```
+
+All dependency versions in each crate's `Cargo.toml` are pinned exactly
+(`=x.y.z`); `Cargo.lock` is committed. Toolchain: `rustc 1.98.1` (workspace
+edition `2024`). `c2-cli` additionally talks to the network at runtime
+(`chia-sdk-coinset` against `https://testnet11.api.coinset.org`, and
+`reqwest` against `https://api.hyperliquid.xyz`, both plain HTTPS, no
+certificates) — `cargo build`/`test` themselves stay offline beyond the
+usual `crates.io` dependency fetch.
+
+## Known gaps (see the docs above for detail)
+
+- `chia-sdk-test::Simulator` does not expose spend/bundle cost; measuring it
+  needs `sim-spike`'s own `measure_bundle_cost` helper (ported into
+  `c2-cli/src/cost.rs` for the CLI binary, which doesn't depend on the
+  simulator/test crate).
+- RewardDistributor / Action Layer (CHIP-50/51) drivers, including
+  `RewardDistributorType::Managed`, exist in `chia-sdk-driver` (feature
+  `action-layer`) — located, not used for the oracle (Р-11 chose a minimal
+  custom singleton instead, see `week1_chain_access.md` §8). CHIP-50 Action
+  Layer is still the planned path for the week 2-3 `create_market/resolve/redeem`
+  application.
+- `c2-cli`'s local per-wallet caches (`<name>.play.json`, `<name>.oracle.json`)
+  advance as soon as a spend is accepted into coinset's mempool
+  (`push_tx` succeeds), not once it's confirmed in a block — on a
+  long-unconfirmed or evicted push (testnet11's mempool was observed
+  consistently 60-100% full during week 1, day 3-4), the cache can point at
+  a coin that never ends up existing on chain, and needs manual repair
+  before retrying. See `week1_testnet_results.md` for a real incident this
+  caused and how it was fixed/worked around.
+- `offer-take`/`oracle-publish` fee support (`--fee`) and `offer-make`'s
+  partial-amount support (`--amount`) were added this pass; `send` is new
+  this pass too. Not yet wired up: batching multiple `oracle-publish`
+  rounds or fee-bumping a still-pending push from the CLI itself (done by
+  hand this pass, see the results doc).

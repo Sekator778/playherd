@@ -1,0 +1,77 @@
+[package]
+name = "c2-cli"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[lib]
+name = "c2_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "c2"
+path = "src/main.rs"
+
+[dependencies]
+# Same pinned SDK versions as ../sim-spike (task instruction: "same pinned
+# versions as sim-spike"). Deliberately *without* chia-sdk-driver's
+# `offer-compression` feature: that feature forces `flate2/zlib-ng-compat`,
+# which needs `libz-sys` (a C library binding). `src/offer_compress.rs` is a
+# byte-exact port of `chia-sdk-driver-0.36.0/src/offers/compress.rs` against
+# our own `flate2` dependency below instead, using its pure-Rust `zlib-rs`
+# backend (no C toolchain needed, still supports the preset dictionary the
+# real `offer1...` format needs -- see that dependency's own comment).
+chia-wallet-sdk = { version = "=0.36.0", features = ["action-layer", "chip-0035"] }
+chia-sdk-driver = "=0.36.0"
+chia-sdk-types = "=0.36.0"
+chia-sdk-signer = "=0.36.0"
+# Coinset.org HTTPS client (see docs/research/week1_chain_access.md §3):
+# read-only coin-record lookups + push_tx, no certificates/full node needed.
+# `rustls`: the crate's own `reqwest` dependency is `default-features =
+# false` (no TLS backend at all) unless a consumer opts into one; pure-Rust
+# rustls avoids depending on a system OpenSSL/native-tls install.
+chia-sdk-coinset = { version = "=0.36.0", features = ["rustls"] }
+# `Address`/`Bech32` (bech32m `txch1...`/`offer1...` encode/decode).
+chia-sdk-utils = "=0.36.0"
+chia-protocol = "=0.36.1"
+chia-puzzles = "=0.20.3"
+chia-puzzle-types = "=0.36.1"
+chia-consensus = "=0.36.1"
+chia-bls = "=0.36.1"
+chia-traits = "=0.36.1"
+clvmr = "=0.16.4"
+clvm-utils = "=0.36.1"
+clvm-traits = "=0.36.1"
+anyhow = "1"
+indexmap = "2.11"
+# zlib (with a shared dictionary, matching the reference wallet's
+# `offer1...` format) for the offer bech32 payload. `zlib-rs`: a pure-Rust
+# zlib reimplementation (unlike the default `miniz_oxide` backend, it
+# supports preset dictionaries) so no C toolchain / libz-sys is needed --
+# see `src/offer_compress.rs`.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+hex-literal = "0.4"
+
+# --- CLI / keystore / chain-client plumbing (not part of sim-spike) ---
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["clock"], default-features = false }
+hex = "0.4"
+# BIP-39 mnemonic generation/parsing. Chia's own mnemonic-to-seed step is
+# plain BIP-39 (see src/keys.rs doc comment for the exact source), so this is
+# a generic BIP-39 crate, not a Chia-specific one.
+bip39 = { version = "=2.2.2", features = ["rand"] }
+# `chia-sdk-coinset` is async (reqwest-based); the CLI runs everything on a
+# small current-thread runtime in `main`. `full` avoids chasing individual
+# driver features by hand; reqwest already pulls in most of them anyway.
+tokio = { version = "1", features = ["full"] }
+# `oracle-publish --from-hyperliquid` (src/hyperliquid.rs): plain read-only
+# POST to Hyperliquid's public `/info` endpoint. Same reqwest version
+# `chia-sdk-coinset`'s `rustls` feature above already resolves to (0.12.23),
+# so this doesn't add a second copy of the dependency -- just makes it a
+# direct dependency this crate is allowed to call.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[dev-dependencies]
+chia-sdk-test = "=0.36.0"

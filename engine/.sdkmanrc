@@ -1,0 +1,3 @@
+# Enable auto-switching with: sdk env
+# This does NOT change the global SDKMAN default (kept at Java 8 per the maintainer notes).
+java=21.0.11-oracle
