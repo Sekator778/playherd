@@ -54,6 +54,13 @@ public final class Enums {
          *  documents Api-method-level failures). */
         UNAUTHORIZED,
         NOT_FOUND,
-        BAD_REQUEST
+        BAD_REQUEST,
+        /** предложение (wave-1 finding, additive — same "not in contract.ts" situation as
+         *  {@code UNAUTHORIZED} above) — {@code setNickname}'s dedicated validation failure, kept
+         *  distinct from the generic {@code BAD_REQUEST} so a client can show a specific message. */
+        INVALID_NICKNAME,
+        /** предложение (task item 2: per-IP rate limit on authChallenge/authVerify/placeBet,
+         *  Р-38 VPS stand-in) — same "additive, not in contract.ts" situation as above. */
+        RATE_LIMITED
     }
 }

@@ -39,6 +39,36 @@ public class ApiExceptionMapper implements ExceptionMapper<Throwable> {
                     .entity(new ErrorBody(new ErrorPayload("BAD_REQUEST", e.getMessage())))
                     .build();
         }
+        // Bug fix (wave-1 finding): a malformed/mistyped JSON request body reaching Jackson
+        // through JAX-RS's own message-body reader (e.g. AdminResource's @Consumes JSON param,
+        // unlike RpcResource's manual mapper.convertValue — see its own IllegalArgumentException
+        // catch in RpcResource#obj) used to fall all the way to the generic 500 below. Confirmed
+        // by running it: Quarkus REST's own Jackson body reader (ServerJacksonMessageBodyReader)
+        // does not let a JsonProcessingException escape as itself — it already wraps it as a
+        // WebApplicationException carrying its own correct 4xx Response (400 for a parse/type
+        // failure), which this generic ExceptionMapper<Throwable> used to just discard in favor of
+        // the 500 below, since that exception is neither an ApiException nor an
+        // IllegalArgumentException. A 4xx WebApplicationException's own Response is preserved
+        // (right status), but its entity is replaced with this app's usual `{"error":{...}}`
+        // envelope instead of whatever default JAX-RS would render, and with a generic message —
+        // its cause's message would otherwise name the Java DTO class (e.g.
+        // "crowdvsmarket.server.dto.Betting$PlaceBetRequest") or raw request bytes, never surfaced
+        // to a client. A JsonProcessingException reaching this mapper directly and unwrapped
+        // (belt-and-suspenders — no known path does this today) gets the same treatment.
+        if (e instanceof jakarta.ws.rs.WebApplicationException wae) {
+            int status = wae.getResponse() != null ? wae.getResponse().getStatus() : 500;
+            if (status >= 400 && status < 500) {
+                return Response.status(status).type(MediaType.APPLICATION_JSON)
+                        .entity(new ErrorBody(new ErrorPayload("BAD_REQUEST", "invalid request")))
+                        .build();
+            }
+            // else: not a client-error status (5xx, or none at all) — fall through to the
+            // generic 500 below like any other unclassified failure.
+        } else if (e instanceof com.fasterxml.jackson.core.JsonProcessingException) {
+            return Response.status(400).type(MediaType.APPLICATION_JSON)
+                    .entity(new ErrorBody(new ErrorPayload("BAD_REQUEST", "invalid request body")))
+                    .build();
+        }
         LOG.error("unhandled RPC failure", e);
         return Response.status(500).type(MediaType.APPLICATION_JSON)
                 .entity(new ErrorBody(new ErrorPayload("INTERNAL", "internal error")))

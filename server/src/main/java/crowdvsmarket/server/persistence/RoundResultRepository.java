@@ -21,6 +21,8 @@ public class RoundResultRepository {
 
     @Inject
     Db db;
+    @Inject
+    OracleRecordRepository oracleRecords;
 
     /** Latest {@code window_end_ms} ever resolved for {@code interval} — the seed for
      *  {@code RoundProgress} at startup (its next-to-resolve window starts exactly there). */
@@ -76,8 +78,28 @@ public class RoundResultRepository {
     }
 
     public Optional<Rounds.RoundDto> findRoundDto(String roundId) {
-        return Optional.ofNullable(db.read(c -> db.queryOne(c,
-                "SELECT * FROM round_results WHERE round_id = ?", this::toRoundDto, roundId)));
+        Rounds.RoundDto dto = db.read(c -> db.queryOne(c,
+                "SELECT * FROM round_results WHERE round_id = ?", this::toRoundDto, roundId));
+        return dto == null ? Optional.empty() : Optional.of(attachOracleAnchor(dto));
+    }
+
+    /** Task item 1c: the optional {@code oracleAnchor} on a settled/cancelled round's DTO — a
+     *  separate lookup against {@code oracle_records} (not a SQL join in {@link #toRoundDto}),
+     *  since it is best-effort/eventually-consistent bookkeeping owned by a different repository,
+     *  not part of this read model's own row. Returns {@code dto} unchanged (no anchor) if this
+     *  round never got an oracle record at all. */
+    private Rounds.RoundDto attachOracleAnchor(Rounds.RoundDto dto) {
+        Rounds.OracleAnchorDto anchor = oracleRecords.findAnchorByRoundId(dto.roundId()).orElse(null);
+        if (anchor == null) {
+            return dto;
+        }
+        return switch (dto) {
+            case Rounds.RoundSettled s -> new Rounds.RoundSettled(s.roundId(), s.window(), s.asset(), s.phase(),
+                    s.openPrice(), s.closePrice(), s.positions(), s.crowd(), s.resultsHash(), anchor);
+            case Rounds.RoundCancelled c -> new Rounds.RoundCancelled(c.roundId(), c.window(), c.asset(), c.phase(),
+                    c.cancellation(), anchor);
+            default -> dto; // toRoundDto never returns RoundBetting/RoundRunning
+        };
     }
 
     /** The previous settled round's crowd-majority direction for {@code interval} — used by the

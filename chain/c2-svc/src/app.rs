@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -19,18 +19,30 @@ use serde_json::json;
 use crate::auth::{self, AuthVerifyRequest, AuthVerifyResponse};
 use crate::oracle::chain_client::ChainClient;
 use crate::oracle::publisher::Publisher;
-use crate::oracle::types::{OracleRecord, OracleRecordsRequest, OracleRecordsResponse, OracleStatusResponse};
+use crate::oracle::types::{
+    OracleRecord, OracleRecordStatusResponse, OracleRecordsRequest, OracleRecordsResponse, OracleStatusResponse,
+};
+use crate::service_auth::{SvcTokenState, require_bearer_token};
 
-pub fn router<C>(publisher: Arc<Publisher<C>>) -> Router
+/// FIXED INTERFACE (a): every `/v1/*` route requires
+/// `Authorization: Bearer <token>` (`service_auth::require_bearer_token`);
+/// `GET /health` never does -- it's registered on a separate router merged
+/// in *after* the protected one's `.layer()` call, so it never passes
+/// through that middleware at all.
+pub fn router<C>(publisher: Arc<Publisher<C>>, svc_token: Option<String>) -> Router
 where
     C: ChainClient + 'static,
 {
-    Router::new()
-        .route("/health", get(health))
+    let svc_token_state: SvcTokenState = Arc::new(svc_token);
+    let protected = Router::new()
         .route("/v1/auth/verify", post(auth_verify::<C>))
         .route("/v1/oracle/records", post(oracle_records::<C>))
+        .route("/v1/oracle/records/:seq", get(oracle_record_status::<C>))
         .route("/v1/oracle/status", get(oracle_status::<C>))
         .with_state(publisher)
+        .layer(axum::middleware::from_fn_with_state(svc_token_state, require_bearer_token));
+
+    Router::new().route("/health", get(health)).merge(protected)
 }
 
 #[derive(Serialize)]
@@ -81,8 +93,16 @@ async fn oracle_records<C: ChainClient>(
             OracleRecord::from_dto(dto).map_err(|reason| AppError(StatusCode::BAD_REQUEST, reason))?;
         records.push(record);
     }
-    let queued = publisher.enqueue(records)?;
-    Ok((StatusCode::ACCEPTED, Json(OracleRecordsResponse { queued })))
+    let accepted_seqs = publisher.enqueue(records).await?;
+    Ok((StatusCode::ACCEPTED, Json(OracleRecordsResponse { queued: accepted_seqs.len(), accepted_seqs })))
+}
+
+/// `GET /v1/oracle/records/{seq}` (FIXED INTERFACE (b)).
+async fn oracle_record_status<C: ChainClient>(
+    State(publisher): State<Arc<Publisher<C>>>,
+    Path(seq): Path<u64>,
+) -> Result<Json<OracleRecordStatusResponse>, AppError> {
+    Ok(Json(publisher.record_status(seq)?))
 }
 
 async fn oracle_status<C: ChainClient>(

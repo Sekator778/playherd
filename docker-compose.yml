@@ -72,6 +72,15 @@ services:
       C2_DATA_DIR: /data
       C2_OPERATOR_NAME: operator
       C2_SVC_PORT: "8090"
+      # FIXED INTERFACE (a): bearer-token auth on every /v1/* endpoint except GET /health; same
+      # value as `server`'s HERD_CHAINSVC_TOKEN below (tools/stand.sh generates both together into
+      # .env). C2_BIND_ADDR: with network_mode: host (see the fix note above), 0.0.0.0 would also
+      # accept connections from outside this machine — bind only to loopback (this container's own
+      # localhost, e.g. `curl localhost:8090` for debugging) and the herd_default gateway IP
+      # (172.28.77.1, how `server` actually reaches it, since chainsvc itself isn't on that
+      # network — see the fix note above).
+      C2_SVC_TOKEN: ${C2_SVC_TOKEN:?set in .env — run tools/stand.sh up, which generates one}
+      C2_BIND_ADDR: "127.0.0.1,172.28.77.1"
     volumes:
       - ${HOME}/.c2/testnet11:/data
     healthcheck:
@@ -110,6 +119,8 @@ services:
       # "chainsvc" DNS name on herd_default — reached via that network's own gateway IP instead,
       # fixed by the `networks.default.ipam` block above at the top of this file.
       HERD_CHAINSVC_URL: http://172.28.77.1:8090
+      # FIXED INTERFACE (a): same value as chainsvc's own C2_SVC_TOKEN above.
+      HERD_CHAINSVC_TOKEN: ${HERD_CHAINSVC_TOKEN:?set in .env — run tools/stand.sh up, which generates one}
       HERD_OPERATOR_TOKEN: ${HERD_OPERATOR_TOKEN:?set in .env — run tools/stand.sh up, which generates one}
     depends_on:
       db:

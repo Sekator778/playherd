@@ -60,9 +60,9 @@ use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
 use crate::state_file::{load_oracle_state, save_oracle_state_atomic};
 
 use super::chain_client::ChainClient;
-use super::queue::{InFlightSpend, QueueFile};
+use super::queue::{ConfirmedRecordInfo, InFlightSpend, QueueFile, RecordState};
 use super::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
-use super::types::{OracleRecord, OracleStatusResponse};
+use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusResponse};
 
 /// Task instruction: "A push that the node REJECTS (never entered the
 /// mempool -- e.g. INVALID_FEE_TOO_CLOSE_TO_ZERO, fee too low) is not 'in
@@ -179,21 +179,65 @@ pub struct Publisher<C: ChainClient> {
     /// unaffected because it never touches chain state). **предложение**:
     /// caching the balance instead of computing it per-request.
     pub balance_snapshot: tokio::sync::RwLock<Option<String>>,
+    /// Serializes every read-modify-write cycle over the durable queue file
+    /// (`<name>.oracle_queue.json`) between the HTTP `enqueue()` handler and
+    /// the background `tick()` loop. Root-cause fix, see
+    /// `docs/research/chain_service.md` §10 ("lost update" root cause of
+    /// seq 2/3/4/62 being acknowledged but never published): both `enqueue`
+    /// and `tick` used to independently `QueueFile::load` -> mutate ->
+    /// `save_atomic` with no mutual exclusion at all. `tick()`'s
+    /// `advance_in_flight`/`rebuild_in_flight` path in particular awaits
+    /// several chain round-trips (`coin_record` x2, `in_mempool`,
+    /// `fee_estimate_mojos`, `find_funding_coin`) *between* its initial
+    /// `QueueFile::load` (at the top of `tick()`) and its final
+    /// `save_atomic` -- a wide window in which a concurrent `POST
+    /// /v1/oracle/records` could load the same stale on-disk state, append
+    /// its own record, and save -- durably, fsync'ed, 202 already returned
+    /// to the caller -- only for `tick()`'s own later `save_atomic` (built
+    /// from ITS stale in-memory copy, taken before that POST ever ran) to
+    /// silently overwrite it right back out of existence. Held for the
+    /// *entire* body of both `enqueue()` and `tick()`, not just around the
+    /// file I/O, precisely so nothing can slip in between another task's
+    /// load and its save. `status()` deliberately does *not* take this lock
+    /// (see its own doc comment) -- it only ever does a plain, eventually-
+    /// consistent read of the atomically-renamed file, which is always
+    /// either the previous or the new complete state, never a torn write.
+    pub queue_lock: tokio::sync::Mutex<()>,
 }
 
 impl<C: ChainClient> Publisher<C> {
     /// `POST /v1/oracle/records`'s handler: durably enqueues newly
-    /// submitted records, deduped against records already seen (see
-    /// `QueueFile::enqueue`). Returns how many were newly accepted.
-    pub fn enqueue(&self, records: Vec<OracleRecord>) -> Result<usize> {
+    /// submitted records, deduped against records already known
+    /// confirmed/in-flight/pending (see `QueueFile::enqueue`,
+    /// FIXED INTERFACE (b)). Returns the `seq`s newly accepted
+    /// (`acceptedSeqs`); a resubmitted or already-known `seq` is silently
+    /// omitted, not an error.
+    pub async fn enqueue(&self, records: Vec<OracleRecord>) -> Result<Vec<u64>> {
+        let _guard = self.queue_lock.lock().await;
         let mut queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
         let accepted = queue.enqueue(records);
-        if accepted > 0 {
+        if !accepted.is_empty() {
             queue
                 .save_atomic(&self.data_dir, &self.operator_name)
                 .context("persisting newly queued oracle records")?;
         }
         Ok(accepted)
+    }
+
+    /// `GET /v1/oracle/records/{seq}`'s handler (FIXED INTERFACE (b)): a
+    /// plain, unlocked read of the queue's current persisted state -- same
+    /// eventual-consistency reasoning as `status()` (see its doc comment and
+    /// `queue_lock`'s).
+    pub fn record_status(&self, seq: u64) -> Result<OracleRecordStatusResponse> {
+        let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        Ok(match queue.record_state(seq) {
+            RecordState::Confirmed { height, coin_id } => {
+                OracleRecordStatusResponse { seq, state: "confirmed", height, coin_id: Some(coin_id) }
+            }
+            RecordState::InFlight => OracleRecordStatusResponse { seq, state: "in_flight", height: None, coin_id: None },
+            RecordState::Queued => OracleRecordStatusResponse { seq, state: "queued", height: None, coin_id: None },
+            RecordState::Unknown => OracleRecordStatusResponse { seq, state: "unknown", height: None, coin_id: None },
+        })
     }
 
     /// `GET /v1/oracle/status`'s handler. Must never await a network call:
@@ -246,6 +290,12 @@ impl<C: ChainClient> Publisher<C> {
 
     /// Runs one iteration of the publisher state machine (see module doc).
     pub async fn tick(&self) -> Result<TickOutcome> {
+        // See `queue_lock`'s doc comment: held for this entire call
+        // (including the chain round-trips `advance_in_flight`/
+        // `rebuild_in_flight` await below) so a concurrent `enqueue()` can
+        // never load a stale snapshot and clobber whatever this tick ends up
+        // persisting.
+        let _guard = self.queue_lock.lock().await;
         let mut queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
 
         if let Some(in_flight) = queue.in_flight.clone() {
@@ -276,8 +326,24 @@ impl<C: ChainClient> Publisher<C> {
             save_oracle_state_atomic(&self.data_dir, &self.operator_name, &oracle_state)
                 .context("persisting advanced oracle state")?;
 
+            // Per-record confirmation (FIXED INTERFACE (b),
+            // `GET /v1/oracle/records/{seq}`): every record in this batch,
+            // not just "the last one" -- `in_flight.records` is no longer
+            // guaranteed sorted ascending by seq once a LATE/backfill record
+            // (arbitrary seq) can be merged into a rebuild alongside newer
+            // ones (`rebuild_in_flight`), so `.last()`/`.max()` on it would
+            // both be the wrong question for per-seq tracking, only the
+            // right one for the *overall* high-water mark below.
+            let confirmed_coin_id = format!("{}", in_flight.next_coin.coin_id());
+            for record in &in_flight.records {
+                queue.confirmed.insert(
+                    record.seq,
+                    ConfirmedRecordInfo { height: record_info.confirmed_height, coin_id: confirmed_coin_id.clone() },
+                );
+            }
             let confirmed_count = in_flight.records.len();
-            queue.last_confirmed_seq = in_flight.records.last().map(|r| r.seq).or(queue.last_confirmed_seq);
+            queue.last_confirmed_seq =
+                in_flight.records.iter().map(|r| r.seq).max().max(queue.last_confirmed_seq);
             queue.last_confirmed_height = record_info.confirmed_height.or(queue.last_confirmed_height);
             queue.in_flight = None;
             queue

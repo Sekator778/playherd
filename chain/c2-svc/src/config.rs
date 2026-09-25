@@ -6,6 +6,7 @@
 //! **предложение**: consistent with how the rest of this project runs
 //! services in Docker, `docs/product/decisions.md` Р-44).
 
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 /// `C2_PUSH=0` (or `--dry-run` on the CLI, see `main.rs`) disables every
@@ -69,6 +70,61 @@ pub struct Config {
     /// 3 000 000 mojos at cost≈38.7M) while still bounding the operator's
     /// TXCH spend if the mempool is congested indefinitely.
     pub max_fee_mojos: u64,
+    /// FIXED INTERFACE (a): the token every `/v1/*` request (except
+    /// `GET /health`) must present as `Authorization: Bearer <token>`.
+    /// `C2_SVC_TOKEN`, matched against the server's `HERD_CHAINSVC_TOKEN` --
+    /// the two env var names differ because each side names it from its own
+    /// perspective, the *value* is the shared secret. `None` only when unset
+    /// -- `main.rs` refuses to start on `None` unless `allow_no_auth`.
+    pub svc_token: Option<String>,
+    /// `C2_SVC_ALLOW_NO_AUTH=1`: permits starting with no `C2_SVC_TOKEN`
+    /// configured (task instruction: "for tests"). Every request is then let
+    /// through unchecked (`service_auth::require_bearer_token`) -- never set
+    /// this on the stand or in production.
+    pub allow_no_auth: bool,
+    /// `C2_BIND_ADDR`: comma-separated list of addresses to listen on,
+    /// default `127.0.0.1` alone. Task instruction: on the stand (`chainsvc`
+    /// runs with `network_mode: host`) the server reaches this service via
+    /// the compose gateway IP (`172.28.77.1`), not through the compose
+    /// network's service-name DNS -- so the stand's `docker-compose.yml`
+    /// must set this to `172.28.77.1,127.0.0.1` (both: the gateway IP for
+    /// the server, loopback for anything running in this same network
+    /// namespace, e.g. the healthcheck). Never `0.0.0.0` -- an explicit,
+    /// enumerated bind list, not "every interface", is the point of this
+    /// variable existing at all.
+    pub bind_addrs: Vec<IpAddr>,
+}
+
+/// Parses `C2_BIND_ADDR`'s comma-separated address list. Pure and
+/// env-independent so it can be unit tested directly (`tests/config.rs`)
+/// without mutating process-wide environment variables (which would race
+/// against other `#[test]` functions running in parallel in the same
+/// binary).
+pub fn parse_bind_addrs(raw: &str) -> Result<Vec<IpAddr>, String> {
+    let addrs: Result<Vec<IpAddr>, String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<IpAddr>().map_err(|e| format!("C2_BIND_ADDR: invalid address {s:?}: {e}")))
+        .collect();
+    match addrs {
+        Ok(a) if a.is_empty() => Err("C2_BIND_ADDR: must name at least one address".to_string()),
+        other => other,
+    }
+}
+
+/// Whether the service may start with this token configuration (task
+/// instruction: "chainsvc refuses to start without a token (unless
+/// C2_SVC_ALLOW_NO_AUTH=1 for tests)"). Pure so `main.rs`'s startup gate can
+/// be unit tested without touching real env vars or actually starting a
+/// server.
+pub fn check_startup_auth_config(svc_token: &Option<String>, allow_no_auth: bool) -> Result<(), String> {
+    if svc_token.is_none() && !allow_no_auth {
+        return Err(
+            "C2_SVC_TOKEN is required to start c2-svc (or set C2_SVC_ALLOW_NO_AUTH=1 for tests)".to_string(),
+        );
+    }
+    Ok(())
 }
 
 impl Config {
@@ -91,6 +147,10 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(50_000_000);
+        let svc_token = std::env::var("C2_SVC_TOKEN").ok().filter(|s| !s.is_empty());
+        let allow_no_auth = std::env::var("C2_SVC_ALLOW_NO_AUTH").is_ok_and(|v| v == "1");
+        let bind_addrs = parse_bind_addrs(&std::env::var("C2_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1".to_string()))
+            .expect("C2_BIND_ADDR");
         Self {
             data_dir,
             operator_name,
@@ -101,6 +161,9 @@ impl Config {
             retry_backoff: std::time::Duration::from_secs(45),
             max_retry_attempts: 8,
             max_fee_mojos,
+            svc_token,
+            allow_no_auth,
+            bind_addrs,
         }
     }
 
@@ -111,5 +174,51 @@ impl Config {
             self.push_enabled = false;
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_single_default_address() {
+        assert_eq!(parse_bind_addrs("127.0.0.1"), Ok(vec!["127.0.0.1".parse().unwrap()]));
+    }
+
+    #[test]
+    fn parses_comma_separated_addresses_with_whitespace() {
+        // Task instruction: on the stand, bind to the compose gateway IP
+        // *and* loopback.
+        assert_eq!(
+            parse_bind_addrs("172.28.77.1, 127.0.0.1"),
+            Ok(vec!["172.28.77.1".parse().unwrap(), "127.0.0.1".parse().unwrap()])
+        );
+    }
+
+    #[test]
+    fn rejects_empty_string() {
+        assert!(parse_bind_addrs("").is_err());
+    }
+
+    #[test]
+    fn rejects_garbage_address() {
+        assert!(parse_bind_addrs("not-an-ip").is_err());
+    }
+
+    #[test]
+    fn startup_refuses_with_no_token_and_no_bypass() {
+        assert!(check_startup_auth_config(&None, false).is_err());
+    }
+
+    #[test]
+    fn startup_allows_no_token_with_explicit_bypass() {
+        assert!(check_startup_auth_config(&None, true).is_ok());
+    }
+
+    #[test]
+    fn startup_allows_a_configured_token_regardless_of_bypass_flag() {
+        assert!(check_startup_auth_config(&Some("secret".to_string()), false).is_ok());
+        assert!(check_startup_auth_config(&Some("secret".to_string()), true).is_ok());
     }
 }

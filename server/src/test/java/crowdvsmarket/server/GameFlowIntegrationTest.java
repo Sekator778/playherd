@@ -122,7 +122,11 @@ class GameFlowIntegrationTest {
                         org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(new ChainSvcClient.AuthVerifyResult(true, null));
         org.mockito.Mockito.when(chainSvcClient.oracleRecords(org.mockito.ArgumentMatchers.anyList()))
-                .thenAnswer(inv -> ((List<?>) inv.getArgument(0)).size());
+                .thenAnswer(inv -> {
+                    List<ChainSvcClient.OracleRecord> records = inv.getArgument(0);
+                    List<Long> seqs = records.stream().map(ChainSvcClient.OracleRecord::seq).toList();
+                    return new ChainSvcClient.OracleRecordsResult(seqs.size(), seqs);
+                });
         org.mockito.Mockito.when(chainSvcClient.oracleStatus())
                 .thenReturn(new ChainSvcClient.OracleStatus(
                         "c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20", "testnet11", 1L, 4_735_705L,

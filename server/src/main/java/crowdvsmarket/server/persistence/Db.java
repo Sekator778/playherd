@@ -31,7 +31,21 @@ public class Db {
         return objectMapper;
     }
 
-    /** Runs {@code work} inside one JDBC transaction (manual commit/rollback); returns its result. */
+    /**
+     * Runs {@code work} inside one JDBC transaction (manual commit/rollback); returns its result.
+     *
+     * <p>Bug fix (wave-1 finding): a {@link SQLException} thrown by {@code work} itself — e.g. a
+     * constraint violation, or {@link #prepare}/{@link #readJson}'s own {@code SQLException}s for
+     * a bad jsonb value — used to come back out of this method wrapped as {@code RuntimeException
+     * ("db connection failure", …)}, indistinguishable from an actual failure to obtain/use the
+     * JDBC connection itself (getConnection()/setAutoCommit()/commit()/close() failing). Those are
+     * different failure classes an operator needs to tell apart, so only the latter — everything
+     * that is genuinely about the connection, not about the data {@code work} tried to write —
+     * gets that message now; a {@code SQLException} surfaced by {@code work} itself is labeled
+     * "db operation failed" instead. A {@code crowdvsmarket.server.dto.ApiException}/other
+     * {@link RuntimeException} thrown by {@code work} (business-rule validation) still propagates
+     * completely unchanged, exactly as before, so {@code ApiExceptionMapper} keeps seeing it.
+     */
     public <T> T tx(SqlWork<T> work) {
         try (Connection c = dataSource.getConnection()) {
             c.setAutoCommit(false);
@@ -39,9 +53,13 @@ public class Db {
                 T result = work.run(c);
                 c.commit();
                 return result;
-            } catch (Exception e) {
+            } catch (SQLException e) {
+                c.rollback(); // a rollback failure here propagates to the outer catch below, which
+                // is the correct "db connection failure" case (the connection is what's now broken).
+                throw new RuntimeException("db operation failed: " + e.getMessage(), e);
+            } catch (RuntimeException e) {
                 c.rollback();
-                throw sneaky(e);
+                throw e;
             }
         } catch (SQLException e) {
             throw new RuntimeException("db connection failure", e);

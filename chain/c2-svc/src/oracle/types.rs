@@ -46,9 +46,27 @@ pub struct OracleRecordsRequest {
     pub records: Vec<OracleRecordDto>,
 }
 
+/// FIXED INTERFACE (b): `queued` is `acceptedSeqs.len()` (kept alongside it
+/// for a caller that only wants the count), `acceptedSeqs` is exactly the
+/// `seq`s newly accepted this call -- a `seq` already known
+/// confirmed/in-flight/pending is silently omitted (idempotent re-POST, not
+/// an error), so this can be shorter than `req.records.len()`.
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OracleRecordsResponse {
     pub queued: usize,
+    pub accepted_seqs: Vec<u64>,
+}
+
+/// `GET /v1/oracle/records/{seq}` (FIXED INTERFACE (b)).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OracleRecordStatusResponse {
+    pub seq: u64,
+    /// `"queued" | "in_flight" | "confirmed" | "unknown"`.
+    pub state: &'static str,
+    pub height: Option<u32>,
+    pub coin_id: Option<String>,
 }
 
 /// Validated, internal record shape -- what actually goes into the CLVM

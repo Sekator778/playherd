@@ -9,6 +9,7 @@
 //! re-deriving anything (no dependency on the operator's live UTXO set
 //! being unchanged across the restart).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -19,6 +20,41 @@ use serde::{Deserialize, Serialize};
 use crate::atomic_file::{read_json_or_default, write_json_atomic};
 
 use super::types::OracleRecord;
+
+/// One record's on-chain confirmation (`GET /v1/oracle/records/{seq}`,
+/// FIXED INTERFACE (b)) -- `height`/`coin_id` of the singleton generation
+/// whose spend announced this exact `seq`. Recorded per-record (not just as
+/// a single running high-water mark) precisely because a LATE/backfill
+/// record can confirm inside a batch alongside much-higher new seqs, so "the
+/// last record in the confirming batch" is no longer a reliable stand-in for
+/// "every seq up to here is confirmed" once out-of-order publication is
+/// possible (see `docs/research/chain_service.md` §10.3).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConfirmedRecordInfo {
+    pub height: Option<u32>,
+    /// `0x`-hex `Coin::coin_id()` of the next singleton generation created by
+    /// the confirming spend (the same coin `GET /v1/oracle/status` would
+    /// track next).
+    pub coin_id: String,
+}
+
+/// `GET /v1/oracle/records/{seq}`'s `state` (FIXED INTERFACE (b)), derived
+/// from the queue's actual persisted state rather than from the
+/// `last_accepted_seq` watermark -- see `QueueFile::record_state`'s doc
+/// comment for why the watermark alone is not a safe way to answer "is this
+/// seq already accounted for".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordState {
+    Confirmed { height: Option<u32>, coin_id: String },
+    InFlight,
+    Queued,
+    /// Neither pending, in flight, nor confirmed -- either never submitted,
+    /// or (before this fix) silently lost. `enqueue` treats this the same
+    /// way regardless of which: accept it (task instruction, FIXED
+    /// INTERFACE (b): "a record whose seq is below the watermark but is NOT
+    /// known as confirmed/queued/in_flight is accepted as a LATE record").
+    Unknown,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InFlightSpend {
@@ -54,13 +90,17 @@ pub struct InFlightSpend {
 pub struct QueueFile {
     pub pending: Vec<OracleRecord>,
     pub in_flight: Option<InFlightSpend>,
-    /// Highest `seq` ever accepted into the queue (`pending`, `in_flight`,
-    /// or already confirmed) -- dedupes a record a caller resubmits (e.g.
-    /// after a timed-out `POST /v1/oracle/records` it isn't sure went
-    /// through).
+    /// Highest `seq` ever accepted into the queue -- purely informational
+    /// now (see `record_state`'s doc comment for why it stopped being the
+    /// basis for dedup/idempotency); still exposed for operator visibility.
     pub last_accepted_seq: Option<u64>,
     pub last_confirmed_seq: Option<u64>,
     pub last_confirmed_height: Option<u32>,
+    /// Per-record confirmation info, FIXED INTERFACE (b)'s
+    /// `GET /v1/oracle/records/{seq}`. `#[serde(default)]`: the real stand's
+    /// existing `<name>.oracle_queue.json` predates this field.
+    #[serde(default)]
+    pub confirmed: BTreeMap<u64, ConfirmedRecordInfo>,
 }
 
 impl QueueFile {
@@ -76,22 +116,56 @@ impl QueueFile {
         write_json_atomic(&Self::path(data_dir, name), self)
     }
 
-    /// Accepts every record in `incoming` whose `seq` is strictly greater
-    /// than the running watermark (`last_accepted_seq`), processed in
-    /// ascending `seq` order so the watermark advances monotonically even
-    /// within one batch. Returns how many were newly accepted (the
-    /// `queued` count `POST /v1/oracle/records` responds with).
-    pub fn enqueue(&mut self, mut incoming: Vec<OracleRecord>) -> usize {
+    /// `GET /v1/oracle/records/{seq}`'s state, and `enqueue`'s idempotency
+    /// check -- both ask the same question ("what do we actually know about
+    /// this seq") of the same three real, persisted sources of truth
+    /// (`confirmed`, `in_flight`, `pending`), never of the `last_accepted_seq`
+    /// watermark. Root-cause fix (`docs/research/chain_service.md` §10): the
+    /// old code treated "`seq <= last_accepted_seq`" as proof a record was
+    /// already durably queued -- but a concurrent writer could advance that
+    /// same watermark past a record whose actual `pending`/`in_flight` entry
+    /// got clobbered by a lost update (see `Publisher::queue_lock`'s doc
+    /// comment for the concurrency half of that fix), silently and
+    /// permanently swallowing every future resubmission of that exact seq.
+    /// Checking real state instead means a seq below the watermark that
+    /// truly isn't anywhere is simply `Unknown` -- indistinguishable from a
+    /// genuinely new one -- and `enqueue` accepts it either way (FIXED
+    /// INTERFACE (b): "every seq exactly once", late/backfill included).
+    pub fn record_state(&self, seq: u64) -> RecordState {
+        if let Some(info) = self.confirmed.get(&seq) {
+            return RecordState::Confirmed { height: info.height, coin_id: info.coin_id.clone() };
+        }
+        if let Some(in_flight) = &self.in_flight
+            && in_flight.records.iter().any(|r| r.seq == seq)
+        {
+            return RecordState::InFlight;
+        }
+        if self.pending.iter().any(|r| r.seq == seq) {
+            return RecordState::Queued;
+        }
+        RecordState::Unknown
+    }
+
+    /// Accepts every record in `incoming` that isn't already known
+    /// confirmed/in-flight/pending (`record_state`), in ascending `seq`
+    /// order. A record whose `seq` is already accounted for is ignored
+    /// idempotently (task instruction, FIXED INTERFACE (b): "not an error");
+    /// otherwise it's accepted -- including a LATE record whose `seq` is
+    /// below `last_accepted_seq` but was never actually recorded anywhere
+    /// (backfill). Returns the `seq`s newly accepted, in the order accepted
+    /// (`POST /v1/oracle/records`'s `acceptedSeqs`).
+    pub fn enqueue(&mut self, mut incoming: Vec<OracleRecord>) -> Vec<u64> {
         incoming.sort_by_key(|r| r.seq);
-        let mut accepted = 0;
+        let mut accepted = Vec::new();
         for record in incoming {
-            let watermark = self.last_accepted_seq.unwrap_or(0);
-            if self.last_accepted_seq.is_some() && record.seq <= watermark {
-                continue; // duplicate / out-of-order resubmission, ignored
+            if !matches!(self.record_state(record.seq), RecordState::Unknown) {
+                continue; // already confirmed / queued / in-flight: idempotent no-op
             }
-            self.last_accepted_seq = Some(record.seq);
+            if record.seq > self.last_accepted_seq.unwrap_or(0) {
+                self.last_accepted_seq = Some(record.seq);
+            }
+            accepted.push(record.seq);
             self.pending.push(record);
-            accepted += 1;
         }
         accepted
     }

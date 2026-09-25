@@ -46,6 +46,14 @@ public final class Rounds {
     public record CancellationDto(String roundId, String reason, long cancelledAtMs, int refundedBetCount) {
     }
 
+    /** Additive (task item 1c, FIXED INTERFACE b/c): optional per-round anchor into chainsvc's own
+     *  oracle publication (Р-40/41/47) — {@code state} one of
+     *  {@code "queued"|"in_flight"|"confirmed"|"unknown"} (chainsvc's FIXED INTERFACE (b) vocabulary,
+     *  see {@code ChainSvcClient.OracleRecordState}); {@code height} only non-null once
+     *  {@code state} is {@code "confirmed"}. Web will pick this up later (not edited here). */
+    public record OracleAnchorDto(long seq, String state, Long height) {
+    }
+
     /** One sealed marker so service code can pattern-match; not itself serialized (each variant
      *  record below carries its own {@code phase} literal, see class javadoc). */
     public sealed interface RoundDto permits RoundBetting, RoundRunning, RoundSettled, RoundCancelled {
@@ -69,17 +77,17 @@ public final class Rounds {
 
     public record RoundSettled(String roundId, RoundWindowDto window, String asset, String phase, String openPrice,
                                  String closePrice, List<PublicPositionDto> positions, CrowdRoundResultDto crowd,
-                                 String resultsHash) implements RoundDto {
+                                 String resultsHash, OracleAnchorDto oracleAnchor) implements RoundDto {
         public RoundSettled(String roundId, RoundWindowDto window, String openPrice, String closePrice,
                              List<PublicPositionDto> positions, CrowdRoundResultDto crowd, String resultsHash) {
-            this(roundId, window, "BTC", "SETTLED", openPrice, closePrice, positions, crowd, resultsHash);
+            this(roundId, window, "BTC", "SETTLED", openPrice, closePrice, positions, crowd, resultsHash, null);
         }
     }
 
     public record RoundCancelled(String roundId, RoundWindowDto window, String asset, String phase,
-                                   CancellationDto cancellation) implements RoundDto {
+                                   CancellationDto cancellation, OracleAnchorDto oracleAnchor) implements RoundDto {
         public RoundCancelled(String roundId, RoundWindowDto window, CancellationDto cancellation) {
-            this(roundId, window, "BTC", "CANCELLED", cancellation);
+            this(roundId, window, "BTC", "CANCELLED", cancellation, null);
         }
     }
 

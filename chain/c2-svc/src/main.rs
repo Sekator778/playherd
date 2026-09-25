@@ -5,11 +5,11 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 
 use c2_svc::app;
-use c2_svc::config::Config;
+use c2_svc::config::{Config, check_startup_auth_config};
 use c2_svc::oracle::chain_client::CoinsetChainClient;
 use c2_svc::oracle::publisher::Publisher;
 
@@ -32,11 +32,17 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = Config::from_env().with_dry_run(cli.dry_run);
 
+    // FIXED INTERFACE (a): refuse to start with no auth token configured,
+    // unless the operator explicitly opted out (tests only).
+    check_startup_auth_config(&config.svc_token, config.allow_no_auth).map_err(|e| anyhow::anyhow!(e))?;
+
     tracing::info!(
         data_dir = %config.data_dir.display(),
         operator_name = %config.operator_name,
         push_enabled = config.push_enabled,
         port = config.port,
+        bind_addrs = ?config.bind_addrs,
+        auth_enabled = config.svc_token.is_some(),
         "starting c2-svc"
     );
 
@@ -51,6 +57,7 @@ async fn main() -> Result<()> {
         max_fee_mojos: config.max_fee_mojos,
         fee_target_time_secs: 60,
         balance_snapshot: tokio::sync::RwLock::new(None),
+        queue_lock: tokio::sync::Mutex::new(()),
     });
 
     // Background oracle-publisher loop: advances in-flight spends /
@@ -93,8 +100,28 @@ async fn main() -> Result<()> {
         });
     }
 
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.port)).await?;
-    tracing::info!(addr = %listener.local_addr()?, "listening");
-    axum::serve(listener, app::router(publisher)).await?;
+    // Task instruction: bind exactly the enumerated `C2_BIND_ADDR` addresses
+    // (default `127.0.0.1` alone), never `0.0.0.0` -- on the stand this is
+    // `172.28.77.1,127.0.0.1` (see `config.rs::Config::bind_addrs`'s doc
+    // comment). One listener + one `axum::serve` task per address, all
+    // serving the same `Router` (cheap to `.clone()`, it's an `Arc` inside).
+    let router = app::router(publisher, config.svc_token.clone());
+    let mut listeners = Vec::with_capacity(config.bind_addrs.len());
+    for addr in &config.bind_addrs {
+        let listener = tokio::net::TcpListener::bind((*addr, config.port))
+            .await
+            .with_context(|| format!("binding {addr}:{}", config.port))?;
+        tracing::info!(addr = %listener.local_addr()?, "listening");
+        listeners.push(listener);
+    }
+
+    let mut serve_tasks = Vec::with_capacity(listeners.len());
+    for listener in listeners {
+        let router = router.clone();
+        serve_tasks.push(tokio::spawn(async move { axum::serve(listener, router).await }));
+    }
+    for task in serve_tasks {
+        task.await.context("serve task panicked")??;
+    }
     Ok(())
 }

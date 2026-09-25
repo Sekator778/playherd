@@ -34,12 +34,18 @@ public class OraclePublisherService {
                         .map(r -> new ChainSvcClient.OracleRecord(r.seq(), r.ts(), r.priceCents(), r.resultsHash(),
                                 r.source(), r.sourceTs()))
                         .toList();
-                int queued = chainSvc.oracleRecords(records);
-                if (queued >= chunk.size()) {
-                    oracleRecords.markQueued(chunk.stream().map(OracleRecordRepository.Row::seq).toList());
-                } else {
-                    LOG.warnf("chainsvc queued only %d/%d oracle records this batch — retrying next tick", queued,
-                            chunk.size());
+                // FIXED INTERFACE (b): mark exactly the seqs chainsvc's response names
+                // (`acceptedSeqs`), not "the whole chunk iff the count matches" — a record already
+                // known confirmed/queued at chainsvc is accepted idempotently (not an error) but
+                // was not freshly queued by this call, so `queued` alone cannot tell us which of
+                // `chunk` to stop retrying.
+                ChainSvcClient.OracleRecordsResult result = chainSvc.oracleRecords(records);
+                if (!result.acceptedSeqs().isEmpty()) {
+                    oracleRecords.markQueued(result.acceptedSeqs());
+                }
+                if (result.acceptedSeqs().size() < chunk.size()) {
+                    LOG.warnf("chainsvc accepted only %d/%d oracle records this batch — retrying the rest next tick",
+                            result.acceptedSeqs().size(), chunk.size());
                 }
             } catch (Exception e) {
                 LOG.debugf(e, "chainsvc unreachable — %d oracle record(s) stay pending", chunk.size());

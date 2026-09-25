@@ -75,7 +75,11 @@ class BotRestartRecoveryTest {
     @Test
     void botsResumeBettingInBothSeriesAfterRestart() {
         org.mockito.Mockito.when(chainSvcClient.oracleRecords(org.mockito.ArgumentMatchers.anyList()))
-                .thenAnswer(inv -> ((List<?>) inv.getArgument(0)).size());
+                .thenAnswer(inv -> {
+                    List<ChainSvcClient.OracleRecord> records = inv.getArgument(0);
+                    List<Long> seqs = records.stream().map(ChainSvcClient.OracleRecord::seq).toList();
+                    return new ChainSvcClient.OracleRecordsResult(seqs.size(), seqs);
+                });
         org.mockito.Mockito.when(chainSvcClient.oracleStatus()).thenReturn(null);
         org.mockito.Mockito.when(chainSvcClient.health()).thenReturn(true);
 

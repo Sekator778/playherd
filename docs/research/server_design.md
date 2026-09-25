@@ -299,3 +299,120 @@ canonicalization, а не иллюстративному списку. Пред�
   (`NOT_FOUND`, если чужая), хотя `contract.ts` не называет их `myWithdrawal`/`myDeposit`:
   `requestId` — маленький предсказуемый счётчик (`LedgerBook`'овский `"w-N"`/`"d-N"`, см. §3), без
   этой проверки перебор id раскрыл бы чужую историю выводов/вводов.
+
+## 13. Волна 2 (после первого раунда тестирования, перед ревью критика) — 2026-09-25
+
+Правит найденное первым раундом тестирования: chainsvc-аутентификация (клиентская сторона), сверка
+durable delivery (FIXED INTERFACE (c)), входная валидация из wave-1 security findings. Затронуты
+только `server/`, `docker-compose.yml`, `tools/stand.sh` — `chain/` (сам `chainsvc`, стороны (a)/(b)
+FIXED INTERFACE) правит отдельная сессия параллельно; здесь описана только клиентская/серверная
+половина, которую видит этот модуль.
+
+**FIXED INTERFACE (a), клиент** — `ChainSvcClientImpl` шлёт `Authorization: Bearer
+<herd.chainsvc.token>` на каждый вызов `ChainSvcRestClient`, кроме `GET /health` (задача явно
+исключает его из аутентификации). Токен — новый конфиг `herd.chainsvc.token`
+(`HERD_CHAINSVC_TOKEN`), должен совпадать с `chainsvc`'овским `C2_SVC_TOKEN` — `tools/stand.sh`
+генерирует оба в `.env` одним значением (переиспользует существующее, если `.env` уже частично
+заполнен вручную, чтобы не разъехались). `docker-compose.yml`: `chainsvc` получает
+`C2_BIND_ADDR=127.0.0.1,172.28.77.1` — сервис работает в `network_mode: host` (см. §10-соседний
+комментарий в самом файле), значит `0.0.0.0` слушал бы снаружи машины; нужны оба адреса, потому что
+`server` достаёт его через шлюз `herd_default` (`172.28.77.1`, см. существующий комментарий про
+`HERD_CHAINSVC_URL`), а не только с самого хоста chainsvc-контейнера.
+
+**FIXED INTERFACE (c), сверка durable delivery** — новый `OracleReconciliationService`
+(`@Scheduled(every="60s")`): для каждой строки `oracle_records`, уже хотя бы раз отданной chainsvc
+(`chainsvc_queued=TRUE`) и ещё не известной `confirmed`, зовёт новый
+`GET /v1/oracle/records/{seq}` (FIXED INTERFACE (b)) и сохраняет `state`/`height`/`coinId`
+(V2-миграция: `oracle_records.state|height|coin_id|state_checked_at_ms`, `state` по умолчанию
+`'unknown'` — честный ответ «ещё не спрашивали»). Запись, которую chainsvc всё ещё называет
+`"unknown"` спустя 2 минуты после постановки в очередь этим сервером, перепосылается той же
+`POST /v1/oracle/records` — по FIXED INTERFACE (b) chainsvc принимает такую запись как
+LATE/backfill идемпотентно («каждый seq ровно один раз»), так что повторная отправка на каждом
+тике, если состояние так и не сдвинулось, безопасна. Заодно `OraclePublisherService` перешёл на
+`acceptedSeqs` из ответа (`{queued:int, acceptedSeqs:[int]}`, FIXED INTERFACE (b)) вместо сравнения
+счётчика с размером пачки — идемпотентно принятая (уже `confirmed`/`queued` на стороне chainsvc)
+запись не должна навсегда застревать «в ожидании» из-за несовпадения счётчика.
+
+**`oracleAnchor` (опционально) на `RoundSettled`/`RoundCancelled`** — `{seq, state,
+height|null}`, отдельный lookup в `RoundResultRepository.findAnchorByRoundId` (не JOIN в
+`toRoundDto`: это данные из другой таблицы, которой владеет `OracleRecordRepository`, и они
+принципиально eventually-consistent). Отсутствует (`null`/поле не появляется — Java-record
+компонент всё равно сериализуется, но со значением `null`), если раунду ни разу не завели запись
+оракула — сегодня это все отменённые раунды (`GameService.cancelRound` не зовёт
+`enqueueOracleRecord`, только `resolveRound`/`storeSettledResult` для settled). `web/` не трогали
+(задача это прямо запрещает) — фронт подхватит поле отдельно.
+
+**Входная валидация (wave-1 security findings)**:
+- `setNickname` — trim + allow-list `[A-Za-z0-9 _.-]{3,24}` одним regex'ом (`matches()` требует
+  совпадения ВСЕЙ строки, так что allow-list сам по себе уже отбрасывает управляющие символы и
+  NUL — отдельной проверки не нужно) → `400 INVALID_NICKNAME` (предложение, additive
+  `ApiErrorCode`, тот же случай, что уже задокументированный `UNAUTHORIZED`/`NOT_FOUND`/
+  `BAD_REQUEST` в §12 — не в `contract.ts`).
+- `authVerify`/`previewLiquidation`/`placeBet` — новый `RpcResource#requiredObj` вместо `obj`:
+  отсутствующее/`null` тело аргумента теперь `400 BAD_REQUEST` вместо `NullPointerException` →
+  500 (эти три метода первым делом разыменовывают компонент своего request-record).
+- Ошибки самого Jackson (несовпадение типа, неразбираемый JSON) — везде generic `"invalid
+  request body"`/`"invalid JSON body"`, без `e.getMessage()`: тот мог называть Java-класс DTO
+  (`RpcResource#obj`'ов `IllegalArgumentException` от `convertValue`) или сырой текст запроса
+  (`argsArray`). Плюс `ApiExceptionMapper` теперь ловит `JsonProcessingException` напрямую (400,
+  не 500) — нужно для `AdminResource`'ового JAX-RS-биндинга тела, который не проходит через
+  `RpcResource#obj` вообще.
+- `leverage` (и вообще любое целочисленное поле любого RPC-DTO) — Jackson по умолчанию тихо
+  округляет JSON-float до `int` (`ACCEPT_FLOAT_AS_INT`, `10.5` → `10`); новый
+  `JacksonConfig implements ObjectMapperCustomizer` отключает эту фичу глобально, так что
+  нецелое число теперь честная `400`, а не тихая порча значения.
+- `Db.tx` — SQLException, брошенный самим `work` (например, `prepare()`'ов `"failed to serialize
+  jsonb param"` при плохом jsonb-значении, или constraint violation), раньше долетал наружу как
+  `RuntimeException("db connection failure", …)` — неотличимо от реального разрыва соединения.
+  Теперь это `"db operation failed: …"`; `"db connection failure"` — только для
+  getConnection()/setAutoCommit()/commit()/close(). `ApiException`/прочий `RuntimeException` из
+  `work` (бизнес-валидация) по-прежнему пролетает не тронутым.
+- `AdminResource` — сравнение bearer-токена теперь через новый
+  `util.ConstantTimeTokens.equals` (SHA-256-дайджест обеих сторон, потом
+  `MessageDigest.isEqual`) — старое сравнение уходило с ранним `return false` при несовпадении
+  *длины*, до входа в константно-временный цикл, что само по себе давало через тайминг узнать
+  длину токена.
+- Rate limit (Р-38, заглушка до VPS) — `RateLimiter`: token bucket в памяти, ключ
+  `"<ip>:<method>"`, на `authChallenge`/`authVerify`/`placeBet` (`RpcResource` проверяет до
+  диспетчеризации, отдельный бакет на каждый метод — иначе шумный вызов одного метода съедал бы
+  бюджет другого). Предложение-дефолты (не из источника): capacity 30, refill 0.5/сек
+  (`herd.ratelimit.*` / `HERD_RATELIMIT_*`) — «generous limits» по формулировке задачи, ничем
+  жёстче не зафиксировано. Не переживает рестарт процесса и не общий между инстансами — сознательно
+  временная замена для локального стенда/демо-VPS, не для реального продакшена с несколькими
+  инстансами.
+
+**Тесты и реальные числа** (`mvn -s ~/.m2/settings-oss.xml -f pom.xml clean verify`,
+2026-09-25): `engine` — **6519, 0 упавших** (не тронут, аддитивное правило проекта соблюдено —
+изменений в `engine/` в этом проходе нет вообще). `server` — **56, 0 упавших**: новые
+`RpcValidationTest` (12), `AdminResourceValidationTest` (5), `RateLimitTest` (2, свой
+`@TestProfile` с capacity=2/refill=0 — детерминированно за 3 запроса, а не выжиганием реального
+«generous» лимита), `OracleReconciliationServiceTest` (5), `ChainSvcClientImplTest` (7, чистый
+Mockito-юнит на `ChainSvcRestClient`, без `@QuarkusTest`), `DbTxErrorLabelingTest` (5, чистый
+Mockito-юнит на замоканных `DataSource`/`Connection`), `ConstantTimeTokensTest` (6) — плюс
+обновлённые под новый `ChainSvcClient.OracleRecordsResult` `GameFlowIntegrationTest`/
+`BotRestartRecoveryTest`. Реактор целиком: **6575, 0 упавших**, `BUILD SUCCESS`.
+
+Попутно найдено и по возможности исправлено (не отдельные Р-N, находки при самом прогоне):
+`AdminResource`'овский путь (JAX-RS `@Consumes`-биндинг тела запроса, в отличие от
+`RpcResource`'овского ручного `mapper.convertValue`) на самом деле не бросает
+`com.fasterxml.jackson.core.JsonProcessingException` напрямую — Quarkus REST
+(`ServerJacksonMessageBodyReader`) сам оборачивает её в `jakarta.ws.rs.WebApplicationException` с
+уже правильным `400`-ответом внутри, который старый `ApiExceptionMapper` (ловил только
+`ApiException`/`NoSuchElementException`/`IllegalArgumentException`) не узнавал и топил в общем
+`500` — проверено прогоном, не предположением; добавлена ветка на `WebApplicationException` (4xx
+→ сохранить статус, но подменить тело на обычный `{"error":{...}}` с общим сообщением, не тем, что
+несёт сама обёрнутая `JsonProcessingException`).
+
+`BotRestartRecoveryTest` — не результат этого прохода, но зафиксировано при повторных локальных
+прогонах (несколько запусков подряд для проверки новых тестов): тест изредка красный сам по себе,
+двумя разными способами — (а) документированная вероятностная природа таймингов ботов (см. его же
+javadoc про «~1% на бота на раунд») и (б) выявленная здесь же гонка в самих тестах этого файла
+(и `GameFlowIntegrationTest`, тот же паттерн): `@InjectMock ChainSvcClient` начинает получать
+реальные вызовы от фоновых `@Scheduled`-тиков (`RoundSchedulerService`/`OraclePublisherService`,
+раз в `HERD_TICK_MS`) сразу после старта Quarkus-приложения — то есть ещё до/во время
+многострочной настройки `when(...).thenAnswer(...)`/`when(...).thenReturn(...)` внутри самого
+теста; конкурентный вызов на том же моке в этот момент — известная нить-небезопасность Mockito при
+пошаговой настройке стаба, а не что-то новое в этой волне (структура настройки в обоих файлах не
+менялась, кроме типа возврата `oracleRecords`). Не в assigned paths этой волны и не входит в
+перечисленные Р-N/пункты задачи — не тронуто; здесь только задокументировано как факт для
+критика/следующего прохода.

@@ -45,6 +45,15 @@ public class GameConfig {
     @ConfigProperty(name = "herd.oracle.network")
     String oracleNetwork;
 
+    @ConfigProperty(name = "herd.chainsvc.token")
+    String chainsvcToken;
+
+    @ConfigProperty(name = "herd.ratelimit.capacity")
+    int rateLimitCapacity;
+
+    @ConfigProperty(name = "herd.ratelimit.refill-per-sec")
+    double rateLimitRefillPerSecond;
+
     public GameMode mode() {
         return GameMode.parse(modeRaw);
     }
@@ -87,5 +96,20 @@ public class GameConfig {
 
     public String oracleNetwork() {
         return oracleNetwork;
+    }
+
+    /** FIXED INTERFACE (a): the bearer token this server sends to chainsvc on every {@code
+     *  /v1/*} call (chainsvc's own {@code C2_SVC_TOKEN} must hold the same value — {@code
+     *  tools/stand.sh} generates both into {@code .env} together). */
+    public String chainsvcToken() {
+        return chainsvcToken;
+    }
+
+    public int rateLimitCapacity() {
+        return rateLimitCapacity;
+    }
+
+    public double rateLimitRefillPerSecond() {
+        return rateLimitRefillPerSecond;
     }
 }

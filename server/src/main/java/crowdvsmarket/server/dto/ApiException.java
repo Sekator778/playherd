@@ -63,6 +63,15 @@ public final class ApiException extends RuntimeException {
         return new ApiException(Enums.ApiErrorCode.BAD_REQUEST, 400, message);
     }
 
+    public static ApiException invalidNickname(String message) {
+        return new ApiException(Enums.ApiErrorCode.INVALID_NICKNAME, 400, message);
+    }
+
+    public static ApiException rateLimited() {
+        return new ApiException(Enums.ApiErrorCode.RATE_LIMITED, 429,
+                "too many requests — please slow down and try again shortly");
+    }
+
     public Enums.ApiErrorCode code() {
         return code;
     }

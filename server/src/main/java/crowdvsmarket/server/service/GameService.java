@@ -214,13 +214,22 @@ public class GameService {
                 identity.displayName(), row.isBot());
     }
 
+    /** Wave-1 finding: trimmed, 3–24 chars, allow-list {@code [A-Za-z0-9 _.-]} — the allow-list
+     *  itself already rejects control characters (including NUL) and anything outside that set,
+     *  since {@link java.util.regex.Matcher#matches()} requires the *whole* (trimmed) string to be
+     *  built only from these characters. */
+    private static final java.util.regex.Pattern NICKNAME_PATTERN =
+            java.util.regex.Pattern.compile("[A-Za-z0-9 _.-]{3,24}");
+
     public synchronized Identity.PlayerSummaryDto setNickname(String playerId, String nickname) {
-        if (nickname == null || nickname.isBlank()) {
-            throw ApiException.badRequest("nickname must not be blank");
+        String trimmed = nickname == null ? "" : nickname.strip();
+        if (!NICKNAME_PATTERN.matcher(trimmed).matches()) {
+            throw ApiException.invalidNickname(
+                    "nickname must be 3-24 characters: letters, digits, space, '_', '.', '-' only");
         }
         players.byId(playerId).orElseThrow(() -> ApiException.notFound("unknown player " + playerId));
         db.tx(c -> {
-            players.updateNickname(c, playerId, nickname.strip());
+            players.updateNickname(c, playerId, trimmed);
             return null;
         });
         return summary(playerId);

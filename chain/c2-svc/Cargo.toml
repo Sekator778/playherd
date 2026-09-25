@@ -72,3 +72,9 @@ clap = { version = "4.6", features = ["derive"] }
 [dev-dependencies]
 chia-sdk-test = "=0.36.0"
 tempfile = "3"
+# HTTP-level auth middleware tests (`src/service_auth.rs`, `tests/`) --
+# `tower::ServiceExt::oneshot` to drive an `axum::Router` directly without a
+# real TCP listener. Both already resolved transitively via `axum` itself
+# (see `Cargo.lock`), so pinning them as direct dev-deps adds no new crate to
+# the dependency graph, only a direct edge to ones already fetched.
+tower = { version = "0.5", features = ["util"] }

@@ -6,6 +6,7 @@ import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.dto.ServerInfo;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.util.ConstantTimeTokens;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
@@ -32,20 +33,12 @@ public class AdminResource {
 
     private void requireOperator(String authorizationHeader) {
         String expected = "Bearer " + config.operatorToken();
-        if (authorizationHeader == null || !constantTimeEquals(authorizationHeader, expected)) {
+        // Bug fix (wave-1 finding): compares fixed-length digests (ConstantTimeTokens), not the
+        // raw header/token strings — a raw-length short-circuit before the constant-time loop
+        // would leak the token's length to a timing attacker.
+        if (authorizationHeader == null || !ConstantTimeTokens.equals(authorizationHeader, expected)) {
             throw ApiException.unauthorized("missing or invalid operator bearer token");
         }
-    }
-
-    private static boolean constantTimeEquals(String a, String b) {
-        if (a.length() != b.length()) {
-            return false;
-        }
-        int diff = 0;
-        for (int i = 0; i < a.length(); i++) {
-            diff |= a.charAt(i) ^ b.charAt(i);
-        }
-        return diff == 0;
     }
 
     public record CancelRoundRequest(String reason) {
