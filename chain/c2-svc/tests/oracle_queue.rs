@@ -42,6 +42,10 @@ struct FakeChainClientInner {
     /// Every `push_tx` call returns this outcome; tests flip it between
     /// calls to simulate a failed-then-retried push.
     next_push_outcome: PushOutcome,
+    /// tx_id (`SpendBundle::name()`) -> whether `in_mempool` reports it
+    /// present. Defaults to "not in mempool" for any tx_id not explicitly
+    /// set, matching a rejected push that never entered the mempool.
+    in_mempool: HashMap<Bytes32, bool>,
     /// Artificial delay every trait method sleeps before returning --
     /// stands in for a slow/stuck coinset, so a test can prove
     /// `Publisher::status()` answers without waiting on whatever chain call
@@ -64,12 +68,25 @@ impl FakeChainClient {
                 status: Some("SUCCESS".to_string()),
                 error: None,
             },
+            in_mempool: HashMap::new(),
             delay: Duration::ZERO,
         }))
     }
 
     fn set_delay(&self, delay: Duration) {
         self.0.lock().unwrap().delay = delay;
+    }
+
+    /// Controls what the *next* `fee_estimate_mojos` call returns (task
+    /// instruction: "re-estimate with get_fee_estimate ... on each
+    /// consecutive fee rejection").
+    fn set_fee_estimate(&self, fee_mojos: u64) {
+        self.0.lock().unwrap().fee_mojos = fee_mojos;
+    }
+
+    /// Controls whether `in_mempool(tx_id)` reports `tx_id` present.
+    fn set_in_mempool(&self, tx_id: Bytes32, present: bool) {
+        self.0.lock().unwrap().in_mempool.insert(tx_id, present);
     }
 
     fn set_confirmed(&self, coin_id: Bytes32, height: u32) {
@@ -188,6 +205,19 @@ impl ChainClient for FakeChainClient {
             Ok(outcome)
         }
     }
+
+    fn in_mempool(&self, tx_id: Bytes32) -> impl Future<Output = Result<bool>> + Send {
+        let (present, delay) = {
+            let inner = self.0.lock().unwrap();
+            (inner.in_mempool.get(&tx_id).copied().unwrap_or(false), inner.delay)
+        };
+        async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            Ok(present)
+        }
+    }
 }
 
 // --- fixture -------------------------------------------------------------
@@ -234,6 +264,7 @@ fn set_up(retry_backoff: Duration) -> Result<Fixture> {
         chain: FakeChainClient::new(),
         retry_backoff,
         max_retry_attempts: 3,
+        max_fee_mojos: 50_000_000,
         fee_target_time_secs: 60,
         balance_snapshot: tokio::sync::RwLock::new(None),
     };
@@ -395,11 +426,17 @@ async fn stuck_in_flight_stops_auto_retrying_at_max_attempts() -> Result<()> {
     assert_eq!(fx.publisher.chain.push_call_count(), 3);
 
     let outcome = fx.publisher.tick().await?;
-    assert_eq!(outcome, TickOutcome::StuckInFlight);
+    match outcome {
+        TickOutcome::StuckInFlight { reason } => {
+            assert!(reason.contains("3 retry attempts"), "reason should name the attempt cap: {reason}");
+        }
+        other => panic!("expected StuckInFlight, got {other:?}"),
+    }
     assert_eq!(fx.publisher.chain.push_call_count(), 3, "must not push_tx again past max_retry_attempts");
 
     let status = fx.publisher.status().await?;
     assert!(status.in_flight_bundle_id.is_some(), "stuck spend still surfaced via status");
+    assert!(status.stuck_reason.is_some(), "stuck spend's reason surfaced via status too");
 
     Ok(())
 }
@@ -487,6 +524,198 @@ async fn dry_run_never_pushes_or_mutates_state() -> Result<()> {
     let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
     assert!(queue.in_flight.is_none());
     assert_eq!(queue.pending.len(), 2, "dry run must not drain the pending queue");
+
+    Ok(())
+}
+
+/// Task fix: a push the node REJECTS outright (never entered the mempool,
+/// e.g. `INVALID_FEE_TOO_CLOSE_TO_ZERO`) does not spend the singleton coin,
+/// so it isn't really "in flight" -- once coinset confirms the coin is
+/// still unspent and the bundle absent from the mempool, the publisher
+/// rebuilds with a higher, freshly re-estimated fee and broadcasts that
+/// instead, and the rebuilt bundle can go on to confirm normally.
+#[tokio::test]
+async fn fee_too_low_rejection_rebuilds_with_higher_fee_then_confirms() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?; // zero backoff: every tick is eligible to act
+
+    fx.publisher.enqueue(vec![record(1)])?;
+    fx.publisher.chain.set_fee_estimate(0);
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some(
+            "Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string(),
+        ),
+    });
+
+    let outcome = fx.publisher.tick().await?; // start_new_batch: broadcasts at fee=0, rejected
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
+    assert_eq!(fx.publisher.chain.push_call_count(), 1);
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let first_in_flight = queue.in_flight.expect("should be in flight after the rejected broadcast");
+    assert_eq!(first_in_flight.fee_mojos, 0);
+    assert_eq!(first_in_flight.attempts, 1);
+
+    // The mempool has since eased: a real, higher fee is now both estimated
+    // and sufficient for the node to accept the push.
+    fx.publisher.chain.set_fee_estimate(1_000_000);
+    fx.publisher
+        .chain
+        .set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+
+    let outcome = fx.publisher.tick().await?;
+    match outcome {
+        TickOutcome::Rebuilt { records, accepted, fee_mojos } => {
+            assert_eq!(records, 1);
+            assert!(accepted);
+            assert_eq!(fee_mojos, 1_000_000, "bumped fee = max(old_fee * 2, chain estimate)");
+        }
+        other => panic!("expected Rebuilt, got {other:?}"),
+    }
+    assert_eq!(fx.publisher.chain.push_call_count(), 2, "rebuild pushes exactly once, no extra retry");
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let rebuilt = queue.in_flight.expect("still in flight, now awaiting confirmation");
+    assert_eq!(rebuilt.fee_mojos, 1_000_000);
+    assert_eq!(rebuilt.attempts, 1, "a rebuilt bundle gets its own fresh retry budget");
+    assert_ne!(
+        rebuilt.bundle_id, first_in_flight.bundle_id,
+        "rebuilding (higher fee) produces a materially different bundle"
+    );
+
+    fx.publisher.chain.set_confirmed(rebuilt.next_coin.coin_id(), 4_800_000);
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Confirmed { records: 1 });
+
+    let status = fx.publisher.status().await?;
+    assert_eq!(status.last_confirmed_seq, Some(1));
+    assert!(status.stuck_reason.is_none());
+
+    Ok(())
+}
+
+/// Task instruction: once the fee has been bumped up to `max_fee_mojos` and
+/// still gets rejected, the publisher must stop escalating and clearly
+/// report "needs operator attention" with a reason, both from `tick()` and
+/// from `GET /v1/oracle/status`.
+#[tokio::test]
+async fn fee_cap_reached_reports_stuck_with_reason() -> Result<()> {
+    let mut fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.max_fee_mojos = 100; // tiny cap -- saturates on the very first rebuild
+
+    fx.publisher.enqueue(vec![record(1)])?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
+    });
+
+    let outcome = fx.publisher.tick().await?; // Broadcast at fee=0
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
+
+    fx.publisher.chain.set_fee_estimate(999_999); // far above the cap
+    let outcome = fx.publisher.tick().await?; // rebuild: fee clamped to the 100-mojo cap
+    match outcome {
+        TickOutcome::Rebuilt { fee_mojos, accepted, .. } => {
+            assert_eq!(fee_mojos, 100, "fee must be clamped to max_fee_mojos, not the raw estimate");
+            assert!(!accepted);
+        }
+        other => panic!("expected Rebuilt, got {other:?}"),
+    }
+    assert_eq!(fx.publisher.chain.push_call_count(), 2);
+
+    // Fee is already at the cap -- nothing left to escalate, so further
+    // rejections just retry the same (capped-fee) bundle up to
+    // max_retry_attempts (3, from `set_up`), then report stuck.
+    let outcome = fx.publisher.tick().await?; // attempts: 1 -> 2
+    assert_eq!(outcome, TickOutcome::Retried { accepted: false });
+    let outcome = fx.publisher.tick().await?; // attempts: 2 -> 3 == max_retry_attempts
+    assert_eq!(outcome, TickOutcome::Retried { accepted: false });
+    assert_eq!(fx.publisher.chain.push_call_count(), 4);
+
+    let outcome = fx.publisher.tick().await?;
+    match outcome {
+        TickOutcome::StuckInFlight { reason } => {
+            assert!(reason.contains("fee cap of 100 mojos reached"), "reason should name the cap: {reason}");
+        }
+        other => panic!("expected StuckInFlight, got {other:?}"),
+    }
+    assert_eq!(fx.publisher.chain.push_call_count(), 4, "must not push_tx again once genuinely stuck");
+
+    let status = fx.publisher.status().await?;
+    assert!(
+        status.stuck_reason.as_deref().is_some_and(|r| r.contains("fee cap of 100 mojos reached")),
+        "status() must surface the same clear reason: {:?}",
+        status.stuck_reason
+    );
+
+    Ok(())
+}
+
+/// "never double-spend the singleton" guard for the rebuild path: if
+/// coinset shows the singleton coin this rejected bundle would spend is
+/// already spent (e.g. by a race, or a push that actually landed despite a
+/// misleading rejection response), the publisher must not rebuild on top of
+/// it -- just wait for the next tick's `next_coin` confirmation check.
+#[tokio::test]
+async fn no_rebuild_while_singleton_coin_already_spent() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.enqueue(vec![record(1)])?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
+    });
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.expect("should be in flight");
+    fx.publisher.chain.set_spent(in_flight.spent_coin.coin_id(), 50, 51);
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(
+        outcome,
+        TickOutcome::WaitingForConfirmation,
+        "must not rebuild on top of an already-spent singleton coin"
+    );
+    assert_eq!(fx.publisher.chain.push_call_count(), 1, "must not push_tx again");
+
+    Ok(())
+}
+
+/// Task instruction: "the previous bundle IS in the mempool but pending too
+/// long: leave it". Even for a fee-looking rejection, if coinset's own
+/// mempool lookup shows the bundle present, the publisher must not rebuild
+/// or resubmit -- only wait.
+#[tokio::test]
+async fn no_rebuild_while_bundle_still_in_mempool() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.enqueue(vec![record(1)])?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
+    });
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.expect("should be in flight");
+    // Coinset's own mempool read disagrees with the cached
+    // `last_push_accepted: false` -- the bundle actually made it in.
+    fx.publisher.chain.set_in_mempool(in_flight.bundle.name(), true);
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(
+        outcome,
+        TickOutcome::WaitingForConfirmation,
+        "must not rebuild/resubmit a bundle coinset shows is already in the mempool"
+    );
+    assert_eq!(fx.publisher.chain.push_call_count(), 1, "must not push_tx again");
 
     Ok(())
 }

@@ -16,7 +16,7 @@ use std::future::Future;
 use anyhow::{Context, Result};
 use chia_bls::SecretKey;
 use chia_protocol::{Bytes32, SpendBundle};
-use chia_sdk_coinset::{ChiaRpcClient, CoinsetClient};
+use chia_sdk_coinset::{ChiaRpcClient, CoinsetClient, GetMempoolItemResponse};
 use serde::Deserialize;
 
 use c2_cli::chain::ADDRESS_GAP;
@@ -63,6 +63,19 @@ pub trait ChainClient: Send + Sync {
     fn balance(&self, master_sk: &SecretKey) -> impl Future<Output = Result<u64>> + Send;
 
     fn push_tx(&self, bundle: SpendBundle) -> impl Future<Output = Result<PushOutcome>> + Send;
+
+    /// Whether `tx_id` (a `SpendBundle::name()` -- the node's own canonical
+    /// hash, *not* this service's locally-displayed `bundle_id`, see
+    /// `queue.rs::InFlightSpend::bundle_id`'s doc comment) is currently known
+    /// to the mempool. Distinguishes "the node rejected this push outright,
+    /// it never entered the mempool" (safe to rebuild with a higher fee,
+    /// task instruction: "the singleton coin is still unspent") from "it's
+    /// sitting in the mempool, just slow to confirm" (task instruction:
+    /// "leave it" -- Chia has no fee-bump replacement for a same-coin bundle
+    /// already known to the mempool unless the replacement spends a superset
+    /// of coins at a higher fee, which this service does not implement, see
+    /// `publisher.rs::advance_in_flight`).
+    fn in_mempool(&self, tx_id: Bytes32) -> impl Future<Output = Result<bool>> + Send;
 }
 
 #[derive(Debug, Clone)]
@@ -168,5 +181,21 @@ impl ChainClient for CoinsetChainClient {
             status: response.status,
             error: response.error,
         })
+    }
+
+    async fn in_mempool(&self, tx_id: Bytes32) -> Result<bool> {
+        // Verified live against `https://testnet11.api.coinset.org/
+        // get_mempool_item_by_tx_id` today (2026-09-25) for a tx_id this
+        // node had genuinely never seen: `{"error":"Tx 0x... not in
+        // mempool","structuredError":{"code":"TX_NOT_IN_MEMPOOL",...},
+        // "success":false}` -- same "no hard error, just an absent record"
+        // shape `coin_record` above already relies on, so this maps
+        // `mempool_item: None` directly to `false` regardless of `success`.
+        let response: GetMempoolItemResponse = self
+            .client
+            .get_mempool_item_by_tx_id(tx_id)
+            .await
+            .context("get_mempool_item_by_tx_id")?;
+        Ok(response.mempool_item.is_some())
     }
 }

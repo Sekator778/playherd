@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
         chain,
         retry_backoff: config.retry_backoff,
         max_retry_attempts: config.max_retry_attempts,
+        max_fee_mojos: config.max_fee_mojos,
         fee_target_time_secs: 60,
         balance_snapshot: tokio::sync::RwLock::new(None),
     });

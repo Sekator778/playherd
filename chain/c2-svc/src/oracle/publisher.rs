@@ -9,8 +9,11 @@
 //! One `tick()` call does exactly one of, in priority order:
 //! 1. an in-flight spend just confirmed -> finalize (advance
 //!    `operator.oracle.json`, clear `in_flight`);
-//! 2. an in-flight spend is still unconfirmed -> maybe retry `push_tx`
-//!    (backoff, task instruction "retries with backoff");
+//! 2. an in-flight spend is still unconfirmed -> either wait (still sitting
+//!    in the mempool, or backoff hasn't elapsed), rebuild it with a higher
+//!    fee (rejected for being underpriced, task instruction), or retry the
+//!    exact same bundle (any other rejection reason, task instruction
+//!    "retries with backoff");
 //! 3. no in-flight spend and records are pending -> build, sign, persist
 //!    (durably, before broadcasting), and broadcast a new batch (<=20
 //!    records, task instruction);
@@ -18,22 +21,40 @@
 //!
 //! "Never double-spend the singleton" (task instruction) is enforced two
 //! ways: only one `in_flight` spend is ever persisted at a time (case 3
-//! only runs when `in_flight` is `None`), and case 3 additionally checks
-//! coinset that `OracleState::current_coin` isn't already spent before
-//! building on top of it (guards against a previous crash having left
-//! stale local state -- see `docs/research/chain_service.md` §5).
+//! only runs when `in_flight` is `None`), and both case 3 and the
+//! fee-rebuild path in case 2 additionally check coinset that the singleton
+//! coin they're about to spend isn't already spent, *and* (for a rebuild)
+//! that the previous bundle isn't sitting in the mempool, before building on
+//! top of it (guards against a previous crash having left stale local
+//! state, or against a "rejected" push that actually made it into the
+//! mempool anyway -- see `docs/research/chain_service.md` §5).
+//!
+//! **Fee-rejection recovery** (task fix, `docs/research/chain_service.md`):
+//! a push the node rejects outright (e.g. `INVALID_FEE_TOO_CLOSE_TO_ZERO`)
+//! never spends the singleton coin -- it is not "in flight" in any sense
+//! that blocks progress. Once `advance_in_flight` confirms via coinset that
+//! the coin is genuinely still unspent *and* the rejected bundle is genuinely
+//! absent from the mempool, it rebuilds the same records (plus any newly
+//! queued ones, still <=20) with a re-estimated, multiplied fee (capped at
+//! `Publisher::max_fee_mojos`) and broadcasts that instead -- resetting the
+//! per-bundle `attempts` counter, since it's a materially different
+//! transaction with its own retry budget. This is also how a stuck spend
+//! from a *previous* process run recovers automatically on the next tick
+//! after restart: `attempts` from before the restart no longer permanently
+//! blocks progress once a fee bump is possible (see `stuck_reason`).
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use chia_protocol::SpendBundle;
+use chia_bls::Signature;
+use chia_protocol::{CoinSpend, SpendBundle};
 use chia_puzzle_types::Proof;
 use sha2::{Digest, Sha256};
 
 use c2_cli::builders::fee::build_fee_only;
 use c2_cli::cost::measure_bundle_cost;
-use c2_cli::state::ProofDto;
+use c2_cli::state::{OracleState, ProofDto};
 
 use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
 use crate::state_file::{load_oracle_state, save_oracle_state_atomic};
@@ -42,6 +63,57 @@ use super::chain_client::ChainClient;
 use super::queue::{InFlightSpend, QueueFile};
 use super::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
 use super::types::{OracleRecord, OracleStatusResponse};
+
+/// Task instruction: "A push that the node REJECTS (never entered the
+/// mempool -- e.g. INVALID_FEE_TOO_CLOSE_TO_ZERO, fee too low) is not 'in
+/// flight'". `INVALID_FEE_TOO_CLOSE_TO_ZERO` is the exact rejection this
+/// service observed live on this stand (see `docs/research/
+/// chain_service.md`) and the same one already documented from a live
+/// testnet11 `push_tx` in `docs/research/week1_testnet_results.md` §5.1
+/// (`c2 issue-play`, same mempool-manager rejection). The broader
+/// case-insensitive "contains FEE" match below is a **предложение**, not a
+/// verified enumeration of every Chia fee-rejection error code -- it only
+/// ever *widens* which rejections get the extra chain-verified rebuild
+/// treatment below; the actual "never double-spend" safety comes from
+/// `advance_in_flight`'s coin-unspent/not-in-mempool checks before this is
+/// ever consulted, not from this string match.
+fn is_fee_rejection(error: Option<&str>) -> bool {
+    error.is_some_and(|msg| msg.to_ascii_uppercase().contains("FEE"))
+}
+
+/// The "needs operator attention" message for a stuck in-flight spend --
+/// shared by `advance_in_flight`'s `StuckInFlight` outcome and
+/// `GET /v1/oracle/status`'s `stuckReason`, so both always agree. `Some`
+/// only once `in_flight.attempts` has exhausted `max_retry_attempts` *on its
+/// current bundle* -- a rebuild resets that counter (see module doc), so a
+/// spend that's still being automatically fee-bumped is not yet "stuck".
+fn stuck_reason(in_flight: &InFlightSpend, max_retry_attempts: u32, max_fee_mojos: u64) -> Option<String> {
+    if in_flight.attempts < max_retry_attempts {
+        return None;
+    }
+    let fee_note = if in_flight.fee_mojos >= max_fee_mojos {
+        format!("fee cap of {max_fee_mojos} mojos reached")
+    } else {
+        format!("fee {} mojos, cap {max_fee_mojos} mojos", in_flight.fee_mojos)
+    };
+    Some(format!(
+        "bundle {} exceeded {max_retry_attempts} retry attempts ({fee_note}): {}",
+        in_flight.bundle_id,
+        in_flight.last_push_error.as_deref().unwrap_or("(no error message)")
+    ))
+}
+
+/// **предложение**: `sha256` of the aggregated signature's bytes, a stable
+/// per-attempt label for `GET /v1/oracle/status`'s `inFlightBundleId` --
+/// *not* Chia's canonical spend-bundle name (`SpendBundle::name()`, used
+/// instead wherever the real chain/mempool needs to identify this exact
+/// bundle, e.g. `advance_in_flight`'s `in_mempool` check). See
+/// `queue.rs::InFlightSpend::bundle_id`'s doc comment.
+fn bundle_display_id(signature: &Signature) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(signature.to_bytes());
+    format!("0x{}", hex::encode(hasher.finalize()))
+}
 
 fn now_unix() -> i64 {
     SystemTime::now()
@@ -61,11 +133,20 @@ pub enum TickOutcome {
     Broadcast { records: usize, accepted: bool },
     /// An already-in-flight spend's `push_tx` was retried this tick.
     Retried { accepted: bool },
-    /// An in-flight spend exists but isn't due for a retry yet.
+    /// The previous bundle was rejected for being underpriced and coinset
+    /// confirmed it's genuinely not in flight (coin unspent, bundle absent
+    /// from the mempool) -- rebuilt with a higher fee and broadcast (task
+    /// instruction: "rebuild the spend with a higher fee").
+    Rebuilt { records: usize, accepted: bool, fee_mojos: u64 },
+    /// An in-flight spend exists but isn't due for a retry yet, or is
+    /// sitting in the mempool / has its coin already spent by something
+    /// else -- either way, nothing to do this tick but wait.
     WaitingForConfirmation,
-    /// An in-flight spend hit `max_retry_attempts` -- needs operator
-    /// attention (surfaced via `GET /v1/oracle/status`).
-    StuckInFlight,
+    /// An in-flight spend hit `max_retry_attempts` on its current bundle and
+    /// can no longer be escalated (fee already at `max_fee_mojos`, or the
+    /// rejection reason wasn't fee-related) -- needs operator attention
+    /// (surfaced via `GET /v1/oracle/status`'s `stuckReason`).
+    StuckInFlight { reason: String },
     /// The in-flight spend's `next_coin` was found confirmed on chain;
     /// `operator.oracle.json` was advanced and the queue's `in_flight` was
     /// cleared.
@@ -79,6 +160,10 @@ pub struct Publisher<C: ChainClient> {
     pub chain: C,
     pub retry_backoff: Duration,
     pub max_retry_attempts: u32,
+    /// Hard ceiling (mojos) on a rebuilt spend's fee -- see
+    /// `Config::max_fee_mojos` (`C2_MAX_FEE_MOJOS`, task instruction:
+    /// "configurable cap").
+    pub max_fee_mojos: u64,
     /// `target_times` seconds passed to `get_fee_estimate` (task
     /// instruction: "fees from coinset get_fee_estimate with the dry-run
     /// cost"). **предложение**: 60s, see `Config::retry_backoff` doc.
@@ -124,6 +209,10 @@ impl<C: ChainClient> Publisher<C> {
         let operator_balance_mojos = self.balance_snapshot.read().await.clone();
 
         let in_flight_records = queue.in_flight.as_ref().map(|f| f.records.len()).unwrap_or(0);
+        let stuck = queue
+            .in_flight
+            .as_ref()
+            .and_then(|f| stuck_reason(f, self.max_retry_attempts, self.max_fee_mojos));
 
         Ok(OracleStatusResponse {
             launcher_id: oracle_state
@@ -136,6 +225,7 @@ impl<C: ChainClient> Publisher<C> {
             pending_records: queue.pending_count() + in_flight_records,
             in_flight_bundle_id: queue.in_flight.as_ref().map(|f| f.bundle_id.clone()),
             operator_balance_mojos,
+            stuck_reason: stuck,
         })
     }
 
@@ -198,15 +288,10 @@ impl<C: ChainClient> Publisher<C> {
             return Ok(TickOutcome::Confirmed { records: confirmed_count });
         }
 
-        if in_flight.attempts >= self.max_retry_attempts {
-            tracing::warn!(
-                bundle_id = %in_flight.bundle_id,
-                attempts = in_flight.attempts,
-                "in-flight oracle publish spend exceeded max retry attempts, needs operator attention"
-            );
-            return Ok(TickOutcome::StuckInFlight);
-        }
-
+        // Backoff / dry-run gating happens before anything else below --
+        // including for an already-exhausted spend, so a stuck spend is
+        // reported via `status()`/logs rather than hammering coinset every
+        // tick (unchanged from the old behavior).
         let elapsed = now_unix() - in_flight.last_attempt_at_unix;
         if elapsed < self.retry_backoff.as_secs() as i64 {
             return Ok(TickOutcome::WaitingForConfirmation);
@@ -215,6 +300,70 @@ impl<C: ChainClient> Publisher<C> {
             return Ok(TickOutcome::WaitingForConfirmation);
         }
 
+        // Never-double-spend checks, done *before* consulting
+        // `max_retry_attempts` below: a spend that exhausted its attempts in
+        // a previous process run (e.g. before this fix existed) must not
+        // stay permanently stuck once it's actually safe to rebuild -- see
+        // module doc "recovers automatically on the next tick after
+        // restart".
+        let spent_record = self
+            .chain
+            .coin_record(in_flight.spent_coin.coin_id())
+            .await
+            .context("checking singleton coin before acting on an in-flight spend")?;
+        if spent_record.spent {
+            // Something else (or a race with the `next_coin` check above)
+            // already spent it -- don't touch anything, the next tick's
+            // `next_coin` check will resolve it once the recreated coin is
+            // visible.
+            return Ok(TickOutcome::WaitingForConfirmation);
+        }
+        let in_mempool = self
+            .chain
+            .in_mempool(in_flight.bundle.name())
+            .await
+            .context("checking mempool for the in-flight spend's bundle")?;
+        if in_mempool {
+            // Task instruction: "the previous bundle IS in the mempool but
+            // pending too long: leave it". A Chia mempool replacement
+            // requires spending a *superset* of the same coins at a
+            // strictly higher fee (`chia-blockchain`'s
+            // `mempool_manager.py::check_removals`/`MempoolItem` replacement
+            // rule) -- a same-coin, higher-fee rebuild does not qualify, so
+            // resubmitting it would just be rejected as a conflicting spend.
+            // Not implemented; just wait for it to confirm or fall out of
+            // the mempool on its own.
+            return Ok(TickOutcome::WaitingForConfirmation);
+        }
+
+        // Not in the mempool and the coin is still unspent: the last push
+        // was genuinely rejected (or evicted). If it looks like an
+        // underpriced-fee rejection and there's still room under the fee
+        // cap, rebuild with a higher fee rather than resubmitting the exact
+        // bytes that were just rejected.
+        if !in_flight.last_push_accepted
+            && is_fee_rejection(in_flight.last_push_error.as_deref())
+            && in_flight.fee_mojos < self.max_fee_mojos
+        {
+            return self.rebuild_in_flight(queue, in_flight).await;
+        }
+
+        // Can't (or don't need to) escalate the fee -- exhausted this
+        // bundle's dedicated retry budget?
+        if let Some(reason) = stuck_reason(&in_flight, self.max_retry_attempts, self.max_fee_mojos) {
+            tracing::warn!(
+                bundle_id = %in_flight.bundle_id,
+                attempts = in_flight.attempts,
+                fee_mojos = in_flight.fee_mojos,
+                reason = %reason,
+                "in-flight oracle publish spend needs operator attention"
+            );
+            return Ok(TickOutcome::StuckInFlight { reason });
+        }
+
+        // Plain retry of the exact same bundle: covers a rejection that
+        // isn't fee-related (no point rebuilding -- a higher fee wouldn't
+        // fix it), or the fee-capped case that still has attempts left.
         let outcome = self
             .chain
             .push_tx(in_flight.bundle.clone())
@@ -235,10 +384,156 @@ impl<C: ChainClient> Publisher<C> {
         Ok(TickOutcome::Retried { accepted })
     }
 
+    /// Rebuilds the in-flight spend's records (plus any newly queued ones,
+    /// task instruction: "merging any newly queued records into the
+    /// rebuilt spend (<=20)") against the *same* singleton coin, with a
+    /// re-estimated and multiplied fee, and broadcasts it in place of the
+    /// rejected bundle. Only ever called after `advance_in_flight` has
+    /// confirmed the singleton coin is unspent and the previous bundle is
+    /// absent from the mempool (never-double-spend guard).
+    async fn rebuild_in_flight(&self, queue: &mut QueueFile, in_flight: InFlightSpend) -> Result<TickOutcome> {
+        let manager = load_operator_wallet_key(&self.data_dir, &self.operator_name)
+            .context("loading operator wallet key")?;
+        let oracle_state = load_oracle_state(&self.data_dir, &self.operator_name)
+            .context("loading oracle state to rebuild a rejected spend")?;
+        if oracle_state.current_coin != in_flight.spent_coin {
+            // Belt-and-suspenders: `advance_in_flight` already checked
+            // `in_flight.spent_coin` unspent on-chain, and `current_coin` is
+            // only ever advanced on a *confirmed* spend (which would have
+            // taken the early `Confirmed` return above) -- so these must
+            // already match. Refuse rather than rebuild against a
+            // mismatched coin if that invariant is ever violated.
+            bail!(
+                "oracle state current_coin {} no longer matches the in-flight spend's coin {} -- \
+                 refusing to rebuild (needs manual reconciliation, see docs/research/chain_service.md §5)",
+                oracle_state.current_coin.coin_id(),
+                in_flight.spent_coin.coin_id()
+            );
+        }
+
+        // Merge any newly queued pending records into this rebuilt batch,
+        // oldest first, capped at `MAX_RECORDS_PER_SPEND` total.
+        let mut records = in_flight.records.clone();
+        let room = MAX_RECORDS_PER_SPEND.saturating_sub(records.len());
+        if room > 0 {
+            records.extend(queue.take_batch(room));
+        }
+        let batch_len = records.len();
+
+        let current_proof: Proof = oracle_state.current_proof();
+        let draft = build_oracle_publish_batch(
+            oracle_state.launcher_id,
+            oracle_state.current_coin,
+            current_proof,
+            &manager,
+            &records,
+        )
+        .context("rebuilding oracle-publish batch spend with a higher fee")?;
+        let draft_cost = measure_bundle_cost(&draft.coin_spends).context("measuring rebuilt draft spend cost")?;
+
+        // Task instruction: "re-estimate with get_fee_estimate for the real
+        // cost at a shorter target time" -- a rejected, congested-mempool
+        // spend needs to outbid the mempool *sooner* than a fresh batch's
+        // default target, not just match it. **предложение**: a third of
+        // `fee_target_time_secs`, floor 1s.
+        let shorter_target = (self.fee_target_time_secs / 3).max(1);
+        let chain_estimate = match self.chain.fee_estimate_mojos(draft_cost.total_cost, shorter_target).await {
+            Ok(fee) => fee,
+            Err(e) => {
+                tracing::warn!("get_fee_estimate failed while rebuilding a rejected spend, falling back to 0: {e:#}");
+                0
+            }
+        };
+        // Task instruction: "on each consecutive fee rejection multiply the
+        // fee (e.g. x2) up to a configurable cap".
+        let fee_mojos = in_flight
+            .fee_mojos
+            .saturating_mul(2)
+            .max(chain_estimate)
+            .max(1)
+            .min(self.max_fee_mojos);
+
+        let (coin_spends, signature) = self.attach_fee_coin(draft.coin_spends, draft.signature, fee_mojos).await?;
+        let bundle_id = bundle_display_id(&signature);
+        let bundle = SpendBundle::new(coin_spends, signature);
+        let next_proof_dto: ProofDto = draft.next_proof.into();
+        let now = now_unix();
+
+        queue.in_flight = Some(InFlightSpend {
+            records,
+            spent_coin: oracle_state.current_coin,
+            next_coin: draft.next_coin,
+            next_proof: next_proof_dto,
+            bundle: bundle.clone(),
+            bundle_id,
+            fee_mojos,
+            broadcast_at_unix: now,
+            last_attempt_at_unix: now,
+            // A materially different (higher-fee) transaction gets its own
+            // retry budget rather than inheriting the rejected bundle's
+            // exhausted count (module doc: "resetting the per-bundle
+            // `attempts` counter").
+            attempts: 1,
+            last_push_accepted: false,
+            last_push_error: None,
+        });
+        // Durability first, same invariant as `start_new_batch`.
+        queue
+            .save_atomic(&self.data_dir, &self.operator_name)
+            .context("persisting rebuilt in-flight spend before broadcasting")?;
+
+        let outcome = self.chain.push_tx(bundle).await.context("push_tx for rebuilt batch")?;
+        if let Some(in_flight) = queue.in_flight.as_mut() {
+            in_flight.last_push_accepted = outcome.accepted;
+            in_flight.last_push_error = outcome.error.clone();
+        }
+        queue
+            .save_atomic(&self.data_dir, &self.operator_name)
+            .context("persisting rebuilt push_tx outcome")?;
+
+        tracing::info!(
+            records = batch_len,
+            fee_mojos,
+            accepted = outcome.accepted,
+            "rebuilt oracle publish batch with a higher fee after a rejection"
+        );
+        Ok(TickOutcome::Rebuilt {
+            records: batch_len,
+            accepted: outcome.accepted,
+            fee_mojos,
+        })
+    }
+
+    /// Adds a fee-only coin spend (and its signature) for `fee_mojos` to a
+    /// draft's coin spends/signature, when `fee_mojos > 0`. Shared by
+    /// `start_new_batch` and `rebuild_in_flight` -- the only difference
+    /// between them is how `fee_mojos` itself is computed.
+    async fn attach_fee_coin(
+        &self,
+        mut coin_spends: Vec<CoinSpend>,
+        signature: Signature,
+        fee_mojos: u64,
+    ) -> Result<(Vec<CoinSpend>, Signature)> {
+        if fee_mojos == 0 {
+            return Ok((coin_spends, signature));
+        }
+        let master_sk =
+            load_operator_master_sk(&self.data_dir, &self.operator_name).context("loading operator master key")?;
+        let (payer, fee_coin) = self
+            .chain
+            .find_funding_coin(&master_sk, fee_mojos)
+            .await
+            .context("no funding coin to pay the oracle-publish batch fee with")?;
+        let fee_result = build_fee_only(fee_coin, &payer, fee_mojos).context("building fee-only coin spend")?;
+        coin_spends.extend(fee_result.coin_spends);
+        let signature = signature + &fee_result.signature;
+        Ok((coin_spends, signature))
+    }
+
     async fn start_new_batch(&self, queue: &mut QueueFile) -> Result<TickOutcome> {
         let manager = load_operator_wallet_key(&self.data_dir, &self.operator_name)
             .context("loading operator wallet key")?;
-        let oracle_state =
+        let oracle_state: OracleState =
             load_oracle_state(&self.data_dir, &self.operator_name).context("loading oracle state")?;
 
         // Never double-spend the singleton: refuse to build on stale local
@@ -284,21 +579,6 @@ impl<C: ChainClient> Publisher<C> {
             }
         };
 
-        let mut coin_spends = draft.coin_spends;
-        let mut signature = draft.signature;
-        if fee_mojos > 0 {
-            let master_sk =
-                load_operator_master_sk(&self.data_dir, &self.operator_name).context("loading operator master key")?;
-            let (payer, fee_coin) = self
-                .chain
-                .find_funding_coin(&master_sk, fee_mojos)
-                .await
-                .context("no funding coin to pay the oracle-publish batch fee with")?;
-            let fee_result = build_fee_only(fee_coin, &payer, fee_mojos).context("building fee-only coin spend")?;
-            coin_spends.extend(fee_result.coin_spends);
-            signature = signature + &fee_result.signature;
-        }
-
         if !self.push_enabled {
             tracing::info!(
                 records = batch_len,
@@ -308,15 +588,16 @@ impl<C: ChainClient> Publisher<C> {
             );
             // Put the drained batch back -- dry-run must not change any
             // persisted state (mirrors `c2-cli`'s own `--push` convention).
+            // Also skips `attach_fee_coin`'s `find_funding_coin` network
+            // call below -- a dry run has no reason to touch the chain past
+            // the fee estimate above (task fix: incidental improvement, the
+            // old code called it unconditionally even in dry-run mode).
             queue.pending.splice(0..0, batch);
             return Ok(TickOutcome::DryRun { records: batch_len });
         }
 
-        let bundle_id = {
-            let mut hasher = Sha256::new();
-            hasher.update(signature.to_bytes());
-            format!("0x{}", hex::encode(hasher.finalize()))
-        };
+        let (coin_spends, signature) = self.attach_fee_coin(draft.coin_spends, draft.signature, fee_mojos).await?;
+        let bundle_id = bundle_display_id(&signature);
         let bundle = SpendBundle::new(coin_spends, signature);
         let next_proof_dto: ProofDto = draft.next_proof.into();
 

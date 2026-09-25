@@ -111,4 +111,15 @@ pub struct OracleStatusResponse {
     pub pending_records: usize,
     pub in_flight_bundle_id: Option<String>,
     pub operator_balance_mojos: Option<String>,
+    /// **предложение** (extends the FIXED INTERFACE (3) status shape the
+    /// same way `inFlightBundleId`/`operatorBalanceMojos` already do, see
+    /// `chain_service.md` §4 -- `chainsvc` is an internal service, not part
+    /// of the public web contract). `Some` once the in-flight spend has
+    /// exhausted `max_retry_attempts` on its current bundle and either the
+    /// fee is already at `C2_MAX_FEE_MOJOS` or the rejection reason isn't
+    /// fee-related (task instruction: "clear 'operator attention' status
+    /// with the reason"), `None` otherwise -- including while a fee-bump
+    /// rebuild is still automatically in progress, see
+    /// `publisher.rs::stuck_reason`.
+    pub stuck_reason: Option<String>,
 }

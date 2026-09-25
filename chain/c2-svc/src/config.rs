@@ -50,12 +50,25 @@ pub struct Config {
     /// `docs/research/week1_chain_access.md`) so a normal confirmation
     /// isn't mistaken for a stuck push.
     pub retry_backoff: std::time::Duration,
-    /// Cap on retry attempts for one broadcast before this service stops
-    /// auto-retrying and only reports the stuck spend via
+    /// Cap on retry attempts for one broadcast (bundle version -- a
+    /// fee-bumped rebuild starts its own fresh count, see
+    /// `publisher.rs::advance_in_flight`) before this service stops
+    /// auto-retrying it and only reports the stuck spend via
     /// `GET /v1/oracle/status` (`inFlightBundleId`) for the operator to
     /// look at (Р-43: "операторский CLI + публичная страница статуса").
     /// **предложение**.
     pub max_retry_attempts: u32,
+    /// Hard ceiling on the fee (mojos) a rebuilt spend may pay when the node
+    /// keeps rejecting a broadcast for being under the mempool's current
+    /// minimum (task instruction: "on each consecutive fee rejection
+    /// multiply the fee ... up to a configurable cap"). `C2_MAX_FEE_MOJOS`,
+    /// **предложение** default 50 000 000 mojos = 0.00005 TXCH (task
+    /// instruction's own suggested default) -- generous enough to clear
+    /// testnet11's observed ~90-100% full mempool (`docs/research/
+    /// week1_testnet_results.md` §5.1: a real accepted fee there was
+    /// 3 000 000 mojos at cost≈38.7M) while still bounding the operator's
+    /// TXCH spend if the mempool is congested indefinitely.
+    pub max_fee_mojos: u64,
 }
 
 impl Config {
@@ -74,6 +87,10 @@ impl Config {
             .unwrap_or(8090);
         let coinset_base_url = std::env::var("C2_COINSET_BASE_URL")
             .unwrap_or_else(|_| "https://testnet11.api.coinset.org".to_string());
+        let max_fee_mojos = std::env::var("C2_MAX_FEE_MOJOS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50_000_000);
         Self {
             data_dir,
             operator_name,
@@ -83,6 +100,7 @@ impl Config {
             publisher_tick: std::time::Duration::from_secs(10),
             retry_backoff: std::time::Duration::from_secs(45),
             max_retry_attempts: 8,
+            max_fee_mojos,
         }
     }
 
