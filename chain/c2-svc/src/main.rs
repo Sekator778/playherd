@@ -11,7 +11,7 @@ use clap::Parser;
 use c2_svc::app;
 use c2_svc::config::{Config, check_startup_auth_config};
 use c2_svc::oracle::chain_client::CoinsetChainClient;
-use c2_svc::oracle::publisher::Publisher;
+use c2_svc::oracle::publisher::{Publisher, TickFailureState};
 
 #[derive(Parser)]
 #[command(name = "c2-svc", about = "C2 chain service: auth/verify + oracle publisher (FIXED INTERFACE 3)")]
@@ -58,7 +58,31 @@ async fn main() -> Result<()> {
         fee_target_time_secs: 60,
         balance_snapshot: tokio::sync::RwLock::new(None),
         queue_lock: tokio::sync::Mutex::new(()),
+        tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
+        tick_failure_threshold: config.tick_failure_threshold,
     });
+
+    // Task fix (`docs/research/chain_service.md` §11): "before accepting or
+    // publishing anything" -- walk the oracle singleton lineage and
+    // reconcile the local queue against it *before* any listener opens or
+    // the periodic loops below start ticking. Never trust a possibly stale
+    // or race-corrupted `<name>.oracle_queue.json` on its own: this is what
+    // the incident that motivated this fix got wrong (76 already-confirmed
+    // records republished after a redeploy onto exactly such a file). A
+    // no-op (not an error) when there's no oracle state yet (`c2
+    // oracle-launch` not run) -- only a genuine chain-access failure refuses
+    // startup here, the same "fail closed on a safety invariant" precedent
+    // `check_startup_auth_config` above already sets for this service.
+    let bootstrap_outcome = publisher
+        .bootstrap_from_chain()
+        .await
+        .context("startup chain-lineage bootstrap (docs/research/chain_service.md §11) failed")?;
+    tracing::info!(
+        generations_advanced = bootstrap_outcome.generations_advanced,
+        dropped_confirmed = bootstrap_outcome.dropped_confirmed.len(),
+        conflicts = bootstrap_outcome.new_conflicts.len(),
+        "startup chain-lineage bootstrap complete"
+    );
 
     // Background oracle-publisher loop: advances in-flight spends /
     // starts new batches from the durable queue on a fixed tick, so a

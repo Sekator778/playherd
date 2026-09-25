@@ -39,19 +39,45 @@ where
         .route("/v1/oracle/records", post(oracle_records::<C>))
         .route("/v1/oracle/records/:seq", get(oracle_record_status::<C>))
         .route("/v1/oracle/status", get(oracle_status::<C>))
-        .with_state(publisher)
+        .with_state(publisher.clone())
         .layer(axum::middleware::from_fn_with_state(svc_token_state, require_bearer_token));
 
-    Router::new().route("/health", get(health)).merge(protected)
+    // Task fix (`docs/research/chain_service.md` §12): `/health` now reads
+    // `Publisher::health_check` (a local-only read, never a network call --
+    // see that method's doc comment) so a wedged publisher (repeated tick
+    // failures, or a specific in-flight spend stuck past its retry budget)
+    // makes this route itself report degraded, not just `GET
+    // /v1/oracle/status`. It needs its own `.with_state(...)` (a plain
+    // `Json<HealthResponse>` health used to need none) -- still a completely
+    // separate `Router` from `protected`, merged in the same order as
+    // before, so it's still never touched by the auth middleware above.
+    Router::new().route("/health", get(health::<C>)).with_state(publisher).merge(protected)
 }
 
 #[derive(Serialize)]
 struct HealthResponse {
     ok: bool,
+    /// Only present when `ok` is `false` (task instruction: "HTTP 503 with
+    /// {\"ok\":false,\"reason\":...}").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
-async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { ok: true })
+async fn health<C: ChainClient>(State(publisher): State<Arc<Publisher<C>>>) -> Response {
+    let degraded = match publisher.health_check().await {
+        Ok(reason) => reason,
+        // A genuinely unreadable/corrupt local queue file is exactly the
+        // kind of unknown state `/health` should never paper over as
+        // healthy -- fail toward "unhealthy", same direction `main.rs`'s own
+        // startup bootstrap already fails closed in.
+        Err(e) => Some(format!("queue file unreadable: {e:#}")),
+    };
+    match degraded {
+        None => (StatusCode::OK, Json(HealthResponse { ok: true, reason: None })).into_response(),
+        Some(reason) => {
+            (StatusCode::SERVICE_UNAVAILABLE, Json(HealthResponse { ok: false, reason: Some(reason) })).into_response()
+        }
+    }
 }
 
 async fn auth_verify<C: ChainClient>(

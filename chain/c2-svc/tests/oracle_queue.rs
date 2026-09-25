@@ -19,15 +19,18 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chia_bls::SecretKey;
-use chia_protocol::{Bytes32, Coin, SpendBundle};
+use chia_protocol::{Bytes32, Coin, CoinSpend, SpendBundle};
+use chia_puzzle_types::Proof;
 
 use c2_cli::builders::oracle::build_oracle_launch;
 use c2_cli::keys::{WalletKey, derive_wallet_key, generate_mnemonic, master_sk_from_mnemonic};
 use c2_cli::keystore::KeyFile;
 use c2_cli::state::OracleState;
 use c2_svc::oracle::chain_client::{ChainClient, CoinRecordInfo, PushOutcome};
-use c2_svc::oracle::publisher::{Publisher, TickOutcome};
+use c2_svc::oracle::lineage::walk_lineage;
+use c2_svc::oracle::publisher::{Publisher, TickFailureState, TickOutcome};
 use c2_svc::oracle::queue::QueueFile;
+use c2_svc::oracle::spend::build_oracle_publish_batch;
 use c2_svc::oracle::types::{OracleRecord, Source};
 use c2_svc::state_file::save_oracle_state_atomic;
 
@@ -52,6 +55,11 @@ struct FakeChainClientInner {
     /// a concurrent `tick()` is in the middle of (task fix, see
     /// `status_answers_while_a_publish_is_in_flight`).
     delay: Duration,
+    /// coin_id -> the `CoinSpend` that spent it, for `puzzle_and_solution`
+    /// (the chain-lineage walk, `oracle/lineage.rs`, task fix
+    /// `docs/research/chain_service.md` §11). Populated by
+    /// `set_puzzle_and_solution` / `push_lineage_generation` below.
+    coin_spends: HashMap<Bytes32, CoinSpend>,
 }
 
 pub struct FakeChainClient(Mutex<FakeChainClientInner>);
@@ -70,6 +78,7 @@ impl FakeChainClient {
             },
             in_mempool: HashMap::new(),
             delay: Duration::ZERO,
+            coin_spends: HashMap::new(),
         }))
     }
 
@@ -97,6 +106,7 @@ impl FakeChainClient {
                 confirmed_height: Some(height),
                 spent: false,
                 spent_height: None,
+                coin: None,
             },
         );
     }
@@ -109,6 +119,7 @@ impl FakeChainClient {
                 confirmed_height: Some(confirmed_height),
                 spent: true,
                 spent_height: Some(spent_height),
+                coin: None,
             },
         );
     }
@@ -119,6 +130,31 @@ impl FakeChainClient {
 
     fn push_call_count(&self) -> u32 {
         self.0.lock().unwrap().push_calls
+    }
+
+    /// Registers `coin_spend` as the spend that consumed `coin`, and marks
+    /// `coin` spent at `spent_height` (`confirmed_height` is whatever it
+    /// already was, or `spent_height` if never set) -- one call sets up
+    /// everything `walk_lineage` needs for that one generation. Takes the
+    /// full `Coin` (not just its id) so `CoinRecordInfo::coin` is populated
+    /// too -- needed by `oracle::lineage::tip_lineage_proof` (task fix,
+    /// `docs/research/chain_service.md` §12) whenever a test's chain tip
+    /// turns out to be this coin's *child* (i.e. every existing lineage test,
+    /// which chains generations forward exactly this way).
+    fn set_lineage_spend(&self, coin: Coin, confirmed_height: u32, spent_height: u32, coin_spend: CoinSpend) {
+        let coin_id = coin.coin_id();
+        let mut inner = self.0.lock().unwrap();
+        inner.coin_records.insert(
+            coin_id,
+            CoinRecordInfo {
+                exists: true,
+                confirmed_height: Some(confirmed_height),
+                spent: true,
+                spent_height: Some(spent_height),
+                coin: Some(coin),
+            },
+        );
+        inner.coin_spends.insert(coin_id, coin_spend);
     }
 }
 
@@ -132,6 +168,7 @@ impl ChainClient for FakeChainClient {
                     confirmed_height: None,
                     spent: false,
                     spent_height: None,
+                    coin: None,
                 }),
                 inner.delay,
             )
@@ -218,6 +255,23 @@ impl ChainClient for FakeChainClient {
             Ok(present)
         }
     }
+
+    fn puzzle_and_solution(
+        &self,
+        coin_id: Bytes32,
+        _height: Option<u32>,
+    ) -> impl Future<Output = Result<Option<CoinSpend>>> + Send {
+        let (coin_spend, delay) = {
+            let inner = self.0.lock().unwrap();
+            (inner.coin_spends.get(&coin_id).cloned(), inner.delay)
+        };
+        async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            Ok(coin_spend)
+        }
+    }
 }
 
 // --- fixture -------------------------------------------------------------
@@ -225,6 +279,15 @@ impl ChainClient for FakeChainClient {
 struct Fixture {
     _tmp: tempfile::TempDir,
     publisher: Publisher<FakeChainClient>,
+    /// Kept for the chain-lineage-walk tests (`bootstrap_from_chain`,
+    /// `reconcile_with_chain`): they build *further* real generations of the
+    /// exact same singleton this fixture's `operator.oracle.json` already
+    /// describes, via `publish_lineage_generation` below, which needs the
+    /// same manager key / launcher id `set_up` used to launch it.
+    manager: WalletKey,
+    launcher_id: Bytes32,
+    eve_coin: Coin,
+    eve_proof: Proof,
 }
 
 fn set_up(retry_backoff: Duration) -> Result<Fixture> {
@@ -268,9 +331,46 @@ fn set_up(retry_backoff: Duration) -> Result<Fixture> {
         fee_target_time_secs: 60,
         balance_snapshot: tokio::sync::RwLock::new(None),
         queue_lock: tokio::sync::Mutex::new(()),
+        tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
+        tick_failure_threshold: 3,
     };
 
-    Ok(Fixture { _tmp: tmp, publisher })
+    Ok(Fixture {
+        _tmp: tmp,
+        publisher,
+        manager,
+        launcher_id: launch.launcher_id,
+        eve_coin: launch.eve_coin,
+        eve_proof: launch.eve_proof,
+    })
+}
+
+/// Builds one real oracle-publish-batch spend (the exact same builder the
+/// production `Publisher` uses, `spend.rs::build_oracle_publish_batch` --
+/// not a hand-rolled announcement encoding) recreating `current_coin` and
+/// announcing `records`, and registers it with `chain` as the spend that
+/// confirmed `current_coin` at `spent_height` (chain-lineage-walk fixture
+/// helper, `oracle/lineage.rs`, task fix `docs/research/chain_service.md`
+/// §11). Returns the next generation's `(Coin, Proof)` to chain into a
+/// further call, mirroring how `Publisher::start_new_batch` itself advances
+/// generation to generation.
+fn publish_lineage_generation(
+    chain: &FakeChainClient,
+    launcher_id: Bytes32,
+    manager: &WalletKey,
+    current_coin: Coin,
+    current_proof: Proof,
+    spent_height: u32,
+    records: &[OracleRecord],
+) -> Result<(Coin, Proof)> {
+    let draft = build_oracle_publish_batch(launcher_id, current_coin, current_proof, manager, records)?;
+    let coin_spend = draft
+        .coin_spends
+        .into_iter()
+        .next()
+        .expect("build_oracle_publish_batch always emits exactly one (singleton) coin spend");
+    chain.set_lineage_spend(current_coin, spent_height, spent_height, coin_spend);
+    Ok((draft.next_coin, draft.next_proof))
 }
 
 fn record(seq: u64) -> OracleRecord {
@@ -830,6 +930,8 @@ async fn restart_resumes_a_pending_in_flight_spend() -> Result<()> {
         fee_target_time_secs: 60,
         balance_snapshot: tokio::sync::RwLock::new(None),
         queue_lock: tokio::sync::Mutex::new(()),
+        tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
+        tick_failure_threshold: 3,
     };
 
     restarted.chain.set_confirmed(next_coin.coin_id(), 4_900_000);
@@ -966,6 +1068,474 @@ async fn no_rebuild_while_bundle_still_in_mempool() -> Result<()> {
         "must not rebuild/resubmit a bundle coinset shows is already in the mempool"
     );
     assert_eq!(fx.publisher.chain.push_call_count(), 1, "must not push_tx again");
+
+    Ok(())
+}
+
+// --- chain-lineage bootstrap/reconciliation (task fix, incident writeup
+// `docs/research/chain_service.md` §11: redeploying the new chainsvc onto
+// an old/race-corrupted queue file republished 76 already-confirmed
+// records, byte-identical, because nothing ever checked the chain itself
+// before publishing) ---------------------------------------------------
+
+/// The exact incident this fix exists to prevent: a stale/race-corrupted
+/// queue file whose `pending` still holds a record the chain already
+/// confirmed, byte-identical, must never be republished.
+#[tokio::test]
+async fn bootstrap_drops_stale_pending_records_already_confirmed_on_chain() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+
+    // Real generation 1 on chain: seq 1 confirmed, singleton advances to
+    // `gen1_coin` (still unspent -- the chain's current tip).
+    let (gen1_coin, gen1_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        1_000_000,
+        &[record(1)],
+    )?;
+    fx.publisher.chain.set_confirmed(gen1_coin.coin_id(), 1_000_000);
+
+    // `operator.oracle.json` correctly reflects that (it's a separate file
+    // from the corrupted queue below, and in the real incident it was
+    // consistent -- only the queue file was stale).
+    let oracle_state = OracleState {
+        launcher_id: fx.launcher_id,
+        manager_synthetic_pk: fx.manager.synthetic_pk,
+        current_coin: gen1_coin,
+        current_proof_dto: gen1_proof.into(),
+        next_sequence: 2,
+    };
+    save_oracle_state_atomic(&fx.publisher.data_dir, "operator", &oracle_state)?;
+
+    // The stale/race-corrupted queue file: still thinks seq 1 is pending,
+    // no checkpoint yet (as if predating this fix entirely).
+    let mut queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    queue.pending = vec![record(1)];
+    queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+
+    let outcome = fx.publisher.bootstrap_from_chain().await?;
+    assert_eq!(outcome.dropped_confirmed, vec![1]);
+    assert!(outcome.new_conflicts.is_empty());
+    assert_eq!(fx.publisher.chain.push_call_count(), 0, "must never republish an already-confirmed record");
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.pending.is_empty(), "stale pending record must be dropped, not republished");
+    assert_eq!(queue.confirmed.get(&1).map(|c| c.coin_id.clone()), Some(format!("{}", gen1_coin.coin_id())));
+    assert_eq!(fx.publisher.record_status(1)?.state, "confirmed");
+
+    // A follow-up tick() (which now also reconciles first, see module doc)
+    // must not build/broadcast anything either.
+    let tick_outcome = fx.publisher.tick().await?;
+    assert_eq!(tick_outcome, TickOutcome::Idle);
+    assert_eq!(fx.publisher.chain.push_call_count(), 0);
+
+    Ok(())
+}
+
+/// A locally-queued record whose content *disagrees* with what the chain
+/// actually has for the same `seq` must be pulled out of `pending` (never
+/// published) but never silently dropped either -- it has to surface as a
+/// conflict.
+#[tokio::test]
+async fn bootstrap_flags_conflict_when_chain_content_differs() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+
+    let (gen1_coin, gen1_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        1_000_000,
+        &[record(1)],
+    )?;
+    fx.publisher.chain.set_confirmed(gen1_coin.coin_id(), 1_000_000);
+
+    let oracle_state = OracleState {
+        launcher_id: fx.launcher_id,
+        manager_synthetic_pk: fx.manager.synthetic_pk,
+        current_coin: gen1_coin,
+        current_proof_dto: gen1_proof.into(),
+        next_sequence: 2,
+    };
+    save_oracle_state_atomic(&fx.publisher.data_dir, "operator", &oracle_state)?;
+
+    // Local pending record for seq 1 has DIFFERENT content than what's
+    // actually confirmed on chain.
+    let mut divergent = record(1);
+    divergent.price_cents += 1;
+    let mut queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    queue.pending = vec![divergent];
+    queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+
+    let outcome = fx.publisher.bootstrap_from_chain().await?;
+    assert_eq!(outcome.new_conflicts, vec![1]);
+    assert!(outcome.dropped_confirmed.is_empty());
+    assert_eq!(fx.publisher.chain.push_call_count(), 0);
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.pending.is_empty(), "a conflicting record must be pulled out of pending too -- never republished");
+    assert!(!queue.confirmed.contains_key(&1), "a conflict must not be recorded as confirmed");
+    let conflict = queue.conflicts.get(&1).expect("seq 1 must be recorded as a conflict");
+    assert_eq!(conflict.local, divergent);
+    assert_eq!(conflict.chain, record(1));
+
+    let status = fx.publisher.status().await?;
+    assert_eq!(status.conflicts, vec![1], "must surface in GET /v1/oracle/status, never silently");
+    assert_eq!(fx.publisher.record_status(1)?.state, "conflict");
+
+    Ok(())
+}
+
+/// "Persist the checkpoint so later restarts only scan forward": a second
+/// reconciliation must resume from the previous scan's tip, not re-walk the
+/// whole lineage from the launcher every time.
+#[tokio::test]
+async fn checkpoint_resume_only_scans_forward_from_last_tip() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+
+    let (gen1_coin, gen1_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        1_000_000,
+        &[record(1)],
+    )?;
+    fx.publisher.chain.set_confirmed(gen1_coin.coin_id(), 1_000_000);
+
+    let outcome = fx.publisher.bootstrap_from_chain().await?;
+    assert_eq!(outcome.generations_advanced, 1);
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(queue.chain_scan_checkpoint, Some(gen1_coin));
+
+    // Chain advances one more generation.
+    let (gen2_coin, _gen2_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        gen1_coin,
+        gen1_proof,
+        1_000_010,
+        &[record(2)],
+    )?;
+    fx.publisher.chain.set_confirmed(gen2_coin.coin_id(), 1_000_010);
+
+    let outcome = fx.publisher.bootstrap_from_chain().await?;
+    // Resuming from the checkpoint (`gen1_coin`) walks exactly the one NEW
+    // generation -- re-walking from the launcher every time would report 2
+    // (eve->gen1->gen2), not 1.
+    assert_eq!(
+        outcome.generations_advanced, 1,
+        "must resume from the persisted checkpoint, not rescan from the launcher"
+    );
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(queue.chain_scan_checkpoint, Some(gen2_coin));
+
+    Ok(())
+}
+
+/// "Lineage with duplicates: first occurrence wins" -- exactly this
+/// incident's shape (a stale queue file's pending rebuilt into a fresh,
+/// duplicate spend, byte-identical content, at a later generation). The
+/// authoritative confirmed map must keep pointing at the *first* on-chain
+/// occurrence, never the later duplicate.
+#[tokio::test]
+async fn lineage_duplicate_seq_keeps_first_occurrence() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+
+    let (gen1_coin, gen1_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        1_000_000,
+        &[record(1)],
+    )?;
+    fx.publisher.chain.set_confirmed(gen1_coin.coin_id(), 1_000_000);
+
+    let outcome = walk_lineage(&fx.publisher.chain, fx.eve_coin).await?;
+    let first = outcome.confirmed.get(&1).cloned().expect("seq 1 must be found");
+    assert_eq!(first.height, Some(1_000_000));
+    assert_eq!(first.coin_id, format!("{}", gen1_coin.coin_id()));
+
+    // A later, buggy republish announces seq 1 again with byte-identical
+    // content at a different (later) generation -- this incident exactly.
+    let (gen2_coin, _gen2_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        gen1_coin,
+        gen1_proof,
+        1_000_010,
+        &[record(1)],
+    )?;
+    fx.publisher.chain.set_confirmed(gen2_coin.coin_id(), 1_000_010);
+
+    let outcome = walk_lineage(&fx.publisher.chain, fx.eve_coin).await?;
+    let still_first = outcome.confirmed.get(&1).cloned().expect("seq 1 must still be found");
+    assert_eq!(still_first, first, "the first on-chain occurrence must win, not the later duplicate");
+    assert_ne!(
+        still_first.coin_id,
+        format!("{}", gen2_coin.coin_id()),
+        "must not have been overwritten by the duplicate"
+    );
+    assert_eq!(outcome.generations_advanced, 2);
+
+    Ok(())
+}
+
+/// Task instruction item 2 ("also run that forward scan periodically
+/// (cheap)"): the *regular* `tick()` loop reconciles against the chain on
+/// its own, not just the one-off startup `bootstrap_from_chain()` -- a
+/// stale/corrupted `pending` must never be republished even if the operator
+/// never explicitly re-bootstraps (e.g. a long-running process whose queue
+/// file got clobbered by something external without a restart).
+#[tokio::test]
+async fn tick_also_reconciles_and_never_republishes_stale_pending() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+
+    let (gen1_coin, gen1_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        1_000_000,
+        &[record(1)],
+    )?;
+    fx.publisher.chain.set_confirmed(gen1_coin.coin_id(), 1_000_000);
+
+    let oracle_state = OracleState {
+        launcher_id: fx.launcher_id,
+        manager_synthetic_pk: fx.manager.synthetic_pk,
+        current_coin: gen1_coin,
+        current_proof_dto: gen1_proof.into(),
+        next_sequence: 2,
+    };
+    save_oracle_state_atomic(&fx.publisher.data_dir, "operator", &oracle_state)?;
+
+    let mut queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    queue.pending = vec![record(1)];
+    queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+
+    // No explicit `bootstrap_from_chain()` call here -- only the regular
+    // periodic `tick()`, exactly as `main.rs`'s background loop drives it.
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Idle, "the stale record was reconciled away, nothing left to publish");
+    assert_eq!(fx.publisher.chain.push_call_count(), 0, "must never republish an already-confirmed record");
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.pending.is_empty());
+    assert_eq!(queue.confirmed.get(&1).map(|c| c.coin_id.clone()), Some(format!("{}", gen1_coin.coin_id())));
+    assert_eq!(queue.chain_scan_checkpoint, Some(gen1_coin), "tick() must also persist the scan checkpoint");
+
+    Ok(())
+}
+
+// --- publisher-wedged incident and its fix (task fix, `docs/research/
+// chain_service.md` §12: reconciliation could clear an all-confirmed
+// `in_flight` without ever advancing `OracleState`, since only
+// `advance_in_flight` used to do that and `tick()`'s reconciliation runs
+// first -- every following tick then bailed with "already spent on chain
+// but there is no matching in-flight spend", forever, with `stuckReason`
+// staying `null` and `/health` staying healthy throughout) ------------------
+
+/// The exact reported incident. Before this fix: the second `tick()` below
+/// would return `Err` (`start_new_batch`'s "refusing to build a new spend on
+/// stale state") instead of publishing seq 2, because reconciliation had
+/// already cleared `in_flight` (all its records confirmed identically on
+/// chain) without ever advancing `OracleState.current_coin` -- and by the
+/// time `tick()` reaches the `in_flight`/`pending` checks below
+/// reconciliation, `in_flight` is already empty, so `advance_in_flight` (the
+/// only code that used to do that advancing) never runs at all this tick.
+#[tokio::test]
+async fn reconciliation_observing_confirmation_first_still_advances_oracle_state() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+
+    fx.publisher.enqueue(vec![record(1)]).await?;
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: true });
+    assert_eq!(fx.publisher.chain.push_call_count(), 1);
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.clone().expect("batch should be in flight");
+
+    // A second record arrives while the first batch is still unconfirmed --
+    // this is the "next pending batch" the fix must still publish once state
+    // adopts the tip.
+    fx.publisher.enqueue(vec![record(2)]).await?;
+
+    // Register the confirming spend via the *lineage-walk* path, not via
+    // `advance_in_flight`'s own `next_coin` check (deliberately never calls
+    // `set_confirmed` on `in_flight.next_coin`) -- same deterministic inputs
+    // (launcher_id, current_coin, proof, manager, records) `tick()`'s own
+    // `start_new_batch` already used, so this produces the exact same
+    // `next_coin` (asserted below) with byte-identical announced content,
+    // all `reconcile_with_chain`'s `all_confirmed` check needs.
+    let (confirmed_next_coin, _) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        5_000_000,
+        &[record(1)],
+    )?;
+    assert_eq!(
+        confirmed_next_coin, in_flight.next_coin,
+        "sanity: the independently-built confirming spend must match the real in-flight one"
+    );
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(
+        outcome,
+        TickOutcome::Broadcast { records: 1, accepted: true },
+        "the next pending batch (seq 2) must publish against the adopted tip in the same tick \
+         that reconciliation -- not advance_in_flight -- observed the confirmation"
+    );
+    assert_eq!(fx.publisher.chain.push_call_count(), 2);
+
+    let oracle_state = c2_svc::state_file::load_oracle_state(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(
+        oracle_state.current_coin, in_flight.next_coin,
+        "OracleState.current_coin must advance to the chain tip even though reconciliation, not \
+         advance_in_flight, is what observed the confirmation"
+    );
+
+    assert_eq!(fx.publisher.record_status(1)?.state, "confirmed");
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let second_in_flight = queue.in_flight.expect("seq 2's batch should now be in flight");
+    assert_eq!(
+        second_in_flight.spent_coin, in_flight.next_coin,
+        "the new batch must spend the adopted tip, not the stale coin"
+    );
+
+    Ok(())
+}
+
+/// Task fix: "restart with stale current_coin behind the chain tip -> adopts
+/// tip". Simulates a redeployed/restored `operator.oracle.json` that still
+/// thinks the singleton is at the eve coin while the chain has already moved
+/// two real generations past it -- `bootstrap_from_chain()` (what `main.rs`
+/// runs "before accepting or publishing anything") must adopt the actual
+/// chain tip, and publishing must continue correctly from there.
+#[tokio::test]
+async fn bootstrap_adopts_chain_tip_when_current_coin_is_stale_and_behind() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+
+    // Two real generations happen on the fake chain -- `operator.oracle.json`
+    // is deliberately never updated to match (still at `eve_coin`, `set_up`'s
+    // fixture default): exactly what a stale/restored/redeployed state file
+    // looks like.
+    let (gen1_coin, gen1_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        100,
+        &[record(1)],
+    )?;
+    let (gen2_coin, _gen2_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        gen1_coin,
+        gen1_proof,
+        101,
+        &[record(2)],
+    )?;
+
+    let outcome = fx.publisher.bootstrap_from_chain().await?;
+    assert_eq!(
+        outcome.adopted_stale_coin,
+        Some(fx.eve_coin),
+        "bootstrap must adopt the tip away from the stale eve coin"
+    );
+
+    let oracle_state = c2_svc::state_file::load_oracle_state(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(
+        oracle_state.current_coin, gen2_coin,
+        "current_coin must now be the actual chain tip (behind by two generations), not the stale eve coin"
+    );
+
+    // Publishing continues correctly from the adopted tip.
+    fx.publisher.enqueue(vec![record(3)]).await?;
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: true });
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.expect("seq 3's batch should be in flight");
+    assert_eq!(in_flight.spent_coin, gen2_coin, "must build the new batch against the adopted tip");
+
+    Ok(())
+}
+
+/// Task fix: "any repeated tick failure (N consecutive, e.g. 3) must set
+/// stuckReason ... and /health must report degraded". Reproduces the
+/// reported incident's actual failure mode directly -- `tick()` hard-failing
+/// (`start_new_batch`'s "refusing to build a new spend on stale state") with
+/// no `InFlightSpend` at all for the older, narrower per-bundle
+/// `stuck_reason` check to see -- and asserts both `GET /v1/oracle/status`'s
+/// `stuckReason` and the new `GET /health` signal (`Publisher::health_check`)
+/// pick it up only once the configured threshold is reached, then clear
+/// again once ticking succeeds.
+#[tokio::test]
+async fn repeated_tick_failures_surface_stuck_reason_and_degrade_health() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.enqueue(vec![record(1)]).await?;
+
+    let oracle_state = c2_svc::state_file::load_oracle_state(&fx.publisher.data_dir, "operator")?;
+    // No lineage data registered for this coin at all (unlike the adoption
+    // tests above) -- `tip_lineage_proof` can't derive a proof, so
+    // reconciliation declines to adopt and `start_new_batch`'s existing
+    // stale-state guard keeps failing every tick, exactly as it did live on
+    // the wedged stand before this fix.
+    fx.publisher.chain.set_spent(oracle_state.current_coin.coin_id(), 50, 51);
+
+    // Below the threshold (3, `set_up`'s fixture default): not yet degraded.
+    assert!(fx.publisher.tick().await.is_err());
+    assert!(fx.publisher.tick().await.is_err());
+    let status = fx.publisher.status().await?;
+    assert!(
+        status.stuck_reason.is_none(),
+        "must not report stuck before the failure threshold: {:?}",
+        status.stuck_reason
+    );
+    assert!(
+        fx.publisher.health_check().await?.is_none(),
+        "must not report degraded before the failure threshold"
+    );
+
+    // Third consecutive failure crosses the threshold.
+    assert!(fx.publisher.tick().await.is_err());
+    let status = fx.publisher.status().await?;
+    let reason = status.stuck_reason.expect("stuckReason must be set after 3 consecutive tick failures");
+    assert!(reason.contains("3 consecutive"), "reason should name the count: {reason}");
+    assert!(
+        reason.contains("already spent on chain"),
+        "reason should include the underlying tick() error text: {reason}"
+    );
+
+    let health_reason = fx.publisher.health_check().await?.expect("health_check must report degraded too");
+    assert_eq!(health_reason, reason, "status and health must agree -- same underlying signal");
+
+    // Recovery: once the underlying condition clears and a tick succeeds
+    // again, the counter resets and both signals clear immediately.
+    fx.publisher.chain.set_confirmed(oracle_state.current_coin.coin_id(), 50);
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: true });
+    let status = fx.publisher.status().await?;
+    assert!(status.stuck_reason.is_none(), "a successful tick must reset the consecutive-failure counter");
+    assert!(fx.publisher.health_check().await?.is_none());
 
     Ok(())
 }

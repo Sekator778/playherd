@@ -60,7 +60,8 @@ use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
 use crate::state_file::{load_oracle_state, save_oracle_state_atomic};
 
 use super::chain_client::ChainClient;
-use super::queue::{ConfirmedRecordInfo, InFlightSpend, QueueFile, RecordState};
+use super::lineage::{genesis_coin, tip_lineage_proof, walk_lineage};
+use super::queue::{ConfirmedRecordInfo, InFlightSpend, QueueFile, ReconcileOutcome, RecordState};
 use super::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
 use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusResponse};
 
@@ -153,6 +154,26 @@ pub enum TickOutcome {
     Confirmed { records: usize },
 }
 
+/// Consecutive `tick()` failures (task fix, `docs/research/chain_service.md`
+/// §12: "any repeated tick failure (N consecutive) must set stuckReason ...
+/// and /health must report degraded"). This is what catches the reported
+/// incident's actual failure mode: `start_new_batch`'s "refusing to build a
+/// new spend on stale state" `bail!` is a hard `Err` from `tick()` itself,
+/// never even reaching a broadcast spend -- so the older, narrower
+/// `stuck_reason` check below (which only ever looks at a specific
+/// `InFlightSpend`'s exhausted retry count) had nothing to look at and
+/// nothing to report; `status` stayed `stuckReason: null` and `/health`
+/// stayed healthy for as long as the underlying bug kept the singleton
+/// wedged. In-memory only, deliberately not persisted: a fresh process
+/// starts with a clean slate and re-derives whether it's actually stuck from
+/// its own next ticks, exactly like every other per-process piece of
+/// `tick()`'s state (`queue_lock`, `balance_snapshot`).
+#[derive(Debug, Clone, Default)]
+pub struct TickFailureState {
+    pub consecutive_failures: u32,
+    pub last_error: Option<String>,
+}
+
 pub struct Publisher<C: ChainClient> {
     pub data_dir: PathBuf,
     pub operator_name: String,
@@ -203,6 +224,14 @@ pub struct Publisher<C: ChainClient> {
     /// consistent read of the atomically-renamed file, which is always
     /// either the previous or the new complete state, never a torn write.
     pub queue_lock: tokio::sync::Mutex<()>,
+    /// See `TickFailureState`'s doc comment. Updated by the public `tick()`
+    /// wrapper after every call (success resets it, failure increments it),
+    /// read by `degraded_reason` (shared by `status()`'s `stuckReason` and
+    /// `GET /health`).
+    pub tick_failures: tokio::sync::RwLock<TickFailureState>,
+    /// N consecutive `tick()` failures before `degraded_reason` reports
+    /// degraded (`C2_TICK_FAILURE_THRESHOLD`, task instruction: "e.g. 3").
+    pub tick_failure_threshold: u32,
 }
 
 impl<C: ChainClient> Publisher<C> {
@@ -234,6 +263,12 @@ impl<C: ChainClient> Publisher<C> {
             RecordState::Confirmed { height, coin_id } => {
                 OracleRecordStatusResponse { seq, state: "confirmed", height, coin_id: Some(coin_id) }
             }
+            // Task fix (`docs/research/chain_service.md` §11): surfaced here
+            // (per-record detail) as well as in `GET /v1/oracle/status`'s
+            // `conflicts` (list-level summary) -- "never silently".
+            RecordState::Conflict { chain_height, chain_coin_id } => {
+                OracleRecordStatusResponse { seq, state: "conflict", height: chain_height, coin_id: Some(chain_coin_id) }
+            }
             RecordState::InFlight => OracleRecordStatusResponse { seq, state: "in_flight", height: None, coin_id: None },
             RecordState::Queued => OracleRecordStatusResponse { seq, state: "queued", height: None, coin_id: None },
             RecordState::Unknown => OracleRecordStatusResponse { seq, state: "unknown", height: None, coin_id: None },
@@ -253,10 +288,11 @@ impl<C: ChainClient> Publisher<C> {
         let operator_balance_mojos = self.balance_snapshot.read().await.clone();
 
         let in_flight_records = queue.in_flight.as_ref().map(|f| f.records.len()).unwrap_or(0);
-        let stuck = queue
-            .in_flight
-            .as_ref()
-            .and_then(|f| stuck_reason(f, self.max_retry_attempts, self.max_fee_mojos));
+        let stuck = self.degraded_reason(&queue).await;
+        // Task fix (`docs/research/chain_service.md` §11): "surface in
+        // status (stuckReason/conflicts) -- never silently". Ascending by
+        // seq for free (`conflicts` is a `BTreeMap`).
+        let conflicts: Vec<u64> = queue.conflicts.keys().copied().collect();
 
         Ok(OracleStatusResponse {
             launcher_id: oracle_state
@@ -270,7 +306,52 @@ impl<C: ChainClient> Publisher<C> {
             in_flight_bundle_id: queue.in_flight.as_ref().map(|f| f.bundle_id.clone()),
             operator_balance_mojos,
             stuck_reason: stuck,
+            conflicts,
         })
+    }
+
+    /// The single signal both `GET /v1/oracle/status`'s `stuckReason` and
+    /// `GET /health`'s degraded state are derived from (task fix,
+    /// `docs/research/chain_service.md` §12: "any repeated tick failure (N
+    /// consecutive) must set stuckReason ... and /health must report
+    /// degraded"). Checks the broader, service-level signal first --
+    /// `tick()` itself hard-failing `tick_failure_threshold` times in a row,
+    /// which is exactly this incident's failure mode (a `bail!` before ever
+    /// reaching a broadcast spend, so there's no `InFlightSpend` for the
+    /// narrower check below to inspect at all) -- and only falls back to the
+    /// existing, narrower "this one specific in-flight spend exhausted its
+    /// own retry budget" check when the service as a whole is still
+    /// executing ticks fine. A plain local read (`queue`'s caller already
+    /// loaded it) plus one in-memory `RwLock` read -- never a network call,
+    /// same reasoning as `status()`'s own doc comment, so a slow/stuck
+    /// coinset can never make `GET /health` itself hang or false-negative.
+    async fn degraded_reason(&self, queue: &QueueFile) -> Option<String> {
+        let failures = self.tick_failures.read().await;
+        if failures.consecutive_failures >= self.tick_failure_threshold {
+            return Some(format!(
+                "publisher tick has failed {} consecutive times (threshold {}): {}",
+                failures.consecutive_failures,
+                self.tick_failure_threshold,
+                failures.last_error.as_deref().unwrap_or("(no error message)")
+            ));
+        }
+        drop(failures);
+        queue
+            .in_flight
+            .as_ref()
+            .and_then(|f| stuck_reason(f, self.max_retry_attempts, self.max_fee_mojos))
+    }
+
+    /// `GET /health`'s handler support (task fix, `docs/research/
+    /// chain_service.md` §12): `Ok(None)` = healthy (`{"ok": true}`, HTTP
+    /// 200), `Ok(Some(reason))` = degraded (`{"ok": false, "reason": ...}`,
+    /// HTTP 503, so the Docker healthcheck can turn unhealthy). `Err` only on
+    /// a genuinely unreadable/corrupt local queue file -- `app.rs` treats
+    /// that the same as degraded (fail toward "unhealthy" on unknown local
+    /// state, not toward silently reporting healthy).
+    pub async fn health_check(&self) -> Result<Option<String>> {
+        let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        Ok(self.degraded_reason(&queue).await)
     }
 
     /// Refreshes `balance_snapshot` from the chain -- the one network call
@@ -288,8 +369,165 @@ impl<C: ChainClient> Publisher<C> {
         *self.balance_snapshot.write().await = snapshot;
     }
 
-    /// Runs one iteration of the publisher state machine (see module doc).
+    /// Startup bootstrap (task fix, `docs/research/chain_service.md` §11):
+    /// walks the oracle singleton lineage and reconciles the local queue
+    /// against it. `main.rs` calls this once, synchronously, before opening
+    /// any listener or spawning the periodic `tick()`/balance-refresh loops
+    /// -- "before accepting or publishing anything". Safe to call again
+    /// later too (e.g. after an operator clears `chain_scan_checkpoint` by
+    /// hand) -- it's the exact same reconciliation `tick()` now also runs on
+    /// every regular cycle (see that method's own doc comment), just
+    /// invoked directly and awaited to completion up front.
+    pub async fn bootstrap_from_chain(&self) -> Result<ReconcileOutcome> {
+        let _guard = self.queue_lock.lock().await;
+        let mut queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        let outcome = self.reconcile_queue_with_chain(&mut queue).await?;
+        if outcome.changed() {
+            queue
+                .save_atomic(&self.data_dir, &self.operator_name)
+                .context("persisting chain-reconciled queue (bootstrap)")?;
+        }
+        Ok(outcome)
+    }
+
+    /// Walks the chain from `queue.chain_scan_checkpoint` (or the
+    /// singleton's genesis coin, on a fresh queue -- see `lineage::
+    /// genesis_coin`) and reconciles the result into `queue` in place (task
+    /// fix, `docs/research/chain_service.md` §11: "never trust the local
+    /// queue file's bookkeeping alone"). Assumes the caller already holds
+    /// `queue_lock` and does **not** save `queue` itself -- both callers
+    /// (`bootstrap_from_chain`, `tick()`) decide separately whether the
+    /// result actually needs persisting (`ReconcileOutcome::changed`).
+    /// A queue with no oracle state yet (`c2 oracle-launch` not run) is a
+    /// no-op, not an error -- there is nothing to reconcile against before
+    /// the singleton even exists.
+    async fn reconcile_queue_with_chain(&self, queue: &mut QueueFile) -> Result<ReconcileOutcome> {
+        let Ok(mut oracle_state) = load_oracle_state(&self.data_dir, &self.operator_name) else {
+            return Ok(ReconcileOutcome::default());
+        };
+        let start = queue
+            .chain_scan_checkpoint
+            .unwrap_or_else(|| genesis_coin(oracle_state.launcher_id, oracle_state.manager_synthetic_pk));
+        let walk = walk_lineage(&self.chain, start)
+            .await
+            .context("walking oracle singleton lineage for chain reconciliation")?;
+        let mut outcome = queue.reconcile_with_chain(&walk);
+
+        for warning in &outcome.decode_warnings {
+            tracing::warn!(%warning, "oracle lineage walk");
+        }
+        if !outcome.dropped_confirmed.is_empty() {
+            tracing::info!(
+                seqs = ?outcome.dropped_confirmed,
+                "chain-lineage walk: dropped already-confirmed records from the local queue \
+                 (never republished -- task fix, docs/research/chain_service.md §11)"
+            );
+        }
+        if !outcome.new_conflicts.is_empty() {
+            tracing::warn!(
+                seqs = ?outcome.new_conflicts,
+                "chain-lineage walk: local record content disagrees with the chain -- \
+                 needs operator attention, see GET /v1/oracle/status's conflicts"
+            );
+        }
+
+        // Task fix (`docs/research/chain_service.md` §12): "make the chain
+        // the source of truth for the singleton position ... whenever local
+        // OracleState.current_coin is spent/behind, adopt the chain tip
+        // (atomically persisted), then continue publishing." This is what
+        // the reported incident's `all_confirmed` case above actually needed
+        // -- `queue.reconcile_with_chain` (a pure `QueueFile` <-> chain-walk
+        // function, no `OracleState` access) can and does clear `in_flight`
+        // once every one of its records is confirmed identically on chain,
+        // but advancing `current_coin`/`current_proof_dto`/`next_sequence`
+        // was only ever done by `advance_in_flight` -- which `tick()` never
+        // reaches once this reconciliation has already emptied `in_flight`
+        // first. Deliberately gated on `queue.in_flight.is_none()`: an
+        // in-flight spend that simply hasn't confirmed yet is *expected* to
+        // leave `current_coin` pointing at a coin the chain still shows
+        // spent underneath it (a partial/conflicting in-flight match is left
+        // alone by `queue.reconcile_with_chain` above for the same reason) --
+        // that gap is `advance_in_flight`'s job to close, not this one's, so
+        // this never runs concurrently with (or in place of) the existing
+        // never-double-spend checks there. With `in_flight` empty, though,
+        // there is nothing left that could still explain `current_coin`
+        // disagreeing with the chain's actual tip except staleness -- spent
+        // out from under this process (this incident), or simply behind by
+        // any number of generations (a stale/restored/redeployed
+        // `operator.oracle.json`) -- so adopt unconditionally.
+        if queue.in_flight.is_none() && oracle_state.current_coin != walk.tip_coin {
+            let stale_coin = oracle_state.current_coin;
+            match tip_lineage_proof(&self.chain, oracle_state.launcher_id, oracle_state.manager_synthetic_pk, walk.tip_coin)
+                .await
+                .context("deriving the chain tip's lineage proof for adoption")?
+            {
+                Some(proof) => {
+                    oracle_state.current_coin = walk.tip_coin;
+                    oracle_state.current_proof_dto = proof.into();
+                    // **предложение**: one singleton spend is exactly one
+                    // generation regardless of how many records it batched
+                    // (same convention `advance_in_flight` already uses,
+                    // `+= 1` there too) -- `next_sequence` is informational
+                    // only (mirrors `c2-cli`'s single-record `OracleState`
+                    // shape for on-disk compatibility; `c2-svc` itself never
+                    // reads it to decide what to publish next, see
+                    // `docs/research/chain_service.md` §12), so being off by
+                    // count on a multi-generation adoption jump has no effect
+                    // on publishing correctness.
+                    oracle_state.next_sequence = oracle_state.next_sequence.saturating_add(1);
+                    save_oracle_state_atomic(&self.data_dir, &self.operator_name, &oracle_state)
+                        .context("persisting adopted chain-tip oracle state")?;
+                    tracing::warn!(
+                        stale_coin = %stale_coin.coin_id(),
+                        adopted_coin = %walk.tip_coin.coin_id(),
+                        "oracle state's current_coin was stale (spent, or behind the chain tip) -- \
+                         adopted the chain tip (task fix, docs/research/chain_service.md §12)"
+                    );
+                    outcome.adopted_stale_coin = Some(stale_coin);
+                }
+                None => {
+                    tracing::warn!(
+                        stale_coin = %stale_coin.coin_id(),
+                        chain_tip = %walk.tip_coin.coin_id(),
+                        "oracle state's current_coin disagrees with the chain tip but the tip's \
+                         lineage proof could not be derived -- not adopting; a repeated tick \
+                         failure will surface this via stuckReason/health instead"
+                    );
+                }
+            }
+        }
+
+        Ok(outcome)
+    }
+
+    /// Runs one iteration of the publisher state machine (see module doc),
+    /// then records the outcome into `tick_failures` (task fix,
+    /// `docs/research/chain_service.md` §12: "any repeated tick failure (N
+    /// consecutive) must set stuckReason ... and /health must report
+    /// degraded") -- a success resets the counter, a failure increments it
+    /// and remembers the error text, both read back by `degraded_reason`.
+    /// The `Result` itself is passed through unchanged either way; callers
+    /// (`main.rs`'s background loop, every existing test) see exactly the
+    /// same `tick()` behavior as before this fix.
     pub async fn tick(&self) -> Result<TickOutcome> {
+        let result = self.tick_once().await;
+        {
+            let mut failures = self.tick_failures.write().await;
+            match &result {
+                Ok(_) => *failures = TickFailureState::default(),
+                Err(e) => {
+                    failures.consecutive_failures += 1;
+                    failures.last_error = Some(format!("{e:#}"));
+                }
+            }
+        }
+        result
+    }
+
+    /// The actual publisher state machine -- see module doc. Renamed from
+    /// the old public `tick()`; the wrapper above adds failure tracking
+    /// around it without changing its own logic at all.
+    async fn tick_once(&self) -> Result<TickOutcome> {
         // See `queue_lock`'s doc comment: held for this entire call
         // (including the chain round-trips `advance_in_flight`/
         // `rebuild_in_flight` await below) so a concurrent `enqueue()` can
@@ -297,6 +535,20 @@ impl<C: ChainClient> Publisher<C> {
         // persisting.
         let _guard = self.queue_lock.lock().await;
         let mut queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+
+        // Task fix (`docs/research/chain_service.md` §11): "also run that
+        // forward scan periodically (cheap) so the confirmed map always
+        // reflects the chain, not only local bookkeeping" -- cheap once
+        // caught up (checkpointed): a single `coin_record` call confirming
+        // the tip is still unspent. Runs before anything else below so a
+        // stale/conflicting record already on chain never reaches
+        // `start_new_batch` this tick either.
+        let reconcile_outcome = self.reconcile_queue_with_chain(&mut queue).await?;
+        if reconcile_outcome.changed() {
+            queue
+                .save_atomic(&self.data_dir, &self.operator_name)
+                .context("persisting chain-reconciled queue")?;
+        }
 
         if let Some(in_flight) = queue.in_flight.clone() {
             return self.advance_in_flight(&mut queue, in_flight).await;

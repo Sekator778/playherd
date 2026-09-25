@@ -84,9 +84,10 @@ services:
     volumes:
       - ${HOME}/.c2/testnet11:/data
     healthcheck:
-      # debian:bookworm-slim (chain/c2-svc/Dockerfile's runtime stage) has no curl/wget — bash's
-      # /dev/tcp is the only dependency-free way to probe the port from inside the container.
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8090' || exit 1"]
+      # debian:bookworm-slim (chain/c2-svc/Dockerfile's runtime stage) has no curl/wget — speak
+      # HTTP over bash's /dev/tcp and require a 200 from /health, which turns 503 when the
+      # oracle publisher keeps failing (chain_service.md §12), not just "the port is open".
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8090 && printf \"GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && head -n1 <&3 | grep -q \" 200 \"' || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 20

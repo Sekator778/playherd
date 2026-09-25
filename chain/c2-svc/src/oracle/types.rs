@@ -140,4 +140,11 @@ pub struct OracleStatusResponse {
     /// rebuild is still automatically in progress, see
     /// `publisher.rs::stuck_reason`.
     pub stuck_reason: Option<String>,
+    /// Task fix (`docs/research/chain_service.md` §11): `seq`s the
+    /// chain-lineage walk found already confirmed on chain with content
+    /// that disagrees with what this service has locally queued or
+    /// in-flight -- never silently dropped nor republished. Ascending,
+    /// empty when there are none. Full detail (local vs. chain content) for
+    /// one of these is `GET /v1/oracle/records/{seq}` (`state: "conflict"`).
+    pub conflicts: Vec<u64>,
 }

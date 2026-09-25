@@ -70,6 +70,15 @@ pub struct Config {
     /// 3 000 000 mojos at cost≈38.7M) while still bounding the operator's
     /// TXCH spend if the mempool is congested indefinitely.
     pub max_fee_mojos: u64,
+    /// N consecutive `tick()` failures before `GET /v1/oracle/status`'s
+    /// `stuckReason` and `GET /health` report degraded (task fix,
+    /// `docs/research/chain_service.md` §12: "any repeated tick failure (N
+    /// consecutive, e.g. 3)"). `C2_TICK_FAILURE_THRESHOLD`, **предложение**
+    /// default 3 -- the task's own suggested example, and small enough
+    /// (`publisher_tick`'s 10s default => ~30s) that an operator/the Docker
+    /// healthcheck notices promptly without flapping on one transient
+    /// coinset hiccup.
+    pub tick_failure_threshold: u32,
     /// FIXED INTERFACE (a): the token every `/v1/*` request (except
     /// `GET /health`) must present as `Authorization: Bearer <token>`.
     /// `C2_SVC_TOKEN`, matched against the server's `HERD_CHAINSVC_TOKEN` --
@@ -147,6 +156,10 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(50_000_000);
+        let tick_failure_threshold = std::env::var("C2_TICK_FAILURE_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
         let svc_token = std::env::var("C2_SVC_TOKEN").ok().filter(|s| !s.is_empty());
         let allow_no_auth = std::env::var("C2_SVC_ALLOW_NO_AUTH").is_ok_and(|v| v == "1");
         let bind_addrs = parse_bind_addrs(&std::env::var("C2_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1".to_string()))
@@ -161,6 +174,7 @@ impl Config {
             retry_backoff: std::time::Duration::from_secs(45),
             max_retry_attempts: 8,
             max_fee_mojos,
+            tick_failure_threshold,
             svc_token,
             allow_no_auth,
             bind_addrs,

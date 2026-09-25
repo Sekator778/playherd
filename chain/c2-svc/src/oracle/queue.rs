@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::atomic_file::{read_json_or_default, write_json_atomic};
 
+use super::lineage::LineageWalkOutcome;
 use super::types::OracleRecord;
 
 /// One record's on-chain confirmation (`GET /v1/oracle/records/{seq}`,
@@ -46,6 +47,11 @@ pub struct ConfirmedRecordInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordState {
     Confirmed { height: Option<u32>, coin_id: String },
+    /// Task fix, `docs/research/chain_service.md` §11: the chain-lineage
+    /// walk found this `seq` already confirmed on chain with DIFFERENT
+    /// content than what this service holds locally -- never silently
+    /// dropped or republished, see `QueueFile::conflicts`.
+    Conflict { chain_height: Option<u32>, chain_coin_id: String },
     InFlight,
     Queued,
     /// Neither pending, in flight, nor confirmed -- either never submitted,
@@ -54,6 +60,24 @@ pub enum RecordState {
     /// INTERFACE (b): "a record whose seq is below the watermark but is NOT
     /// known as confirmed/queued/in_flight is accepted as a LATE record").
     Unknown,
+}
+
+/// One locally-known record (pending or in-flight) whose content disagrees
+/// with what the chain-lineage walk found already confirmed for the same
+/// `seq` (task fix, `docs/research/chain_service.md` §11: "with DIFFERENT
+/// content -> do not publish, mark conflict, surface in status -- never
+/// silently"). Never auto-resolved by this service -- an operator has to
+/// look at both versions and decide; the whole point of this type existing
+/// is that the two disagree and picking one automatically would be exactly
+/// the kind of silent data loss this fix exists to prevent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConflictInfo {
+    /// What this service had queued (or in flight) for this `seq`.
+    pub local: OracleRecord,
+    /// What the chain-lineage walk actually found confirmed for this `seq`.
+    pub chain: OracleRecord,
+    pub chain_height: Option<u32>,
+    pub chain_coin_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +125,68 @@ pub struct QueueFile {
     /// existing `<name>.oracle_queue.json` predates this field.
     #[serde(default)]
     pub confirmed: BTreeMap<u64, ConfirmedRecordInfo>,
+    /// Records whose chain-confirmed content disagrees with what's locally
+    /// queued/in-flight for the same `seq` -- task fix, `docs/research/
+    /// chain_service.md` §11. `#[serde(default)]`: no queue file predating
+    /// this fix has ever had one (nothing ever checked, which is exactly
+    /// this incident's root cause).
+    #[serde(default)]
+    pub conflicts: BTreeMap<u64, ConflictInfo>,
+    /// Where the chain-lineage walk (`oracle/lineage.rs::walk_lineage`) last
+    /// left off -- the singleton coin that was still unspent as of the last
+    /// scan. The next scan (another periodic tick, or the next process's
+    /// startup bootstrap) resumes from here instead of re-walking the whole
+    /// lineage from the launcher every time (task instruction: "persist the
+    /// checkpoint so later restarts only scan forward"). `#[serde(default)]`:
+    /// absent until the first scan (or on any queue file predating this
+    /// fix).
+    #[serde(default)]
+    pub chain_scan_checkpoint: Option<Coin>,
+}
+
+/// What `QueueFile::reconcile_with_chain` actually changed -- returned so
+/// `Publisher` can decide whether the reconciled queue needs saving at all
+/// (most periodic scans, once caught up, change nothing: just one
+/// `coin_record` call confirming the tip is still unspent) and so it has
+/// something to log/report (task fix: "surface... never silently" applies
+/// just as much to the operator's logs as to `GET /v1/oracle/status`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReconcileOutcome {
+    /// `pending`/`in_flight` records dropped because the chain already has
+    /// them, byte-identical -- exactly what this incident republished.
+    pub dropped_confirmed: Vec<u64>,
+    /// `pending`/`in_flight` records moved into `conflicts` because the
+    /// chain has *different* content for the same `seq`.
+    pub new_conflicts: Vec<u64>,
+    /// The in-flight spend was fully superseded (every one of its records
+    /// already confirmed identically on chain) and cleared.
+    pub in_flight_cleared: bool,
+    /// The persisted checkpoint moved forward (or was set for the first
+    /// time).
+    pub checkpoint_advanced: bool,
+    pub generations_advanced: u64,
+    pub decode_warnings: Vec<String>,
+    /// Set by `Publisher::reconcile_queue_with_chain` (not by this method --
+    /// it has no access to `OracleState`), not `queue.rs` itself: the stale
+    /// `OracleState.current_coin` (spent, or simply behind) that was replaced
+    /// by adopting the chain's actual tip, `None` when nothing needed
+    /// adopting this round. Task fix, `docs/research/chain_service.md` §12.
+    /// Carried on this type purely for logging/test visibility alongside the
+    /// rest of one reconciliation pass's outcome -- it does not affect
+    /// `changed()` (that's about whether the *queue file* needs re-saving;
+    /// adopting a chain tip saves `operator.oracle.json`, a separate file,
+    /// unconditionally and immediately, not gated on this outcome at all).
+    pub adopted_stale_coin: Option<Coin>,
+}
+
+impl ReconcileOutcome {
+    /// Whether anything here actually needs persisting.
+    pub fn changed(&self) -> bool {
+        !self.dropped_confirmed.is_empty()
+            || !self.new_conflicts.is_empty()
+            || self.in_flight_cleared
+            || self.checkpoint_advanced
+    }
 }
 
 impl QueueFile {
@@ -134,6 +220,12 @@ impl QueueFile {
     pub fn record_state(&self, seq: u64) -> RecordState {
         if let Some(info) = self.confirmed.get(&seq) {
             return RecordState::Confirmed { height: info.height, coin_id: info.coin_id.clone() };
+        }
+        if let Some(conflict) = self.conflicts.get(&seq) {
+            return RecordState::Conflict {
+                chain_height: conflict.chain_height,
+                chain_coin_id: conflict.chain_coin_id.clone(),
+            };
         }
         if let Some(in_flight) = &self.in_flight
             && in_flight.records.iter().any(|r| r.seq == seq)
@@ -184,5 +276,113 @@ impl QueueFile {
 
     pub fn pending_count(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Applies a chain-lineage walk's findings (`oracle/lineage.rs::
+    /// walk_lineage`) to this queue -- the reconciliation half of the task
+    /// fix (`docs/research/chain_service.md` §11): "pending/in_flight
+    /// records whose seq is already on-chain with identical content -> drop
+    /// as confirmed; with DIFFERENT content -> do not publish, mark
+    /// conflict, surface in status -- never silently. Persist the
+    /// checkpoint so later restarts only scan forward."
+    ///
+    /// `pending` is reconciled unconditionally -- this is exactly what this
+    /// incident republished (a stale/race-corrupted queue file's `pending`
+    /// holding records the chain already had). `in_flight` is reconciled
+    /// defensively: only fully cleared when *every* one of its records is
+    /// already confirmed identically on chain (nothing left to broadcast or
+    /// wait for); a partial or outright conflicting match is surfaced via
+    /// `conflicts` but the in-flight spend itself is left alone --
+    /// unwinding an already-broadcast spend is `advance_in_flight`'s job via
+    /// its own existing chain checks, not this reconciliation pass's.
+    pub fn reconcile_with_chain(&mut self, walk: &LineageWalkOutcome) -> ReconcileOutcome {
+        let mut outcome = ReconcileOutcome {
+            generations_advanced: walk.generations_advanced,
+            decode_warnings: walk.decode_warnings.clone(),
+            ..Default::default()
+        };
+
+        let stale_pending = std::mem::take(&mut self.pending);
+        for record in stale_pending {
+            match walk.confirmed.get(&record.seq) {
+                Some(chain_record) if chain_record.record == record => {
+                    self.confirmed.insert(
+                        record.seq,
+                        ConfirmedRecordInfo { height: chain_record.height, coin_id: chain_record.coin_id.clone() },
+                    );
+                    outcome.dropped_confirmed.push(record.seq);
+                }
+                Some(chain_record) => {
+                    self.conflicts.insert(
+                        record.seq,
+                        ConflictInfo {
+                            local: record,
+                            chain: chain_record.record,
+                            chain_height: chain_record.height,
+                            chain_coin_id: chain_record.coin_id.clone(),
+                        },
+                    );
+                    outcome.new_conflicts.push(record.seq);
+                }
+                None => self.pending.push(record),
+            }
+        }
+        self.pending.sort_by_key(|r| r.seq);
+
+        // Cloned (not borrowed) so `self.in_flight = None` below and the
+        // `self.confirmed`/`self.conflicts` mutations don't fight the
+        // borrow checker over sibling fields of `self`.
+        if let Some(in_flight) = self.in_flight.clone() {
+            let mismatched: Vec<u64> = in_flight
+                .records
+                .iter()
+                .filter(|r| walk.confirmed.get(&r.seq).is_some_and(|cr| cr.record != **r))
+                .map(|r| r.seq)
+                .collect();
+            let all_confirmed = !in_flight.records.is_empty()
+                && in_flight.records.iter().all(|r| walk.confirmed.get(&r.seq).is_some_and(|cr| cr.record == *r));
+
+            if all_confirmed {
+                for record in &in_flight.records {
+                    let chain_record = &walk.confirmed[&record.seq];
+                    self.confirmed.insert(
+                        record.seq,
+                        ConfirmedRecordInfo { height: chain_record.height, coin_id: chain_record.coin_id.clone() },
+                    );
+                    outcome.dropped_confirmed.push(record.seq);
+                }
+                self.in_flight = None;
+                outcome.in_flight_cleared = true;
+            } else {
+                for record in in_flight.records.iter().filter(|r| mismatched.contains(&r.seq)) {
+                    let chain_record = &walk.confirmed[&record.seq];
+                    self.conflicts.insert(
+                        record.seq,
+                        ConflictInfo {
+                            local: *record,
+                            chain: chain_record.record,
+                            chain_height: chain_record.height,
+                            chain_coin_id: chain_record.coin_id.clone(),
+                        },
+                    );
+                    outcome.new_conflicts.push(record.seq);
+                }
+            }
+        }
+
+        if let Some((&max_seq, chain_record)) = walk.confirmed.iter().next_back()
+            && max_seq > self.last_confirmed_seq.unwrap_or(0)
+        {
+            self.last_confirmed_seq = Some(max_seq);
+            self.last_confirmed_height = chain_record.height.or(self.last_confirmed_height);
+        }
+
+        let checkpoint_advanced = self.chain_scan_checkpoint != Some(walk.tip_coin);
+        if checkpoint_advanced {
+            self.chain_scan_checkpoint = Some(walk.tip_coin);
+        }
+        outcome.checkpoint_advanced = checkpoint_advanced;
+
+        outcome
     }
 }

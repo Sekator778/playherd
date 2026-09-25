@@ -15,7 +15,7 @@ use std::future::Future;
 
 use anyhow::{Context, Result};
 use chia_bls::SecretKey;
-use chia_protocol::{Bytes32, SpendBundle};
+use chia_protocol::{Bytes32, Coin, CoinSpend, SpendBundle};
 use chia_sdk_coinset::{ChiaRpcClient, CoinsetClient, GetMempoolItemResponse};
 use serde::Deserialize;
 
@@ -28,6 +28,20 @@ pub struct CoinRecordInfo {
     pub confirmed_height: Option<u32>,
     pub spent: bool,
     pub spent_height: Option<u32>,
+    /// The queried coin's own `parent_coin_info`/`puzzle_hash`/`amount` --
+    /// `None` only when `exists` is `false`. Task fix (`docs/research/
+    /// chain_service.md` §12, "make the chain the source of truth for the
+    /// singleton position"): to build the `Proof` needed to spend some coin
+    /// `X`, the singleton layer needs `X`'s *parent*'s own
+    /// `parent_coin_info`/`amount` -- one `coin_record` call on
+    /// `X.parent_coin_info` already has this for free, since coinset's
+    /// `get_coin_record_by_name` always returns the full `coin` object
+    /// alongside its confirmation/spent status (`chia-sdk-coinset`'s own
+    /// `CoinRecord` struct has a `coin: Coin` field, not just the booleans
+    /// this type used to expose) -- see `oracle::lineage::tip_lineage_proof`.
+    /// Purely additive: every existing caller only ever asked about
+    /// confirmation/spent status and still can.
+    pub coin: Option<Coin>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +90,21 @@ pub trait ChainClient: Send + Sync {
     /// of coins at a higher fee, which this service does not implement, see
     /// `publisher.rs::advance_in_flight`).
     fn in_mempool(&self, tx_id: Bytes32) -> impl Future<Output = Result<bool>> + Send;
+
+    /// The puzzle reveal + solution that spent `coin_id` (`None` if
+    /// `coin_id` was never spent, or coinset simply has no record of it),
+    /// for the startup/periodic lineage walk (`oracle/lineage.rs`, task fix
+    /// `docs/research/chain_service.md` §11: "never trust the local queue
+    /// file's bookkeeping alone -- reconstruct the authoritative confirmed
+    /// map straight from the chain"). `height` narrows the lookup the same
+    /// way `docs/research/chain_service.md` §9.2's `get_puzzle_and_solution`
+    /// calls already do elsewhere in this codebase's tooling (the coin's own
+    /// `spent_height`, from a prior `coin_record` call).
+    fn puzzle_and_solution(
+        &self,
+        coin_id: Bytes32,
+        height: Option<u32>,
+    ) -> impl Future<Output = Result<Option<CoinSpend>>> + Send;
 }
 
 #[derive(Debug, Clone)]
@@ -130,12 +159,14 @@ impl ChainClient for CoinsetChainClient {
                 } else {
                     None
                 },
+                coin: Some(record.coin),
             },
             None => CoinRecordInfo {
                 exists: false,
                 confirmed_height: None,
                 spent: false,
                 spent_height: None,
+                coin: None,
             },
         })
     }
@@ -197,5 +228,18 @@ impl ChainClient for CoinsetChainClient {
             .await
             .context("get_mempool_item_by_tx_id")?;
         Ok(response.mempool_item.is_some())
+    }
+
+    async fn puzzle_and_solution(&self, coin_id: Bytes32, height: Option<u32>) -> Result<Option<CoinSpend>> {
+        let response = self
+            .client
+            .get_puzzle_and_solution(coin_id, height)
+            .await
+            .context("get_puzzle_and_solution")?;
+        // Same "absent record, no hard error" shape as `coin_record`/
+        // `in_mempool` above -- coinset answers a coin it has no
+        // puzzle/solution for (never spent, or simply unknown to it) with
+        // `coin_solution: null`, not a `success: false` error.
+        Ok(response.coin_solution)
     }
 }

@@ -3,6 +3,7 @@
 //! `docs/research/chain_service.md` §2-5 for the full write-up.
 
 pub mod chain_client;
+pub mod lineage;
 pub mod publisher;
 pub mod queue;
 pub mod spend;
