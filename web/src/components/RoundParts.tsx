@@ -7,7 +7,7 @@ import type {
   PublicPositionDto,
 } from "../api/contract";
 import { formatPlayAmount, formatUsd } from "../format";
-import { EmptyState, RoundStatusBadge } from "./Common";
+import { BotBadge, EmptyState, ResultsHashLine, RoundStatusBadge } from "./Common";
 import { DirectionGlyph } from "./icons";
 
 export function IntervalTabs({ value, onChange }: { value: Interval; onChange: (v: Interval) => void }) {
@@ -43,7 +43,7 @@ export function PositionsList({ positions, settled }: { positions: PublicPositio
           <li key={p.playerId} className="list-row">
             <span>
               <DirectionGlyph direction={p.direction} /> {p.direction} · x{p.leverage} ·{" "}
-              <Link to={`/profile/${p.playerId}`}>{p.player.displayName}</Link>
+              <Link to={`/profile/${p.playerId}`}>{p.player.displayName}</Link> <BotBadge isBot={p.player.isBot} />
             </span>
             <span>
               {p.liquidated && <span className="outcome-liquidated">Liquidated</span>}
@@ -103,7 +103,15 @@ export function CrowdPositionCard({ phase, crowd }: CrowdPositionCardProps) {
   );
 }
 
-export function CancellationNotice({ cancellation }: { cancellation: CancellationDto }) {
+export function CancellationNotice({
+  cancellation,
+  resultsHash,
+  roundId,
+}: {
+  cancellation: CancellationDto;
+  resultsHash?: string;
+  roundId: string;
+}) {
   return (
     <div className="card">
       <RoundStatusBadge phase="CANCELLED" />
@@ -112,6 +120,7 @@ export function CancellationNotice({ cancellation }: { cancellation: Cancellatio
       <p className="muted">
         All {cancellation.refundedBetCount} bets were refunded, including any that would have been liquidated.
       </p>
+      <ResultsHashLine roundId={roundId} resultsHash={resultsHash} />
     </div>
   );
 }

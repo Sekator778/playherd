@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import type {
   DepositRequestDto,
@@ -214,24 +213,18 @@ export function WalletPage() {
   const { player, openConnectModal } = useSession();
 
   return (
-    <>
-      <div className="mobile-only state-card">
-        <p className="state-card__title">Wallet needs Sage on desktop — open this page there.</p>
-        <Link to="/">Back to Home</Link>
-      </div>
-      <div className="desktop-only">
-        <h1>Wallet</h1>
-        {!player ? (
-          <div className="state-card">
-            <p className="state-card__title">Connect your wallet to see your balance</p>
-            <button type="button" className="btn btn--primary" onClick={openConnectModal}>
-              CONNECT WALLET
-            </button>
-          </div>
-        ) : (
-          <WalletContent />
-        )}
-      </div>
-    </>
+    <div>
+      <h1>Wallet</h1>
+      {!player ? (
+        <div className="state-card">
+          <p className="state-card__title">Connect your wallet to see your balance</p>
+          <button type="button" className="btn btn--primary" onClick={openConnectModal}>
+            CONNECT WALLET
+          </button>
+        </div>
+      ) : (
+        <WalletContent />
+      )}
+    </div>
   );
 }

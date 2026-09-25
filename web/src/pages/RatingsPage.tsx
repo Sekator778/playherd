@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import type { RatingsDto, SeasonId } from "../api/contract";
-import { ErrorState, MultiAccountDisclosureLine, Skeleton } from "../components/Common";
+import { BotBadge, ErrorState, MultiAccountDisclosureLine, Skeleton } from "../components/Common";
 import { formatPercent, formatPlayAmount } from "../format";
 
 function currentSeasonId(): SeasonId {
@@ -113,7 +113,7 @@ export function RatingsPage() {
                 <tr key={r.player.playerId}>
                   <td data-label="Rank">#{r.rank}</td>
                   <td data-label="Player">
-                    <Link to={`/profile/${r.player.playerId}`}>{r.player.displayName}</Link>
+                    <Link to={`/profile/${r.player.playerId}`}>{r.player.displayName}</Link> <BotBadge isBot={r.player.isBot} />
                   </td>
                   <td data-label="Balance change" className="mono">
                     {formatPlayAmount(r.growth, { decimals: 0, sign: true })} PLAY
@@ -141,7 +141,7 @@ export function RatingsPage() {
               <tr key={r.player.playerId}>
                 <td data-label="Rank">#{r.rank}</td>
                 <td data-label="Player">
-                  <Link to={`/profile/${r.player.playerId}`}>{r.player.displayName}</Link>
+                  <Link to={`/profile/${r.player.playerId}`}>{r.player.displayName}</Link> <BotBadge isBot={r.player.isBot} />
                 </td>
                 <td data-label="Direction accuracy" className="mono">
                   {formatPercent(r.accuracy)}

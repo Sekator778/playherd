@@ -221,6 +221,50 @@ ol {
   letter-spacing: 0.01em;
 }
 
+/* Replay-mode banner (task item 4 — ServerInfoDto) -------------------------- */
+
+.replay-banner {
+  background: var(--bg-elevated-2);
+  color: var(--accent-text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  padding: 8px 14px;
+  margin-bottom: 16px;
+}
+
+/* Bot badge (task item 4 — PlayerSummaryDto.isBot) -------------------------- */
+
+.bot-badge {
+  display: inline-block;
+  background: var(--bg-elevated-2);
+  color: var(--text-faint);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+
+/* Test wallet tag (task item 2 — "shows 'Test wallet' clearly") ------------ */
+
+.test-wallet-tag {
+  display: inline-block;
+  color: var(--accent-text);
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 2px 10px;
+  margin-bottom: 8px;
+}
+
 /* Header ------------------------------------------------------------------ */
 
 .app-header {
@@ -278,11 +322,27 @@ ol {
 }
 
 @media (max-width: 720px) {
+  /* Nav links move into the hamburger menu on mobile (Layout.tsx's `.mobile-nav`) — but the
+   * balance pill and CONNECT WALLET/profile menu stay visible (Р-48 replaces Р-31: sign-in and
+   * betting both work on a phone now), just shrunk a bit so logo + balance + wallet button + the
+   * hamburger button all fit at 375px without wrapping or causing horizontal scroll. */
+  .app-header {
+    gap: 10px;
+    padding: 0 12px;
+  }
   .app-header__nav {
     display: none;
   }
   .app-header__right {
-    display: none;
+    gap: 8px;
+  }
+  .app-header__right .btn {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .balance-pill {
+    padding: 5px 8px;
+    font-size: 12px;
   }
 }
 
@@ -824,29 +884,9 @@ ol {
   gap: 28px;
 }
 
-.desktop-only {
-  display: block;
-}
-.mobile-only {
-  display: none;
-}
-@media (max-width: 720px) {
-  .desktop-only {
-    display: none;
-  }
-  .mobile-only {
-    display: block;
-  }
-  .home-section--chart {
-    order: 1;
-  }
-  .home-section--round {
-    order: 2;
-  }
-  .home-section--ratings {
-    order: 3;
-  }
-}
+/* Р-48 replaces Р-31: betting and the wallet work on mobile too, so Home no longer reorders its
+ * sections for a no-wallet phone layout — natural document order (round → chart → ratings) is
+ * the same at every width, one-handed-usable bet slip and all (task item 3). */
 
 .chart-tooltip {
   background: var(--bg-elevated-2);

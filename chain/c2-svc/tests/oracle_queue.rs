@@ -1,0 +1,401 @@
+//! Queueing-logic unit tests (task instruction: "queueing logic (unit with
+//! a fake chain client)") -- no network, no simulator, just
+//! `Publisher::{enqueue, tick}` against `FakeChainClient` and a temp data
+//! dir. Exercises: "several pending records go into ONE singleton spend",
+//! "records queue while a spend is in flight", "detect confirmation via
+//! coinset", "retries with backoff", and "never double-spend the
+//! singleton" (all task instruction phrases).
+//!
+//! Setup uses `c2_cli::builders::oracle::build_oracle_launch` directly
+//! (pure local CLVM construction, no chain/simulator needed) to get a
+//! self-consistent `(launcher_id, eve_coin, eve_proof)` triple for the
+//! fixture `operator.oracle.json` -- the same reason `c2 oracle-launch`
+//! itself works fully offline in dry-run mode.
+
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::Mutex;
+use std::time::Duration;
+
+use anyhow::Result;
+use chia_bls::SecretKey;
+use chia_protocol::{Bytes32, Coin, SpendBundle};
+
+use c2_cli::builders::oracle::build_oracle_launch;
+use c2_cli::keys::{WalletKey, derive_wallet_key, generate_mnemonic, master_sk_from_mnemonic};
+use c2_cli::keystore::KeyFile;
+use c2_cli::state::OracleState;
+use c2_svc::oracle::chain_client::{ChainClient, CoinRecordInfo, PushOutcome};
+use c2_svc::oracle::publisher::{Publisher, TickOutcome};
+use c2_svc::oracle::queue::QueueFile;
+use c2_svc::oracle::types::{OracleRecord, Source};
+use c2_svc::state_file::save_oracle_state_atomic;
+
+// --- fake chain client -------------------------------------------------
+
+struct FakeChainClientInner {
+    /// coin_id -> confirmed/spent info the test controls directly.
+    coin_records: HashMap<Bytes32, CoinRecordInfo>,
+    fee_mojos: u64,
+    funding_amount: u64,
+    push_calls: u32,
+    /// Every `push_tx` call returns this outcome; tests flip it between
+    /// calls to simulate a failed-then-retried push.
+    next_push_outcome: PushOutcome,
+}
+
+pub struct FakeChainClient(Mutex<FakeChainClientInner>);
+
+impl FakeChainClient {
+    fn new() -> Self {
+        Self(Mutex::new(FakeChainClientInner {
+            coin_records: HashMap::new(),
+            fee_mojos: 0,
+            funding_amount: 1_000_000,
+            push_calls: 0,
+            next_push_outcome: PushOutcome {
+                accepted: true,
+                status: Some("SUCCESS".to_string()),
+                error: None,
+            },
+        }))
+    }
+
+    fn set_confirmed(&self, coin_id: Bytes32, height: u32) {
+        self.0.lock().unwrap().coin_records.insert(
+            coin_id,
+            CoinRecordInfo {
+                exists: true,
+                confirmed_height: Some(height),
+                spent: false,
+                spent_height: None,
+            },
+        );
+    }
+
+    fn set_spent(&self, coin_id: Bytes32, confirmed_height: u32, spent_height: u32) {
+        self.0.lock().unwrap().coin_records.insert(
+            coin_id,
+            CoinRecordInfo {
+                exists: true,
+                confirmed_height: Some(confirmed_height),
+                spent: true,
+                spent_height: Some(spent_height),
+            },
+        );
+    }
+
+    fn set_push_outcome(&self, outcome: PushOutcome) {
+        self.0.lock().unwrap().next_push_outcome = outcome;
+    }
+
+    fn push_call_count(&self) -> u32 {
+        self.0.lock().unwrap().push_calls
+    }
+}
+
+impl ChainClient for FakeChainClient {
+    fn coin_record(&self, coin_id: Bytes32) -> impl Future<Output = Result<CoinRecordInfo>> + Send {
+        let info = self
+            .0
+            .lock()
+            .unwrap()
+            .coin_records
+            .get(&coin_id)
+            .copied()
+            .unwrap_or(CoinRecordInfo {
+                exists: false,
+                confirmed_height: None,
+                spent: false,
+                spent_height: None,
+            });
+        async move { Ok(info) }
+    }
+
+    fn fee_estimate_mojos(&self, _cost: u64, _target_time_secs: u32) -> impl Future<Output = Result<u64>> + Send {
+        let fee = self.0.lock().unwrap().fee_mojos;
+        async move { Ok(fee) }
+    }
+
+    fn find_funding_coin(
+        &self,
+        master_sk: &SecretKey,
+        min_amount: u64,
+    ) -> impl Future<Output = Result<(WalletKey, Coin)>> + Send {
+        let amount = self.0.lock().unwrap().funding_amount;
+        let wallet_key = derive_wallet_key(master_sk, 0);
+        let coin = Coin::new(Bytes32::from([7u8; 32]), wallet_key.puzzle_hash, amount);
+        async move {
+            if amount < min_amount {
+                anyhow::bail!("fake funding coin has {amount} mojos, need >= {min_amount}");
+            }
+            Ok((wallet_key, coin))
+        }
+    }
+
+    fn balance(&self, _master_sk: &SecretKey) -> impl Future<Output = Result<u64>> + Send {
+        let amount = self.0.lock().unwrap().funding_amount;
+        async move { Ok(amount) }
+    }
+
+    fn push_tx(&self, _bundle: SpendBundle) -> impl Future<Output = Result<PushOutcome>> + Send {
+        let mut inner = self.0.lock().unwrap();
+        inner.push_calls += 1;
+        let outcome = inner.next_push_outcome.clone();
+        async move { Ok(outcome) }
+    }
+}
+
+// --- fixture -------------------------------------------------------------
+
+struct Fixture {
+    _tmp: tempfile::TempDir,
+    publisher: Publisher<FakeChainClient>,
+}
+
+fn set_up(retry_backoff: Duration) -> Result<Fixture> {
+    let tmp = tempfile::tempdir()?;
+    let data_dir = tmp.path().to_path_buf();
+
+    let mnemonic = generate_mnemonic()?;
+    let master_sk = master_sk_from_mnemonic(&mnemonic);
+    let manager = derive_wallet_key(&master_sk, 0);
+
+    std::fs::write(
+        data_dir.join("operator.json"),
+        serde_json::to_string_pretty(&KeyFile {
+            mnemonic: mnemonic.to_string(),
+            created_utc: "2026-09-25T00:00:00Z".to_string(),
+            network: "testnet11".to_string(),
+        })?,
+    )?;
+
+    // Pure local CLVM construction (no chain/simulator) -- see module doc.
+    let funding_coin = Coin::new(Bytes32::from([9u8; 32]), manager.puzzle_hash, 1);
+    let launch = build_oracle_launch(funding_coin, &manager, 0)?;
+
+    let oracle_state = OracleState {
+        launcher_id: launch.launcher_id,
+        manager_synthetic_pk: manager.synthetic_pk,
+        current_coin: launch.eve_coin,
+        current_proof_dto: launch.eve_proof.into(),
+        next_sequence: 1,
+    };
+    save_oracle_state_atomic(&data_dir, "operator", &oracle_state)?;
+
+    let publisher = Publisher {
+        data_dir,
+        operator_name: "operator".to_string(),
+        push_enabled: true,
+        chain: FakeChainClient::new(),
+        retry_backoff,
+        max_retry_attempts: 3,
+        fee_target_time_secs: 60,
+    };
+
+    Ok(Fixture { _tmp: tmp, publisher })
+}
+
+fn record(seq: u64) -> OracleRecord {
+    OracleRecord {
+        seq,
+        ts: 1_790_000_000 + seq as i64,
+        price_cents: 65_432_100,
+        results_hash: Bytes32::from([seq as u8; 32]),
+        source_flag: Source::Live.flag(),
+        source_ts: 1_789_999_000 + seq as i64,
+    }
+}
+
+// --- tests -----------------------------------------------------------------
+
+/// "several pending records go into ONE singleton spend" + "detect
+/// confirmation via coinset": one batch, one broadcast, confirmation
+/// clears it and advances `operator.oracle.json`.
+#[tokio::test]
+async fn batch_broadcasts_once_and_confirms() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+
+    let queued = fx.publisher.enqueue(vec![record(1), record(2), record(3)])?;
+    assert_eq!(queued, 3);
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 3, accepted: true });
+    assert_eq!(fx.publisher.chain.push_call_count(), 1);
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.expect("spend should be in flight");
+    assert_eq!(in_flight.records.len(), 3);
+    assert!(queue.pending.is_empty());
+
+    // Not confirmed yet -> another tick must not start a second spend.
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::WaitingForConfirmation);
+    assert_eq!(fx.publisher.chain.push_call_count(), 1, "must not re-push before backoff elapses");
+
+    fx.publisher.chain.set_confirmed(in_flight.next_coin.coin_id(), 4_735_705);
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Confirmed { records: 3 });
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.in_flight.is_none());
+    assert_eq!(queue.last_confirmed_seq, Some(3));
+    assert_eq!(queue.last_confirmed_height, Some(4_735_705));
+
+    let oracle_state = c2_svc::state_file::load_oracle_state(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(oracle_state.current_coin, in_flight.next_coin);
+    assert_eq!(oracle_state.next_sequence, 2);
+
+    let status = fx.publisher.status().await?;
+    assert_eq!(status.last_confirmed_seq, Some(3));
+    assert_eq!(status.pending_records, 0);
+    assert!(status.in_flight_bundle_id.is_none());
+
+    Ok(())
+}
+
+/// "records queue while a spend is in flight": records submitted after a
+/// batch is already broadcast must not trigger a second, concurrent spend
+/// -- they wait in `pending` until the in-flight one confirms.
+#[tokio::test]
+async fn records_queue_while_a_spend_is_in_flight() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+
+    fx.publisher.enqueue(vec![record(1)])?;
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: true });
+
+    // More records arrive while the first batch is still unconfirmed.
+    let queued = fx.publisher.enqueue(vec![record(2), record(3)])?;
+    assert_eq!(queued, 2);
+
+    let status = fx.publisher.status().await?;
+    assert_eq!(status.pending_records, 3, "1 in flight + 2 pending");
+
+    // Ticking again must not start a second spend (only one in_flight at a
+    // time) and must not touch push_tx again yet.
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::WaitingForConfirmation);
+    assert_eq!(fx.publisher.chain.push_call_count(), 1);
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(queue.pending.len(), 2, "new records stayed queued, did not join the in-flight spend");
+    let next_coin = queue.in_flight.unwrap().next_coin;
+
+    // Confirm the first batch -> the queued records become eligible for the
+    // *next* spend.
+    fx.publisher.chain.set_confirmed(next_coin.coin_id(), 100);
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Confirmed { records: 1 });
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 2, accepted: true });
+    assert_eq!(fx.publisher.chain.push_call_count(), 2);
+
+    Ok(())
+}
+
+/// "retries with backoff": a rejected/still-unconfirmed push is retried
+/// only after `retry_backoff` has elapsed, reusing the exact same signed
+/// bundle (no rebuild).
+#[tokio::test]
+async fn retries_after_backoff_elapses() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?; // zero backoff: every tick is eligible to retry
+
+    fx.publisher.enqueue(vec![record(1)])?;
+    fx.publisher
+        .chain
+        .set_push_outcome(PushOutcome { accepted: false, status: None, error: Some("mempool full".to_string()) });
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
+    assert_eq!(fx.publisher.chain.push_call_count(), 1);
+
+    // Still not confirmed, still failing -> backoff is zero, so this tick
+    // retries `push_tx` again with the same persisted bundle.
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Retried { accepted: false });
+    assert_eq!(fx.publisher.chain.push_call_count(), 2);
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.expect("still in flight after failed pushes");
+    assert_eq!(in_flight.attempts, 2);
+    assert_eq!(in_flight.last_push_error.as_deref(), Some("mempool full"));
+
+    // Now let it succeed and confirm.
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+    fx.publisher.chain.set_confirmed(in_flight.next_coin.coin_id(), 200);
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Confirmed { records: 1 });
+
+    Ok(())
+}
+
+/// A stuck spend (exhausted retries) is surfaced, not silently dropped or
+/// endlessly retried past the configured cap.
+#[tokio::test]
+async fn stuck_in_flight_stops_auto_retrying_at_max_attempts() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.enqueue(vec![record(1)])?;
+    fx.publisher
+        .chain
+        .set_push_outcome(PushOutcome { accepted: false, status: None, error: Some("rejected".to_string()) });
+
+    // max_retry_attempts = 3 (set_up): first tick broadcasts (attempts=1),
+    // then 2 more ticks retry (attempts=2, attempts=3); a 4th tick must stop
+    // retrying and report `StuckInFlight` instead of calling push_tx again.
+    fx.publisher.tick().await?; // attempts = 1
+    fx.publisher.tick().await?; // attempts = 2
+    fx.publisher.tick().await?; // attempts = 3
+    assert_eq!(fx.publisher.chain.push_call_count(), 3);
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::StuckInFlight);
+    assert_eq!(fx.publisher.chain.push_call_count(), 3, "must not push_tx again past max_retry_attempts");
+
+    let status = fx.publisher.status().await?;
+    assert!(status.in_flight_bundle_id.is_some(), "stuck spend still surfaced via status");
+
+    Ok(())
+}
+
+/// "never double-spend the singleton": if the chain says the current
+/// generation's coin is already spent but local state has no matching
+/// in-flight spend (stale state, e.g. after an unexpected local state
+/// reset), a new batch must be refused rather than built on top of it.
+#[tokio::test]
+async fn refuses_to_build_on_stale_spent_current_coin() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.enqueue(vec![record(1)])?;
+
+    let oracle_state = c2_svc::state_file::load_oracle_state(&fx.publisher.data_dir, "operator")?;
+    fx.publisher
+        .chain
+        .set_spent(oracle_state.current_coin.coin_id(), 50, 51);
+
+    let result = fx.publisher.tick().await;
+    assert!(result.is_err(), "must refuse to spend an already-spent current_coin");
+    assert_eq!(fx.publisher.chain.push_call_count(), 0);
+
+    Ok(())
+}
+
+/// A dry run (`push_enabled: false`) builds and signs but never calls
+/// `push_tx` and never mutates persisted state -- task instruction
+/// "--dry-run / env C2_PUSH=0 mode for tests".
+#[tokio::test]
+async fn dry_run_never_pushes_or_mutates_state() -> Result<()> {
+    let mut fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.push_enabled = false;
+
+    fx.publisher.enqueue(vec![record(1), record(2)])?;
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::DryRun { records: 2 });
+    assert_eq!(fx.publisher.chain.push_call_count(), 0);
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.in_flight.is_none());
+    assert_eq!(queue.pending.len(), 2, "dry run must not drain the pending queue");
+
+    Ok(())
+}

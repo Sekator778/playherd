@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
+import { usePoll } from "../api/usePoll";
 import { useClock } from "../api/useClock";
 import type { RoundDto } from "../api/contract";
 import { BetSlip } from "../components/BetSlip";
-import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton } from "../components/Common";
+import {
+  Countdown,
+  ErrorState,
+  OracleDisclosureLine,
+  ResultsHashLine,
+  RoundStatusBadge,
+  Skeleton,
+} from "../components/Common";
 import { CancellationNotice, CrowdPositionCard, PositionsList } from "../components/RoundParts";
 import { formatPlayAmount, formatUsd } from "../format";
+
+const POLL_MS = 2000;
 
 export function RoundPage() {
   const { roundId } = useParams<{ roundId: string }>();
@@ -37,9 +47,7 @@ export function RoundPage() {
       .catch(() => setError(true));
   }, [api, roundId]);
 
-  useEffect(() => {
-    load();
-  }, [load, nowMs]);
+  usePoll(load, POLL_MS, [load]);
 
   if (error && !round) return <ErrorState onRetry={load} />;
   if (!round) {
@@ -52,7 +60,7 @@ export function RoundPage() {
   }
 
   if (round.phase === "CANCELLED") {
-    return <CancellationNotice cancellation={round.cancellation} />;
+    return <CancellationNotice cancellation={round.cancellation} resultsHash={round.resultsHash} roundId={round.roundId} />;
   }
 
   const ownPosition =
@@ -100,23 +108,19 @@ export function RoundPage() {
           {round.phase === "BETTING" && (
             <>
               <p>{round.participantCount} players have voted</p>
-              <div className="desktop-only">
-                <BetSlip
-                  round={round}
-                  nowMs={nowMs}
-                  onChanged={load}
-                  noPlayerHint="You can still watch this round without one."
-                />
-              </div>
-              <div className="mobile-only card">
-                <p className="muted">Open on desktop to bet</p>
-              </div>
+              <BetSlip
+                round={round}
+                nowMs={nowMs}
+                onChanged={load}
+                noPlayerHint="You can still watch this round without one."
+              />
             </>
           )}
           {(round.phase === "RUNNING" || round.phase === "SETTLED") && (
             <>
               <p className="mono">Open price: {formatUsd(round.openPrice)}</p>
               <OracleDisclosureLine />
+              {round.phase === "SETTLED" && <ResultsHashLine roundId={round.roundId} resultsHash={round.resultsHash} />}
               <h3>All positions</h3>
               <PositionsList positions={round.positions} settled={round.phase === "SETTLED"} />
             </>

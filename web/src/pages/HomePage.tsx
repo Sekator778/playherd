@@ -1,21 +1,26 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi } from "../api/ApiContext";
+import { usePoll } from "../api/usePoll";
 import { useClock } from "../api/useClock";
 import type { HomeSummaryDto, Interval } from "../api/contract";
 import { RATING_ROUNDS_THRESHOLD } from "../api/contract";
 import { BetSlip } from "../components/BetSlip";
-import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton } from "../components/Common";
+import { BotBadge, Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton } from "../components/Common";
 import { LazyCrowdChart } from "../components/LazyCrowdChart";
 import { IntervalTabs } from "../components/RoundParts";
 import { formatPlayAmount, formatPercent } from "../format";
+
+/** Task item 1: "polling every 2 s for rounds/home/serverInfo while visible". */
+const POLL_MS = 2000;
 
 function RichRow({ entry }: { entry: HomeSummaryDto["topRich"][number] }) {
   return (
     <li className="list-row">
       <Link to={`/profile/${entry.player.playerId}`}>
         #{entry.rank} {entry.player.displayName}
-      </Link>
+      </Link>{" "}
+      <BotBadge isBot={entry.player.isBot} />
       <span className="mono">{formatPlayAmount(entry.growth, { decimals: 0, sign: true })} PLAY</span>
     </li>
   );
@@ -26,7 +31,8 @@ function ProphetRow({ entry }: { entry: HomeSummaryDto["topProphets"][number] })
     <li className="list-row">
       <Link to={`/profile/${entry.player.playerId}`}>
         #{entry.rank} {entry.player.displayName}
-      </Link>
+      </Link>{" "}
+      <BotBadge isBot={entry.player.isBot} />
       <span className="mono">{formatPercent(entry.accuracy)}</span>
     </li>
   );
@@ -49,9 +55,7 @@ export function HomePage() {
       .catch(() => setError(true));
   }, [api]);
 
-  useEffect(() => {
-    load();
-  }, [load, nowMs]);
+  usePoll(load, POLL_MS, [load]);
 
   if (error && !home) {
     return <ErrorState onRetry={load} />;
@@ -91,17 +95,7 @@ export function HomePage() {
             </p>
           </div>
           {betting.phase === "BETTING" ? (
-            <>
-              <div className="desktop-only">
-                <BetSlip round={betting} nowMs={nowMs} onChanged={load} />
-              </div>
-              <div className="card mobile-only">
-                <p>{betting.participantCount} players have voted</p>
-                <Link className="btn btn--secondary btn--block" to={`/round/${betting.roundId}`}>
-                  Open on desktop to bet
-                </Link>
-              </div>
-            </>
+            <BetSlip round={betting} nowMs={nowMs} onChanged={load} />
           ) : (
             <div className="card">
               <h3>This round was cancelled.</h3>

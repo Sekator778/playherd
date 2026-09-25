@@ -12,6 +12,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "chia-wallet-sdk-wasm": "^0.36.0",
     "decimal.js": "^10.6.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -35,6 +36,10 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.1",
     "vite": "^8.3.1",
+    "vite-plugin-wasm": "^3.6.0",
     "vitest": "^5.0.2"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true
   }
 }

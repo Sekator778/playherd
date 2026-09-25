@@ -94,18 +94,26 @@ export function ConnectWalletModal() {
   const startConnect = async () => {
     const attemptId = attemptIdRef.current;
     setStep("waiting");
-    const challenge = await api.authChallenge({});
-    // Mock: fabricates an address/signature locally instead of round-tripping through Sage
-    // (docs/research/week1_wallet_auth.md §0) — a short delay stands in for "Waiting for
-    // confirmation in Sage…" so that state is actually visible.
-    await new Promise((r) => setTimeout(r, 650));
+    // Browser test wallet (Р-45): a real Chia key generated in this browser, persisted in
+    // localStorage — every browser profile/incognito window/phone is a different player. Signs
+    // the exact scheme a real Sage-backed login uses (docs/research/week1_wallet_auth.md §2).
+    // Dynamically imported — its WASM crypto module (~2 MB gzipped, the whole
+    // chia-wallet-sdk-wasm surface, not just the signing slice this app uses) has no reason to
+    // sit in the initial bundle every visitor downloads, especially on the mobile connections
+    // Р-48 targets; it only loads once someone actually opens this modal.
+    const { getTestWallet, signTestWalletMessage } = await import("../wallet/testWallet");
+    const wallet = getTestWallet();
+    const challenge = await api.authChallenge({ address: wallet.address });
+    const signed = signTestWalletMessage(challenge.message);
+    // Signing itself is near-instant (WASM, no network round trip) — this short delay just
+    // keeps the "waiting" state actually visible instead of flashing past it.
+    await new Promise((r) => setTimeout(r, 400));
     if (attemptIdRef.current !== attemptId) return; // modal closed/reopened mid-attempt
-    const fakeAddr = challenge.message.match(/Address: (\S+)/)?.[1] ?? "txch1demo";
     const session_ = await api.authVerify({
       nonce: challenge.nonce,
-      address: fakeAddr,
-      publicKey: "mock-public-key",
-      signature: "mock-signature",
+      address: signed.address,
+      publicKey: signed.publicKey,
+      signature: signed.signature,
     });
     if (attemptIdRef.current !== attemptId) return;
     setAddress(session_.player.walletAddress);
@@ -141,10 +149,14 @@ export function ConnectWalletModal() {
         {step === "connect" && (
           <>
             <h2 id="connect-modal-title">Connect your wallet</h2>
-            <p className="muted">We'll ask Sage to sign a short message — this does not move any funds.</p>
+            <p className="test-wallet-tag">TEST WALLET</p>
+            <p className="muted">
+              This local stand signs you in with a real Chia key generated right in your browser — not Sage. It
+              doesn't move any funds, and each browser/profile is a separate player.
+            </p>
             <div className="modal-actions">
               <button type="button" className="btn btn--primary btn--block btn--lg" onClick={() => void startConnect()}>
-                Continue with Sage
+                Continue with test wallet
               </button>
             </div>
             <button type="button" className="modal-close-text" onClick={handleClose}>
@@ -156,7 +168,7 @@ export function ConnectWalletModal() {
         {step === "waiting" && (
           <div className="text-center" style={{ padding: "24px 0" }}>
             <div className="spinner" aria-hidden="true" />
-            <p style={{ marginTop: 16 }}>Waiting for confirmation in Sage…</p>
+            <p style={{ marginTop: 16 }}>Signing in with your test wallet…</p>
           </div>
         )}
 

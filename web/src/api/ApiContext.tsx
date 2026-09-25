@@ -1,13 +1,18 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Api, PlayerSummaryDto } from "./contract";
+import { API_MODE } from "./apiMode";
 import { mockApi } from "./mockApi";
+import { realApi } from "./realApi";
 
 /**
- * The single `Api` instance every screen reads from — today always {@link mockApi}, but every
- * component only ever imports this context, never `mockApi` directly, so swapping in a real
- * HTTP client later (Р-35) is a one-line change here.
+ * The single `Api` instance every screen reads from — every component only ever imports this
+ * context, never `mockApi`/`realApi` directly, so switching between them is a one-line change
+ * here. Which one that is is decided once, at module load, by `VITE_API_MODE` (`apiMode.ts`,
+ * task item 1) — `mockApi` unless the build was explicitly told `VITE_API_MODE=real`.
  */
-const ApiInstanceContext = createContext<Api>(mockApi);
+const apiInstance: Api = API_MODE === "real" ? realApi : mockApi;
+
+const ApiInstanceContext = createContext<Api>(apiInstance);
 
 export function useApi(): Api {
   return useContext(ApiInstanceContext);
@@ -55,13 +60,13 @@ export function ApiProvider({ children }: { children: ReactNode }) {
   const [modalOpen, setModalOpen] = useState(false);
 
   const refresh = async () => {
-    const current = await mockApi.currentPlayer();
+    const current = await apiInstance.currentPlayer();
     setPlayer(current);
     setLoading(false);
   };
 
   const signOut = async () => {
-    await mockApi.signOut();
+    await apiInstance.signOut();
     await refresh();
   };
 
@@ -69,7 +74,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
   // linter only recognizes a bare promise chain with no synchronous setState before it as a
   // safe effect body.
   useEffect(() => {
-    mockApi.currentPlayer().then((current) => {
+    apiInstance.currentPlayer().then((current) => {
       setPlayer(current);
       setLoading(false);
     });
@@ -84,7 +89,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <ApiInstanceContext.Provider value={mockApi}>
+    <ApiInstanceContext.Provider value={apiInstance}>
       <SessionContext.Provider value={session}>
         <ConnectModalContext.Provider value={{ isOpen: modalOpen, close: () => setModalOpen(false) }}>
           {children}

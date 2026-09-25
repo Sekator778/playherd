@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import type { PublicProfileDto } from "../api/contract";
 import { seasonRange } from "../api/season";
-import { ErrorState, Skeleton } from "../components/Common";
+import { BotBadge, ErrorState, Skeleton } from "../components/Common";
 import { DirectionGlyph } from "../components/icons";
 import { formatDateTimeUtc, formatPercent, formatPlayAmount } from "../format";
 
@@ -48,21 +48,16 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
   }, [load, mine, player]);
 
   if (mine && !player) {
-    // Signing in is a Sage action (desktop-only, Р-31) — same mobile/desktop split as
-    // WalletPage, so a phone can't run the wallet-connect flow from this route either.
+    // Signing in works from any device now (Р-48 replaces Р-31's desktop-only Sage
+    // restriction — Sage itself ships Android/iOS builds, and the browser test wallet used on
+    // the local stand runs the same flow on a phone too).
     return (
-      <>
-        <div className="mobile-only state-card">
-          <p className="state-card__title">Wallet needs Sage on desktop — open this page there.</p>
-          <Link to="/">Back to Home</Link>
-        </div>
-        <div className="desktop-only state-card">
-          <p className="state-card__title">Connect your wallet to see your profile.</p>
-          <button type="button" className="btn btn--primary" onClick={openConnectModal}>
-            CONNECT WALLET
-          </button>
-        </div>
-      </>
+      <div className="state-card">
+        <p className="state-card__title">Connect your wallet to see your profile.</p>
+        <button type="button" className="btn btn--primary" onClick={openConnectModal}>
+          CONNECT WALLET
+        </button>
+      </div>
     );
   }
 
@@ -79,7 +74,9 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
 
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <h1>{profile.player.displayName}</h1>
+      <h1>
+        {profile.player.displayName} <BotBadge isBot={profile.player.isBot} />
+      </h1>
 
       {profile.seasonRecord && (
         <div className="grid-3">

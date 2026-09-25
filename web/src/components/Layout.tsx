@@ -4,7 +4,7 @@ import { useApi, useSession } from "../api/ApiContext";
 import { useClock } from "../api/useClock";
 import { formatPlayAmount } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
-import { DemoBanner } from "./Common";
+import { DemoBanner, ServerInfoBanner } from "./Common";
 
 const NAV_LINKS = [
   { to: "/", label: "Home", end: true },
@@ -155,6 +155,7 @@ export function Layout() {
       <Header />
       <main id="main-content" className="main-content">
         <div className="container">
+          <ServerInfoBanner />
           <Outlet />
         </div>
       </main>

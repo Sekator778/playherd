@@ -1,0 +1,47 @@
+[
+  {
+    "case": "positive",
+    "seed_hex": "718696a8222cd75e90125b9b6487b18532598608d1377a2a6e195439e46732fc",
+    "address": "txch1dhxy800eq57a9y9zlhuw0anfv9ekl586c5zm8cp2tng7tpr8rl5se62cng",
+    "public_key": "0x80fb74aac15c91e90912b5e0d6718d30a8ef121dcba22f4b1959921bb0a88c313d4eeca5f575488f9246c51448ff3ff2",
+    "message": "Crowd vs Market login\nNonce: 1a2b3c4d5e6f\n",
+    "signature": "0x90eb821d315c97c8e071ad23922ce45f9b5b8dd0331fc29694c18c52a87f4af9c97b5ea4a21522af3fff37e33707e7ca10d78883b706a3018e55fb52eac4e0d377718505694f4f6619b830508b6931e76b33b82b14dd0a468ad8413eb837ecc5",
+    "valid": true
+  },
+  {
+    "case": "wrong_address",
+    "seed_hex": "718696a8222cd75e90125b9b6487b18532598608d1377a2a6e195439e46732fc",
+    "address": "txch1y7c05dpql2yc5lpfuvq8xvxmw79n6ztva5cznda4kw2kgwsrk6cshxye3h",
+    "public_key": "0x80fb74aac15c91e90912b5e0d6718d30a8ef121dcba22f4b1959921bb0a88c313d4eeca5f575488f9246c51448ff3ff2",
+    "message": "Crowd vs Market login\nNonce: 1a2b3c4d5e6f\n",
+    "signature": "0x90eb821d315c97c8e071ad23922ce45f9b5b8dd0331fc29694c18c52a87f4af9c97b5ea4a21522af3fff37e33707e7ca10d78883b706a3018e55fb52eac4e0d377718505694f4f6619b830508b6931e76b33b82b14dd0a468ad8413eb837ecc5",
+    "valid": false
+  },
+  {
+    "case": "wrong_message",
+    "seed_hex": "718696a8222cd75e90125b9b6487b18532598608d1377a2a6e195439e46732fc",
+    "address": "txch1dhxy800eq57a9y9zlhuw0anfv9ekl586c5zm8cp2tng7tpr8rl5se62cng",
+    "public_key": "0x80fb74aac15c91e90912b5e0d6718d30a8ef121dcba22f4b1959921bb0a88c313d4eeca5f575488f9246c51448ff3ff2",
+    "message": "Crowd vs Market login\nNonce: TAMPERED\n",
+    "signature": "0x90eb821d315c97c8e071ad23922ce45f9b5b8dd0331fc29694c18c52a87f4af9c97b5ea4a21522af3fff37e33707e7ca10d78883b706a3018e55fb52eac4e0d377718505694f4f6619b830508b6931e76b33b82b14dd0a468ad8413eb837ecc5",
+    "valid": false
+  },
+  {
+    "case": "tampered_signature",
+    "seed_hex": "718696a8222cd75e90125b9b6487b18532598608d1377a2a6e195439e46732fc",
+    "address": "txch1dhxy800eq57a9y9zlhuw0anfv9ekl586c5zm8cp2tng7tpr8rl5se62cng",
+    "public_key": "0x80fb74aac15c91e90912b5e0d6718d30a8ef121dcba22f4b1959921bb0a88c313d4eeca5f575488f9246c51448ff3ff2",
+    "message": "Crowd vs Market login\nNonce: 1a2b3c4d5e6f\n",
+    "signature": "0x90eb821d315c97c8e071ad23922ce45f9b5b8dd0331fc29694c18c52a87f4af9c97b5ea4a21522af3fff37e33707e7ca10d78883b706a3018e55fb52eac4e0d377718505694f4f6619b830508b6931e76b33b82b14dd0a468ad8413eb837ec3a",
+    "valid": false
+  },
+  {
+    "case": "all_hex_message",
+    "seed_hex": "b88b49ea5d5a6fc4e5f903153d1395548260a3e05dd536469c05cba3b7b46b70",
+    "address": "txch150u3v54y44kt9a4asrr0rs6q937n38563smgwvxhxgfwt20q39dslw5cwf",
+    "public_key": "0xac53e31185735f5507a1c7e57417fb8911d5f8f06e1b23e8a99cbc32307390e329f22ac4d85e118f42e6c9cad5b05189",
+    "message": "deadbeef1234c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+    "signature": "0xb4b24319deecc3b7767d75d337d1a79045a9b4e67427f67a2130a76837896b30e09a3025262ac75eec0244f596a049df0075597767b9f6b2f6a826f6b60caa97c9f7ed2974bd93909fc6291482224f38fd5b86f5c96e7ad4b0c1385131da83ec",
+    "valid": true
+  }
+]

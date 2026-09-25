@@ -1,16 +1,25 @@
 import { useEffect, useState } from "react";
+import { API_MODE } from "./apiMode";
 import { simNowMs } from "./clock";
 import type { EpochMs } from "./contract";
 
-/** Re-renders the calling component every `tickMs` (default 1s of real time — with `SIM_SPEED`
- *  applied, that is enough for a countdown to visibly move) and returns the current simulated
- *  time. This is the only thing that makes round phases/timers advance on screen — everything
- *  else in the mock is a pure function of the timestamp this hook hands out. */
+/** `MockApi` plays back a simulated, accelerated clock (`simNowMs`); `RealApi` talks to an
+ *  actual server whose round windows already move at real wall-clock speed (accelerated test
+ *  durations, Р-46, are the *server's* doing, not the client's) — so in real mode this is just
+ *  `Date.now()`. */
+function currentTickMs(): EpochMs {
+  return API_MODE === "real" ? Date.now() : simNowMs();
+}
+
+/** Re-renders the calling component every `tickMs` (default 1s of real time) and returns the
+ *  current time — purely for local, no-network display (countdown timers): it never triggers a
+ *  data refetch by itself. Data polling (rounds/home/serverInfo) is `usePoll`'s job, on its own,
+ *  slower cadence — see `usePoll.ts`. */
 export function useClock(tickMs = 1000): EpochMs {
-  const [now, setNow] = useState<EpochMs>(() => simNowMs());
+  const [now, setNow] = useState<EpochMs>(() => currentTickMs());
 
   useEffect(() => {
-    const id = window.setInterval(() => setNow(simNowMs()), tickMs);
+    const id = window.setInterval(() => setNow(currentTickMs()), tickMs);
     return () => window.clearInterval(id);
   }, [tickMs]);
 

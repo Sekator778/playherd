@@ -91,6 +91,9 @@ export interface PlayerSummaryDto {
   walletAddress: string;
   /** `"nickname (xch1qp…mqqqxw)"` — precomputed server-side, never re-derived in the UI. */
   displayName: string;
+  /** Additive (task's FIXED INTERFACE (1)): set on the 20 labelled test-mode bots (Р-46) so the
+   *  UI can badge them everywhere a `PlayerSummaryDto` is shown. Absent/false for a real player. */
+  isBot?: boolean;
 }
 
 /** Public profile (Р-29): past rounds only (direction, leverage, outcome) — the player's
@@ -281,11 +284,20 @@ export interface RoundSettled extends RoundBase {
   closePrice: UsdStr;
   positions: PublicPositionDto[];
   crowd: CrowdRoundResultDto | null;
+  /** Additive (task's FIXED INTERFACE (1), Р-41): "0x"+sha256 hex of the canonical results JSON
+   *  published in the same oracle record as this round's close. Optional — absent until the
+   *  oracle spend confirms on testnet11 (`ServerInfoDto.oracle.pendingRecords`). Verify at
+   *  `GET /api/rounds/{roundId}/results.json`. */
+  resultsHash?: string;
 }
 
 export interface RoundCancelled extends RoundBase {
   phase: "CANCELLED";
   cancellation: CancellationDto;
+  /** Additive (task's FIXED INTERFACE (1)) — same meaning as `RoundSettled.resultsHash`; a
+   *  cancelled round's canonical results JSON has `status: "CANCELLED"` and an empty/void
+   *  `positions`/`crowd` per the FIXED INTERFACE (2) shape. */
+  resultsHash?: string;
 }
 
 export type RoundDto = RoundBetting | RoundRunning | RoundSettled | RoundCancelled;
@@ -485,6 +497,37 @@ export interface HomeSummaryDto {
 }
 
 // ---------------------------------------------------------------------------
+// Server info (additive per the task's FIXED INTERFACE (1) — Р-40, Р-41, Р-46, Р-47, Р-43).
+// Lets the UI show, honestly, which mode it's talking to: a real backend always answers this
+// (`mode: "live"` outside test mode, `"replay"` inside it, Р-46), a `MockApi` build never does
+// (see `mockApi.ts` — the method simply doesn't exist there, so the UI must treat a thrown/
+// missing `serverInfo()` as "no server info to show", not as an error state).
+// ---------------------------------------------------------------------------
+
+export interface ServerInfoDto {
+  mode: "live" | "replay";
+  /** Set only when `mode === "replay"` (Р-46: accelerated replay of real historical BTC prices
+   *  in test mode). */
+  replay?: {
+    sourceFromIso: string;
+    sourceToIso: string;
+    speedup: number;
+  };
+  roundDurationsSec: { HOURLY: number; DAILY: number };
+  /** Count of the labelled test-mode bots playing alongside real players (Р-46: 20). */
+  bots: number;
+  oracle: {
+    network: "testnet11";
+    launcherId: string;
+    lastConfirmedSeq: number | null;
+    lastConfirmedHeight: number | null;
+    pendingRecords: number;
+    operatorBalanceMojos: string | null;
+  };
+  serverTimeMs: EpochMs;
+}
+
+// ---------------------------------------------------------------------------
 // Pagination (предложение — no source fixes a page size/cursor shape; kept generic and small)
 // ---------------------------------------------------------------------------
 
@@ -591,4 +634,10 @@ export interface Api {
 
   // --- home aggregate (Р-34) ---
   home(): Promise<HomeSummaryDto>;
+
+  /** Additive (task's FIXED INTERFACE (1)) — optional on the `Api` type itself: `MockApi`
+   *  intentionally does not implement it (there is no "server" to report on in the mock era),
+   *  so every call site must handle `api.serverInfo?.()` being `undefined` as well as the
+   *  promise it returns being absent from a real backend that predates this field. */
+  serverInfo?(): Promise<ServerInfoDto>;
 }

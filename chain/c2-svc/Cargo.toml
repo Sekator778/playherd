@@ -1,0 +1,74 @@
+[package]
+name = "c2-svc"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "c2-svc"
+path = "src/main.rs"
+
+[lib]
+name = "c2_svc"
+path = "src/lib.rs"
+
+[dependencies]
+# `c2-cli`'s library half (`c2_cli`): reused here for wallet key derivation
+# (`keys.rs`), transaction signing (`sign.rs`), the oracle singleton launch
+# builder + `SINGLETON_AMOUNT` constant, the fee-only builder, coinset
+# funding-coin lookup (`chain.rs`), CLVM cost measurement (`cost.rs`), the
+# push_tx-shaped spend JSON renderer (`spend_json.rs`), and -- most
+# importantly -- the exact on-disk `OracleState`/`ProofDto`/`KeyFile` JSON
+# shapes (`state.rs`, `keystore.rs`), so this service reads and writes
+# *the same* `<name>.oracle.json` / `<name>.json` files `c2 oracle-launch` /
+# `c2 oracle-publish` already produced on the real stand
+# (`~/.c2/testnet11/operator.oracle.json`, launcher
+# `c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20`, see
+# `docs/research/week1_testnet_results.md`) -- no reimplementation, zero risk
+# of the JSON shapes drifting apart. `chain/c2-cli` itself is intentionally
+# left unmodified by this crate (see `docs/research/chain_service.md` §1).
+c2-cli = { path = "../c2-cli" }
+
+# Same pinned SDK versions as ../c2-cli / ../sim-spike (this crate builds and
+# signs its own spends -- the multi-record oracle-publish batch spend does
+# not exist in c2-cli, see `src/oracle/spend.rs`).
+chia-wallet-sdk = { version = "=0.36.0", features = ["action-layer", "chip-0035"] }
+chia-sdk-driver = "=0.36.0"
+chia-sdk-types = "=0.36.0"
+chia-sdk-signer = "=0.36.0"
+chia-sdk-coinset = { version = "=0.36.0", features = ["rustls"] }
+chia-sdk-utils = "=0.36.0"
+chia-protocol = "=0.36.1"
+chia-puzzle-types = "=0.36.1"
+chia-consensus = "=0.36.1"
+chia-bls = "=0.36.1"
+chia-traits = "=0.36.1"
+clvmr = "=0.16.4"
+clvm-utils = "=0.36.1"
+clvm-traits = "=0.36.1"
+anyhow = "1"
+hex = "0.4"
+# Only used locally, to label an in-flight spend for `GET /v1/oracle/status`
+# (`oracle/queue.rs::InFlightSpend::bundle_id`) -- see that field's doc
+# comment for why coinset's own `push_tx` response doesn't give us a tx id.
+sha2 = "0.10"
+bip39 = { version = "=2.2.2", features = ["rand"] }
+chrono = { version = "0.4", features = ["clock"], default-features = false }
+
+# --- HTTP service / plumbing (not part of c2-cli) ---
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1"
+# Reads Hyperliquid-shaped fields? No -- only used for the coinset HTTP fee
+# estimate call, same reqwest version chia-sdk-coinset's `rustls` feature
+# already resolves to (see c2-cli's own Cargo.toml comment on this).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+clap = { version = "4.6", features = ["derive"] }
+
+[dev-dependencies]
+chia-sdk-test = "=0.36.0"
+tempfile = "3"

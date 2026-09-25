@@ -1,0 +1,156 @@
+# Local test stand (Р-44): 2–4 browser windows/phone = 2–4 players in one shared game.
+# Separate compose project "herd" — never touches other containers on this machine.
+# Run via tools/stand.sh (up|down|logs|status|reset), not `docker compose` directly, so the
+# "don't touch other herd-*-looking or unrelated containers" checks in that script always run
+# first.
+#
+# Only `web` is published to the host (0.0.0.0:${HERD_WEB_PORT:-8480}) so a phone on the same
+# Wi-Fi can open it (Р-48). `db` is internal-only, reached by `server` over the compose network
+# by service name.
+#
+# chainsvc is the one exception to "everything talks over the compose network by service name":
+# it runs with `network_mode: host` (see the fix note on that service below) so its outbound
+# calls to testnet11 actually leave the machine. Compose forbids combining `network_mode` with
+# `networks:`, so it cannot also carry the "chainsvc" DNS name on `herd_default` — `server`
+# instead reaches it via `herd_default`'s own gateway IP, fixed below at 172.28.77.1 precisely so
+# that address is known at compose-file-write time (see HERD_CHAINSVC_URL on `server`).
+
+name: herd
+
+networks:
+  default:
+    name: herd_default
+    ipam:
+      config:
+        - subnet: 172.28.77.0/24
+          gateway: 172.28.77.1
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: herd
+      POSTGRES_PASSWORD: herd
+      POSTGRES_DB: herd
+    volumes:
+      - herd_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herd -d herd"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  # FIXED INTERFACE (3): "chainsvc", port 8090. Talks to testnet11 for real (C2_PUSH=1) using the
+  # operator key/oracle-singleton state already launched on this Mac (launcher
+  # c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20,
+  # ~/.c2/testnet11/operator.oracle.json) — bind-mounted read-write so oracle-state advances and
+  # this service's durable publish queue persist across restarts, exactly like `c2-cli` itself.
+  chainsvc:
+    build:
+      context: ./chain
+      dockerfile: c2-svc/Dockerfile
+      # Fix: this machine's default Docker bridge network has no DNS/egress (confirmed:
+      # `docker run alpine wget https://…` fails, `docker run --network host alpine wget …`
+      # succeeds) — `cargo build` needs crates.io. Same root cause the "chain service" agent
+      # hit and documented in docs/research/chain_service.md §6. See
+      # docs/product/local_stand.md "Известные ограничения и фиксы".
+      network: host
+    # Fix (runtime, not just build — see docs/product/local_stand.md "Известные ограничения и
+    # фиксы" for the full story): this machine's compose/bridge networks (`ip-masq` disabled —
+    # confirmed via `docker network inspect`/`~/.orbstack/config/docker.json`) give containers on
+    # them NO internet egress at all, not even by raw IP (verified: a plain `nc -zv <coinset IP>
+    # 443` from a bridge-network container times out). `network_mode: host` is the only network
+    # mode on this machine that actually reaches the internet (verified: real testnet11
+    # `GET /v1/oracle/status` succeeds under it) — required for chainsvc's real testnet11 pushes
+    # (Р-47). Compose forbids `networks:` together with `network_mode`, so this service is NOT on
+    # `herd_default`; `server` reaches it via the gateway IP instead (see `server.environment`).
+    network_mode: host
+    environment:
+      C2_PUSH: "1"
+      C2_DATA_DIR: /data
+      C2_OPERATOR_NAME: operator
+      C2_SVC_PORT: "8090"
+    volumes:
+      - ${HOME}/.c2/testnet11:/data
+    healthcheck:
+      # debian:bookworm-slim (chain/c2-svc/Dockerfile's runtime stage) has no curl/wget — bash's
+      # /dev/tcp is the only dependency-free way to probe the port from inside the container.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8090' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  # FIXED INTERFACE (1)/(2): the Quarkus game server. mode=replay (Р-46 test mode) is the
+  # image/application.properties default; every HERD_* below is explicit anyway so the stand's
+  # actual configuration is visible here rather than implied by a default someone could change.
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      # Fix: same no-DNS/egress default bridge network as chainsvc above — `mvn` needs Maven
+      # Central. The "server" agent's report hit this too (needed `--network host` in its own
+      # sandbox); this machine has the identical restriction outside any sandbox.
+      network: host
+    environment:
+      HERD_MODE: replay
+      HERD_ROUND_HOURLY_SEC: "180" # Р-46: test-mode "hourly" round = 3 min
+      HERD_ROUND_DAILY_SEC: "900" # Р-46: test-mode "daily" round = 15 min
+      HERD_REPLAY_SPEEDUP: "20"
+      HERD_BOTS_COUNT: "20" # Р-46: 20 labelled bots
+      HERD_DB_USER: herd
+      HERD_DB_PASSWORD: herd
+      # Service name in this compose file is "db", not application.properties' default
+      # "postgres" — see docs/product/local_stand.md "Известные ограничения и фиксы".
+      HERD_DB_URL: jdbc:postgresql://db:5432/herd
+      # chainsvc runs with network_mode: host (see its own fix note above), so it has no
+      # "chainsvc" DNS name on herd_default — reached via that network's own gateway IP instead,
+      # fixed by the `networks.default.ipam` block above at the top of this file.
+      HERD_CHAINSVC_URL: http://172.28.77.1:8090
+      HERD_OPERATOR_TOKEN: ${HERD_OPERATOR_TOKEN:?set in .env — run tools/stand.sh up, which generates one}
+    depends_on:
+      db:
+        condition: service_healthy
+      chainsvc:
+        condition: service_healthy
+    healthcheck:
+      # Exercises the real RPC path (DB reachable, event log rebuilt, round scheduler alive) —
+      # not just "the JVM booted". empty args array = FIXED INTERFACE (1)'s no-argument call.
+      test:
+        - CMD-SHELL
+        - >-
+          curl -sf -o /dev/null -X POST -H 'Content-Type: application/json' -d '{"args":[]}'
+          http://127.0.0.1:8081/api/rpc/serverInfo || exit 1
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 45s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      # Fix: same no-DNS/egress default bridge network — `npm ci` needs registry.npmjs.org. The
+      # "web" agent's report documents the identical failure as a sandbox limitation; it recurs
+      # here for the same reason (this Mac's Docker default bridge network, not the sandbox).
+      network: host
+    ports:
+      - "${HERD_WEB_PORT:-8480}:80"
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  herd_pg:
+    name: herd_pg

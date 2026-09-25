@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["sim-spike", "c2-cli"]
+members = ["sim-spike", "c2-cli", "c2-svc"]
 
 [workspace.package]
 edition = "2024"

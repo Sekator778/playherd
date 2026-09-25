@@ -1,5 +1,6 @@
-import type { CSSProperties, ReactNode } from "react";
-import type { RoundPhase } from "../api/contract";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useApi } from "../api/ApiContext";
+import type { RoundPhase, ServerInfoDto } from "../api/contract";
 import { formatCountdown } from "../format";
 
 export function DemoBanner() {
@@ -7,6 +8,101 @@ export function DemoBanner() {
     <div className="demo-banner" role="note">
       DEMO — PLAY is toy money on a test network. Nothing here is real funds.
     </div>
+  );
+}
+
+/**
+ * Task item 4 ("Show serverInfo: a clear mode banner in replay mode… bot badge wherever isBot,
+ * oracle status line…"). `MockApi` has no `serverInfo()` (`contract.ts`'s own doc comment on the
+ * method) so this renders nothing at all in the mock build — there is no server to report on —
+ * rather than a "server unreachable" error state.
+ */
+export function ServerInfoBanner() {
+  const api = useApi();
+  const [info, setInfo] = useState<ServerInfoDto | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .serverInfo?.()
+      .then((i) => {
+        if (!cancelled) setInfo(i);
+      })
+      .catch(() => {
+        if (!cancelled) setInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  if (!info || info.mode !== "replay" || !info.replay) return null;
+  const { sourceFromIso, sourceToIso, speedup } = info.replay;
+  const fmt = (iso: string) => iso.slice(0, 10);
+  return (
+    <div className="replay-banner" role="note">
+      Replay: BTC prices from {fmt(sourceFromIso)}–{fmt(sourceToIso)}, {speedup}× speed
+      {info.bots > 0 ? ` · ${info.bots} bots playing` : ""}
+    </div>
+  );
+}
+
+/** Task item 4: "bot badge wherever isBot". Small enough to sit inline next to a nickname. */
+export function BotBadge({ isBot }: { isBot?: boolean }) {
+  if (!isBot) return null;
+  return (
+    <span className="bot-badge" title="Played by a test-mode bot (Р-46)">
+      BOT
+    </span>
+  );
+}
+
+/** Task item 4: "resultsHash + link to results.json on settled rounds" — also used for a
+ *  cancelled round, which carries the same optional field (`RoundCancelled.resultsHash`).
+ *  `resultsHash` is optional even on a real backend (absent until the oracle's next batched
+ *  singleton spend confirms — see `ServerInfoDto.oracle.pendingRecords`), so this renders
+ *  nothing at all until it exists rather than a placeholder/loading state. */
+export function ResultsHashLine({ roundId, resultsHash }: { roundId: string; resultsHash?: string }) {
+  if (!resultsHash) return null;
+  const short = `${resultsHash.slice(0, 10)}…${resultsHash.slice(-6)}`;
+  return (
+    <p className="disclaimer-line mono">
+      Results hash: {short} —{" "}
+      <a href={`/api/rounds/${encodeURIComponent(roundId)}/results.json`} target="_blank" rel="noopener noreferrer">
+        verify results.json
+      </a>
+    </p>
+  );
+}
+
+/** Task item 4: "oracle status line (last confirmed seq/height on testnet11)". */
+export function OracleStatusLine() {
+  const api = useApi();
+  const [info, setInfo] = useState<ServerInfoDto | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .serverInfo?.()
+      .then((i) => {
+        if (!cancelled) setInfo(i);
+      })
+      .catch(() => {
+        if (!cancelled) setInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  if (!info) return null;
+  const { oracle } = info;
+  return (
+    <p className="disclaimer-line mono">
+      Oracle ({oracle.network}): last confirmed seq {oracle.lastConfirmedSeq ?? "—"}, height{" "}
+      {oracle.lastConfirmedHeight ?? "—"}
+      {oracle.pendingRecords > 0 ? ` · ${oracle.pendingRecords} pending` : ""}
+    </p>
   );
 }
 

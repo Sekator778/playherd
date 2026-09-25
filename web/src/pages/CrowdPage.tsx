@@ -3,7 +3,7 @@ import { useApi } from "../api/ApiContext";
 import { useClock } from "../api/useClock";
 import type { CrowdAccountDto } from "../api/contract";
 import { CROWD_STARTING_CAPITAL_USD } from "../api/contract";
-import { ErrorState, OracleDisclosureLine, Skeleton } from "../components/Common";
+import { ErrorState, OracleDisclosureLine, OracleStatusLine, Skeleton } from "../components/Common";
 import { LazyCrowdChart } from "../components/LazyCrowdChart";
 import { StatTile } from "../components/RoundParts";
 import { formatPercent, formatUpdatedAtUtc, formatUsd } from "../format";
@@ -66,6 +66,7 @@ export function CrowdPage() {
       <LazyCrowdChart history={crowd.history} variant="full" />
       {updatedAt !== null && <p className="faint">{formatUpdatedAtUtc(updatedAt)}</p>}
       <OracleDisclosureLine />
+      <OracleStatusLine />
       <h2>Season returns</h2>
       <table className="data-table data-table--responsive">
         <thead>

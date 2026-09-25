@@ -1,12 +1,14 @@
 # Crowd vs Market — фронтенд
 
 Vite + React + TypeScript (strict) + react-router. Собран против `src/api/contract.ts`
-(TS-зеркало будущего Quarkus API, Р-20/Р-35) и работает целиком на `MockApi`
-(`src/api/mockApi.ts`) — детерминированных тестовых данных, без сети и без бэкенда. Когда
-бэкенд появится, под интерфейс `Api` подставляется настоящий HTTP-клиент — ни один компонент
-не меняется (в этом и была цель контракта).
+(TS-зеркало будущего Quarkus API, Р-20/Р-35). Два `Api`: `MockApi` (`src/api/mockApi.ts`,
+детерминированные тестовые данные, без сети) и `RealApi` (`src/api/realApi.ts`, HTTP поверх
+FIXED INTERFACE (1) — `POST /api/rpc/<method>`). Выбор — переменной сборки `VITE_API_MODE`
+(`src/api/apiMode.ts`): `mock` по умолчанию (`npm run dev`), `real` в Docker-сборке
+(`Dockerfile`). Ни один компонент не знает, какой из двух активен (в этом и была цель
+контракта) — все читают через `useApi()`/`ApiContext.tsx`.
 
-Источники: `docs/product/decisions.md` (Р-1…Р-35), `docs/product/ux_spec.md`,
+Источники: `docs/product/decisions.md` (Р-1…Р-48), `docs/product/ux_spec.md`,
 `docs/research/hl_liquidation_math.md`, `docs/research/round_engine_design.md`,
 `docs/research/week1_wallet_auth.md`. UI-копирайт — на английском (Р-24), этот файл — на
 русском, код и комментарии — на английском.
@@ -38,12 +40,30 @@ Vite/React/TS(strict)/react-router заданы условием задачи. �
   переключателя).
 - **vitest + @testing-library/react + jsdom** — тесты (дано условием).
 - **eslint + typescript-eslint** (flat config) — линт (дано условием); `eslint-plugin-react-hooks`
-  в этой версии тянет и строгие «React Compiler»-правила (`set-state-in-effect`, `purity`) —
-  весь фетчинг данных в эффектах написан так, чтобы им соответствовать (см. код: паттерн
-  «сброс состояния при смене входных данных — во время рендера, не в эффекте»).
+  в этой версии тянет и строгие «React Compiler»-правила (`set-state-in-effect`, `purity`,
+  `refs`) — весь фетчинг данных в эффектах и рефы (`usePoll.ts`) написаны так, чтобы им
+  соответствовать (см. код: паттерн «сброс состояния при смене входных данных — во время
+  рендера, не в эффекте»; «обновление рефа — в собственном безусловном эффекте, не во время
+  рендера»).
+- **chia-wallet-sdk-wasm** (Apache-2.0, официальный `xch-dev/chia-wallet-sdk`) — браузерный
+  тестовый кошелёк (Р-45, `src/wallet/testWallet.ts`): настоящий BLS-ключ и подпись прямо в
+  браузере, той же схемой, что использует Sage (`docs/research/week1_wallet_auth.md` §2).
+  Экспорты проверены чтением `.d.ts` пакета (не документацией) — `SecretKey.sign`,
+  `deriveUnhardenedPath`/`deriveSynthetic`, `standardPuzzleHash`, `Address`,
+  `Clvm.pair`/`Program.treeHash()` — всё нужное присутствует, альтернативный пакет не
+  понадобился. Подгружается лениво (`import()` только при открытии окна входа) — его wasm сам
+  по себе ~2 МБ gzip, весь пакет (NFT/DID/офферы/…), не только используемый нами срез подписи,
+  так что он не должен утяжелять первую загрузку.
+- **vite-plugin-wasm** — учит Vite импортировать `.wasm` как ES-модуль (wasm-bindgen'овский
+  "bundler"-таргет `chia-wallet-sdk-wasm`). `vite-plugin-top-level-await` (обычная вторая
+  половина этой пары) пробовалась и не подошла — её `generateBundle`-хук ожидает форму вывода
+  классического Rollup/esbuild и падает на Vite 8's Rolldown-бандлере («missing field `type`»
+  из внутреннего SWC re-print шага); не понадобилась — вывод Rolldown уже поддерживает
+  top-level await нативно, `npm run build` тому доказательство.
 
-Больше зависимостей не добавлялось; `contract.ts` как был без импортов, так и остался (правки
-только аддитивные, как и требовалось).
+Больше зависимостей не добавлялось сверх нужд задачи; `contract.ts` — только аддитивные правки
+(новый метод `serverInfo()`, `PlayerSummaryDto.isBot?`, `resultsHash?` на разрешённом/отменённом
+раунде), как и требовалось.
 
 ## Архитектура
 

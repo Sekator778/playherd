@@ -1,0 +1,137 @@
+package crowdvsmarket.server.events;
+
+import crowdvsmarket.engine.game.GameEngine;
+import crowdvsmarket.engine.game.RoundReport;
+import crowdvsmarket.engine.ledger.LedgerBook;
+import crowdvsmarket.engine.ledger.PlayAmount;
+import crowdvsmarket.engine.margin.Leverage;
+import crowdvsmarket.engine.market.Candle;
+import crowdvsmarket.engine.ledger.DepositRequest;
+import crowdvsmarket.engine.ledger.WithdrawalRequest;
+import crowdvsmarket.engine.round.Bet;
+import crowdvsmarket.engine.round.RoundPrices;
+import crowdvsmarket.engine.round.RoundWindow;
+import crowdvsmarket.server.domain.ComparisonAccounts;
+import crowdvsmarket.server.domain.EngineHub;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * The single code path that mutates {@link EngineHub} (+ {@link ComparisonAccounts}) for a
+ * {@link GameEvent} — used identically for live traffic (right after the event is persisted, see
+ * {@code GameService}) and for the full replay at startup ({@code EngineRebuildService}). Keeping
+ * exactly one such path is what makes "rebuilt from events on startup" trustworthy: there is no
+ * second, hand-written reconstruction that could drift from what live traffic actually does.
+ */
+@ApplicationScoped
+public final class EventApplier {
+
+    @Inject
+    EngineHub hub;
+
+    @Inject
+    ComparisonAccounts comparisonAccounts;
+
+    /** @return the event-specific result a live caller needs right away — a {@link RoundReport}
+     *          for {@code RoundResolved}, the assigned id for {@code WithdrawalRequested}/
+     *          {@code DepositRequested} (both mirror {@code LedgerBook}'s own generated
+     *          {@code "w-N"}/{@code "d-N"} ids, see those two cases below), {@code null}
+     *          otherwise. Untyped ({@link Object}) since the cases return unrelated types;
+     *          callers know which case they triggered and cast accordingly. */
+    public Object apply(GameEvent event) {
+        return switch (event) {
+            case GameEvent.PlayerRegistered e -> {
+                hub.ledger().ensureSeasonPack(e.playerId(), Instant.ofEpochMilli(e.atMs()));
+                yield null;
+            }
+            case GameEvent.BetPlaced e -> {
+                RoundWindow window = new RoundWindow(e.interval(), e.windowStart(), e.windowEnd());
+                hub.engine(e.interval()).placeBet(e.playerId(), window, e.direction(),
+                        new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()), Instant.ofEpochMilli(e.atMs()));
+                yield null;
+            }
+            case GameEvent.BetCancelled e -> {
+                RoundWindow window = new RoundWindow(e.interval(), e.windowStart(), e.windowEnd());
+                hub.engine(e.interval()).cancelBet(e.playerId(), window, Instant.ofEpochMilli(e.atMs()));
+                yield null;
+            }
+            case GameEvent.RoundResolved e -> {
+                RoundWindow window = new RoundWindow(e.interval(), e.windowStart(), e.windowEnd());
+                List<Candle> path = toCandles(e.path());
+                RoundPrices prices = new StoredRoundPrices(new BigDecimal(e.openPrice()), new BigDecimal(e.closePrice()), path);
+                RoundReport report = hub.engine(e.interval()).runRound(window, prices);
+                comparisonAccounts.onRoundResolved(report, path);
+                yield report;
+            }
+            case GameEvent.RoundCancelled e -> {
+                RoundWindow window = new RoundWindow(e.interval(), e.windowStart(), e.windowEnd());
+                refundAndClear(hub.engine(e.interval()), window, Instant.ofEpochMilli(e.atMs()));
+                yield null;
+            }
+            case GameEvent.WithdrawalRequested e -> {
+                WithdrawalRequest wr = hub.ledger().requestWithdrawal(e.playerId(), new PlayAmount(e.amountMojos()),
+                        Instant.ofEpochMilli(e.atMs()));
+                yield wr.requestId();
+            }
+            case GameEvent.WithdrawalConfirmed e -> {
+                hub.ledger().confirmWithdrawal(e.requestId());
+                yield null;
+            }
+            case GameEvent.WithdrawalFailed e -> {
+                hub.ledger().failWithdrawal(e.requestId(), Instant.ofEpochMilli(e.atMs()));
+                yield null;
+            }
+            case GameEvent.DepositRequested e -> {
+                DepositRequest dr = hub.ledger().requestDeposit(e.playerId(), new PlayAmount(e.amountMojos()),
+                        Instant.ofEpochMilli(e.atMs()));
+                yield dr.requestId();
+            }
+            case GameEvent.DepositConfirmed e -> {
+                hub.ledger().confirmDeposit(e.requestId(), Instant.ofEpochMilli(e.atMs()));
+                yield null;
+            }
+            case GameEvent.DepositFailed e -> {
+                hub.ledger().failDeposit(e.requestId());
+                yield null;
+            }
+        };
+    }
+
+    /** Refunds every bet still pending on {@code window} and clears it — the operator/automatic
+     *  cancellation operation (Р-23, Р-32); {@code GameEngine} has no such method itself, this is
+     *  built from its public {@code ledger()}/{@code betBook()} accessors, same primitives
+     *  {@code LedgerBook.refundStake} already used for a plain bet edit/cancel (Р-13). */
+    public static int refundAndClear(GameEngine engine, RoundWindow window, Instant now) {
+        String roundId = window.roundId();
+        LedgerBook ledger = engine.ledger();
+        List<Bet> bets = new ArrayList<>(engine.betBook().betsFor(roundId));
+        for (Bet bet : bets) {
+            ledger.refundStake(bet.playerId(), roundId, bet.stake(), now);
+        }
+        engine.betBook().clear(roundId);
+        return bets.size();
+    }
+
+    public static List<Candle> toCandles(List<GameEvent.CandleData> raw) {
+        List<Candle> out = new ArrayList<>(raw.size());
+        for (GameEvent.CandleData c : raw) {
+            out.add(new Candle(c.openTimeMs(), c.closeTimeMs(), new BigDecimal(c.open()), new BigDecimal(c.high()),
+                    new BigDecimal(c.low()), new BigDecimal(c.close()), new BigDecimal(c.volume()), c.trades()));
+        }
+        return out;
+    }
+
+    public static List<GameEvent.CandleData> fromCandles(List<Candle> candles) {
+        List<GameEvent.CandleData> out = new ArrayList<>(candles.size());
+        for (Candle c : candles) {
+            out.add(new GameEvent.CandleData(c.openTimeMs(), c.closeTimeMs(), c.open().toPlainString(),
+                    c.high().toPlainString(), c.low().toPlainString(), c.close().toPlainString(),
+                    c.volume().toPlainString(), c.trades()));
+        }
+        return out;
+    }
+}

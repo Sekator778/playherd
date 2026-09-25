@@ -1,5 +1,5 @@
 # Java / Maven
-engine/target/
+target/
 *.class
 
 # Rust
@@ -20,3 +20,10 @@ web/dist/
 *.key
 .env
 .env.*
+
+# Android / Capacitor
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
