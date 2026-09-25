@@ -132,7 +132,11 @@ public class RpcResource {
             default -> throw ApiException.notFound("unknown RPC method: " + method);
         }
 
-        Response.ResponseBuilder builder = Response.ok(result == null ? java.util.Map.of() : result);
+        // A null result is a real JSON null (e.g. currentPlayer with no session), not {}:
+        // void methods already set an explicit empty map above.
+        Response.ResponseBuilder builder = result == null
+                ? Response.ok("null", MediaType.APPLICATION_JSON_TYPE)
+                : Response.ok(result);
         if (setCookie != null) {
             builder.cookie(setCookie);
         }

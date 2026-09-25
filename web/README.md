@@ -154,6 +154,29 @@ UP/DOWN всегда парой иконка+текст, ни одного чи�
 `aria-modal`, возврат фокуса при закрытии, закрытие по Esc. Публичные страницы проверены на
 375px (Р-31).
 
+## Android (Capacitor, Р-48)
+
+`android/` — нативный Android-проект, добавленный Capacitor'ом (`@capacitor/core`/`@capacitor/cli`/
+`@capacitor/android`, MIT). Это сборка **под локальный стенд**, не под магазин: `capacitor.config.ts`
+указывает WebView прямо на поднятый Docker-стенд (`server.url: "http://10.0.2.2:8480"` — с эмулятора
+`10.0.2.2` это `localhost` Mac'а; `server.cleartext: true`, иначе Android ≥ API 28 блокирует http),
+поэтому cookie-сессия `/api/rpc` работает без переделок — тот же ориджин, что и в браузере.
+Подробности запуска на нескольких эмуляторах — `docs/product/local_stand.md` §9.
+
+**Открытый пункт (не сделано здесь, отдельное решение):** сборка для Google Play/App Store не может
+указывать `server.url` на чей-то ноутбук — она вместо этого упакует `dist/` как локальные ассеты
+(обычный `webDir` без `server.*`) и будет ходить на задеплоенный бэкенд через API base URL, а
+cookie-сессию придётся заменить на токен — cookie действует только для того ориджина, что её
+выставил, а `file://`/`capacitor://` ориджин ассетов — не он.
+
+```
+npm run cap:sync      # npx cap sync android — подхватить dist/ + конфиг в android/
+npm run android:debug # sync + ./gradlew assembleDebug → android/app/build/outputs/apk/debug/
+```
+
+WebView remote debugging (`chrome://inspect`) включён только в debug-сборке
+(`MainActivity.java`, `BuildConfig.DEBUG`).
+
 ## Демо-баннер
 
 Пока приложение работает на моковых данных, на каждом экране закреплена нескрываемая полоса:

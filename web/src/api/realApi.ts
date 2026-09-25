@@ -94,7 +94,9 @@ async function rpc<T>(method: string, args: unknown[]): Promise<T> {
     throw new Error(message);
   }
 
-  return (body ?? {}) as T;
+  // An empty or JSON-null body means null (e.g. currentPlayer with no session);
+  // void methods get an explicit {} from the server.
+  return body as T;
 }
 
 class RealApi implements Api {

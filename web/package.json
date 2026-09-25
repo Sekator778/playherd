@@ -9,9 +9,12 @@
     "preview": "vite preview",
     "test": "vitest",
     "typecheck": "tsc -b --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "cap:sync": "cap sync android",
+    "android:debug": "cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
+    "@capacitor/core": "^8.5.2",
     "chia-wallet-sdk-wasm": "^0.36.0",
     "decimal.js": "^10.6.0",
     "react": "^19.3.0",
@@ -20,6 +23,8 @@
     "recharts": "^3.10.1"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

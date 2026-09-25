@@ -102,6 +102,17 @@ class GameFlowIntegrationTest {
     }
 
     @Test
+    @Order(0)
+    void currentPlayerWithoutSessionIsJsonNull() {
+        // Regression: a null result used to be serialized as {}, which the web app read as
+        // "signed in" and never showed CONNECT WALLET on a fresh device.
+        String body = given().contentType(ContentType.JSON).body(Map.of("args", List.of()))
+                .post("/api/rpc/currentPlayer")
+                .then().statusCode(200).extract().asString();
+        org.junit.jupiter.api.Assertions.assertEquals("null", body.trim());
+    }
+
+    @Test
     @Order(1)
     void threeFastRoundsWithBotsAndTwoPlayers_balancesRevealRulesHashAndRestartRecovery() throws Exception {
         // chainsvc mock: every auth attempt is valid (real crypto is chainsvc's job, FIXED
