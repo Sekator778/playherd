@@ -16,6 +16,10 @@ import type { CapacitorConfig } from '@capacitor/cli';
 // keep `webDir: 'dist'`) and talks to a real deployed backend over an API base URL, which means
 // swapping the cookie-based session for token auth (the cookie is only ever valid for the
 // origin that set it — file://.../capacitor:// asset origin can't hold it). Left open per Р-48.
+// When that build happens: build with `npm run build:capacitor`, not plain `npm run build` —
+// `vite.config.ts`'s `base` is absolute ("/") by default (polish item 4, 2026-09-26), which
+// breaks asset loading from a `file://`/`capacitor://` bundle; `CAPACITOR_BUILD=1` switches it
+// back to the relative `"./"` that local-asset loading needs.
 const config: CapacitorConfig = {
   appId: 'app.herd.dev',
   appName: 'Herd',

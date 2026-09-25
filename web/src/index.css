@@ -486,6 +486,7 @@ ol {
 }
 .balance-pill__amount {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .balance-pill__in-play {
   font-weight: 600;

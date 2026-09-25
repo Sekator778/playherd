@@ -1,0 +1,6 @@
+# The one non-stdlib dependency verify_oracle.py needs — the official Chia Network CLVM
+# implementation with a Python binding (https://pypi.org/project/chia_rs), used only to run
+# each on-chain spend's own puzzle_reveal against its own on-chain solution (pure computation
+# over public data this tool already fetched — no keys, no network calls of its own). See the
+# module docstring in verify_oracle.py for exactly what it is used for.
+chia_rs

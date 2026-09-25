@@ -9,13 +9,16 @@
       name="description"
       content="Herd — bet BTC up or down with the crowd, against the market. Demo running on toy PLAY tokens."
     />
-    <!-- PWA (task item 3, Р-48): installable on Android/iPhone home screens. Relative paths
-         throughout (no leading "/") so this keeps working under any deploy sub-path, including
-         a future Capacitor `file://`/`capacitor://` webview (vite.config.ts's `base: "./"`). -->
-    <link rel="manifest" href="manifest.webmanifest" />
+    <!-- PWA (task item 3, Р-48): installable on Android/iPhone home screens. `%BASE_URL%` is
+         Vite's own placeholder (replaced at build time with `vite.config.ts`'s `base` — "/" for
+         the real Docker/web build, "./" only for a future local-asset Capacitor build), so these
+         resolve against the site root instead of against whatever nested route's URL happened to
+         serve this same `index.html` via the SPA fallback (polish item 4, 2026-09-26 — a plain
+         relative path here broke exactly the same way the built JS/CSS did). -->
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
     <meta name="theme-color" content="#0b0e14" />
-    <link rel="icon" href="icons/icon-32.png" sizes="32x32" type="image/png" />
-    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <link rel="icon" href="%BASE_URL%icons/icon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="%BASE_URL%icons/icon-180.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Herd" />

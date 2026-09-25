@@ -48,6 +48,13 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
   const reducedMotion = usePrefersReducedMotion();
   const fx = useFxSettings();
   const cardRef = useRef<HTMLDivElement>(null);
+  // Coin-arc launch point for WIN (below) — deliberately the icon, not the whole card: the
+  // card's own bounding-rect center used to be the arc's origin, which on a WIN sits at/just
+  // below the headline amount, so the trail of freshly-spawned coins rendered right on top of it
+  // and hid it (polish item 1, 2026-09-26). The icon sits above the headline, and the arc's
+  // quadratic-bezier control point is always further up still (`spawnCoinArc`), so every coin's
+  // path moves away from the headline from the very first frame instead of through it.
+  const iconRef = useRef<HTMLDivElement>(null);
   const dismissTimer = useRef<number | undefined>(undefined);
   const playedRef = useRef(false);
   // The header balance pill is a plain, already-mounted DOM node (Layout.tsx, unrelated React
@@ -92,6 +99,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
         // card itself has actually painted; confetti (purely decorative, never the honesty-
         // relevant coin-to-balance arc) waits one frame more.
         const originRect = cardRef.current.getBoundingClientRect();
+        const coinOriginRect = iconRef.current?.getBoundingClientRect() ?? originRect;
         // The header lift (fx.css) only needs to be up for as long as the coin-arc is actually in
         // flight — added here, removed the moment the last coin lands (or on unmount/dismiss, see
         // the dismiss-timer effect below) so it never lingers over a LOSS/LIQUIDATION/EVEN that
@@ -100,7 +108,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
         requestAnimationFrame(() => {
           if (t.sparks > 0) burst(originRect, { kind: "spark", count: t.sparks });
           if (coinTargetRect) {
-            spawnCoinArc(originRect, coinTargetRect, {
+            spawnCoinArc(coinOriginRect, coinTargetRect, {
               count: t.coins,
               staggerMs: t.staggerMs,
               onEachArrive: () => setBalanceDisplay((b) => b + event.netPlay / t.coins),
@@ -181,7 +189,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
         }
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="result-card__icon" aria-hidden="true">
+        <div ref={iconRef} className="result-card__icon" aria-hidden="true">
           {event.kind === "WIN" && <TrophyIcon />}
           {event.kind === "LOSS" && <MinusDiscIcon />}
           {event.kind === "LIQUIDATION" && <CrackIcon />}

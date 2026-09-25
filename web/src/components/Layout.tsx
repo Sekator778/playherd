@@ -49,13 +49,18 @@ function BalancePill() {
 
   if (!player || balance === null) return null;
   return (
-    <NavLink to="/wallet" className="balance-pill">
+    <NavLink to="/wallet" className="balance-pill" aria-label={`Balance: ${formatPlayAmount(balance)} PLAY`}>
       <CoinIcon className="balance-pill__coin" />
       {/* Rolls on ANY change, not only while a result moment is on screen — the direct answer to
        *  Alex's "чтобы сумма выигрыша или проигрыша... сразу это проявлялось"
-       *  (implementation-plan.md §2). */}
+       *  (implementation-plan.md §2). Icon-only unit here (polish item 2, 2026-09-26): a bare
+       *  number + "PLAY" wrapped the word onto its own line on a 1080px phone once the header ran
+       *  tight on width — the gold coin icon already says "this is PLAY", so the word is dropped
+       *  from this compact chip specifically (kept everywhere roomier: Wallet, the result-moment
+       *  card, …) and moved to `aria-label` above so it's still announced, not just implied by a
+       *  decorative icon. */}
       <span className="balance-pill__amount">
-        <RollingDigits value={Number(balance)} format={(n) => `${formatPlayAmount(n)} PLAY`} durationMs={500} />
+        <RollingDigits value={Number(balance)} format={(n) => formatPlayAmount(n)} durationMs={500} />
       </span>
       {inPlay !== null && inPlay > 0 && (
         <span className="balance-pill__in-play">+{formatPlayAmount(inPlay, { decimals: 0 })} in play</span>
@@ -64,34 +69,68 @@ function BalancePill() {
   );
 }
 
-/** Sound/haptics toggle pair (direction.md §6) — lives in the header, next to the profile menu. */
-function FxToggles() {
+/** Sound/haptics settings (direction.md §6) — lives in the header, next to the profile menu.
+ *  One compact button (polish item 3, 2026-09-26: two separate 34px toggle buttons stacked here
+ *  wrapped onto two lines right beside the logo on a 1080px phone once the header ran tight on
+ *  width — `.lab-row`'s `flex-wrap: wrap`, borrowed for its gap styling, was never meant to run in
+ *  a squeezed header). A single icon-only trigger opens a small popover menu with both toggles as
+ *  discoverable rows, same open/outside-click pattern as `ProfileMenu` below — not player-gated,
+ *  since sound/haptics apply before sign-in too. */
+function FxMenu() {
   const fx = useFxSettings();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
   return (
-    <div className="lab-row" style={{ gap: 6 }}>
+    <div className="fx-menu" ref={ref}>
       <button
         type="button"
         className="fx-toggle"
-        aria-pressed={fx.sfxEnabled}
-        aria-label={fx.sfxEnabled ? "Mute sound" : "Unmute sound"}
-        title={fx.sfxEnabled ? "Sound on" : "Sound off"}
-        onClick={() => {
-          if (!fx.sfxEnabled) primeAudioContext();
-          fx.setSfxEnabled(!fx.sfxEnabled);
-        }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Sound and vibration settings"
+        title="Sound and vibration"
+        onClick={() => setOpen((v) => !v)}
       >
         {fx.sfxEnabled ? <SpeakerOnIcon /> : <SpeakerMuteIcon />}
       </button>
-      <button
-        type="button"
-        className="fx-toggle"
-        aria-pressed={fx.hapticsEnabled}
-        aria-label={fx.hapticsEnabled ? "Turn off vibration" : "Turn on vibration"}
-        title={fx.hapticsEnabled ? "Vibration on" : "Vibration off"}
-        onClick={() => fx.setHapticsEnabled(!fx.hapticsEnabled)}
-      >
-        {fx.hapticsEnabled ? <VibrationOnIcon /> : <VibrationOffIcon />}
-      </button>
+      {open && (
+        <ul className="fx-menu__list" role="menu">
+          <li role="none">
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={fx.sfxEnabled}
+              onClick={() => {
+                if (!fx.sfxEnabled) primeAudioContext();
+                fx.setSfxEnabled(!fx.sfxEnabled);
+              }}
+            >
+              {fx.sfxEnabled ? <SpeakerOnIcon /> : <SpeakerMuteIcon />}
+              <span>Sound {fx.sfxEnabled ? "on" : "off"}</span>
+            </button>
+          </li>
+          <li role="none">
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={fx.hapticsEnabled}
+              onClick={() => fx.setHapticsEnabled(!fx.hapticsEnabled)}
+            >
+              {fx.hapticsEnabled ? <VibrationOnIcon /> : <VibrationOffIcon />}
+              <span>Vibration {fx.hapticsEnabled ? "on" : "off"}</span>
+            </button>
+          </li>
+        </ul>
+      )}
     </div>
   );
 }
@@ -170,7 +209,7 @@ function Header() {
           ))}
         </nav>
         <div className="app-header__right">
-          <FxToggles />
+          <FxMenu />
           <BalancePill />
           {player ? (
             <ProfileMenu />

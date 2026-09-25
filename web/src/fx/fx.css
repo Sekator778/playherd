@@ -396,8 +396,44 @@ html[data-reduced-motion="true"] .card--pulse-critical {
   align-items: center;
   justify-content: center;
 }
-.fx-toggle[aria-pressed="true"] {
+.fx-toggle[aria-expanded="true"] {
   border-color: var(--accent);
+}
+
+/* Compact FX popover (polish item 3, 2026-09-26) — same positioning/list pattern as
+   `.profile-menu`/`.profile-menu__list` (index.css) so the two live side by side without a third
+   visual language. */
+.fx-menu {
+  position: relative;
+}
+.fx-menu__list {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  min-width: 176px;
+  padding: 6px;
+  list-style: none;
+  box-shadow: var(--shadow-card);
+}
+.fx-menu__list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+}
+.fx-menu__list button:hover {
+  background: var(--bg-elevated);
 }
 
 /* Header lift during a WIN's coin-arc (result-moment.md §3: "Пилюля баланса в шапке:
