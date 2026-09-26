@@ -135,6 +135,51 @@ public class RoundResultRepository {
         return new Paging.Page<>(hasMore ? items.subList(0, limit) : items, hasMore);
     }
 
+    /** Р-62 "while you were away": this player's own settled positions not yet acknowledged
+     *  ({@link #ackResults}) — newest first, same convention as {@link #playerHistory} and as
+     *  contract.ts's own doc comment on {@code Api.unseenResults} already fixes it (the client,
+     *  {@code fx/useAwayReplay.ts}, reverses the list itself to actually PLAY the result moments
+     *  oldest-first, chaining each WIN's balance animation backwards from the player's current real
+     *  balance). {@code limit} bounds a first-load backlog after a long absence — the newest ones
+     *  are shown/acked first, so a backlog beyond {@code limit} just surfaces (oldest remaining
+     *  first, since fewer are left) on the next call, never lost. */
+    public List<Identity.ProfileRoundEntryDto> unseenResults(String playerId, int limit) {
+        return db.read(c -> db.queryList(c, """
+                SELECT round_id, interval, settled_at_ms, direction, leverage, stake_mojos, liquidated,
+                       direction_correct, payout_mojos
+                FROM player_round_history WHERE player_id = ? AND acked_at_ms IS NULL
+                ORDER BY settled_at_ms DESC LIMIT ?
+                """,
+                rs -> new Identity.ProfileRoundEntryDto(rs.getString("round_id"),
+                        Enums.Interval.valueOf(rs.getString("interval")), rs.getLong("settled_at_ms"),
+                        Enums.Direction.valueOf(rs.getString("direction")), rs.getInt("leverage"),
+                        java.math.BigDecimal.valueOf(rs.getLong("stake_mojos"), 3).toPlainString(),
+                        rs.getBoolean("liquidated"), (Boolean) rs.getObject("direction_correct"),
+                        java.math.BigDecimal.valueOf(rs.getLong("payout_mojos"), 3).toPlainString()),
+                playerId, limit));
+    }
+
+    /** Marks each of {@code roundIds} acknowledged for {@code playerId} (idempotent: a round already
+     *  acked, or one this player never had a settled position in, is silently a no-op — {@code
+     *  ackResults} never needs to fail just because the client's local list is stale/out of sync
+     *  with the server's). Scoped by {@code player_id} in the WHERE clause so a player can only ever
+     *  ack their OWN rows, never another player's, regardless of what round ids are passed in. */
+    public void ackResults(String playerId, List<String> roundIds, long nowMs) {
+        if (roundIds.isEmpty()) {
+            return;
+        }
+        db.tx(c -> {
+            for (String roundId : roundIds) {
+                db.update(c, """
+                        UPDATE player_round_history SET acked_at_ms = ?
+                        WHERE player_id = ? AND round_id = ? AND acked_at_ms IS NULL
+                        """,
+                        nowMs, playerId, roundId);
+            }
+            return null;
+        });
+    }
+
     public List<Identity.ProfileRoundEntryDto> playerHistory(String playerId, int limit) {
         return db.read(c -> db.queryList(c, """
                 SELECT round_id, interval, settled_at_ms, direction, leverage, stake_mojos, liquidated,

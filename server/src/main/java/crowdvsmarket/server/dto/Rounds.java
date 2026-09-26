@@ -46,6 +46,39 @@ public final class Rounds {
     public record CancellationDto(String roundId, String reason, long cancelledAtMs, int refundedBetCount) {
     }
 
+    /** Additive (Р-62, web-side counterpart already in contract.ts): one row of
+     *  {@code RoundBetting.recentBets} — a small, capped, newest-first convenience embed of the
+     *  live bet feed (see {@code BetFeedEntryDto}/{@code betFeed} RPC below for the full,
+     *  cursor-paginated version of the same underlying {@code BetFeed} data). Same identity/
+     *  direction/leverage/stake shape as a settled position already exposes
+     *  ({@code PublicPositionDto}), just for a bet that hasn't reached round start yet. */
+    public record LiveBetDto(Identity.PlayerSummaryDto player, Enums.Direction direction, int leverage, String stake,
+                               long atMs) {
+    }
+
+    /** Additive (Р-62): one row of the public, paginated "who bet what" live feed
+     *  ({@code betFeed} RPC) — a new entry is appended every time a player places OR edits a bet
+     *  (Р-13's "modify before start" shows as a new feed row too, same as a Twitch Predictions
+     *  viewer changing their vote never erases the earlier row). {@code playerDisplayName}/
+     *  {@code isBot} are flattened out of {@code PlayerSummaryDto} on purpose — nicknames are
+     *  already public per Р-15/Р-29, and a feed row has no other use for the rest of that DTO
+     *  (wallet address, playerId). {@code seq} is this feed's own monotonic counter (distinct from
+     *  {@code oracle_records.seq}), used for {@code betFeed(roundId, sinceSeq)} pagination — unlike
+     *  {@link LiveBetDto}'s small newest-first embed, this is the full, cursor-paginated history. */
+    public record BetFeedEntryDto(long seq, long atMs, String playerDisplayName, boolean isBot,
+                                    Enums.Direction direction, String stake, int leverage) {
+    }
+
+    /** Additive (Р-62). {@code entries}: oldest-first among those with {@code seq > sinceSeq},
+     *  capped at {@code BetFeed.PAGE_SIZE} per call. {@code hasMore=true} means more already-placed
+     *  entries exist beyond this page — call again immediately with this page's last entry's
+     *  {@code seq} rather than waiting for the next poll tick. */
+    public record BetFeedDto(String roundId, String asset, List<BetFeedEntryDto> entries, boolean hasMore) {
+        public BetFeedDto(String roundId, List<BetFeedEntryDto> entries, boolean hasMore) {
+            this(roundId, "BTC", entries, hasMore);
+        }
+    }
+
     /** Additive (task item 1c, FIXED INTERFACE b/c): optional per-round anchor into chainsvc's own
      *  oracle publication (Р-40/41/47) — {@code state} one of
      *  {@code "queued"|"in_flight"|"confirmed"|"unknown"} (chainsvc's FIXED INTERFACE (b) vocabulary,
@@ -60,10 +93,27 @@ public final class Rounds {
         String roundId();
     }
 
+    /** {@code upStake}/{@code downStake}/{@code recentBets} match the shape already added to
+     *  contract.ts by the web side (Р-62, "Расклад толпы... видны вживую... как в Twitch
+     *  Predictions", replacing Р-22's "count only" during BETTING) — {@code upCount}/
+     *  {@code downCount}/{@code majorityDirection}/{@code majorityLeverage} are this server's
+     *  additive extension of the same live aggregate (the task's full spec: "upStake, downStake,
+     *  upCount, downCount, participants [= participantCount], and the crowd's current majority/
+     *  leverage preview"). {@code majorityDirection}/{@code majorityLeverage} are both {@code null}
+     *  only for a tie (including 0 vs 0) — same tie rule and same stake-weighted-average leverage
+     *  calc (Р-14) as {@link CrowdRoundPositionDto}/{@code CrowdAccount}'s own majority-side
+     *  computation, just previewed one phase earlier, before the round has actually opened a
+     *  position. */
     public record RoundBetting(String roundId, RoundWindowDto window, String asset, String phase,
-                                 int participantCount, BetDto myBet) implements RoundDto {
-        public RoundBetting(String roundId, RoundWindowDto window, int participantCount, BetDto myBet) {
-            this(roundId, window, "BTC", "BETTING", participantCount, myBet);
+                                 int participantCount, BetDto myBet, String upStake, String downStake, int upCount,
+                                 int downCount, Enums.Direction majorityDirection, Integer majorityLeverage,
+                                 List<LiveBetDto> recentBets) implements RoundDto {
+        public RoundBetting(String roundId, RoundWindowDto window, int participantCount, BetDto myBet,
+                             String upStake, String downStake, int upCount, int downCount,
+                             Enums.Direction majorityDirection, Integer majorityLeverage,
+                             List<LiveBetDto> recentBets) {
+            this(roundId, window, "BTC", "BETTING", participantCount, myBet, upStake, downStake, upCount, downCount,
+                    majorityDirection, majorityLeverage, recentBets);
         }
     }
 

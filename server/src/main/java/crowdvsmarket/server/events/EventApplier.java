@@ -11,8 +11,11 @@ import crowdvsmarket.engine.ledger.WithdrawalRequest;
 import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.RoundPrices;
 import crowdvsmarket.engine.round.RoundWindow;
+import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.domain.ComparisonAccounts;
 import crowdvsmarket.server.domain.EngineHub;
+import crowdvsmarket.server.domain.PlayerDirectory;
+import crowdvsmarket.server.dto.Enums;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
@@ -36,6 +39,12 @@ public final class EventApplier {
     @Inject
     ComparisonAccounts comparisonAccounts;
 
+    @Inject
+    BetFeed betFeed;
+
+    @Inject
+    PlayerDirectory players;
+
     /** @return the event-specific result a live caller needs right away — a {@link RoundReport}
      *          for {@code RoundResolved}, the assigned id for {@code WithdrawalRequested}/
      *          {@code DepositRequested} (both mirror {@code LedgerBook}'s own generated
@@ -53,6 +62,7 @@ public final class EventApplier {
                 RoundWindow window = new RoundWindow(e.interval(), e.windowStart(), e.windowEnd());
                 hub.engine(e.interval()).placeBet(e.playerId(), window, e.direction(),
                         new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()), Instant.ofEpochMilli(e.atMs()));
+                recordBetFeedEntry(window.roundId(), e);
                 yield null;
             }
             case GameEvent.BetCancelled e -> {
@@ -134,6 +144,21 @@ public final class EventApplier {
         }
         engine.betBook().clear(roundId);
         return bets.size();
+    }
+
+    /** Р-62: appends one {@link BetFeed} row for this placement/edit — live or replayed, since this
+     *  runs from the same {@code BetPlaced} case either way. Falls back to the raw {@code playerId}/
+     *  {@code isBot=false} if the directory has no row for it yet (defensive only: every
+     *  {@code BetPlaced} in practice is preceded by that player's own {@code PlayerRegistered},
+     *  same "should not happen" situation as {@code GameService.storeSettledResult}'s identical
+     *  fallback). */
+    private void recordBetFeedEntry(String roundId, GameEvent.BetPlaced e) {
+        PlayerDirectory.Row row = players.byId(e.playerId()).orElse(null);
+        String displayName = row == null ? e.playerId() : row.identity().displayName();
+        boolean isBot = row != null && row.isBot();
+        String stake = new PlayAmount(e.stakeMojos()).toMoney().toPlainString();
+        betFeed.record(roundId, e.playerId(), displayName, isBot, Enums.Direction.valueOf(e.direction().name()),
+                stake, e.leverage(), e.atMs());
     }
 
     public static List<Candle> toCandles(List<GameEvent.CandleData> raw) {

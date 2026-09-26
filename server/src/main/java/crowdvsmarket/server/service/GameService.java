@@ -124,6 +124,8 @@ public class GameService {
     crowdvsmarket.server.persistence.PlayerDepositAddressRepository depositAddresses;
     @Inject
     crowdvsmarket.server.persistence.DepositConfirmationRepository depositConfirmations;
+    @Inject
+    crowdvsmarket.server.domain.BetFeed betFeedStore;
 
     private static final BigDecimal ZERO_MONEY = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final Logger LOG = Logger.getLogger(GameService.class);
@@ -612,6 +614,12 @@ public class GameService {
         }
     }
 
+    /** Р-62's small, capped, newest-first convenience embed on {@code RoundBetting.recentBets} —
+     *  предложение, matches the number the web side's own mock already used. The full,
+     *  cursor-paginated feed ({@code betFeed} RPC) has no such cap on total history, only on one
+     *  call's page size ({@code BetFeed.PAGE_SIZE}). */
+    private static final int RECENT_BETS_LIMIT = 14;
+
     private Rounds.RoundDto buildBettingDto(RoundWindow window, String viewerPlayerIdOrNull) {
         GameEngine engine = hub.engine(window.interval());
         List<Bet> bets = new ArrayList<>(engine.betBook().betsFor(window.roundId()));
@@ -621,8 +629,63 @@ public class GameService {
                 .map(b -> new Rounds.BetDto(b.playerId(), window.roundId(), toDto(b.direction()), b.leverage().value(),
                         b.stake().toMoney().toPlainString()))
                 .orElse(null);
+        LiveSplit split = buildLiveSplit(bets);
+        List<Rounds.LiveBetDto> recentBets = betFeedStore.latest(window.roundId(), RECENT_BETS_LIMIT).stream()
+                .map(e -> new Rounds.LiveBetDto(summaryOrFallback(e.playerId()), e.direction(), e.leverage(),
+                        e.stake(), e.atMs()))
+                .toList();
         return new Rounds.RoundBetting(window.roundId(), new Rounds.RoundWindowDto(toDto(window.interval()),
-                window.startMs(), window.endMs()), bets.size(), myBet);
+                window.startMs(), window.endMs()), bets.size(), myBet, split.upStake(), split.downStake(),
+                split.upCount(), split.downCount(), split.majorityDirection(), split.majorityLeverage(), recentBets);
+    }
+
+    /** Defensive fallback for a {@code playerId} the {@link PlayerDirectory} cache has no row for
+     *  (should not happen in practice — same "should not happen" situation as
+     *  {@link #storeSettledResult}'s identical fallback for the exact same reason: every bet is
+     *  preceded by that player's own registration). */
+    private Identity.PlayerSummaryDto summaryOrFallback(String playerId) {
+        return players.byId(playerId).isPresent() ? summary(playerId)
+                : new Identity.PlayerSummaryDto(playerId, playerId, "", playerId, null);
+    }
+
+    private record LiveSplit(String upStake, String downStake, int upCount, int downCount,
+                               Enums.Direction majorityDirection, Integer majorityLeverage) {
+    }
+
+    /** Р-62: the crowd split visible live during {@code BETTING} — same majority/weighted-leverage
+     *  math as {@link #buildRunningDto}'s {@code crowdPreview} (and {@code CrowdAccount}'s own, at
+     *  actual settlement), just computed one phase earlier, straight from the bets still pending in
+     *  {@code BetBook} (no entry price exists yet, so no margin/liquidation preview here — only the
+     *  split and the majority side's direction/leverage). */
+    private LiveSplit buildLiveSplit(List<Bet> bets) {
+        BigDecimal upStake = PlayAmount.ZERO.toMoney();
+        BigDecimal downStake = PlayAmount.ZERO.toMoney();
+        int upCount = 0;
+        int downCount = 0;
+        List<Bet> upBets = new ArrayList<>();
+        List<Bet> downBets = new ArrayList<>();
+        for (Bet bet : bets) {
+            BigDecimal stake = bet.stake().toMoney();
+            if (bet.direction() == crowdvsmarket.engine.round.Direction.UP) {
+                upStake = upStake.add(stake);
+                upCount++;
+                upBets.add(bet);
+            } else {
+                downStake = downStake.add(stake);
+                downCount++;
+                downBets.add(bet);
+            }
+        }
+        int cmp = upStake.compareTo(downStake);
+        Enums.Direction majorityDirection = null;
+        Integer majorityLeverage = null;
+        if (cmp != 0) {
+            List<Bet> majorityBets = cmp > 0 ? upBets : downBets;
+            majorityDirection = cmp > 0 ? Enums.Direction.UP : Enums.Direction.DOWN;
+            majorityLeverage = weightedLeverage(majorityBets);
+        }
+        return new LiveSplit(upStake.toPlainString(), downStake.toPlainString(), upCount, downCount,
+                majorityDirection, majorityLeverage);
     }
 
     /** Predложение: a live preview of the currently-running round — revealed positions/crowd entry
@@ -706,6 +769,31 @@ public class GameService {
         BigDecimal average = weightedSum.divide(totalStake, MathContext.DECIMAL128);
         int rounded = average.setScale(0, RoundingMode.HALF_UP).intValueExact();
         return Math.max(Leverage.MIN, Math.min(Leverage.MAX, rounded));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Bet feed (Р-62) — public, no session required, same visibility as the round itself
+    // ---------------------------------------------------------------------------------------
+
+    /** {@code sinceSeqOrNull}: {@code null}/omitted for the first page, otherwise the last call's
+     *  last entry's {@code seq} to keep paging forward (see {@code BetFeedDto}'s javadoc). Reads
+     *  {@link crowdvsmarket.server.domain.BetFeed}, an {@link EngineHub}-adjacent in-memory
+     *  structure rebuilt by event replay exactly like {@code LedgerBook.corrections()} (see
+     *  {@link #ledgerCorrections}) — same read-lock treatment for the same reason: it must not be
+     *  read mid-rebuild. */
+    public Rounds.BetFeedDto betFeed(String roundId, Long sinceSeqOrNull) {
+        long sinceSeq = sinceSeqOrNull == null ? 0L : sinceSeqOrNull;
+        engineLock.readLock().lock();
+        try {
+            crowdvsmarket.server.domain.BetFeed.Result result = betFeedStore.since(roundId, sinceSeq);
+            List<Rounds.BetFeedEntryDto> entries = result.entries().stream()
+                    .map(e -> new Rounds.BetFeedEntryDto(e.seq(), e.atMs(), e.playerDisplayName(), e.isBot(),
+                            e.direction(), e.stake(), e.leverage()))
+                    .toList();
+            return new Rounds.BetFeedDto(roundId, entries, result.hasMore());
+        } finally {
+            engineLock.readLock().unlock();
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1327,6 +1415,30 @@ public class GameService {
         }
         List<Identity.ProfileRoundEntryDto> history = roundResults.playerHistory(playerId, PROFILE_HISTORY_LIMIT);
         return new Identity.PublicProfileDto(player, seasonRecord, history);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // "While you were away" (Р-62 cross-check): a player offline at settlement never otherwise
+    // sees the result moment (docs/product/design/result-moment.md) — these two let the app catch
+    // up on return. Both are plain reads/writes of the player_round_history read model (like
+    // {@link #cancellations}), not {@link EngineHub} state, so neither needs engineLock.
+    // ---------------------------------------------------------------------------------------
+
+    /** предложение — no source fixes a number: bounds a first-load backlog after a long absence
+     *  (a player who never opens the app for weeks should not suddenly get flooded with every
+     *  result moment at once); newest-first ordering (see {@code RoundResultRepository
+     *  #unseenResults}'s javadoc) means anything beyond this limit is simply older and shows up on
+     *  a later call instead, once these are acked — never lost. */
+    private static final int UNSEEN_RESULTS_LIMIT = 20;
+
+    public List<Identity.ProfileRoundEntryDto> myUnseenResults(String playerId) {
+        return roundResults.unseenResults(playerId, UNSEEN_RESULTS_LIMIT);
+    }
+
+    /** Idempotent (see {@code RoundResultRepository.ackResults}'s javadoc) — a client can safely
+     *  re-ack ids it already acked, or ids from a stale local cache. */
+    public void ackResults(String playerId, List<String> roundIds, long nowMs) {
+        roundResults.ackResults(playerId, roundIds == null ? List.of() : roundIds, nowMs);
     }
 
     // ---------------------------------------------------------------------------------------

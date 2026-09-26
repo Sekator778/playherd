@@ -45,9 +45,20 @@ class GameFlowIntegrationTest {
         public Map<String, String> getConfigOverrides() {
             // Short enough that "3 fast rounds" finishes in well under a minute, long enough that
             // 2 HTTP sign-ins + 2 place-bet calls comfortably land inside one betting window.
+            //
+            // CI regression fix (docs/research/server_design.md "Shared Postgres across
+            // @QuarkusTest classes"): 4s/6s had no real margin once this class runs as part of the
+            // full suite rather than standalone — RoundCalendar's origin epoch is a fixed wall-clock
+            // instant for the whole suite run (not reset per class/test), so "the round open for
+            // betting right now" can land anywhere in its window purely by chance of when this
+            // class happens to start, and CleanDatabasePerTestClass's own truncate+rebuild pass (see
+            // its javadoc) adds real overhead before this test's first HTTP call. 8s/10s (same
+            // values as BotRestartRecoveryTest/UnseenResultsTest, which hit the exact same failure
+            // mode) gives comfortable headroom for the sign-in + queries that happen before the
+            // first placeBet.
             return Map.of(
-                    "herd.round-durations.hourly-sec", "4",
-                    "herd.round-durations.daily-sec", "6",
+                    "herd.round-durations.hourly-sec", "8",
+                    "herd.round-durations.daily-sec", "10",
                     "herd.bots.count", "8");
         }
     }
@@ -138,9 +149,6 @@ class GameFlowIntegrationTest {
         Session player2 = signIn("txch1player2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         assertThat(player1.playerId()).isNotEqualTo(player2.playerId());
 
-        // --- reveal rules (Р-22): before either player bets, the betting round shows 0 bettors
-        // and no directions/amounts (RoundBetting has no such fields at all — structurally
-        // impossible to leak, see dto/Rounds.java). ---
         JsonNode hourlyPair = rpc(player1, "rounds", "HOURLY");
         String bettingRoundId = hourlyPair.path("betting").path("roundId").asText();
         assertThat(hourlyPair.path("betting").path("phase").asText()).isEqualTo("BETTING");
@@ -163,8 +171,8 @@ class GameFlowIntegrationTest {
         assertThat(new java.math.BigDecimal(myAccountWhileBetting.path("inPlay").asText()))
                 .isEqualByComparingTo("500.000");
 
-        // --- still hidden while betting: only the headcount is visible, even to the bettors
-        // themselves via the *other* player's read (no session at all here) ---
+        // --- Р-62 (replaces Р-22): the crowd split and live bet feed are visible during BETTING
+        // itself, even to a caller with no session at all — not just the headcount. ---
         JsonNode duringBetting = rpc(null, "round", bettingRoundId);
         assertThat(duringBetting.path("phase").asText()).isEqualTo("BETTING");
         // >= 2, not == 2 (bug fix, BotService#scheduleBots): bots now correctly place bets inside
@@ -172,7 +180,64 @@ class GameFlowIntegrationTest {
         // same window can also carry some of the profile's 8 bots' bets by the time this call
         // lands, in addition to the two human players placed above.
         assertThat(duringBetting.path("participantCount").asInt()).isGreaterThanOrEqualTo(2);
+        // Full per-position identity/list is still not part of RoundBetting itself (that's what
+        // the live feed below is for) — only the aggregate split.
         assertThat(duringBetting.has("positions")).isFalse();
+        // The two known bets (player1: 500 UP, player2: 300 DOWN) are always included in the
+        // split — bots may add more on either side, so these are lower bounds, not exact totals.
+        assertThat(new java.math.BigDecimal(duringBetting.path("upStake").asText()))
+                .isGreaterThanOrEqualTo(new java.math.BigDecimal("500.000"));
+        assertThat(new java.math.BigDecimal(duringBetting.path("downStake").asText()))
+                .isGreaterThanOrEqualTo(new java.math.BigDecimal("300.000"));
+        assertThat(duringBetting.path("upCount").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(duringBetting.path("downCount").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(duringBetting.path("upCount").asInt() + duringBetting.path("downCount").asInt())
+                .isEqualTo(duringBetting.path("participantCount").asInt());
+        // majorityDirection/majorityLeverage: null only on an exact tie — with bots in the mix a
+        // tie is possible but unlikely; either way the pair must be consistent (both present or
+        // both absent), which is the actual invariant worth asserting here regardless of which
+        // side wins.
+        boolean hasMajorityDirection = !duringBetting.path("majorityDirection").isMissingNode()
+                && !duringBetting.path("majorityDirection").isNull();
+        boolean hasMajorityLeverage = !duringBetting.path("majorityLeverage").isMissingNode()
+                && !duringBetting.path("majorityLeverage").isNull();
+        assertThat(hasMajorityDirection).isEqualTo(hasMajorityLeverage);
+
+        // --- Р-62's live bet feed (betFeed RPC): both known bets show up, oldest-first by seq,
+        // with the correct nickname/direction/stake/leverage — public, no session required. ---
+        JsonNode feed = rpc(null, "betFeed", bettingRoundId);
+        assertThat(feed.path("roundId").asText()).isEqualTo(bettingRoundId);
+        JsonNode feedEntries = feed.path("entries");
+        assertThat(feedEntries).hasSizeGreaterThanOrEqualTo(2);
+        long previousSeq = -1;
+        boolean sawPlayer1Bet = false;
+        boolean sawPlayer2Bet = false;
+        String player1Name = rpc(player1, "myProfile").path("player").path("displayName").asText();
+        String player2Name = rpc(player2, "myProfile").path("player").path("displayName").asText();
+        for (JsonNode entry : feedEntries) {
+            assertThat(entry.path("seq").asLong()).isGreaterThan(previousSeq); // strictly increasing
+            previousSeq = entry.path("seq").asLong();
+            if (entry.path("playerDisplayName").asText().equals(player1Name)) {
+                sawPlayer1Bet = true;
+                assertThat(entry.path("direction").asText()).isEqualTo("UP");
+                assertThat(entry.path("stake").asText()).isEqualTo("500.000");
+                assertThat(entry.path("isBot").asBoolean()).isFalse();
+            }
+            if (entry.path("playerDisplayName").asText().equals(player2Name)) {
+                sawPlayer2Bet = true;
+                assertThat(entry.path("direction").asText()).isEqualTo("DOWN");
+                assertThat(entry.path("stake").asText()).isEqualTo("300.000");
+            }
+        }
+        assertThat(sawPlayer1Bet).isTrue();
+        assertThat(sawPlayer2Bet).isTrue();
+        // sinceSeq pagination: asking again with the last seq already seen never repeats an
+        // already-returned entry (a concurrently-firing bot could still add a newer one in
+        // between these two calls, so "empty" is not asserted here — only "nothing OLD").
+        JsonNode feedTail = rpc(null, "betFeed", bettingRoundId, previousSeq);
+        for (JsonNode entry : feedTail.path("entries")) {
+            assertThat(entry.path("seq").asLong()).isGreaterThan(previousSeq);
+        }
 
         // --- wait for that exact round to settle ---
         await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofMillis(300))

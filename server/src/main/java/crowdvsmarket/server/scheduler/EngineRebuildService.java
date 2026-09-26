@@ -3,6 +3,7 @@ package crowdvsmarket.server.scheduler;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.bots.BotService;
+import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.domain.ComparisonAccounts;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.PlayerDirectory;
@@ -40,6 +41,8 @@ public class EngineRebuildService {
     EngineHub hub;
     @Inject
     ComparisonAccounts comparisonAccounts;
+    @Inject
+    BetFeed betFeed;
     @Inject
     EventStore eventStore;
     @Inject
@@ -86,6 +89,7 @@ public class EngineRebuildService {
 
             hub.resetEmpty();
             comparisonAccounts.reset();
+            betFeed.reset();
             List<GameEvent> events = eventStore.loadAll();
             for (GameEvent event : events) {
                 eventApplier.apply(event);

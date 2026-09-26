@@ -24,6 +24,7 @@ import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.NewCookie;
 import jakarta.ws.rs.core.Response;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -98,6 +99,8 @@ public class RpcResource {
             }
             case "rounds" -> result = gameService.roundsPair(Enums.Interval.valueOf(str(args, 0)), playerId);
             case "round" -> result = gameService.round(str(args, 0), playerId);
+            // Р-62: public, no session required — same visibility as the round itself during BETTING.
+            case "betFeed" -> result = gameService.betFeed(str(args, 0), longOrNull(args, 1));
             case "btcReferencePrice" -> result = gameService.btcReferencePrice();
             case "previewLiquidation" -> result = gameService.previewLiquidation(requiredObj(args, 0, Betting.LiquidationPreviewRequest.class));
             case "placeBet" -> {
@@ -150,6 +153,19 @@ public class RpcResource {
             case "myProfile" -> {
                 requireSignedIn(playerId);
                 result = gameService.publicProfile(playerId);
+            }
+            // Р-62 "while you were away" — RPC method names match contract.ts's `Api.unseenResults`/
+            // `Api.acknowledgeResults` exactly (web already wrote+wired these against MockApi; the
+            // real implementation just has to answer under the same names for RealApi to work
+            // unchanged once it calls them).
+            case "unseenResults" -> {
+                requireSignedIn(playerId);
+                result = gameService.myUnseenResults(playerId);
+            }
+            case "acknowledgeResults" -> {
+                requireSignedIn(playerId);
+                gameService.ackResults(playerId, strList(args, 0), now);
+                result = java.util.Map.of();
             }
             case "cancellations" -> result = gameService.cancellations(pageParams(args, 0));
             // Wave-2 security fix: public, additive (not in contract.ts, same "additive" situation
@@ -235,6 +251,32 @@ public class RpcResource {
     private String str(JsonNode args, int i) {
         JsonNode n = at(args, i);
         return n.isNull() ? null : n.asText();
+    }
+
+    /** Optional numeric arg — {@code null} when omitted/JSON {@code null} (e.g. {@code betFeed}'s
+     *  {@code sinceSeq}, first-page call). */
+    private Long longOrNull(JsonNode args, int i) {
+        JsonNode n = at(args, i);
+        return n.isNull() ? null : n.asLong();
+    }
+
+    /** {@code string[]} arg (e.g. {@code ackResults}' {@code roundIds}) — an absent/{@code null}
+     *  arg is an empty list, not an error (mirrors {@link #pageParams}'s "missing means default"
+     *  treatment), since {@code ackResults([])} is itself already a defined no-op
+     *  (see {@code RoundResultRepository.ackResults}'s javadoc). */
+    private List<String> strList(JsonNode args, int i) {
+        JsonNode n = at(args, i);
+        if (n.isNull()) {
+            return List.of();
+        }
+        try {
+            return mapper.convertValue(n, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {
+            });
+        } catch (IllegalArgumentException e) {
+            // Same wave-1-finding reasoning as obj()/requiredObj() above: never echo Jackson's own
+            // mapping-failure message (it can name internal types) back to the client.
+            throw ApiException.badRequest("invalid request body");
+        }
     }
 
     private <T> T obj(JsonNode args, int i, Class<T> type) {

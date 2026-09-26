@@ -105,12 +105,34 @@ class EventStoreGoldenFixturesTest {
                 "INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES (?, ?, ?, 1) "
                         + "RETURNING id",
                 rs -> rs.getLong("id"), fixture.typeName(), Db.jsonb(node), 0L));
-        GameEvent replayed = db.read(c -> db.queryOne(c,
-                "SELECT id, event_type, payload, schema_version FROM game_events WHERE id = ?",
-                rs -> eventStore.decode(rs.getLong("id"), rs.getString("event_type"), rs.getString("payload"),
-                        rs.getInt("schema_version")),
-                rowId));
-        assertThat(replayed).isEqualTo(fixture.expected());
+        try {
+            GameEvent replayed = db.read(c -> db.queryOne(c,
+                    "SELECT id, event_type, payload, schema_version FROM game_events WHERE id = ?",
+                    rs -> eventStore.decode(rs.getLong("id"), rs.getString("event_type"), rs.getString("payload"),
+                            rs.getInt("schema_version")),
+                    rowId));
+            assertThat(replayed).isEqualTo(fixture.expected());
+        } finally {
+            // CI regression (docs/research/server_design.md "EventStoreGoldenFixturesTest / shared
+            // game_events"): this INSERT above is a real, manually-committed JDBC transaction (Db#tx
+            // uses its own connection/commit, not JTA), so it is NOT rolled back when the test method
+            // ends — it stays in game_events for the rest of the suite's shared Postgres/JVM. Several
+            // other @QuarkusTest classes (AdminReverseWithdrawalTest, AdminReverseDepositTest,
+            // BotRestartRecoveryTest, GameFlowIntegrationTest, UnseenResultsTest, PlayOnChainTest)
+            // call EngineRebuildService#rebuild(), which replays every row currently in game_events
+            // into a fresh engine. These fixture rows use synthetic ids ("w-golden-1"/"d-golden-1"/
+            // …) chosen purely as decode-test labels — never actually produced by a matching
+            // WithdrawalRequested/DepositRequested in this same replay sequence — so whichever of
+            // those test classes happens to run afterward (purely a function of surefire's
+            // classpath-scan order, which is why this passed locally but failed "consistently" on
+            // CI's runner) replayed e.g. WithdrawalConfirmed("w-golden-1") against a ledger that
+            // never created that id, and blew up with exactly
+            // NoSuchElementException: unknown withdrawal request: w-golden-1. Deleting the row here
+            // keeps this test's real Postgres/JSONB round-trip coverage while leaving game_events
+            // exactly as this test found it, regardless of what else runs in the suite or in what
+            // order.
+            db.tx(c -> db.update(c, "DELETE FROM game_events WHERE id = ?", rowId));
+        }
     }
 
     private static String readFixture(String typeName) {
