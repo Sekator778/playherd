@@ -23,7 +23,7 @@ function richEntries(list: HomeSummaryDto["topRich"]): LeaderboardEntry[] {
   return list.map((e) => ({
     rank: e.rank,
     player: e.player,
-    value: `${formatPlayAmount(e.growth, { decimals: 0, sign: true })} PLAY`,
+    value: `${formatPlayAmount(e.growth, { sign: true })} PLAY`,
     valueClassName: outcomeClassName(outcomeFromNet(Number(e.growth))),
   }));
 }

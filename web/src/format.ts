@@ -2,12 +2,26 @@
  *  plain decimal strings, per contract.ts's own doc comment) and from `api/liquidation.ts`
  *  (exact math). Nothing here is a source of truth for a number, only how it is printed. */
 
+/** One convention for every PLAY amount in the app (independent critique, 2026-09-26, "Game feel
+ *  / number formatting consistency": whole numbers in some places, 2-3 decimals in others, for
+ *  the same kind of number). Auto mode (no explicit `decimals`) rounds to PLAY's own scale — see
+ *  `api/amountInput.ts`'s `PLAY_DECIMALS` (3, 1 PLAY = 1000 mojos) — then shows only the decimals
+ *  that are actually non-zero: a whole amount reads as "10,000", a real fractional settlement as
+ *  "601.32" or, on the rare mojo-level remainder, "601.325". Callers only pass `decimals`
+ *  explicitly for a genuinely different need (e.g. a fixed-width column); every other call site
+ *  in this app uses auto. */
+function autoPlayDecimals(n: number): number {
+  const milliPlay = Math.round(Math.abs(n) * 1000);
+  if (milliPlay % 1000 === 0) return 0;
+  return milliPlay % 10 === 0 ? 2 : 3;
+}
+
 export function formatPlayAmount(
   amount: string | number,
   opts: { decimals?: number; sign?: boolean } = {},
 ): string {
   const n = typeof amount === "string" ? Number(amount) : amount;
-  const decimals = opts.decimals ?? 0;
+  const decimals = opts.decimals ?? autoPlayDecimals(n);
   const formatted = new Intl.NumberFormat("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,

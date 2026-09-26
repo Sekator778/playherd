@@ -1,5 +1,7 @@
 package crowdvsmarket.engine.crowd;
 
+import crowdvsmarket.engine.execution.ExecutionAdapter;
+import crowdvsmarket.engine.execution.PaperTradingAdapter;
 import crowdvsmarket.engine.margin.Leverage;
 import crowdvsmarket.engine.market.Candle;
 import crowdvsmarket.engine.round.Bet;
@@ -48,13 +50,27 @@ public final class CrowdAccount {
 
     private BigDecimal capital;
     private final List<RoundResult> history = new ArrayList<>();
+    private final ExecutionAdapter executionAdapter;
 
     public CrowdAccount() {
         this(STARTING_CAPITAL);
     }
 
     public CrowdAccount(BigDecimal startingCapital) {
+        this(startingCapital, new PaperTradingAdapter());
+    }
+
+    /**
+     * Task item 7: same account, executed through an explicit {@link ExecutionAdapter} instead of
+     * always the default {@link PaperTradingAdapter} — e.g. a future caller that wants the crowd
+     * account's majority-side trade actually placed on a real exchange (Р-38+, out of scope for
+     * this task) constructs one with {@code new CrowdAccount(startingCapital, hyperliquidAdapter)}
+     * instead. {@link #CrowdAccount(BigDecimal)}/{@link #CrowdAccount()} are unchanged and still
+     * default to paper trading, so every existing caller keeps its exact prior behavior.
+     */
+    public CrowdAccount(BigDecimal startingCapital, ExecutionAdapter executionAdapter) {
         this.capital = startingCapital;
+        this.executionAdapter = executionAdapter;
     }
 
     public BigDecimal capital() {
@@ -85,9 +101,13 @@ public final class CrowdAccount {
 
         int leverage = weightedLeverage(majority.bets());
         BigDecimal margin = capital.multiply(MARGIN_SHARE_OF_CAPITAL, MathContext.DECIMAL128).setScale(2, RoundingMode.HALF_UP);
-        Position position = Position.openFromMargin(
+        // Task item 7: was `Position.openFromMargin(...)` + `PositionSimulator.simulate(...)`
+        // called directly here — now the same two calls, behind ExecutionAdapter (see that
+        // interface's javadoc); PaperTradingAdapter (the default, via the other constructors)
+        // does exactly this and nothing else, so this is a byte-identical behavior change.
+        Position position = executionAdapter.openPosition(
                 CROWD_USER_ID, roundId, majority.direction(), new Leverage(leverage), margin, openPrice);
-        PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, path);
+        PositionSimulator.Outcome outcome = executionAdapter.closePosition(position, path);
 
         boolean liquidated = outcome instanceof PositionSimulator.Outcome.Liquidated;
         BigDecimal capitalAfter = liquidated

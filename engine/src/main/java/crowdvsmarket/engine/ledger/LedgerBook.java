@@ -245,7 +245,7 @@ public final class LedgerBook {
             throw new IllegalArgumentException("correction reason must not be blank");
         }
         boolean alreadyReversed = corrections.stream()
-                .anyMatch(c -> relatedWithdrawalRequestId.equals(c.relatedWithdrawalRequestId()));
+                .anyMatch(c -> relatedWithdrawalRequestId.equals(c.relatedRequestId()));
         if (alreadyReversed) {
             throw new IllegalStateException("withdrawal " + relatedWithdrawalRequestId + " was already reversed");
         }
@@ -257,6 +257,55 @@ public final class LedgerBook {
         String id = "c-" + (++correctionCounter);
         LedgerCorrection correction = new LedgerCorrection(id, playerId, originalAmount, reason,
                 relatedWithdrawalRequestId, now.toEpochMilli());
+        corrections.add(correction);
+        return correction;
+    }
+
+    /**
+     * Wave-3 security fix (task item 1, Р-6 deposit-verification gap): an operator correction that
+     * reverses the balance/season effect a deposit request originally applied — e.g. a
+     * self-reported "I sent it" deposit that was auto-confirmed before any real on-chain
+     * CAT-deposit verifier existed (see {@code GameService#requestDeposit}'s
+     * {@code DEPOSIT_VERIFICATION_UNAVAILABLE} gate, added the same task). Exactly the same
+     * shape/reasoning as {@link #reverseWithdrawalEffect} — see that method's javadoc for why the
+     * caller reads {@code originalAmount}/{@code originalSeason} from live state once, at command
+     * time, rather than this method re-resolving {@code relatedDepositRequestId} itself, and why
+     * the original {@link DepositRequest}'s own state is left completely untouched.
+     *
+     * <p>{@code originalAmount} is applied to the balance as a debit — the exact inverse of
+     * {@link #confirmDeposit}'s credit — and {@code originalAmount.negate()} is applied to
+     * {@code originalSeason}'s {@code deposited} bookkeeping (undoing that same original call's
+     * {@code withDeposit(amount)}). Shares {@link #corrections}' idempotency list with
+     * {@link #reverseWithdrawalEffect} — a request id is either a {@code "w-N"} or a {@code "d-N"}
+     * ({@link #requestCounter} is shared between the two, see {@link #requestWithdrawal}'s javadoc
+     * on why replay depends on that), so they can never collide there. Never allows the balance to
+     * go negative (same guard as every other primitive, via {@link #applyDelta}) — if the
+     * (wrongly) credited PLAY was already spent or withdrawn, this throws
+     * {@link IllegalStateException} and the operator must resolve the account by hand.
+     *
+     * @throws IllegalStateException    if {@code relatedDepositRequestId} was already reversed, or
+     *                                   reversing it would take the balance negative
+     * @throws IllegalArgumentException if {@code reason} is blank
+     */
+    public LedgerCorrection reverseDepositEffect(String playerId, PlayAmount originalAmount, Season originalSeason,
+            String reason, String relatedDepositRequestId, Instant now) {
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("correction reason must not be blank");
+        }
+        boolean alreadyReversed = corrections.stream()
+                .anyMatch(c -> relatedDepositRequestId.equals(c.relatedRequestId()));
+        if (alreadyReversed) {
+            throw new IllegalStateException("deposit " + relatedDepositRequestId + " was already reversed");
+        }
+
+        ensureSeasonPack(playerId, now);
+        PlayAmount debit = originalAmount.negate();
+        applyDelta(playerId, debit, LedgerEntryType.OPERATOR_CORRECTION, null, now);
+        adjustSeasonDeposited(playerId, originalSeason, debit);
+
+        String id = "c-" + (++correctionCounter);
+        LedgerCorrection correction = new LedgerCorrection(id, playerId, debit, reason,
+                relatedDepositRequestId, now.toEpochMilli());
         corrections.add(correction);
         return correction;
     }
@@ -273,6 +322,19 @@ public final class LedgerBook {
         }
         Map<Season, SeasonRecord> seasons = new LinkedHashMap<>(acc.seasons());
         seasons.put(season, existing.withWithdrawalDelta(delta));
+        accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), acc.currentSeason(), seasons));
+    }
+
+    /** Same shape as {@link #adjustSeasonWithdrawn}, for {@code deposited} bookkeeping
+     *  ({@link #reverseDepositEffect}) — a no-op if that season's record does not exist. */
+    private void adjustSeasonDeposited(String playerId, Season season, PlayAmount delta) {
+        PlayerAccount acc = account(playerId);
+        SeasonRecord existing = acc.seasons().get(season);
+        if (existing == null) {
+            return;
+        }
+        Map<Season, SeasonRecord> seasons = new LinkedHashMap<>(acc.seasons());
+        seasons.put(season, existing.withDeposit(delta));
         accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), acc.currentSeason(), seasons));
     }
 

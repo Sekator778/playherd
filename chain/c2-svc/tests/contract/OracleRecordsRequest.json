@@ -1,0 +1,12 @@
+{
+  "records": [
+    {
+      "seq": 205,
+      "ts": 1790400000,
+      "priceCents": 8561200,
+      "resultsHash": "0xabababababababababababababababababababababababababababababababab",
+      "source": "live",
+      "sourceTs": 1790400001
+    }
+  ]
+}

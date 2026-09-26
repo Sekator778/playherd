@@ -205,21 +205,21 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             <RollingDigits
               value={event.netPlay}
               durationMs={activeMs || 400}
-              format={(n) => `${formatPlayAmount(n, { decimals: 2, sign: true })} PLAY`}
+              format={(n) => `${formatPlayAmount(n, { sign: true })} PLAY`}
             />
           )}
         </div>
         {event.kind === "EVEN" && <p className="result-card__secondary">No gain, no loss</p>}
         {event.kind !== "EVEN" && (
           <p className="result-card__secondary">
-            stake {formatPlayAmount(event.stakePlay, { decimals: 0 })} PLAY · x{event.leverage}
+            stake {formatPlayAmount(event.stakePlay)} PLAY · x{event.leverage}
             {event.interval === "DAILY" ? " · daily round" : ""}
           </p>
         )}
 
         {!isLiquidation && (
           <p className="result-card__balance mono">
-            Balance: <RollingDigits value={balanceDisplay} durationMs={200} format={(n) => `${formatPlayAmount(n, { decimals: 0 })} PLAY`} />
+            Balance: <RollingDigits value={balanceDisplay} durationMs={200} format={(n) => `${formatPlayAmount(n)} PLAY`} />
           </p>
         )}
 
@@ -254,7 +254,7 @@ function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss:
       <div className="result-card result-card--overflow" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="result-card__overflow-header" onClick={() => setExpanded((v) => !v)}>
           <span>
-            +{events.length} more results — {formatPlayAmount(sum, { decimals: 2, sign: true })} PLAY net
+            +{events.length} more results — {formatPlayAmount(sum, { sign: true })} PLAY net
           </span>
           <span aria-hidden="true">{expanded ? "▲" : "▼"}</span>
         </button>
@@ -263,7 +263,7 @@ function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss:
             {events.map((e) => (
               <li key={e.id}>
                 <span className={e.kind === "WIN" ? "outcome-won" : e.kind === "LOSS" || e.kind === "LIQUIDATION" ? "outcome-lost" : "outcome-even"}>
-                  {formatPlayAmount(e.netPlay, { decimals: 2, sign: true })} PLAY
+                  {formatPlayAmount(e.netPlay, { sign: true })} PLAY
                 </span>{" "}
                 <span className="muted">
                   {e.kind === "LIQUIDATION" ? "liquidated · " : ""}

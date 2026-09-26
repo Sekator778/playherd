@@ -79,8 +79,9 @@ export function HowItWorksPage() {
         <h2>PLAY is not real money</h2>
         <p>
           PLAY is a toy currency on Chia's testnet11 — it has no real-world value. New players start with{" "}
-          {formatPlayAmount(STARTER_PACK_PLAY, { decimals: 0 })} PLAY. You can move PLAY to your own testnet11
-          wallet as a CAT token and back, but nothing on this site involves real funds.
+          {formatPlayAmount(STARTER_PACK_PLAY)} PLAY. Moving PLAY on/off testnet11 as a real CAT token is planned but
+          turned off for now — we don't yet verify a deposit or withdrawal on chain, so your PLAY balance stays
+          entirely in this game until that verification exists. Nothing on this site involves real funds either way.
         </p>
       </section>
 

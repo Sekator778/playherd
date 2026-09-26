@@ -113,7 +113,7 @@ export function RoundPage() {
               <div className="card card--hero own-outcome own-outcome--liquidated">
                 <div className="net-result">
                   <span className="outcome-lost">
-                    {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY · liquidated
+                    {formatPlayAmount(net, { sign: true })} PLAY · liquidated
                   </span>
                 </div>
                 <p className="net-result__secondary">You lost your whole stake.</p>
@@ -126,12 +126,12 @@ export function RoundPage() {
               <div className="card card--hero own-outcome">
                 <div className="net-result">
                   <span className={outcomeClassName(outcomeFromNet(net))}>
-                    {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY
+                    {formatPlayAmount(net, { sign: true })} PLAY
                   </span>
                 </div>
                 <p className="net-result__secondary">
-                  stake {formatPlayAmount(stake, { decimals: 0 })} → paid{" "}
-                  {formatPlayAmount(ownPosition.payout, { decimals: 2 })}
+                  stake {formatPlayAmount(stake)} → paid{" "}
+                  {formatPlayAmount(ownPosition.payout)}
                 </p>
               </div>
             );
@@ -157,7 +157,7 @@ export function RoundPage() {
                     <RollingDigits
                       value={live.toNumber()}
                       durationMs={400}
-                      format={(n) => `${formatPlayAmount(n, { decimals: 2, sign: true })} PLAY`}
+                      format={(n) => `${formatPlayAmount(n, { sign: true })} PLAY`}
                     />
                   </span>{" "}
                   <span className="net-result__secondary">unrealized</span>

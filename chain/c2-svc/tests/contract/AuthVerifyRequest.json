@@ -1,0 +1,6 @@
+{
+  "address": "txch1dhxy800eq57a9y9zlhuw0anfv9ekl586c5zm8cp2tng7tpr8rl5se62cng",
+  "publicKey": "0x80fb74aac15c91e90912b5e0d6718d30a8ef121dcba22f4b1959921bb0a88c313d4eeca5f575488f9246c51448ff3ff2",
+  "message": "Crowd vs Market login\nNonce: 1a2b3c4d5e6f\n",
+  "signature": "0x90eb821d315c97c8e071ad23922ce45f9b5b8dd0331fc29694c18c52a87f4af9c97b5ea4a21522af3fff37e33707e7ca10d78883b706a3018e55fb52eac4e0d377718505694f4f6619b830508b6931e76b33b82b14dd0a468ad8413eb837ecc5"
+}

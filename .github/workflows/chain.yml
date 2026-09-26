@@ -1,0 +1,56 @@
+name: chain
+
+# Task item 6 (CI, docs/reviews/2026-09-26-independent-critique.md): cargo test --workspace +
+# clippy for chain/ (c2-cli, c2-svc, sim-spike). Before this workflow, chain/ — the most
+# incident-prone module in the codebase (chain/c2-svc/src/oracle/publisher.rs alone has had 3
+# documented production postmortems in ~36 hours, docs/research/chain_service.md §9/§11/§12) —
+# had zero automated gate, unlike engine/ and web/.
+#
+# clippy runs WITHOUT `-D warnings`: `cargo clippy --workspace --all-targets` is not currently
+# clean (pre-existing warnings in c2-cli's own test files, e.g. `cloned_ref_to_slice_refs`,
+# `inconsistent_digit_grouping` — outside chain/c2-svc, this task's only assigned path under
+# chain/) — per task instruction, `-D warnings` is added only once that is independently cleaned
+# up, not made a hard gate against pre-existing, unrelated warnings today.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "chain/**"
+      - ".github/workflows/chain.yml"
+  pull_request:
+    paths:
+      - "chain/**"
+      - ".github/workflows/chain.yml"
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chain
+    steps:
+      - uses: actions/checkout@v4
+
+      # actions-rs/toolchain is archived/unmaintained — dtolnay/rust-toolchain is the standard
+      # actively-maintained replacement for pinning a Rust toolchain + components in CI.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            chain/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('chain/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
+      - name: cargo clippy --workspace --all-targets (no -D warnings — see file header)
+        run: cargo clippy --workspace --all-targets --locked

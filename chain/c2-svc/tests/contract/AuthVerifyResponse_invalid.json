@@ -1,0 +1,4 @@
+{
+  "valid": false,
+  "reason": "publicKey does not map to address via the standard synthetic-key p2 puzzle"
+}

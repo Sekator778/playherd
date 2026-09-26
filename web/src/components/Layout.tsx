@@ -63,7 +63,7 @@ function BalancePill() {
         <RollingDigits value={Number(balance)} format={(n) => formatPlayAmount(n)} durationMs={500} />
       </span>
       {inPlay !== null && inPlay > 0 && (
-        <span className="balance-pill__in-play">+{formatPlayAmount(inPlay, { decimals: 0 })} in play</span>
+        <span className="balance-pill__in-play">+{formatPlayAmount(inPlay)} in play</span>
       )}
     </NavLink>
   );

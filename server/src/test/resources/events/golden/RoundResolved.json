@@ -1,0 +1,1 @@
+{"interval": "HOURLY", "windowStart": 1700000000000, "windowEnd": 1700000180000, "openPrice": "85000.00", "closePrice": "85100.00", "path": [{"openTimeMs": 1700000000000, "closeTimeMs": 1700000059999, "open": "85000.00", "high": "85050.00", "low": "84990.00", "close": "85040.00", "volume": "1.23456", "trades": 42}], "atMs": 1700000180000}

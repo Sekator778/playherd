@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import crowdvsmarket.server.scheduler.EngineRebuildService;
 import crowdvsmarket.server.service.GameService;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.QuarkusTestProfile;
+import io.quarkus.test.junit.TestProfile;
 import io.restassured.http.ContentType;
 import io.restassured.response.Response;
 import jakarta.inject.Inject;
@@ -22,9 +24,23 @@ import org.junit.jupiter.api.Test;
  * without altering or deleting the original event, and lists it publicly (with reason) via the
  * unauthenticated {@code ledgerCorrections} RPC method — the same "public log" pattern
  * {@code cancellations} already uses for round cancellations (Р-32/Р-43).
+ *
+ * <p>Task item 1 (BLOCKER security fix): {@code gameService.requestWithdrawal} is disabled by
+ * default (see {@code RpcValidationTest.WithdrawalDepositEnabledProfile}) — needs the same
+ * {@link WithdrawalEnabledProfile} override so this class's fixture setup (creating a withdrawal
+ * request to then reverse) keeps working; the reversal mechanism under test here is independent
+ * of whether new withdrawals are currently allowed.
  */
 @QuarkusTest
+@TestProfile(AdminReverseWithdrawalTest.WithdrawalEnabledProfile.class)
 class AdminReverseWithdrawalTest {
+
+    public static class WithdrawalEnabledProfile implements QuarkusTestProfile {
+        @Override
+        public Map<String, String> getConfigOverrides() {
+            return Map.of("herd.withdrawal.enabled", "true");
+        }
+    }
 
     @ConfigProperty(name = "herd.operator.token")
     String operatorToken;
@@ -83,7 +99,7 @@ class AdminReverseWithdrawalTest {
         Response resp = callReverse(request.requestId(), reason);
         assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(200);
         assertThat(resp.jsonPath().getString("playerId")).isEqualTo(playerId);
-        assertThat(resp.jsonPath().getString("relatedWithdrawalRequestId")).isEqualTo(request.requestId());
+        assertThat(resp.jsonPath().getString("relatedRequestId")).isEqualTo(request.requestId());
         assertThat(resp.jsonPath().getString("reason")).isEqualTo(reason);
         // delta is the exact inverse of the original withdrawal (a credit of the same magnitude
         // back to the balance it was debited from)
@@ -106,7 +122,7 @@ class AdminReverseWithdrawalTest {
         assertThat(publicList.statusCode()).as(publicList.asString()).isEqualTo(200);
         List<Map<String, Object>> items = publicList.jsonPath().getList("items");
         boolean found = items.stream().anyMatch(item ->
-                request.requestId().equals(item.get("relatedWithdrawalRequestId"))
+                request.requestId().equals(item.get("relatedRequestId"))
                         && reason.equals(item.get("reason")));
         assertThat(found).as("expected the correction to be publicly listed with its reason").isTrue();
     }
@@ -159,7 +175,7 @@ class AdminReverseWithdrawalTest {
         Response publicList = given().contentType(ContentType.JSON).body(Map.of("args", List.of()))
                 .post("/api/rpc/ledgerCorrections");
         List<Map<String, Object>> items = publicList.jsonPath().getList("items");
-        boolean found = items.stream().anyMatch(item -> request.requestId().equals(item.get("relatedWithdrawalRequestId")));
+        boolean found = items.stream().anyMatch(item -> request.requestId().equals(item.get("relatedRequestId")));
         assertThat(found).as("correction must still be listed after a rebuild replay").isTrue();
     }
 }

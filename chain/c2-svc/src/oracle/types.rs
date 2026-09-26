@@ -41,7 +41,10 @@ pub struct OracleRecordDto {
     pub source_ts: i64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+// Serialize is additive (task item 5, contract test Java<->Rust): production code only ever
+// deserializes this off the wire, but tests/contract_fixtures.rs needs to serialize a real,
+// constructed instance to write it out as a shared JSON fixture.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OracleRecordsRequest {
     pub records: Vec<OracleRecordDto>,
 }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import crowdvsmarket.server.auth.AuthService;
 import crowdvsmarket.server.auth.SessionService;
+import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Auth;
 import crowdvsmarket.server.dto.Betting;
@@ -53,6 +54,8 @@ public class RpcResource {
     SessionService sessions;
     @Inject
     RateLimiter rateLimiter;
+    @Inject
+    GameConfig config;
 
     @POST
     @Path("/{method}")
@@ -183,18 +186,24 @@ public class RpcResource {
         return request.remoteAddress().host();
     }
 
+    /** Task item 3 (security minor): {@code Secure} follows {@code herd.cookie.secure}
+     *  (GameConfig) — {@code false} for the local http-only Docker stand (Р-44), must be set
+     *  {@code true} once this is ever deployed behind TLS (Р-38 VPS), so the session cookie is
+     *  never sent in cleartext over the open internet. */
     private NewCookie sessionCookie(String sessionId) {
         return new NewCookie.Builder(SESSION_COOKIE)
                 .value(sessionId)
                 .path("/")
                 .httpOnly(true)
+                .secure(config.cookieSecure())
                 .sameSite(NewCookie.SameSite.LAX)
                 .maxAge((int) (7L * 24 * 3600))
                 .build();
     }
 
     private NewCookie clearSessionCookie() {
-        return new NewCookie.Builder(SESSION_COOKIE).value("").path("/").httpOnly(true).maxAge(0).build();
+        return new NewCookie.Builder(SESSION_COOKIE).value("").path("/").httpOnly(true)
+                .secure(config.cookieSecure()).maxAge(0).build();
     }
 
     // --- args[] parsing helpers ---

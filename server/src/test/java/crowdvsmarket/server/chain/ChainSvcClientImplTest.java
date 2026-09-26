@@ -90,7 +90,7 @@ class ChainSvcClientImplTest {
     @Test
     void oracleStatusSendsBearerToken() {
         when(rest.oracleStatus(any())).thenReturn(new ChainSvcRestClient.OracleStatusResponse(
-                "launcher", "testnet11", 1L, 100L, 0, null, "0"));
+                "launcher", "testnet11", 1L, 100L, 0, null, "0", null, java.util.List.of()));
 
         impl.oracleStatus();
 

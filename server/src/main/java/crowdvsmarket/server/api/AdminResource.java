@@ -81,6 +81,29 @@ public class AdminResource {
         return gameService.reverseWithdrawal(requestId, reason, System.currentTimeMillis());
     }
 
+    public record ReverseDepositRequest(String reason) {
+    }
+
+    /** Task item 1 (BLOCKER security fix): reverses a deposit request's already-recorded
+     *  (fraudulent) balance/season effect — e.g. the self-reported deposits {@code
+     *  d-2}/{@code d-4}/{@code d-7}/{@code d-10}, auto-confirmed with zero on-chain verification
+     *  before {@code GameService#requestDeposit} started rejecting new deposits outright — without
+     *  altering or deleting the original event. Exact mirror of {@link #reverseWithdrawal}. */
+    @POST
+    @Path("/deposits/{requestId}/reverse")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Ledger.LedgerCorrectionDto reverseDeposit(@HeaderParam("Authorization") String auth,
+                                                        @PathParam("requestId") String requestId,
+                                                        ReverseDepositRequest body) {
+        requireOperator(auth);
+        String reason = body == null ? null : body.reason();
+        if (reason == null || reason.isBlank()) {
+            throw ApiException.badRequest("reason is required");
+        }
+        return gameService.reverseDeposit(requestId, reason, System.currentTimeMillis());
+    }
+
     @GET
     @Path("/status")
     @Produces(MediaType.APPLICATION_JSON)

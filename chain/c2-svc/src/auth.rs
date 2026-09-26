@@ -47,7 +47,10 @@ pub const TXCH_PREFIX: &str = "txch";
 /// quoted in `docs/research/week1_wallet_auth.md` §2.
 const CHIP_0002_SIGN_MESSAGE_PREFIX: &[u8] = b"Chia Signed Message";
 
-#[derive(Debug, Clone, Deserialize)]
+// Serialize is additive (task item 5, contract test Java<->Rust): production code only ever
+// deserializes a request off the wire, but tests/contract_fixtures.rs needs to serialize a real,
+// constructed instance to write it out as a shared JSON fixture.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthVerifyRequest {
     pub address: String,

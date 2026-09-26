@@ -84,4 +84,16 @@ public sealed interface GameEvent {
     record WithdrawalReversed(String playerId, long originalAmountMojos, String originalSeasonId, String reason,
                                 String relatedWithdrawalRequestId, long atMs) implements GameEvent {
     }
+
+    /** Task item 1 (wave-3 security fix, Р-6 deposit-verification gap): an operator correction
+     *  that reverses the balance/season effect a deposit request originally applied — e.g. the
+     *  fake self-reported deposits {@code d-2}/{@code d-4}/{@code d-7}/{@code d-10} accepted before
+     *  {@code GameService#requestDeposit} started rejecting new deposits with
+     *  {@code DEPOSIT_VERIFICATION_UNAVAILABLE} (no real on-chain CAT-deposit verifier exists yet,
+     *  Р-6 decision pending with Alex). Exactly {@link WithdrawalReversed}'s shape/reasoning,
+     *  mirrored for deposits — see {@code crowdvsmarket.engine.ledger.LedgerBook
+     *  #reverseDepositEffect}'s javadoc. */
+    record DepositReversed(String playerId, long originalAmountMojos, String originalSeasonId, String reason,
+                             String relatedDepositRequestId, long atMs) implements GameEvent {
+    }
 }

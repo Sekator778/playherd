@@ -63,8 +63,14 @@ public interface ChainSvcRestClient {
     OracleRecordStateResponse oracleRecordStatus(@HeaderParam("Authorization") String authorization,
                                                    @PathParam("seq") long seq);
 
+    /** {@code stuckReason}/{@code conflicts}: task item 5 (contract test Java<->Rust) fix — a
+     *  real field-drift the new contract-fixture test caught: chainsvc's actual
+     *  {@code OracleStatusResponse} (chain/c2-svc/src/oracle/types.rs) has carried these since its
+     *  §11/§12 postmortem fixes, silently dropped on the Java side by Jackson's default
+     *  ignore-unknown-properties behavior until now. */
     record OracleStatusResponse(String launcherId, String network, Long lastConfirmedSeq, Long lastConfirmedHeight,
-                                  int pendingRecords, String inFlightBundleId, String operatorBalanceMojos) {
+                                  int pendingRecords, String inFlightBundleId, String operatorBalanceMojos,
+                                  String stuckReason, List<Long> conflicts) {
     }
 
     @GET

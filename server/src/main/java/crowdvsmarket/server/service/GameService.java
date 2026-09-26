@@ -800,12 +800,23 @@ public class GameService {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Withdraw / deposit (Р-6) — OnChainWalletPort stub: predложение, auto-confirmed immediately.
-    // Real CAT bridging is out of scope (no such endpoint in FIXED INTERFACE 3); see
-    // docs/research/server_design.md.
+    // Withdraw / deposit (Р-6) — OnChainWalletPort stub: predложение. Task item 1 (BLOCKER
+    // security fix, docs/reviews/2026-09-26-independent-critique.md): both used to auto-confirm
+    // immediately with zero on-chain check, so requestDeposit credited any self-reported amount
+    // (live-reproduced: 5,000,000 fake PLAY minted in ten seconds) and requestWithdrawal falsely
+    // claimed a CAT left the game. Real CAT bridging is out of scope (no such endpoint in FIXED
+    // INTERFACE 3) and gated on a decision pending with Alex (Р-6) — until it exists, both are
+    // disabled by default (herd.deposit.enabled / herd.withdrawal.enabled, GameConfig), rejecting
+    // every new request outright rather than crediting/debiting something false. See
+    // docs/research/server_design.md "Withdraw / deposit" for the full reasoning and the operator
+    // reversal path for the deposits that were fraudulently confirmed before this fix
+    // (reverseDeposit below).
     // ---------------------------------------------------------------------------------------
 
     public Ledger.WithdrawalRequestDto requestWithdrawal(String playerId, String amount, long nowMs) {
+        if (!config.withdrawalEnabled()) {
+            throw ApiException.withdrawalUnavailable();
+        }
         PlayAmount amt;
         try {
             amt = PlayAmount.fromMoney(new BigDecimal(amount));
@@ -870,6 +881,9 @@ public class GameService {
     }
 
     public Ledger.DepositRequestDto requestDeposit(String playerId, String amount, long nowMs) {
+        if (!config.depositEnabled()) {
+            throw ApiException.depositVerificationUnavailable();
+        }
         PlayAmount amt;
         try {
             amt = PlayAmount.fromMoney(new BigDecimal(amount));
@@ -937,7 +951,7 @@ public class GameService {
             crowdvsmarket.engine.ledger.WithdrawalRequest request = ledger.withdrawal(requestId)
                     .orElseThrow(() -> ApiException.notFound("unknown withdrawal request " + requestId));
             boolean alreadyReversed = ledger.corrections().stream()
-                    .anyMatch(c -> requestId.equals(c.relatedWithdrawalRequestId()));
+                    .anyMatch(c -> requestId.equals(c.relatedRequestId()));
             if (alreadyReversed) {
                 throw ApiException.badRequest("withdrawal " + requestId + " was already reversed");
             }
@@ -954,8 +968,42 @@ public class GameService {
         }
     }
 
+    /** Task item 1 (BLOCKER security fix): {@code AdminResource}'s entry point for correcting a
+     *  deposit request's already-recorded (fraudulent) effect — e.g. the self-reported deposits
+     *  {@code d-2}/{@code d-4}/{@code d-7}/{@code d-10}, auto-confirmed with zero on-chain
+     *  verification before {@link #requestDeposit} started rejecting new deposits outright. Exact
+     *  mirror of {@link #reverseWithdrawal} — see that method's javadoc and
+     *  {@code LedgerBook#reverseDepositEffect}'s. */
+    public Ledger.LedgerCorrectionDto reverseDeposit(String requestId, String reason, long nowMs) {
+        String trimmedReason = reason == null ? "" : reason.strip();
+        if (trimmedReason.isBlank()) {
+            throw ApiException.badRequest("correction reason must not be blank");
+        }
+        engineLock.writeLock().lock();
+        try {
+            LedgerBook ledger = hub.ledger();
+            crowdvsmarket.engine.ledger.DepositRequest request = ledger.deposit(requestId)
+                    .orElseThrow(() -> ApiException.notFound("unknown deposit request " + requestId));
+            boolean alreadyReversed = ledger.corrections().stream()
+                    .anyMatch(c -> requestId.equals(c.relatedRequestId()));
+            if (alreadyReversed) {
+                throw ApiException.badRequest("deposit " + requestId + " was already reversed");
+            }
+            Season originalSeason = Season.of(Instant.ofEpochMilli(request.requestedAtEpochMs()));
+
+            GameEvent.DepositReversed event = new GameEvent.DepositReversed(request.playerId(),
+                    request.amount().mojos(), originalSeason.id(), trimmedReason, requestId, nowMs);
+            persist(event, nowMs);
+            crowdvsmarket.engine.ledger.LedgerCorrection correction =
+                    (crowdvsmarket.engine.ledger.LedgerCorrection) eventApplier.apply(event);
+            return toLedgerCorrectionDto(correction);
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
     private static Ledger.LedgerCorrectionDto toLedgerCorrectionDto(crowdvsmarket.engine.ledger.LedgerCorrection c) {
-        return new Ledger.LedgerCorrectionDto(c.correctionId(), c.playerId(), c.relatedWithdrawalRequestId(),
+        return new Ledger.LedgerCorrectionDto(c.correctionId(), c.playerId(), c.relatedRequestId(),
                 c.delta().toMoney().toPlainString(), c.reason(), c.atEpochMs());
     }
 

@@ -40,8 +40,8 @@ public final class EventApplier {
      *          for {@code RoundResolved}, the assigned id for {@code WithdrawalRequested}/
      *          {@code DepositRequested} (both mirror {@code LedgerBook}'s own generated
      *          {@code "w-N"}/{@code "d-N"} ids, see those two cases below), a
-     *          {@code crowdvsmarket.engine.ledger.LedgerCorrection} for {@code WithdrawalReversed},
-     *          {@code null} otherwise. Untyped ({@link Object}) since the cases return unrelated
+     *          {@code crowdvsmarket.engine.ledger.LedgerCorrection} for {@code WithdrawalReversed}/
+     *          {@code DepositReversed}, {@code null} otherwise. Untyped ({@link Object}) since the cases return unrelated
      *          types; callers know which case they triggered and cast accordingly. */
     public Object apply(GameEvent event) {
         return switch (event) {
@@ -103,6 +103,11 @@ public final class EventApplier {
                 crowdvsmarket.engine.season.Season season = crowdvsmarket.engine.season.Season.parse(e.originalSeasonId());
                 yield hub.ledger().reverseWithdrawalEffect(e.playerId(), new PlayAmount(e.originalAmountMojos()),
                         season, e.reason(), e.relatedWithdrawalRequestId(), Instant.ofEpochMilli(e.atMs()));
+            }
+            case GameEvent.DepositReversed e -> {
+                crowdvsmarket.engine.season.Season season = crowdvsmarket.engine.season.Season.parse(e.originalSeasonId());
+                yield hub.ledger().reverseDepositEffect(e.playerId(), new PlayAmount(e.originalAmountMojos()),
+                        season, e.reason(), e.relatedDepositRequestId(), Instant.ofEpochMilli(e.atMs()));
             }
         };
     }

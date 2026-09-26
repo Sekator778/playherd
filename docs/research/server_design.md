@@ -531,3 +531,245 @@ invalid-amount/positive-still-works, `placeBet` с отрицательным st
 теста, 0 упавших, 0 ошибок**, `BUILD SUCCESS`. Устойчивость новых конкурентных/асинхронных тестов
 (`GameServiceConcurrencyTest`, `OraclePublisherServiceTest`) проверена тремя последовательными
 прогонами подряд — стабильно зелёные каждый раз.
+
+## 15. Волна 3 (независимая критика 2026-09-26) — фиксы без решения Алекса
+
+Правит 7 находок `docs/reviews/2026-09-26-independent-critique.md`, ограниченных задачей как «не
+требующие решения Алекса» (открытые вопросы — Sage-логин, VPS, чистка git-истории, Р-6-в-полном-
+объёме — не в этой волне). Затронуты `server/`, `engine/` (аддитивно), `chain/c2-svc` (только
+контрактные фикстуры), `docker-compose.yml`, `tools/stand.sh`, `tools/herd-operator.sh`,
+`.github/workflows/`, `README.md` (один абзац, явно разрешено формулировкой задачи item 7).
+`web/`/`docs/product/`/`PLAN.md`/`docs/selection/` не трогали — на них параллельно работали другие
+сессии.
+
+### 15.1 BLOCKER — `requestDeposit` кредитовал любую самозаявленную сумму без проверки в сети
+
+Живой репро критика (`reviewCheck`, +5 000 000 PLAY за 10 секунд) и БД стенда (`d-2`/`d-4`/`d-7`/
+`d-10`, все `CONFIRMED` без проверки в сети) подтверждены и исправлены:
+
+- `GameService.requestDeposit`/`requestWithdrawal` теперь первым делом проверяют
+  `GameConfig.depositEnabled()`/`withdrawalEnabled()` (новые `herd.deposit.enabled`/
+  `herd.withdrawal.enabled`, `application.properties`, **default `false`**) → `ApiException
+  .depositVerificationUnavailable()`/`withdrawalUnavailable()` (новые `ApiErrorCode
+  .DEPOSIT_VERIFICATION_UNAVAILABLE`/`WITHDRAWAL_UNAVAILABLE`, `503`, аддитивные) — до парсинга
+  суммы, т.е. отклоняется вообще любой новый депозит/вывод, а не только некорректная сумма. Выбран
+  вариант «честный отказ», не «PENDING_VERIFICATION навсегда» — нет верификатора, значит нет
+  честного «pending» состояния, которое когда-нибудь разрешится само. Вывод отключён тем же
+  способом («prefer disabling withdrawal too» из формулировки задачи) — он тоже auto-confirm без
+  реального ухода CAT в сеть, значит тоже ложное заявление.
+- Публичный оператор-реверс для депозита — точное зеркало уже существующего `reverseWithdrawal`
+  (§14.2): новый `GameEvent.DepositReversed` (аддитивный к sealed `GameEvent`) →
+  `LedgerBook.reverseDepositEffect` (самодостаточная коррекция, debit исходной суммы + откат
+  `SeasonRecord.deposited`) → `POST /api/admin/deposits/{requestId}/reverse` (`AdminResource
+  .reverseDeposit`) → публично со причиной через `ledgerCorrections` (тот же RPC, что и раньше).
+  `LedgerCorrection.relatedWithdrawalRequestId` переименован в `relatedRequestId` (несёт и `w-N`,
+  и `d-N` — аддитивный DTO, не в `contract.ts`, ни один вызывающий код в `web/` его не читал).
+  `tools/herd-operator.sh` получил `reverse-deposit <requestId> "reason"` (та же curl-обёртка).
+- **Выполнено на живом стенде** (2026-09-26, после пересборки со всеми фиксами этой волны):
+
+  ```
+  HERD_OPERATOR_TOKEN=<из .env> tools/herd-operator.sh reverse-deposit d-2  "<reason>"
+  HERD_OPERATOR_TOKEN=<из .env> tools/herd-operator.sh reverse-deposit d-4  "<reason>"
+  HERD_OPERATOR_TOKEN=<из .env> tools/herd-operator.sh reverse-deposit d-7  "<reason>"
+  HERD_OPERATOR_TOKEN=<из .env> tools/herd-operator.sh reverse-deposit d-10 "<reason>"
+  ```
+
+  (полный текст `<reason>` — см. коммит/эту сессию; каждый вызов вернул `200` с новым
+  `correctionId` `c-2..c-5`, дельты `-50.000`/`-50.000`/`-1234.000`/`-5000000.000` соответственно —
+  ровно инверсия исходного кредита). После — реальный рестарт `herd-server-1` (не
+  `EngineRebuildService.rebuild()` в тесте, а `docker restart`): реплей 7053 событий, включая все 4
+  `DepositReversed`, без ошибок — регрессионный тест на это ниже (§15.4).
+
+### 15.2 BLOCKER — лимит запросов за nginx считал всех клиентов за одного
+
+`RpcResource#clientIp` не менялся (по-прежнему просто `request.remoteAddress().host()`) — вместо
+ручного парсинга заголовка решение на уровне Quarkus, ровно как просит формулировка задачи:
+`quarkus.http.proxy.proxy-address-forwarding=true` + `quarkus.http.proxy.trusted-proxies=
+172.28.77.0/24` (CIDR той самой подсети, что уже зафиксирована в `docker-compose.yml`'s
+`networks.default.ipam` — единственный член этой подсети, кроме `db`/`server` самих себя,
+это `web`/nginx) + `allow-x-forwarded=true`/`allow-forwarded=false` (nginx шлёт `X-Forwarded-For`,
+не RFC-`Forwarded`). Проверено чтением байткода `quarkus-vertx-http-3.33.3.jar`
+(`ForwardedParser`/`ForwardedServerRequestWrapper`/`TrustedProxyCheckPartConverter` — CIDR
+действительно поддерживается, `TrustedProxyCheckPartConverter`'s `CIDR_PATTERN = ".+/\\d+"`) и
+живым автотестом (см. ниже) — не просто предположение по документации.
+
+Два теста, оба через реальный HTTP-стек Quarkus (не runtime-парсинг заголовка вручную):
+`RateLimitTrustedProxyTest` (свой `@TestProfile`, доверяет `127.0.0.1` — реальный peer тестового
+клиента) — два разных `X-Forwarded-For` от этого доверенного peer получают раздельные ведро́;
+`RateLimitSpoofedProxyTest` (реальный дефолт приложения, `127.0.0.1` НЕ входит в
+`172.28.77.0/24`) — поддельный `X-Forwarded-For` от недоверенного peer игнорируется, оба вызова
+делят одно ведро́ — ровно тот DoS, что критик живьём воспроизвёл (`27×200` затем `13×429` с одного
+вызывающего).
+
+### 15.3 Security-минорные (по отчёту)
+
+- **`AuthService` больше не эхо́ит сырой текст исключения chainsvc клиенту** — `chainsvc auth
+  verification unavailable: <e.getMessage()>` заменено на `LOG.warnf` + generic `"sign-in
+  temporarily unavailable — please try again shortly"` (`ApiException.unauthorized`). Тест —
+  `RpcValidationTest#authVerifyNeverEchoesChainsvcsRawExceptionMessage` (мок chainsvc бросает
+  различимую «внутреннюю» строку, проверяется её отсутствие в ответе).
+- **Пароль Postgres генерируется в `.env`**, не хардкод `herd`/`herd` в `docker-compose.yml` —
+  `tools/stand.sh`'s `ensure_env_file` генерирует `HERD_DB_PASSWORD` (та же схема, что токены),
+  `docker-compose.yml`'s `db.POSTGRES_PASSWORD`/`server.HERD_DB_PASSWORD` теперь оба читают его из
+  `${HERD_DB_PASSWORD:?...}`. **Существующий `herd_pg`-volume не сброшен** (задача явно это
+  запрещает): Postgres применяет `POSTGRES_PASSWORD` только к пустой data dir, поэтому пароль на
+  уже инициализированном volume был сменён напрямую — `docker exec herd-db-1 psql -U herd -d herd
+  -c "ALTER USER herd WITH PASSWORD '...'"` (локальное unix-socket подключение внутри контейнера
+  идёт через `trust`-аутентификацию, старый пароль не нужен) — выполнено на живом стенде 2026-09-26
+  **до** пересборки `server`/`db` образов этой волны, так что `server` ни на секунду не терял
+  доступ к БД. Новое значение записано в `.env` (заменило placeholder, который параллельная
+  «game-designer»-сессия оставила там же с явной пометкой «whoever lands that should overwrite this
+  line»).
+- **`herd_session`-cookie получает `Secure`, когда сервер за TLS** — новый флаг
+  `herd.cookie.secure` (`GameConfig`, default `false` — верно для локального http-стенда Р-44),
+  `RpcResource`'s `sessionCookie()`/`clearSessionCookie()` оба зовут `.secure(config
+  .cookieSecure())`. Для VPS-деплоя (Р-38, отдельное решение) выставить `HERD_COOKIE_SECURE=true`
+  **только после** реальной TLS-терминации перед сервером — иначе cookie с `Secure` без HTTPS
+  браузер вообще не отправит.
+
+### 15.4 Эволюция схемы событий (`game_events`)
+
+- **`schema_version`**: `V3__event_schema_version.sql` добавляет колонку `INT NOT NULL DEFAULT 1`
+  (бэкфилл всех уже существующих строк версией 1, ровно то, что `EventStore
+  .CURRENT_SCHEMA_VERSION` уже предполагает для всего написанного раньше). `EventStore.decode`
+  теперь принимает и версию, и `rowId`; версия ≠ 1 — громкий `IllegalStateException` с `rowId`
+  (нет ветки под версию 2 — пока и не нужна, это только крючок на будущее).
+- **Толерантный декодер / алиас-таблица переименований**: `EventStore.TYPE_ALIASES` (пока пустая —
+  ни один `GameEvent`-тип реально не переименовывался) + `resolveTypeAlias(type, aliases)` —
+  чистая функция, протестирована напрямую синтетической картой алиасов
+  (`EventStoreSchemaEvolutionTest#aliasedTypeNameResolvesToCurrentType`), т.к. реального примера
+  переименования пока не существует.
+- **Неизвестный `event_type` при старте падает громко, с `rowId`** (не молча пропускает money-
+  событие) — было и раньше (`IllegalStateException`), теперь сообщение включает `id` строки
+  (`"game_events row id=<N> has unknown event_type: <type>"`) — единственное изменение поведения
+  здесь, но именно оно и требовалось задачей («fail loudly with the row id»).
+- **Золотые JSON-фикстуры на каждый из 13 текущих типов `GameEvent`** —
+  `server/src/test/resources/events/golden/<TypeName>.json` +
+  `EventStoreGoldenFixturesTest` (round-trip: фикстура → объект → `equals` ожидаемому; replay:
+  та же фикстура реально вставляется строкой в `game_events` через реальный Postgres и читается
+  обратно через тот же `EventStore.loadAll()`-путь, не переимплементацию). Отдельный тест
+  (`everyGameEventPermittedSubtypeHasAFixture`) сверяет список фикстур со
+  `GameEvent.class.getPermittedSubclasses()` — забыть добавить фикстуру для нового типа события
+  теперь падает сборкой, а не тихо остаётся дырой.
+- Регрессионный тест на реплей после реверса — **для депозита** (задача явно требует): `Admin
+  ReverseDepositTest#reversalSurvivesEngineRebuildReplay` — тот же паттерн, что уже был у
+  `AdminReverseWithdrawalTest` для `WithdrawalReversed` (§14.2), теперь и для `DepositReversed`
+  через `EngineRebuildService.rebuild()`.
+
+### 15.5 Контрактный тест Java↔Rust
+
+`chain/c2-svc/tests/contract_fixtures.rs` (новый) пишет JSON-фикстуры из настоящих Rust-типов
+`chain/c2-svc` (`AuthVerifyRequest`/`Response`, `OracleRecordDto`/`OracleRecordsRequest`/
+`Response`, `OracleRecordStatusResponse`, `OracleStatusResponse`) под
+`chain/c2-svc/tests/contract/*.json` — auth-кейсы построены не вручную, а прогнаны через реальный
+`auth::verify()` с реальным BLS-материалом из уже существующего `tests/vectors/auth_vectors.json`
+(`positive`/`wrong_address`), так фикстура — настоящий пример, а не выдумка. `AuthVerifyRequest`/
+`OracleRecordsRequest` получили `Serialize` (были только `Deserialize` — аддитивно, продакшен-код
+их по-прежнему только десериализует). Регенерация: `cargo test -p c2-svc --test contract_fixtures`
+из `chain/`.
+
+`server/src/test/java/crowdvsmarket/server/chain/ChainSvcContractFixturesTest.java` читает те же
+файлы (`../chain/c2-svc/tests/contract/`, соседняя директория — то же допущение о рабочей
+директории Surefire, что уже использует `EventStoreGoldenFixturesTest`) и
+десериализует/сериализует их `ChainSvcRestClient`'ными DTO.
+
+**Реальная находка контрактного теста** (не просто новый тест — он действительно поймал дрейф):
+`OracleStatusResponse` (и Rust-, и Java-сторона) несёт `stuckReason`/`conflicts` уже с фиксов §11/
+§12 (`chain_service.md`) — но Java-версия (`ChainSvcRestClient.OracleStatusResponse`, `ChainSvcClient
+.OracleStatus`) их не имела вообще, Jackson молча отбрасывал оба поля при десериализации
+(default-игнор неизвестных полей). Исправлено аддитивно (два новых поля на конец обеих Java-
+записей, `ChainSvcClientImpl` прокидывает); все существующие вызовы конструкторов обновлены
+(`GameFlowIntegrationTest`, `ChainSvcClientImplTest`) — дальше эти поля никуда не прокинуты
+(`ServerInfoDto`/UI) — вне объёма этой волны.
+
+### 15.6 CI — `server.yml`/`chain.yml`
+
+- `.github/workflows/server.yml`: `mvn -B -f pom.xml -pl server -am verify` против настоящего
+  `postgres:16-alpine` service-контейнера (тот же образ, что `docker-compose.yml`'s `db`), Dev
+  Services отключены явной подстановкой `-Dquarkus.datasource.jdbc.url=...` (Quarkus не поднимает
+  Dev Services, когда datasource URL уже сконфигурирован для активного профиля).
+- `.github/workflows/chain.yml`: `cargo test --workspace --locked` + `cargo clippy --workspace
+  --all-targets --locked` — **без `-D warnings`**: `cargo clippy` по всему workspace сегодня НЕ
+  чист (`cloned_ref_to_slice_refs`/`inconsistent_digit_grouping` в тестах `c2-cli`, вне
+  `chain/c2-svc` — единственного assigned-пути этой сессии под `chain/`), задача прямо говорит
+  добавлять `-D warnings` только когда уже чисто.
+- Оба заменяют `engine.yml`/`web.yml`'s комментарий «нет GitHub remote, не запустится» на
+  реальный триггер — репозиторий на самом деле уже имеет `origin` (`git@github.com:Sekator778/
+  herd.git`), это устаревшее допущение дня 1.
+
+### 15.7 Execution adapter (PLAN.md §3, заявление README)
+
+- `crowdvsmarket.engine.execution.ExecutionAdapter` (новый пакет, чистый интерфейс без фреймворка
+  — тот же паттерн, что уже `engine.ledger.OnChainWalletPort` для withdraw/deposit) —
+  `openPosition`/`getPosition`/`closePosition` (PLAN's `open_position`/`get_position`/
+  `close_position`).
+- `PaperTradingAdapter` (`engine/`) — ровно `Position.openFromMargin` + `PositionSimulator
+  .simulate`, те же два вызова, что `CrowdAccount`/`ComparisonAccounts` уже делали инлайн.
+  **`CrowdAccount` реально переведён на него**: новый конструктор `CrowdAccount(BigDecimal,
+  ExecutionAdapter)`, старые `CrowdAccount()`/`CrowdAccount(BigDecimal)` не изменили поведения
+  (дефолтят на `new PaperTradingAdapter()`) — байт-в-байт то же поведение, весь существующий набор
+  тестов (`CrowdAccountTest`, `FullSweepReplayTest`, `MonthLongHourlySimulationTest`,
+  `HistoricalScenarioTest`, 6269-кейсовый `PositionSizingPropertyTest`) прошёл без единого
+  изменения ожиданий. `ComparisonAccounts` (анти-толпа линия, `server/`) переведён тем же образом.
+- `crowdvsmarket.server.execution.HyperliquidAdapter` (`server/`, т.к. нужен HTTP-клиент —
+  `engine/` намеренно остаётся без инфраструктурных зависимостей) — **настоящая** сборка запроса
+  по официальному API Hyperliquid (`HyperliquidExchangeRequests`, поля/формат сверены с
+  `hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint`, зафетчено
+  2026-09-26) — но **отключён по умолчанию** (`herd.execution.hyperliquid.enabled=false`) и
+  отказывается собирать/слать что-либо без явного адреса кошелька
+  (`herd.execution.hyperliquid.wallet-address`, пусто по умолчанию — нигде в репозитории/`.env` не
+  задан). Ничто в кодовой базе не создаёт этот адаптер с реальными ключами и не подключает его к
+  игровому пути — `CrowdAccount`/`ComparisonAccounts` используют исключительно
+  `PaperTradingAdapter` (Р-38: активация реальными деньгами — решение того, кто разворачивает).
+  `getPosition` — единственный метод, который реально может выполниться уже сегодня: `POST /info`
+  `clearinghouseState` — публичный, без подписи (сверено с `hyperliquid.gitbook.io/hyperliquid-
+  docs/for-developers/api/info-endpoint/perpetuals`, зафетчено 2026-09-26) — но его ответ
+  намеренно не отображается на `PositionSimulator.Outcome` (этот проект не хранит источники, из
+  которых такое отображение можно вывести не гадая) — возвращает `Optional.empty()`.
+- **EIP-712-подпись L1-экшенов Hyperliquid НЕ реализована** — задача прямо разрешает этот отказ от
+  объёма («if full signing is too large... implement... a clearly failing signer stub and say so
+  precisely»). `HyperliquidSigner.NotImplementedSigner` всегда бросает
+  `SigningNotImplementedException` с точным описанием недостающего пайплайна (источники,
+  зафетчены 2026-09-25/26): EIP-712 domain `{name: "Exchange", version: "1", chainId: 1337,
+  verifyingContract: 0x0..0}` и `Agent`-структура `{source, connectionId}` (Python SDK,
+  `hyperliquid/utils/signing.py`, `sign_l1_action`), `connectionId = keccak256(msgpack.packb
+  (action) ++ nonce as 8 BE bytes ++ vaultAddress-флаг)`, финальная ECDSA-подпись поверх
+  typed-data хэша этой структуры. Ничего из этого не реализовано (нужна msgpack-библиотека +
+  keccak256 + secp256k1/EIP-712 — сама документация Hyperliquid прямо советует не писать это
+  вручную) — честная заглушка вместо гадания, которое могло бы оказаться тихо неверным.
+  `openPosition`/`closePosition` даже при `enabled=true` + сконфигурированном кошельке доходят
+  ровно до вызова `signer.sign(...)` и падают там — тест `HyperliquidAdapterEnabledTest` это прямо
+  проверяет (падение на подписи, не на валидации/конфиге).
+- **README.md** (один абзац, явно разрешено формулировкой задачи item 7) исправлен: было
+  «чтение цены с Hyperliquid реализовано в коде, торговый адаптер... пока не начат» (уже устарело
+  к моменту этой волны — другая параллельная сессия успела смягчить исходное заявление критика, но
+  сама заявила меньше, чем стало правдой после этой волны) → теперь называет `ExecutionAdapter`/
+  `PaperTradingAdapter`/`HyperliquidAdapter` по имени и честно называет ровно то, что не работает
+  (подпись).
+
+### 15.8 Тесты и реальные числа
+
+`mvn -s ~/.m2/settings-oss.xml -f pom.xml clean verify`, 2026-09-26: `engine` — **6530, 0 упавших**
+(было 6527 в §14.6 + 3 новых `PaperTradingAdapterTest`). `server` — **120, 0 упавших**: новые
+`AdminReverseDepositTest` (6), `WithdrawalDepositUnavailableTest` (3), `RateLimitTrustedProxyTest`
+(1), `RateLimitSpoofedProxyTest` (1), `events.EventStoreGoldenFixturesTest` (14),
+`events.EventStoreSchemaEvolutionTest` (4), `chain.ChainSvcContractFixturesTest` (7),
+`execution.HyperliquidAdapterTest` (4), `execution.HyperliquidAdapterEnabledTest` (3), плюс
+`RpcValidationTest`/`AdminReverseWithdrawalTest`/`ChainSvcClientImplTest`/
+`GameFlowIntegrationTest` выросли/поправлены под новые поля/поведение. Реактор целиком: **6650
+теста, 0 упавших, 0 ошибок**, `BUILD SUCCESS` (перепроверено двумя последовательными прогонами —
+первый словил один известный флейк, `OracleReconciliationServiceTest
+#reconcileDoesNotBackfillARecordStillUnknownButRecentlyQueued`, не относящийся к этой волне
+(scheduler-таймингового происхождения, файл не трогался; трижды зелёный в изоляции), второй прогон
+реактора целиком — чисто).
+
+`chain/`: `cargo test --workspace --locked` — все существующие сьюты (аутентификация, очередь
+оракула, CAT/Offer, синглтон) плюс новый `contract_fixtures` — зелёные, без изменений в
+проверяемом поведении. `cargo clippy --workspace --all-targets` — не чист (см. §15.6), не
+относящиеся к этой сессии предупреждения не трогали.
+
+Живой стенд (`docker compose -p herd`, все 4 сервиса) пересобран и перезапущен с этой волной
+(2026-09-26): Postgres-пароль ротирован без сброса `herd_pg` (§15.3), `V3` миграция применилась
+чисто, реальный `docker restart herd-server-1` реплеил все 7053 события (включая 4 новых
+`DepositReversed`) без единой ошибки, все 4 фиктивных депозита (`d-2`/`d-4`/`d-7`/`d-10`) реально
+реверснуты на живых данных (не только в тесте) — команды и результат см. §15.1.

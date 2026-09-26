@@ -10,6 +10,7 @@
 #   HERD_OPERATOR_TOKEN=... tools/herd-operator.sh status
 #   HERD_OPERATOR_TOKEN=... tools/herd-operator.sh cancel <roundId> ["reason"]
 #   HERD_OPERATOR_TOKEN=... tools/herd-operator.sh reverse-withdrawal <requestId> "reason"
+#   HERD_OPERATOR_TOKEN=... tools/herd-operator.sh reverse-deposit <requestId> "reason"
 #
 # Env:
 #   HERD_OPERATOR_TOKEN  required — must match the running server's HERD_OPERATOR_TOKEN.
@@ -30,6 +31,7 @@ Usage:
   $(basename "$0") status
   $(basename "$0") cancel <roundId> ["reason"]
   $(basename "$0") reverse-withdrawal <requestId> "reason"
+  $(basename "$0") reverse-deposit <requestId> "reason"
 
 Env:
   HERD_OPERATOR_TOKEN  required — bearer token, must match the server's own.
@@ -81,6 +83,25 @@ case "$cmd" in
     fi
     escaped_reason=$(printf '%s' "$reason" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
     curl -sS -X POST "${SERVER_URL}/api/admin/withdrawals/${request_id}/reverse" \
+      -H "Authorization: Bearer ${HERD_OPERATOR_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"reason\":\"${escaped_reason}\"}"
+    echo
+    ;;
+  reverse-deposit)
+    # Task item 1 (BLOCKER security fix, docs/reviews/2026-09-26-independent-critique.md):
+    # reverses a deposit request's already-recorded (fraudulent) balance/season effect — e.g. the
+    # self-reported deposits d-2/d-4/d-7/d-10, auto-confirmed with zero on-chain verification
+    # before requestDeposit started rejecting new deposits outright — without altering or deleting
+    # the original event. Same "public log via ledgerCorrections" pattern as reverse-withdrawal.
+    request_id="${2:-}"
+    reason="${3:-}"
+    if [[ -z "$request_id" || -z "$reason" ]]; then
+      echo "error: reverse-deposit requires <requestId> and a non-empty \"reason\"" >&2
+      usage
+    fi
+    escaped_reason=$(printf '%s' "$reason" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+    curl -sS -X POST "${SERVER_URL}/api/admin/deposits/${request_id}/reverse" \
       -H "Authorization: Bearer ${HERD_OPERATOR_TOKEN}" \
       -H "Content-Type: application/json" \
       -d "{\"reason\":\"${escaped_reason}\"}"

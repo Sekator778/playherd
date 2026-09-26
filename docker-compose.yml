@@ -30,7 +30,14 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: herd
-      POSTGRES_PASSWORD: herd
+      # Task item 3 (security minor): generated into .env by tools/stand.sh, same pattern as
+      # HERD_OPERATOR_TOKEN/HERD_CHAINSVC_TOKEN below — was hardcoded "herd"/"herd" (a trivial,
+      # public-repo-visible password), harmless only because `db` has no `ports:` mapping today.
+      # Postgres only applies POSTGRES_PASSWORD while initializing an EMPTY data directory — an
+      # existing herd_pg volume keeps whatever password it was created with; see
+      # docs/research/server_design.md "Postgres password" for the ALTER USER step a volume
+      # created before this change needs once, so it isn't silently locked out of its own data.
+      POSTGRES_PASSWORD: ${HERD_DB_PASSWORD:?set in .env — run tools/stand.sh up, which generates one}
       POSTGRES_DB: herd
     volumes:
       - herd_pg:/var/lib/postgresql/data
@@ -112,7 +119,10 @@ services:
       HERD_REPLAY_SPEEDUP: "20"
       HERD_BOTS_COUNT: "20" # Р-46: 20 labelled bots
       HERD_DB_USER: herd
-      HERD_DB_PASSWORD: herd
+      # Task item 3: same value as `db`'s own POSTGRES_PASSWORD above (tools/stand.sh generates
+      # it into .env once, reused by both, same "one shared secret, two env var names" pattern as
+      # HERD_CHAINSVC_TOKEN/C2_SVC_TOKEN below).
+      HERD_DB_PASSWORD: ${HERD_DB_PASSWORD:?set in .env — run tools/stand.sh up, which generates one}
       # Service name in this compose file is "db", not application.properties' default
       # "postgres" — see docs/product/local_stand.md "Известные ограничения и фиксы".
       HERD_DB_URL: jdbc:postgresql://db:5432/herd

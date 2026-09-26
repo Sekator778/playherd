@@ -29,8 +29,13 @@ public interface ChainSvcClient {
     record OracleRecordsResult(int queued, List<Long> acceptedSeqs) {
     }
 
+    /** {@code stuckReason}/{@code conflicts} (task item 5, contract test Java<->Rust): present on
+     *  chainsvc's real {@code OracleStatusResponse} (chain/c2-svc/src/oracle/types.rs) since the
+     *  §11/§12 postmortem fixes but missing from this record until the contract-fixture test
+     *  caught the drift — additive, {@code null}/empty until a caller actually needs them. */
     record OracleStatus(String launcherId, String network, Long lastConfirmedSeq, Long lastConfirmedHeight,
-                          int pendingRecords, String inFlightBundleId, String operatorBalanceMojos) {
+                          int pendingRecords, String inFlightBundleId, String operatorBalanceMojos,
+                          String stuckReason, List<Long> conflicts) {
     }
 
     /** FIXED INTERFACE (b)'s new {@code GET /v1/oracle/records/{seq}} — one record's own

@@ -3,20 +3,21 @@ import { useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import type { PublicProfileDto } from "../api/contract";
 import { netFromPayoutAndStake } from "../api/outcome";
-import { seasonRange } from "../api/season";
+import { seasonHistory } from "../api/seasonStats";
 import { Avatar } from "../components/Avatar";
 import { BotBadge, ErrorState, Skeleton } from "../components/Common";
 import { ResultTile } from "../components/ResultTile";
 import { formatDateTimeUtc, formatPercent, formatPlayAmount } from "../format";
 
 /** `SeasonRecordDto` has no "growth" field of its own — derive it the same way the "Richest"
- *  rating does, from the season-bounded slice of the player's full round history. */
+ *  rating does, from the season-bounded slice of the player's full round history (`seasonStats.ts`'s
+ *  `seasonHistory`, also used by the Ratings page's own-highlights strip). */
 function seasonBalanceChange(profile: PublicProfileDto): number {
   if (!profile.seasonRecord) return 0;
-  const { startMs, endMs } = seasonRange(profile.seasonRecord.season);
-  return profile.history
-    .filter((h) => h.settledAtMs >= startMs && h.settledAtMs < endMs)
-    .reduce((sum, h) => sum + Number(h.payout) - Number(h.stake), 0);
+  return seasonHistory(profile.history, profile.seasonRecord.season).reduce(
+    (sum, h) => sum + netFromPayoutAndStake(h.payout, h.stake),
+    0,
+  );
 }
 
 export function ProfilePage({ mine = false }: { mine?: boolean }) {
@@ -100,7 +101,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
           <div className="stat-tile">
             <div className="stat-tile__label">Balance change this season</div>
             <div className="stat-tile__value">
-              {formatPlayAmount(seasonBalanceChange(profile).toFixed(3), { decimals: 0, sign: true })} PLAY
+              {formatPlayAmount(seasonBalanceChange(profile).toFixed(3), { sign: true })} PLAY
             </div>
           </div>
         </div>

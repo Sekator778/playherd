@@ -130,7 +130,7 @@ class GameFlowIntegrationTest {
         org.mockito.Mockito.when(chainSvcClient.oracleStatus())
                 .thenReturn(new ChainSvcClient.OracleStatus(
                         "c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20", "testnet11", 1L, 4_735_705L,
-                        0, null, "10000000000"));
+                        0, null, "10000000000", null, List.of()));
         org.mockito.Mockito.when(chainSvcClient.health()).thenReturn(true);
 
         // --- sign in two players (Р-45 local test wallet) ---

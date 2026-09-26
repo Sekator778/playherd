@@ -1,0 +1,70 @@
+name: server
+
+# Task item 6 (CI, docs/reviews/2026-09-26-independent-critique.md): builds and tests the Quarkus
+# game server (server/) together with its engine/ dependency, against a real Postgres service
+# container (not Quarkus Dev Services — see the explicit quarkus.datasource.* overrides below) so
+# this matches docker-compose.yml's own db image (postgres:16-alpine) as closely as a CI service
+# container allows. Before this workflow, server/ — the largest module in the codebase
+# (GameService.java alone is 1000+ lines) — had zero automated gate, unlike engine/ and web/.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "engine/**"
+      - "server/**"
+      - "pom.xml"
+      - ".github/workflows/server.yml"
+  pull_request:
+    paths:
+      - "engine/**"
+      - "server/**"
+      - "pom.xml"
+      - ".github/workflows/server.yml"
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      # Matches docker-compose.yml's `db` service image exactly.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: herd
+          POSTGRES_PASSWORD: herd
+          POSTGRES_DB: herd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U herd -d herd"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # engine/ has no <parent>/this-repo-as-parent relationship (project rule: only additive
+      # changes to engine/) — server/ depends on it as a plain Maven artifact, so the root
+      # aggregator pom.xml (`-pl server -am`, same as server/Dockerfile's own build stage) builds
+      # and installs engine into the reactor before packaging/testing server, in one command.
+      #
+      # Dev Services (Quarkus's own Testcontainers-backed throwaway Postgres, used for a plain
+      # local `mvn test`) is disabled here by supplying an explicit
+      # quarkus.datasource.jdbc.url — Quarkus only starts Dev Services when no datasource URL is
+      # configured for the active profile — pointing tests instead at the real `postgres` service
+      # container above.
+      - name: mvn -B verify (engine + server, real Postgres service)
+        run: >-
+          mvn -B -f pom.xml -pl server -am verify
+          -Dquarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/herd
+          -Dquarkus.datasource.username=herd
+          -Dquarkus.datasource.password=herd

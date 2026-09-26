@@ -21,6 +21,9 @@ web/dist/
 .env
 .env.*
 
+# Local-only notes with home-network/identifying details (Р-39 redaction, 2026-09-26)
+.local/
+
 # Android / Capacitor
 .gradle/
 build/

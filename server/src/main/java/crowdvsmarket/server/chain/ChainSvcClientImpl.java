@@ -68,7 +68,8 @@ public class ChainSvcClientImpl implements ChainSvcClient {
         try {
             ChainSvcRestClient.OracleStatusResponse r = rest.oracleStatus(bearerToken());
             return new OracleStatus(r.launcherId(), r.network(), r.lastConfirmedSeq(), r.lastConfirmedHeight(),
-                    r.pendingRecords(), r.inFlightBundleId(), r.operatorBalanceMojos());
+                    r.pendingRecords(), r.inFlightBundleId(), r.operatorBalanceMojos(), r.stuckReason(),
+                    r.conflicts() == null ? List.of() : r.conflicts());
         } catch (Exception e) {
             LOG.debugf(e, "chainsvc /v1/oracle/status unreachable");
             return null;

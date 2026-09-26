@@ -79,6 +79,17 @@ ensure_env_file() {
     echo "HERD_OPERATOR_TOKEN=$(openssl rand -hex 32)" >>"${ROOT_DIR}/.env"
   fi
 
+  # Task item 3 (security minor): Postgres password, generated the same way as the tokens above
+  # — was hardcoded "herd"/"herd" in docker-compose.yml. NOTE: this only takes effect for a BRAND
+  # NEW herd_pg volume (Postgres applies POSTGRES_PASSWORD only while initializing an empty data
+  # directory); an existing volume keeps its old password until an operator runs `ALTER USER herd
+  # WITH PASSWORD '...'` inside the running db container — see docs/research/server_design.md
+  # "Postgres password" for the one-time command.
+  if ! grep -q '^HERD_DB_PASSWORD=' "${ROOT_DIR}/.env"; then
+    log "generating HERD_DB_PASSWORD"
+    echo "HERD_DB_PASSWORD=$(openssl rand -hex 24)" >>"${ROOT_DIR}/.env"
+  fi
+
   # FIXED INTERFACE (a): chainsvc's C2_SVC_TOKEN and server's HERD_CHAINSVC_TOKEN must be the
   # *same* bearer-token value — reuse whichever one already exists in .env so a partially-edited
   # file never ends up with two different tokens, generate once only if neither is present yet.

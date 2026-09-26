@@ -25,22 +25,34 @@ interface BetSlipProps {
   noPlayerHint?: string;
 }
 
+/** Plain-integer default for the stake field's *initial* value — never `MIN_STAKE_PLAY` itself
+ *  (contract.ts: `"100.000"`, PLAY's own exact 3-decimal scale) bound straight into the input.
+ *  Independent critique, 2026-09-26: a native `<input type="number">` rendered that raw string
+ *  locale-dependently — on a comma-decimal system, `"100.000"` reads back as "100,000" (a
+ *  thousand-fold misread) even though the interface language is fixed to English (Р-24). Below,
+ *  the stake field is a plain text input we format/parse ourselves instead, so this constant only
+ *  needs to be a clean starting number, not a value any browser could reformat. */
+const DEFAULT_STAKE_DISPLAY = String(Number(MIN_STAKE_PLAY));
+
+/** Only digits and at most one decimal point — typed directly into a plain text field, immune to
+ *  the locale-reformatting a native number input applies to its own value. Returns `null` (do
+ *  nothing) for a keystroke that isn't a partial number, e.g. a second "." or a stray letter, so
+ *  the field can never show something Direction/Number(stake) would silently misparse. */
+function sanitizeStakeInput(raw: string): string | null {
+  return raw === "" || /^\d*\.?\d*$/.test(raw) ? raw : null;
+}
+
+/** Same reasoning as {@link DEFAULT_STAKE_DISPLAY} applied to an existing bet's stake when
+ *  loading it back into the editable field — `existing.stake` is contract-precision (e.g.
+ *  `"600.000"`); the field shows the plain number a player actually typed. */
+function stakeDisplay(amount: string): string {
+  return String(Number(amount));
+}
+
 /** Bet slip (`ux_spec.md` §11) — used embedded on Home and full-size on the Round page, always
  *  the same component so every state/validation rule lives in exactly one place. */
 export function BetSlip({ round, nowMs, onChanged, noPlayerHint }: BetSlipProps) {
   const { player, openConnectModal } = useSession();
-
-  if (!player) {
-    return (
-      <div className="card">
-        <h3>Connect your wallet to place a bet</h3>
-        {noPlayerHint && <p className="muted">{noPlayerHint}</p>}
-        <button type="button" className="btn btn--primary btn--lg btn--block" onClick={openConnectModal}>
-          CONNECT WALLET
-        </button>
-      </div>
-    );
-  }
 
   const bettingClosed = nowMs >= round.window.startMs;
   if (bettingClosed) {
@@ -55,7 +67,129 @@ export function BetSlip({ round, nowMs, onChanged, noPlayerHint }: BetSlipProps)
     );
   }
 
+  if (!player) {
+    return <BetSlipPreview noPlayerHint={noPlayerHint} onConnect={openConnectModal} />;
+  }
+
   return <BetSlipForm round={round} onChanged={onChanged} />;
+}
+
+/**
+ * Logged-out preview (independent critique, 2026-09-26, "Game feel / onboarding" finding): a
+ * skeptical newcomer couldn't see what a bet even looks like — direction, leverage, the
+ * liquidation price it implies — before connecting a wallet; the slip was replaced outright by a
+ * bare "Connect your wallet" card. This reuses the exact same direction/leverage/stake controls
+ * and the same `api.previewLiquidation` call `BetSlipForm` uses below, which is why it needs no
+ * server or contract change: `RpcResource`'s `previewLiquidation` case has never required a
+ * signed-in session (only `placeBet`/`cancelBet` do). There is no balance to check and nothing to
+ * submit here — adjusting the controls is real (the liquidation preview genuinely updates), only
+ * the final action differs, opening the same connect-wallet modal every other "no player" entry
+ * point in the app already uses.
+ */
+function BetSlipPreview({ noPlayerHint, onConnect }: { noPlayerHint?: string; onConnect: () => void }) {
+  const api = useApi();
+  const [direction, setDirection] = useState<Direction>("UP");
+  const [leverage, setLeverage] = useState<number>(10);
+  const [stake, setStake] = useState<string>(DEFAULT_STAKE_DISPLAY);
+  const [preview, setPreview] = useState<LiquidationPreviewDto | null>(null);
+  const debounceRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    window.clearTimeout(debounceRef.current);
+    const stakeNum = Number(stake);
+    const validStake = Boolean(stake) && !Number.isNaN(stakeNum) && stakeNum > 0;
+    debounceRef.current = window.setTimeout(() => {
+      if (!validStake) {
+        setPreview(null);
+        return;
+      }
+      api
+        .previewLiquidation({ direction, leverage, stake: stakeNum.toFixed(3) })
+        .then(setPreview)
+        .catch(() => setPreview(null));
+    }, 150);
+    return () => window.clearTimeout(debounceRef.current);
+  }, [api, direction, leverage, stake]);
+
+  return (
+    <div className="card bet-slip">
+      <p className="test-wallet-tag">PREVIEW — not signed in</p>
+
+      <div className="field">
+        <span id="preview-direction-label">Direction</span>
+        <div className="direction-row" role="group" aria-labelledby="preview-direction-label">
+          <button
+            type="button"
+            className={`direction-btn direction-btn--up ${direction === "UP" ? "direction-btn--selected" : ""}`}
+            aria-pressed={direction === "UP"}
+            onClick={() => setDirection("UP")}
+          >
+            <DirectionGlyph direction="UP" />
+            UP
+          </button>
+          <button
+            type="button"
+            className={`direction-btn direction-btn--down ${direction === "DOWN" ? "direction-btn--selected" : ""}`}
+            aria-pressed={direction === "DOWN"}
+            onClick={() => setDirection("DOWN")}
+          >
+            <DirectionGlyph direction="DOWN" />
+            DOWN
+          </button>
+        </div>
+      </div>
+
+      <div className="field">
+        <label htmlFor="preview-leverage-input" className="visually-hidden">
+          Leverage
+        </label>
+        <LeverageDial id="preview-leverage-input" value={leverage} min={LEVERAGE_MIN} max={LEVERAGE_MAX} onChange={setLeverage} />
+      </div>
+
+      <div className="field">
+        {/* Distinct accessible name from the signed-in slip's "Stake (PLAY)" (`BetSlipForm`
+         *  below) — real users only ever see one of the two, but the two components briefly
+         *  coexist in the accessibility tree while sign-in state settles, and this is the label
+         *  a screen reader (or `findByLabelText` in tests) would otherwise have to disambiguate
+         *  by timing alone. */}
+        <label htmlFor="preview-stake-input">Preview stake (PLAY)</label>
+        <div className="stake-hero num-lg mono" aria-hidden="true">
+          {formatPlayAmount(Number(stake) || 0)} PLAY
+        </div>
+        <input
+          id="preview-stake-input"
+          className="stake-input-secondary"
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          value={stake}
+          onChange={(e) => {
+            const next = sanitizeStakeInput(e.target.value);
+            if (next !== null) setStake(next);
+          }}
+        />
+      </div>
+
+      {preview && (
+        <div className="card card--tight liquidation-preview">
+          <p className="section-title" style={{ marginBottom: 8 }}>
+            Liquidation preview
+          </p>
+          <LiquidationBar
+            entryPrice={preview.entryPriceUsed}
+            liquidationPrice={preview.liquidationPrice}
+            percentToLiquidation={preview.percentToLiquidation}
+          />
+        </div>
+      )}
+
+      <p className="muted">Connect your wallet to actually place this bet.</p>
+      {noPlayerHint && <p className="muted">{noPlayerHint}</p>}
+      <button type="button" className="btn btn--primary btn--lg btn--block" onClick={onConnect}>
+        CONNECT WALLET
+      </button>
+    </div>
+  );
 }
 
 function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () => void }) {
@@ -65,7 +199,7 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [direction, setDirection] = useState<Direction>(existing?.direction ?? "UP");
   const [leverage, setLeverage] = useState<number>(existing?.leverage ?? 10);
-  const [stake, setStake] = useState<string>(existing ? existing.stake : MIN_STAKE_PLAY);
+  const [stake, setStake] = useState<string>(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
 
   // Reset local form state when the round or the existence of an own bet changes — deliberately
   // keyed on `hasBet` (a boolean), not the `myBet` object reference, which changes on every poll
@@ -81,7 +215,7 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
     setShowCancelConfirm(false);
     setDirection(existing?.direction ?? "UP");
     setLeverage(existing?.leverage ?? 10);
-    setStake(existing ? existing.stake : MIN_STAKE_PLAY);
+    setStake(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
   }
 
   const [balance, setBalance] = useState<number | null>(null);
@@ -122,7 +256,7 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
       <div className="card">
         {showCancelConfirm ? (
           <>
-            <p>Cancel your bet and get {formatPlayAmount(existing.stake, { decimals: 0 })} PLAY back?</p>
+            <p>Cancel your bet and get {formatPlayAmount(existing.stake)} PLAY back?</p>
             <div className="direction-row">
               <button type="button" className="btn btn--secondary" onClick={() => setShowCancelConfirm(false)}>
                 KEEP BET
@@ -143,7 +277,7 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
           <>
             <p>
               Your bet: <DirectionGlyph direction={existing.direction} /> {existing.direction} · x{existing.leverage} ·{" "}
-              {formatPlayAmount(existing.stake, { decimals: 0 })} PLAY
+              {formatPlayAmount(existing.stake)} PLAY
             </p>
             <div className="direction-row">
               <button type="button" className="btn btn--secondary" onClick={() => setFormOpen(true)}>
@@ -232,17 +366,19 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
       <div className="field">
         <label htmlFor="stake-input">Stake (PLAY)</label>
         <div className="stake-hero num-lg mono" aria-hidden="true">
-          {formatPlayAmount(stakeNum, { decimals: 0 })} PLAY
+          {formatPlayAmount(stakeNum)} PLAY
         </div>
         <input
           id="stake-input"
           className="stake-input-secondary"
-          type="number"
+          type="text"
           inputMode="decimal"
-          min={0}
-          step={1}
+          autoComplete="off"
           value={stake}
-          onChange={(e) => setStake(e.target.value)}
+          onChange={(e) => {
+            const next = sanitizeStakeInput(e.target.value);
+            if (next !== null) setStake(next);
+          }}
         />
         <div className="stake-chips">
           <button type="button" className="stake-chip" onClick={() => addStake(100)}>
@@ -261,7 +397,7 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
         {belowMin && <p className="field-error">Minimum stake is 100 PLAY.</p>}
         {!belowMin && overBalance && (
           <p className="field-error">
-            Not enough PLAY — you have {effectiveBalance.toFixed(3)} PLAY, this bet needs {stakeNum.toFixed(3)} PLAY.
+            Not enough PLAY — you have {formatPlayAmount(effectiveBalance)} PLAY, this bet needs {formatPlayAmount(stakeNum)} PLAY.
           </p>
         )}
       </div>

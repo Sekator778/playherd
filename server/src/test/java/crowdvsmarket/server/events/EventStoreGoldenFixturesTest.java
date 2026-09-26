@@ -1,0 +1,119 @@
+package crowdvsmarket.server.events;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import crowdvsmarket.engine.market.Interval;
+import crowdvsmarket.engine.round.Direction;
+import crowdvsmarket.server.persistence.Db;
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.stream.Stream;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
+/**
+ * Task item 4 (event schema evolution, docs/reviews/2026-09-26-independent-critique.md): a golden
+ * JSON fixture for EVERY current {@link GameEvent} type (server/src/test/resources/events/golden/
+ * &lt;TypeName&gt;.json), each exercised with a round-trip (fixture JSON → {@link GameEvent}
+ * record, compared field-for-field against an independently hand-built expected instance) AND a
+ * replay (the fixture is actually persisted into a real {@code game_events} row — the same
+ * Postgres/JSONB round trip {@link EventStore#loadAll} uses at every real startup — then read back
+ * through {@link EventStore#decode} itself, not a reimplementation of it). A future change to any
+ * {@link GameEvent} record's shape that breaks decoding an old fixture fails exactly one of these,
+ * naming the type, instead of only surfacing as an opaque startup crash against real historical
+ * data.
+ */
+@QuarkusTest
+class EventStoreGoldenFixturesTest {
+
+    private static final Path FIXTURES_DIR =
+            Path.of("src/test/resources/events/golden");
+
+    @Inject
+    Db db;
+
+    @Inject
+    EventStore eventStore;
+
+    private record Fixture(String typeName, GameEvent expected) {
+    }
+
+    static Stream<Fixture> fixtures() {
+        return Stream.of(
+                new Fixture("PlayerRegistered", new GameEvent.PlayerRegistered("p-golden-1", 1700000000000L)),
+                new Fixture("BetPlaced", new GameEvent.BetPlaced("p-golden-1", Interval.HOURLY, 1700000000000L,
+                        1700000180000L, Direction.UP, 10, 100000L, 1700000000500L)),
+                new Fixture("BetCancelled", new GameEvent.BetCancelled("p-golden-1", Interval.HOURLY,
+                        1700000000000L, 1700000180000L, 1700000001000L)),
+                new Fixture("RoundResolved", new GameEvent.RoundResolved(Interval.HOURLY, 1700000000000L,
+                        1700000180000L, "85000.00", "85100.00",
+                        List.of(new GameEvent.CandleData(1700000000000L, 1700000059999L, "85000.00", "85050.00",
+                                "84990.00", "85040.00", "1.23456", 42)),
+                        1700000180000L)),
+                new Fixture("RoundCancelled", new GameEvent.RoundCancelled(Interval.HOURLY, 1700000000000L,
+                        1700000180000L, "golden fixture test cancel", 1700000180000L)),
+                new Fixture("WithdrawalRequested",
+                        new GameEvent.WithdrawalRequested("p-golden-1", 500000L, 1700000002000L)),
+                new Fixture("WithdrawalConfirmed", new GameEvent.WithdrawalConfirmed("w-golden-1", 1700000002500L)),
+                new Fixture("WithdrawalFailed", new GameEvent.WithdrawalFailed("w-golden-2", 1700000003000L)),
+                new Fixture("DepositRequested", new GameEvent.DepositRequested("p-golden-1", 250000L, 1700000004000L)),
+                new Fixture("DepositConfirmed", new GameEvent.DepositConfirmed("d-golden-1", 1700000004500L)),
+                new Fixture("DepositFailed", new GameEvent.DepositFailed("d-golden-2", 1700000005000L)),
+                new Fixture("WithdrawalReversed", new GameEvent.WithdrawalReversed("p-golden-1", 500000L, "2026-09",
+                        "golden fixture reversal", "w-golden-1", 1700000006000L)),
+                new Fixture("DepositReversed", new GameEvent.DepositReversed("p-golden-1", 250000L, "2026-09",
+                        "golden fixture reversal", "d-golden-1", 1700000007000L)));
+    }
+
+    /** Every {@link GameEvent} record must have exactly one fixture above — catches "added a new
+     *  event type, forgot to golden-fixture-test it" as a hard failure, not a silent gap. */
+    @Test
+    void everyGameEventPermittedSubtypeHasAFixture() {
+        List<String> declaredTypes = Stream.of(GameEvent.class.getPermittedSubclasses())
+                .map(Class::getSimpleName).sorted().toList();
+        List<String> fixturedTypes = fixtures().map(Fixture::typeName).sorted().toList();
+        assertThat(fixturedTypes).as("add a golden fixture + Fixture entry for every GameEvent subtype")
+                .isEqualTo(declaredTypes);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("fixtures")
+    void roundTripsAndReplaysThroughTheRealEventStore(Fixture fixture) throws Exception {
+        String fixtureJson = readFixture(fixture.typeName());
+
+        // Round trip: the committed fixture JSON decodes to exactly the expected GameEvent.
+        GameEvent decodedDirectly = eventStore.decode(-1L, fixture.typeName(), fixtureJson, 1);
+        assertThat(decodedDirectly).isEqualTo(fixture.expected());
+
+        // Replay: the exact same fixture, persisted as a real game_events row (JSONB round trip
+        // included) and read back through EventStore.decode via that row's own id — the same path
+        // EventStore#loadAll uses for every historical row at real startup.
+        // at_ms is the row's own column (used for e.g. admin listings elsewhere) — irrelevant to
+        // this test, which only exercises decode()'s reading of event_type/payload/schema_version.
+        Object node = db.json().readTree(fixtureJson);
+        long rowId = db.tx(c -> db.queryOne(c,
+                "INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES (?, ?, ?, 1) "
+                        + "RETURNING id",
+                rs -> rs.getLong("id"), fixture.typeName(), Db.jsonb(node), 0L));
+        GameEvent replayed = db.read(c -> db.queryOne(c,
+                "SELECT id, event_type, payload, schema_version FROM game_events WHERE id = ?",
+                rs -> eventStore.decode(rs.getLong("id"), rs.getString("event_type"), rs.getString("payload"),
+                        rs.getInt("schema_version")),
+                rowId));
+        assertThat(replayed).isEqualTo(fixture.expected());
+    }
+
+    private static String readFixture(String typeName) {
+        try {
+            return Files.readString(FIXTURES_DIR.resolve(typeName + ".json"));
+        } catch (IOException e) {
+            throw new UncheckedIOException("missing golden fixture for " + typeName, e);
+        }
+    }
+}

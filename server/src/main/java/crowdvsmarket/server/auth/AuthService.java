@@ -11,6 +11,7 @@ import jakarta.inject.Inject;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
+import org.jboss.logging.Logger;
 
 /**
  * Р-4/Р-45 sign-in: challenge/verify flow per docs/research/week1_wallet_auth.md §4, verified
@@ -20,6 +21,8 @@ import java.util.Base64;
  */
 @ApplicationScoped
 public class AuthService {
+
+    private static final Logger LOG = Logger.getLogger(AuthService.class);
 
     private static final String MESSAGE_PREFIX = "Herd sign-in\n"; // non-hex prefix — see the hex
     // footgun documented in docs/research/week1_wallet_auth.md §2: Sage decodes an all-hex-digit
@@ -77,7 +80,13 @@ public class AuthService {
         try {
             result = chainSvc.authVerify(req.address(), req.publicKey(), row.message(), req.signature());
         } catch (Exception e) {
-            throw ApiException.unauthorized("chainsvc auth verification unavailable: " + e.getMessage());
+            // Task item 3 (security minor): chainsvc's raw exception text (connection refused,
+            // timeout, an internal stack trace fragment, …) used to be echoed straight into the
+            // client-facing error.message — never surfaced to a client anywhere else in this
+            // codebase (see e.g. RpcResource#argsArray/#obj's own comments on the same class of
+            // leak). Logged here instead; the client gets a generic, honest "unavailable" message.
+            LOG.warnf(e, "chainsvc auth verification unavailable for address %s", req.address());
+            throw ApiException.unauthorized("sign-in temporarily unavailable — please try again shortly");
         }
         if (!result.valid()) {
             throw ApiException.signatureInvalid(result.reason());

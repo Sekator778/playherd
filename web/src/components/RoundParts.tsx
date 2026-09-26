@@ -142,7 +142,7 @@ function StagePanel({
                 <span className="player-chip__lev mono">x{p.leverage}</span>
                 {value !== null && (
                   <span className={`player-chip__result ${p.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(value))}`}>
-                    {formatPlayAmount(value, { decimals: 2, sign: true })}
+                    {formatPlayAmount(value, { sign: true })}
                     {p.liquidated && " · liq"}
                   </span>
                 )}

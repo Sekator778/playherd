@@ -227,7 +227,7 @@ class LedgerBookTest {
         assertThat(ledger.balance("alice")).isEqualTo(LedgerBook.STARTER_PACK); // back to honest 10000
         assertThat(correction.playerId()).isEqualTo("alice");
         assertThat(correction.delta()).isEqualTo(bogusAmount);
-        assertThat(correction.relatedWithdrawalRequestId()).isEqualTo(bogus.requestId());
+        assertThat(correction.relatedRequestId()).isEqualTo(bogus.requestId());
         assertThat(correction.reason()).contains("wave-2");
         assertThat(ledger.corrections()).containsExactly(correction); // public, listed
 

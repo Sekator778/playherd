@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import crowdvsmarket.server.chain.ChainSvcClient;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.QuarkusTestProfile;
+import io.quarkus.test.junit.TestProfile;
 import io.restassured.http.ContentType;
 import io.restassured.response.Response;
 import java.util.List;
@@ -17,9 +19,24 @@ import org.junit.jupiter.api.Test;
  * Wave-1 security findings (task item 2): input validation that used to either 500 instead of 400,
  * silently accept bad input, or echo Jackson/Java internals back to the client. chainsvc is mocked
  * exactly like {@link GameFlowIntegrationTest} — this class never talks to a real chain service.
+ *
+ * <p>Task item 1 (BLOCKER security fix): {@code requestDeposit}/{@code requestWithdrawal} are
+ * disabled by default (see {@link WithdrawalDepositUnavailableTest} for that default-config
+ * behavior) — this class needs its own {@link WithdrawalDepositEnabledProfile} to re-enable them,
+ * so its amount-validation tests below (negative/zero/positive) keep exercising exactly what they
+ * always tested: the input validation itself, independent of whether the feature is currently
+ * turned on.
  */
 @QuarkusTest
+@TestProfile(RpcValidationTest.WithdrawalDepositEnabledProfile.class)
 class RpcValidationTest {
+
+    public static class WithdrawalDepositEnabledProfile implements QuarkusTestProfile {
+        @Override
+        public java.util.Map<String, String> getConfigOverrides() {
+            return java.util.Map.of("herd.deposit.enabled", "true", "herd.withdrawal.enabled", "true");
+        }
+    }
 
     @InjectMock
     ChainSvcClient chainSvcClient;
@@ -176,6 +193,37 @@ class RpcValidationTest {
         Response resp = rpcRaw(null, "previewLiquidation", body);
         assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
         assertThat(resp.jsonPath().getString("error.code")).isEqualTo("BAD_REQUEST");
+    }
+
+    // --- task item 3 (security minor): AuthService must never echo chainsvc's raw exception
+    // text to a client ---
+
+    @Test
+    void authVerifyNeverEchoesChainsvcsRawExceptionMessage() {
+        String internalLeak = "connection refused: chainsvc-internal-host.invalid:8090 (secret detail)";
+        org.mockito.Mockito.reset(chainSvcClient);
+        org.mockito.Mockito.when(chainSvcClient.authVerify(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyString()))
+                .thenThrow(new RuntimeException(internalLeak));
+
+        Response challengeResp = given().contentType(ContentType.JSON)
+                .body(Map.of("args", List.of()))
+                .post("/api/rpc/authChallenge");
+        String nonce = challengeResp.jsonPath().getString("nonce");
+        Map<String, Object> verifyReq = Map.of(
+                "nonce", nonce,
+                "address", "txch1leak-test-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "publicKey", "0x" + "ab".repeat(48),
+                "signature", "0x" + "cd".repeat(96));
+        Response resp = given().contentType(ContentType.JSON)
+                .body(Map.of("args", List.of(verifyReq)))
+                .post("/api/rpc/authVerify");
+
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(401);
+        assertThat(resp.asString()).doesNotContain(internalLeak).doesNotContain("chainsvc-internal-host");
+        assertThat(resp.jsonPath().getString("error.message")).isEqualTo(
+                "sign-in temporarily unavailable — please try again shortly");
     }
 
     // --- wave-2 CRITICAL security fix: requestWithdrawal/requestDeposit reject non-positive

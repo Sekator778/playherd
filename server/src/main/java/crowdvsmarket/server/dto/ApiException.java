@@ -74,6 +74,23 @@ public final class ApiException extends RuntimeException {
         return new ApiException(Enums.ApiErrorCode.INVALID_AMOUNT, 400, message);
     }
 
+    /** Task item 1 (BLOCKER security fix): {@code requestDeposit} rejects every new deposit
+     *  outright — no real on-chain CAT-deposit verifier exists yet (Р-6 decision pending with
+     *  Alex) — rather than crediting an unverified self-reported amount. 503, not 4xx: the
+     *  request itself is well-formed, the feature is just not available. */
+    public static ApiException depositVerificationUnavailable() {
+        return new ApiException(Enums.ApiErrorCode.DEPOSIT_VERIFICATION_UNAVAILABLE, 503,
+                "deposits are not available yet — this demo has no real on-chain CAT-deposit "
+                        + "verification; nothing was credited");
+    }
+
+    /** Same task item, same reasoning, for {@code requestWithdrawal}. */
+    public static ApiException withdrawalUnavailable() {
+        return new ApiException(Enums.ApiErrorCode.WITHDRAWAL_UNAVAILABLE, 503,
+                "withdrawals are not available yet — this demo does not send PLAY on-chain as a "
+                        + "real CAT; nothing was debited");
+    }
+
     public static ApiException rateLimited() {
         return new ApiException(Enums.ApiErrorCode.RATE_LIMITED, 429,
                 "too many requests — please slow down and try again shortly");

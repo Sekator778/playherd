@@ -1,6 +1,8 @@
 package crowdvsmarket.server.domain;
 
 import crowdvsmarket.engine.crowd.CrowdAccount;
+import crowdvsmarket.engine.execution.ExecutionAdapter;
+import crowdvsmarket.engine.execution.PaperTradingAdapter;
 import crowdvsmarket.engine.game.RoundReport;
 import crowdvsmarket.engine.margin.Leverage;
 import crowdvsmarket.engine.market.Candle;
@@ -40,6 +42,13 @@ public final class ComparisonAccounts {
 
     private static final String ANTI_CROWD_USER_ID = "anti-crowd";
 
+    /** Task item 7: was a direct {@code Position.openFromMargin} + {@code PositionSimulator
+     *  .simulate} call inline in {@link #onRoundResolved} below (same primitives {@link
+     *  CrowdAccount} itself used before this task) — now the same two calls behind {@link
+     *  ExecutionAdapter}, same default as {@link CrowdAccount}'s own no-arg/startingCapital
+     *  constructors. Stateless, so one shared instance is fine. */
+    private final ExecutionAdapter executionAdapter = new PaperTradingAdapter();
+
     private BigDecimal btcHoldCapital;
     private BigDecimal btcHoldQtyBtc;
     private BigDecimal antiCrowdCapital;
@@ -78,10 +87,10 @@ public final class ComparisonAccounts {
             BigDecimal margin = antiCrowdCapital
                     .multiply(CrowdAccount.MARGIN_SHARE_OF_CAPITAL, MathContext.DECIMAL128)
                     .setScale(2, RoundingMode.HALF_UP);
-            Position position = Position.openFromMargin(
+            Position position = executionAdapter.openPosition(
                     ANTI_CROWD_USER_ID, report.window().roundId(), antiDirection,
                     new Leverage(crowd.leverage()), margin, openPrice);
-            PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, path);
+            PositionSimulator.Outcome outcome = executionAdapter.closePosition(position, path);
             if (outcome instanceof PositionSimulator.Outcome.Liquidated) {
                 antiCrowdCapital = antiCrowdCapital.subtract(margin);
             } else {

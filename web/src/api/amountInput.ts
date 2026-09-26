@@ -1,6 +1,6 @@
 /**
- * Shared client-side validation for a PLAY amount typed into a free-text field — currently the
- * Withdraw/Deposit forms (`pages/WalletPage.tsx`). Pure functions, no React (same pattern as
+ * Shared client-side validation for a PLAY amount typed into a free-text field — built for the
+ * Withdraw/Deposit forms in `pages/WalletPage.tsx`. Pure functions, no React (same pattern as
  * `outcome.ts`/`fx/resultEvent.ts`), so they're unit-tested directly.
  *
  * Neither form validated this before (wave2 fix, 2026-09-26): `Number(amount) || 0` treated a
@@ -9,6 +9,12 @@
  * enabled and would have sent a negative withdrawal/deposit straight to the server. Neither form
  * checked the fractional part either, so e.g. "10.12345" reached `.toFixed(3)` unnoticed —
  * silently sending 10.123, a different number than what was typed, with no warning.
+ *
+ * Not currently wired into the UI (independent critique, 2026-09-26): both forms were replaced by
+ * an honest "turned off" notice after the *other* half of the same finding — the Deposit form
+ * credited any self-reported amount with zero on-chain check — turned out to be the real, live
+ * exploit. This validation stayed correct throughout; it's kept, tested, ready to wire back in
+ * once real on-chain verification exists (`WalletPage.tsx`'s `UnavailableNotice` doc comment).
  */
 
 /** `PlayAmountStr`'s scale (`contract.ts`: "PlayAmount.java... scale 3, 1 PLAY = 1000 mojos"). */

@@ -62,7 +62,7 @@ export function ResultTile({
         {dateLabel && <span className="result-tile__meta">{dateLabel}</span>}
       </span>
       <span className={`result-tile__net ${NET_CLASS[kind]}`}>
-        {formatPlayAmount(net, { decimals: 2, sign: true })} PLAY
+        {formatPlayAmount(net, { sign: true })} PLAY
         {liquidated && <span className="result-tile__tag"> · LIQ</span>}
       </span>
     </Link>

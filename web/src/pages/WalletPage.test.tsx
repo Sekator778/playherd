@@ -1,5 +1,4 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ApiProvider } from "../api/ApiContext";
@@ -26,86 +25,32 @@ function renderWallet() {
   );
 }
 
-describe("Withdraw/Deposit amount validation (wave2 fix, 2026-09-26 — amountInput.ts)", () => {
-  it("Withdraw: a negative amount is rejected, not silently treated as valid", async () => {
+describe("Withdraw/Deposit — turned off honestly (independent critique, 2026-09-26: unverified self-report deposit)", () => {
+  it("Withdraw has no input or button — an honest notice instead of a dead form", async () => {
     renderWallet();
-    const user = userEvent.setup();
-    const input = await screen.findByLabelText("Amount (PLAY)");
+    await screen.findByText("Withdraw to wallet");
 
-    await user.clear(input);
-    await user.type(input, "-50");
-
-    expect(await screen.findByText("Enter an amount greater than 0.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Withdraw" })).toBeDisabled();
+    expect(screen.queryByLabelText("Amount (PLAY)")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Withdraw" })).not.toBeInTheDocument();
+    expect(screen.getByText(/we don't yet verify a withdrawal on chain/)).toBeInTheDocument();
   });
 
-  it("Withdraw: more than 3 decimal places is rejected", async () => {
+  it("Deposit has no input or button — the self-report exploit's form is gone entirely, not just disabled", async () => {
     renderWallet();
-    const user = userEvent.setup();
-    const input = await screen.findByLabelText("Amount (PLAY)");
+    await screen.findByText("Deposit from wallet");
 
-    await user.clear(input);
-    await user.type(input, "10.1234");
-
-    expect(await screen.findByText("At most 3 decimal places.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Withdraw" })).toBeDisabled();
+    expect(screen.queryByLabelText("Amount you sent (PLAY)")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "I sent it" })).not.toBeInTheDocument();
+    expect(screen.getByText(/no on-chain check at all/)).toBeInTheDocument();
   });
 
-  it("Withdraw: over balance is still rejected, same as before", async () => {
+  it("the wallet still has no other enabled button that submits a deposit/withdrawal request", async () => {
     renderWallet();
-    const user = userEvent.setup();
-    const input = await screen.findByLabelText("Amount (PLAY)");
+    await screen.findByText("Activity");
 
-    await user.clear(input);
-    await user.type(input, "999999");
-
-    expect(await screen.findByText(/You only have .* PLAY\./)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Withdraw" })).toBeDisabled();
-  });
-
-  it("Withdraw: a valid positive amount within balance enables the button", async () => {
-    renderWallet();
-    const user = userEvent.setup();
-    const input = await screen.findByLabelText("Amount (PLAY)");
-
-    await user.clear(input);
-    await user.type(input, "123.45");
-
-    expect(screen.getByRole("button", { name: "Withdraw" })).toBeEnabled();
-  });
-
-  it("Deposit: a negative amount is rejected", async () => {
-    renderWallet();
-    const user = userEvent.setup();
-    const input = await screen.findByLabelText("Amount you sent (PLAY)");
-
-    await user.clear(input);
-    await user.type(input, "-1");
-
-    expect(await screen.findByText("Enter an amount greater than 0.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "I sent it" })).toBeDisabled();
-  });
-
-  it("Deposit: more than 3 decimals is rejected even though there's no balance ceiling", async () => {
-    renderWallet();
-    const user = userEvent.setup();
-    const input = await screen.findByLabelText("Amount you sent (PLAY)");
-
-    await user.clear(input);
-    await user.type(input, "5.6789");
-
-    expect(await screen.findByText("At most 3 decimal places.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "I sent it" })).toBeDisabled();
-  });
-
-  it("Deposit: a large but valid positive amount is accepted (no balance ceiling)", async () => {
-    renderWallet();
-    const user = userEvent.setup();
-    const input = await screen.findByLabelText("Amount you sent (PLAY)");
-
-    await user.clear(input);
-    await user.type(input, "1000000");
-
-    expect(screen.getByRole("button", { name: "I sent it" })).toBeEnabled();
+    const buttons = screen.queryAllByRole("button");
+    for (const b of buttons) {
+      expect(b.textContent).not.toMatch(/withdraw|deposit|sent it/i);
+    }
   });
 });

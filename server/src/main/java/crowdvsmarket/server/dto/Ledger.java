@@ -28,11 +28,14 @@ public final class Ledger {
                                       long requestedAtMs) {
     }
 
-    /** Wave-2 security fix (Р-32/Р-43 pattern) — additive, not in contract.ts: one public,
-     *  reasoned operator ledger correction (see {@code GameService#reverseWithdrawal} /
-     *  {@code AdminResource}), listed the same way {@code CancellationDto} lists a round
-     *  cancellation. {@code delta} carries its own sign (a correction can be a credit or a debit). */
-    public record LedgerCorrectionDto(String correctionId, String playerId, String relatedWithdrawalRequestId,
+    /** Wave-2 security fix (Р-32/Р-43 pattern; extended wave-3, task item 1, to deposits) —
+     *  additive, not in contract.ts: one public, reasoned operator ledger correction (see
+     *  {@code GameService#reverseWithdrawal}/{@code #reverseDeposit} / {@code AdminResource}),
+     *  listed the same way {@code CancellationDto} lists a round cancellation. {@code delta}
+     *  carries its own sign (a correction can be a credit or a debit). {@code relatedRequestId} is
+     *  either a withdrawal's {@code "w-N"} or a deposit's {@code "d-N"} id — the prefix
+     *  disambiguates which. */
+    public record LedgerCorrectionDto(String correctionId, String playerId, String relatedRequestId,
                                         String delta, String reason, long atMs) {
     }
 }

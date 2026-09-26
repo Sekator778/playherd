@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useApi, useSession } from "../api/ApiContext";
-import { checkPlayAmount, PLAY_DECIMALS } from "../api/amountInput";
-import type {
-  DepositRequestDto,
-  LedgerEntryDto,
-  LedgerEntryType,
-  PlayerAccountDto,
-  WithdrawalRequestDto,
-} from "../api/contract";
+import type { LedgerEntryDto, LedgerEntryType, PlayerAccountDto } from "../api/contract";
 import { EmptyState, ErrorState, Skeleton } from "../components/Common";
 import { formatDateTimeUtc, formatPlayAmount } from "../format";
 import { RollingDigits } from "../fx/RollingDigits";
@@ -76,117 +69,21 @@ function BalanceCard({ balance }: { balance: string }) {
   );
 }
 
-function WithdrawForm({ balance, onDone }: { balance: string; onDone: () => void }) {
-  const api = useApi();
-  const [amount, setAmount] = useState("");
-  const [request, setRequest] = useState<WithdrawalRequestDto | null>(null);
-  const pollRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => () => window.clearInterval(pollRef.current), []);
-
-  // Client-side validation (Alex, wave2 fix): positive, ≤ balance, ≤3 decimals — see
-  // `amountInput.ts`'s header for the bug this closes (a negative amount used to pass).
-  const check = checkPlayAmount(amount, Number(balance));
-
-  const submit = async () => {
-    const r = await api.requestWithdrawal(check.amount.toFixed(3));
-    setRequest(r);
-    onDone();
-    pollRef.current = window.setInterval(async () => {
-      const updated = await api.withdrawal(r.requestId);
-      setRequest(updated);
-      if (updated.state !== "REQUESTED") {
-        window.clearInterval(pollRef.current);
-        onDone();
-      }
-    }, 1000);
-  };
-
+/**
+ * Withdraw/deposit to a real on-chain CAT (Р-6) is turned off for now (independent critique,
+ * 2026-09-26, "Wallet deposit flow" — a blocker): the old "Deposit from wallet" form credited any
+ * self-reported amount instantly with zero on-chain verification, so any player could mint
+ * unlimited PLAY (reproduced live: 5,000,000 PLAY minted in ten seconds). Until real on-chain
+ * verification exists there's nothing honest left to put here except that — never a form that
+ * quietly does nothing, and never a button that looks live but isn't (`game-designer.md`'s
+ * "никаких dark patterns"). Past deposits/withdrawals, including ones made while this was live,
+ * still show in the Activity log below exactly as they happened — nothing here hides history.
+ */
+function UnavailableNotice({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="card">
-      <h3>Withdraw to wallet</h3>
-      <div className="field">
-        <label htmlFor="withdraw-amount">Amount (PLAY)</label>
-        <input id="withdraw-amount" type="number" min={0} step="0.001" value={amount} onChange={(e) => setAmount(e.target.value)} />
-        {amount !== "" && !check.isPositive && <p className="field-error">Enter an amount greater than 0.</p>}
-        {check.isPositive && check.tooManyDecimals && (
-          <p className="field-error">At most {PLAY_DECIMALS} decimal places.</p>
-        )}
-        {check.isPositive && !check.tooManyDecimals && check.overBalance && (
-          <p className="field-error">You only have {formatPlayAmount(balance)} PLAY.</p>
-        )}
-      </div>
-      <button type="button" className="btn btn--primary" disabled={!check.valid} onClick={() => void submit()}>
-        Withdraw
-      </button>
-      {request && (
-        <p className="muted" style={{ marginTop: 10 }}>
-          {request.state === "REQUESTED" &&
-            `Withdrawal requested — ${formatPlayAmount(request.amount)} PLAY, pending confirmation.`}
-          {request.state === "CONFIRMED" &&
-            `Withdrawal confirmed — ${formatPlayAmount(request.amount)} PLAY sent to your wallet.`}
-          {request.state === "FAILED" &&
-            `Withdrawal failed — ${formatPlayAmount(request.amount)} PLAY returned to your balance.`}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function DepositForm({ onDone }: { onDone: () => void }) {
-  const api = useApi();
-  const [amount, setAmount] = useState("");
-  const [reference, setReference] = useState("");
-  const [request, setRequest] = useState<DepositRequestDto | null>(null);
-  const pollRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => () => window.clearInterval(pollRef.current), []);
-
-  // Client-side validation (Alex, wave2 fix): positive, ≤3 decimals — no balance ceiling for a
-  // deposit (see `amountInput.ts`'s header for the bug this closes: a negative amount used to
-  // pass this form too).
-  const check = checkPlayAmount(amount);
-
-  const submit = async () => {
-    const r = await api.requestDeposit(check.amount.toFixed(3));
-    setRequest(r);
-    onDone();
-    pollRef.current = window.setInterval(async () => {
-      const updated = await api.deposit(r.requestId);
-      setRequest(updated);
-      if (updated.state !== "REQUESTED") {
-        window.clearInterval(pollRef.current);
-        onDone();
-      }
-    }, 1000);
-  };
-
-  return (
-    <div className="card">
-      <h3>Deposit from wallet</h3>
-      <div className="field">
-        <label htmlFor="deposit-amount">Amount you sent (PLAY)</label>
-        <input id="deposit-amount" type="number" min={0} step="0.001" value={amount} onChange={(e) => setAmount(e.target.value)} />
-        {amount !== "" && !check.isPositive && <p className="field-error">Enter an amount greater than 0.</p>}
-        {check.isPositive && check.tooManyDecimals && (
-          <p className="field-error">At most {PLAY_DECIMALS} decimal places.</p>
-        )}
-      </div>
-      <div className="field">
-        <label htmlFor="deposit-ref">Transaction reference (optional)</label>
-        <input id="deposit-ref" type="text" value={reference} onChange={(e) => setReference(e.target.value)} />
-      </div>
-      <button type="button" className="btn btn--primary" disabled={!check.valid} onClick={() => void submit()}>
-        I sent it
-      </button>
-      {request && (
-        <p className="muted" style={{ marginTop: 10 }}>
-          {request.state === "REQUESTED" &&
-            `Deposit requested — we'll credit ${formatPlayAmount(request.amount)} PLAY once it's confirmed on testnet11.`}
-          {request.state === "CONFIRMED" && `Deposit confirmed — ${formatPlayAmount(request.amount)} PLAY added to your balance.`}
-          {request.state === "FAILED" && "Deposit failed — no PLAY was received."}
-        </p>
-      )}
+      <h3>{title}</h3>
+      <p className="muted">{children}</p>
     </div>
   );
 }
@@ -253,7 +150,7 @@ function WalletContent() {
                     </span>
                   </span>
                   <span className="mono" style={{ color: Number(e.delta) >= 0 ? "var(--up)" : "var(--down)" }}>
-                    {formatPlayAmount(e.delta, { decimals: 3, sign: true })} PLAY
+                    {formatPlayAmount(e.delta, { sign: true })} PLAY
                   </span>
                 </li>
               ))}
@@ -267,8 +164,15 @@ function WalletContent() {
         )}
       </div>
       <div className="stack" style={{ gap: 16 }}>
-        <WithdrawForm balance={account.balance} onDone={load} />
-        <DepositForm onDone={load} />
+        <UnavailableNotice title="Withdraw to wallet">
+          Turned off for now — we don't yet verify a withdrawal on chain, so it stays fully in-game until that
+          exists. Nothing you've already won or lost is affected.
+        </UnavailableNotice>
+        <UnavailableNotice title="Deposit from wallet">
+          Turned off for now — the old "amount you sent" form credited any number with no on-chain check at all, so
+          we removed it rather than leave something unsafe live. It'll come back once deposits are actually verified
+          on chain.
+        </UnavailableNotice>
       </div>
     </div>
   );

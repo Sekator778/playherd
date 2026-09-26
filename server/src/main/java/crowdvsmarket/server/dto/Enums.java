@@ -69,6 +69,15 @@ public final class Enums {
          *  dedicated rejection for a zero/negative/otherwise non-positive amount, kept distinct
          *  from the generic {@code BAD_REQUEST} (parse failure) so a client can tell "not a number"
          *  apart from "a number, but not a valid one here". Same "additive" situation as above. */
-        INVALID_AMOUNT
+        INVALID_AMOUNT,
+        /** Task item 1 (BLOCKER security fix): {@code requestDeposit} — no real on-chain
+         *  CAT-deposit verifier exists yet (Р-6 decision pending with Alex), so deposits are
+         *  rejected outright rather than crediting an unverified self-reported amount. Same
+         *  "additive" situation as the values above. */
+        DEPOSIT_VERIFICATION_UNAVAILABLE,
+        /** Same task item, same reasoning, for {@code requestWithdrawal} (the task's "prefer
+         *  disabling withdrawal too" guidance — it auto-confirms with no chain call, which would
+         *  otherwise falsely claim a CAT left the game). */
+        WITHDRAWAL_UNAVAILABLE
     }
 }

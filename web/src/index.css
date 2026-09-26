@@ -281,6 +281,26 @@ ol {
   }
 }
 
+/* 390px mobile-web overflow fix (independent critique, 2026-09-26, "Mobile ergonomics" finding).
+   A grid track's `auto`/`fr` sizing gives every item an implicit `min-width: auto`, which
+   resolves to that item's CONTENT min-content size — a `display:flex` leaderboard row
+   (`.leaderboard-card`, `white-space: nowrap` name + a non-shrinking `.leaderboard-card__value`)
+   has a min-content width around 400px, wider than a 360-414px phone viewport. Below `860px`
+   these grids already collapse to a single `1fr` column, but that column still won't shrink
+   below its content's min-content size without this rule, so the single remaining item (and the
+   page around it) overflowed horizontally and got clipped instead of wrapping — reproduced in
+   headless Chrome at 390px (CDP: `.grid-2 > div` measured 410px wide inside a 343px track,
+   `document.documentElement.scrollWidth` 426 vs `innerWidth` 390) with the actual desktop-Chrome
+   window, not just the emulators the original report used. This is the standard fix: let every
+   direct child of these three grid containers shrink to the track's assigned width; nothing
+   inside (`.card`, `.leaderboard-card__body`, stat tiles) needs its own explicit width to render
+   correctly once it can. */
+.two-col > *,
+.grid-2 > *,
+.grid-3 > * {
+  min-width: 0;
+}
+
 /* Demo banner ------------------------------------------------------------ */
 
 .demo-banner {
@@ -455,6 +475,26 @@ ol {
   .balance-pill__coin {
     width: 16px;
     height: 16px;
+  }
+  /* 390px header overflow fix (found verifying task item 1, 2026-09-26): every rule above this
+   * one shrinks a *fixed-size* control, but the profile-menu button's nickname is free text up
+   * to 24 characters (`ConnectWalletModal.tsx`'s `maxLength`) with no cap of its own — a flex
+   * item's implicit `min-width: auto` (its own content size) still won this row against the
+   * header's available width once a real nickname ("mobileCheck", 11 chars) replaced the shorter
+   * placeholder this breakpoint was last tuned against, pushing the hamburger button 3px past
+   * the viewport (confirmed via CDP: `.hamburger` right edge at 393 vs `innerWidth` 390). Capping
+   * and eliding it, the same `overflow: hidden` + `text-overflow: ellipsis` pattern the
+   * leaderboard's own name column already uses, bounds the header's width regardless of nickname
+   * length instead of only for whatever nickname happened to be tested. */
+  .profile-menu {
+    min-width: 0;
+  }
+  .profile-menu__button {
+    display: block;
+    max-width: 92px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 

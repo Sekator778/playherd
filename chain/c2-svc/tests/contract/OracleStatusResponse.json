@@ -1,0 +1,11 @@
+{
+  "launcherId": "c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20",
+  "network": "testnet11",
+  "lastConfirmedSeq": 205,
+  "lastConfirmedHeight": 4737632,
+  "pendingRecords": 4,
+  "inFlightBundleId": null,
+  "operatorBalanceMojos": "999999999",
+  "stuckReason": null,
+  "conflicts": []
+}
