@@ -18,7 +18,7 @@
 //! whenever a wire type's shape changes, so the Java side's test catches the drift instead of it
 //! only ever being observed live.
 
-use c2_cli::keys::{TXCH_PREFIX, derive_wallet_key, generate_mnemonic, master_sk_from_mnemonic};
+use c2_cli::keys::{TXCH_PREFIX, derive_wallet_key};
 use c2_svc::auth::{AuthVerifyRequest, AuthVerifyResponse, verify};
 use c2_svc::oracle::types::{
     OracleRecordDto, OracleRecordStatusResponse, OracleRecordsRequest, OracleRecordsResponse, OracleStatusResponse,
@@ -29,6 +29,7 @@ use c2_svc::play::types::{
     DepositAddressRequestDto, DepositAddressResponse, DepositDto, DepositsResponse, WithdrawalAcceptedResponse,
     WithdrawalRequestDto, WithdrawalStatusResponse,
 };
+use chia_bls::SecretKey;
 use chia_protocol::Bytes32;
 use chia_sdk_utils::Address;
 use serde::Deserialize;
@@ -142,8 +143,9 @@ fn write_contract_fixtures() {
     // (Р-6, decision Р-53 2026-09-26, docs/research/chain_service.md §13). A
     // genuine txch1... address (not a hand-typed string), same "real
     // production code path" preference the auth fixtures above follow.
-    let mnemonic = generate_mnemonic().expect("generate mnemonic for play fixtures");
-    let master_sk = master_sk_from_mnemonic(&mnemonic);
+    // Fixed, public, test-only seed (never a real wallet): a random key made every `cargo test`
+    // rewrite these files with new addresses and left the tree dirty after each run.
+    let master_sk = SecretKey::from_seed(&[0x5eu8; 32]);
     let player_wallet = derive_wallet_key(&master_sk, 0);
     let player_address =
         Address::new(player_wallet.puzzle_hash, TXCH_PREFIX.to_string()).encode().expect("encode player address");
