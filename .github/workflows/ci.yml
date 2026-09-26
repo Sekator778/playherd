@@ -404,6 +404,21 @@ jobs:
             sleep 5
           done
 
+      # tools/e2e/testWallet.mjs imports chia-wallet-sdk-wasm straight from web/node_modules on
+      # this runner's own filesystem (by design — no separate install, see that file's own doc
+      # comment) — that's unrelated to the `web` Docker image built above, which installs its own
+      # copy inside its build container. Without this, `node tools/e2e/run.mjs` fails with
+      # ERR_MODULE_NOT_FOUND before it ever reaches the stand.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci (web) — provides chia-wallet-sdk-wasm for tools/e2e/testWallet.mjs
+        working-directory: web
+        run: npm ci
+
       - name: Run e2e (CI mode — skips on-chain confirmation checks; see tools/e2e/run.mjs)
         run: node --experimental-wasm-modules tools/e2e/run.mjs http://localhost:8480 --ci
 
