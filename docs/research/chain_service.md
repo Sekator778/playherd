@@ -1145,3 +1145,181 @@ spend_all`, что и у сервисного withdrawal-батчера, §13.2,
 - Server-side (Java) интеграция «дернуть `/v1/play/withdrawals` при запросе игрока», «поллить
   `/v1/play/deposits`», хранение `playerIndex ↔ address` на уровне игрока — другой assigned path,
   другой агент, как и в §10.8/§11.6 для оракула.
+
+## 14. Р-53, живая проверка нашла 4 проблемы — фикс-волна (2026-09-26, позже)
+
+Источник задания: живая верификация Р-53 (перед закрытой альфой) нашла четыре проблемы в коде §13
+(вывод/ввод PLAY) — этот раздел их закрывает. Assigned paths — те же, что и в §13: `chain/`
+(`c2-svc`, `c2-cli`) и этот файл.
+
+### 14.1 Итог одной строкой
+
+`cargo test --workspace` в `chain/` (без `cargo clean`, инкрементальная сборка): **99 passed, 1
+ignored (тот же генератор тест-векторов оракула, не баг), 0 failed** (было 91/1/0 после §13 — +8:
+1 юнит-тест `play::withdrawal_spend::tests`, 4 юнит-теста `play::chain_client::tests`
+(float-height), 3 интеграционных `tests/play_withdrawals.rs`: 3-заявочный coinId-тест + 2
+self-heal теста). Прогнано дважды подряд, идентично. `cargo clippy --workspace --all-targets` —
+ноль новых категорий предупреждений: единственная затронутая строка (`play/withdrawal_spend.rs`,
+теперь `:125`, была `:111` в §13.1) — тот же `cloned_ref_to_slice_refs`, что и раньше, просто
+сдвинулась вниз из-за вставленного кода. Реальные транзакции на testnet11 не отправлялись — весь
+функционал проверен `cargo test --workspace` (фейковый chain client / офлайн-CLVM), как и
+буквально попросило задание («cargo test --workspace green (real counts)», не живой push).
+
+### 14.2 Баг 1: неверный coinId в батче на несколько заявок
+
+`withdrawal_publisher.rs::advance_in_flight` записывал в `queue.confirmed` coinId монеты **сдачи**
+казначейства для **каждой** заявки в подтвердившемся батче — совпадало с реальным coinId заявки
+только случайно, для батча ровно из одной заявки (все существовавшие до этой волны тесты были
+именно такими). Для батча из N>1 заявок `GET /v1/play/withdrawals/{requestId}` отвечал бы одним и
+тем же (неверным для N-1 из них) coinId на все заявки батча.
+
+Фикс: `withdrawal_spend::build_play_withdrawal_batch` (`chain/c2-svc/src/play/withdrawal_spend.rs`)
+теперь считает и возвращает `payout_coin_ids: Vec<Bytes32>` — по одному на заявку, в том же
+порядке, что и входной `requests`, тем же способом (`Cat::child(r.to_puzzle_hash, r.amount_mojos)`),
+каким уже считается `next_coin` (монета сдачи, `Cat::child(owner.puzzle_hash, change_amount)`) —
+гарантированно совпадает с тем, что реально создаёт `Cat::spend_all` из того же самого условия
+`create_coin`, эмитированного для этой же заявки в том же цикле. Новое поле добавлено и в
+персистентный `InFlightWithdrawalBatch` (`withdrawal_queue.rs`), так что coinId переживает рестарт
+процесса, а не пересчитывается заново. `advance_in_flight` теперь `zip`-ит `requests` с
+`payout_coin_ids` вместо того, чтобы писать `next_coin_id` в цикле по `requests`.
+
+Тесты: `tests/play_withdrawals.rs::each_request_in_a_batch_gets_its_own_correct_coin_id_and_the_change_coin_is_not_reported`
+— батч из 3 заявок сквозь весь `WithdrawalPublisher`/`GET`-эквивалент (`status()`): каждая заявка
+получает свой, отличный от двух других id; ни один из трёх никогда не равен id монеты сдачи; плюс
+юнит-тест на уровне самого билдера (`play::withdrawal_spend::tests::
+each_request_in_a_batch_gets_its_own_distinct_payout_coin_id_and_the_change_coin_is_never_among_them`),
+который независимо пересчитывает ожидаемый coinId через `Coin::new` + `cat_chain::cat_puzzle_hash`
+напрямую (не через `Cat::child`), чтобы не проверять реализацию сама на себе. Старый
+однозаявочный тест `batch_withdrawal_pays_out_and_returns_change_to_treasury` обновлён — раньше он
+буквально утверждал старое (ошибочное) поведение как правильное.
+
+### 14.3 Баг 2 / фикс: самовосстановление казначейства («treasury self-heal»)
+
+До этой волны `operator.play.json` (кэш текущей монеты казначейства) не имел вообще никакой сверки
+с цепью — ровно тот класс риска, что §12 уже закрыло для оракульного синглтона («chain — источник
+истины позиции»), только для казначейской CAT-монеты оставался открытым (см. §13.3, «Открытый
+вопрос»). На практике это уже один раз потребовало ручного одноразового инструмента
+(`chain/c2-cli/examples/reconcile_play.rs`, написанного другой сессией во время предыдущей живой
+проверки) — теперь тот же класс проблемы решён автоматически, тем же принципом, что и у оракула, но
+без обхода линии генераций (обычная CAT-монета не announce-ит `requestId`/generation в
+структурированном виде, в отличие от синглтона — см. module doc `withdrawal_publisher.rs`).
+
+`WithdrawalPublisher::reconcile_treasury_with_chain` (`withdrawal_publisher.rs`) — вызывается при
+старте (`bootstrap_treasury_from_chain`, из `main.rs`, тем же местом и тем же принципом «до того как
+слушать порт или тикать», что и `Publisher::bootstrap_from_chain` для оракула) и на каждом
+`tick()`, **до** проверки `in_flight`/`pending`:
+
+1. Если есть `in_flight`-батч этого паблишера — реконсиляция не делает ничего: `in_flight.spent_coin`
+   по построению всегда равен текущему `operator.play.json`'s `coin` (`start_new_batch`/
+   `rebuild_in_flight` всегда строят батч именно из текущей закэшированной монеты), так что
+   «потраченность» кэшированной монеты в этом случае уже объяснена — дальше работает обычная логика
+   `advance_in_flight` (ждать/ретраить/ребилдить), не self-heal.
+2. Иначе — спрашивает `coin_record` закэшированной монеты. Если не потрачена (или ещё не
+   подтверждена) — ничего не делает (и снимает предыдущий флаг «застряло», если он был).
+3. Если потрачена — ищет текущие непотраченные PLAY CAT-монеты казначейского ключа
+   (`load_operator_wallet_key`'s индекс 0) через puzzle-hash-скан (`PlayChainClient::
+   coin_records_by_puzzle_hashes` на `cat_chain::cat_puzzle_hash(assetId, ownerPuzzleHash)` — тот же
+   единственный известный адрес, не gap-скан по индексам, в отличие от `find_cat_coin`) и
+   реконструирует родословную каждого кандидата через `Cat::parse_children` (декодирует puzzle
+   reveal + solution родителя, найденного через `ChainClient::coin_record`/`puzzle_and_solution`) —
+   та же техника, что `c2_cli::cat_chain::cat_from_coin_id`, но переписанная поверх дженерик-трейтов
+   `ChainClient`/`PlayChainClient`, а не конкретного `CoinsetClient`, специально чтобы юнит-теститься
+   на фейковом chain client. Из найденных непотраченных монет **никогда** не строит батч на
+   потраченной — либо усыновляет самую крупную (`max_by_key(amount)`), либо, если кандидатов нет
+   вовсе, помечает казначейство «застрявшим» (`treasury_stuck`).
+4. Застрявшее состояние всплывает в `GET /health` (не в отдельном `/v1/play/status` — такого
+   эндпоинта FIXED INTERFACE этой задачи не называет): `WithdrawalPublisher::health_check`
+   переиспользует тип `oracle::publisher::TickFailureState` (без переоракульных полей, просто общая
+   форма) для того же самого «N подряд неудачных tick() → деградация», которое §12.4 уже ввело для
+   оракула, плюс отдельный `treasury_stuck`-флаг именно для случая «нашли потраченной, замены нет».
+   `app.rs`'s `/health`-роут теперь читает оба паблишера (`HealthState<C>`, по образцу уже
+   существующего `PlayState<C>`) — деградация любого из двух деградирует весь роут, тем же образом,
+   каким раньше это делал только оракульный.
+
+Тесты (`tests/play_withdrawals.rs`, фейковый chain client, без сети/симулятора):
+- `treasury_self_heal_adopts_the_live_coin_when_the_cached_one_is_stale` — строит настоящий (не
+  фиктивный) спенд закэшированной монеты A билдером `withdrawal_spend::build_play_withdrawal_batch`
+  (сама заявка в нём не важна — важно, что это реальный, декодируемый `Cat::parse_children` спенд),
+  регистрирует A потраченной и её реального CAT-ребёнка B — непотраченным на фейковом chain client
+  (`set_spent`/`set_coin_record`/`set_puzzle_and_solution`/`add_puzzle_hash_record`, последние два —
+  новые методы `tests/play_common/mod.rs::FakePlayChainClient`), тикает без единой ожидающей заявки
+  — `operator.play.json` усыновляет B, `health_check()` остаётся `None`.
+- `treasury_self_heal_waits_when_our_own_in_flight_batch_explains_the_spent_coin` — свой собственный
+  батч в полёте, его же монета казначейства помечена потраченной на фейковом чейне (как будто спенд
+  уже подтвердился) — тик отвечает `WaitingForConfirmation` (обычная логика `advance_in_flight`,
+  `next_coin` ещё не подтверждён), кэш казначейства не тронут self-heal'ом.
+
+### 14.4 Баг 3 / фикс: `get_tip_height` — testnet11 отвечает float вместо целого
+
+`PlayChainClient::peak_height` (для `CoinsetChainClient`, `play/chain_client.rs`) звал
+`chia_sdk_coinset::CoinsetClient::get_blockchain_state()` — строго типизированный
+`BlockchainState`, чьё поле `peak: chia_protocol::BlockRecord` объявляет `height: u32`. testnet11
+время от времени отвечает `peak.height` JSON-числом с точкой (`0.0`) вместо целого — serde_json
+отказывается декодировать `u32` из числа-с-точкой, и весь ответ падает целиком (не только это одно
+поле) → `GET /v1/play/deposits` отвечал 500.
+
+Фикс: `peak_height` больше не использует типизированный `get_blockchain_state()` — вместо этого
+зовёт `ChiaRpcClient::make_post_request::<serde_json::Value, _>("get_blockchain_state", ...)`
+(тот же приём, что уже применён для `get_fee_estimate` в `oracle::chain_client::
+FeeEstimateResponse` — «моделировать только те поля, что реально нужны сервису») и достаёт из сырого
+`serde_json::Value` только `blockchain_state.peak.height`, толерантно к тому, что оно может прийти и
+как целое, и как float (`as_u64().or_else(|| as_f64().map(|f| f as u64))`), полностью игнорируя
+форму всех остальных полей. Вынесено в чистую синхронную функцию `parse_peak_height` — юнит-тестится
+без сети и без mock HTTP-сервера. Тесты (`play::chain_client::tests`): `tolerates_a_float_height_
+from_testnet11` — записанное (урезанное) тело реального ответа testnet11 с `"height": 0.0` (плюс
+посторонним полем `"sync_progress_height": "not-a-number"`, которое `BlockchainState` вообще не
+принял бы ни в каком виде — демонстрирует, что остальные поля действительно игнорируются);
+`still_works_for_an_ordinary_integer_height` — обычный целый `height`; `surfaces_a_get_blockchain_
+state_failure` — `success: false`; `rejects_a_missing_peak_height` — поле отсутствует вовсе.
+
+### 14.5 Задача 4: контрактные JSON-фикстуры для `/v1/play/*`
+
+`chain/c2-svc/tests/contract_fixtures.rs` (та же инфраструктура, что §15.5/волна 3 сервера уже
+завела для оракульных типов, `docs/research/server_design.md` §15.5) теперь пишет и фикстуры для
+`/v1/play/*`: `WithdrawalRequestDto`, `WithdrawalAcceptedResponse`,
+`WithdrawalStatusResponse_{confirmed,failed,queued}` (три состояния — показать явное присутствие/
+отсутствие `coinId`/`height`/`reason` по-разному, тем же принципом, что `AuthVerifyResponse_
+{valid,invalid}` уже показывает присутствие/отсутствие `reason`), `DepositAddressRequestDto`,
+`DepositAddressResponse`, `DepositsResponse` (со вложенным `DepositDto` — как и `OracleRecordDto`,
+отдельного файла на вложенный тип нет, только на верхнеуровневые request/response). Адреса в
+фикстурах — настоящие, полученные реальным путём деривации (`derive_wallet_key`/`play::deposit::
+deposit_address`), не руками наскриптованные строки — тот же принцип, что уже описан в шапке этого
+файла («genuine wire example, not a guess at one»). `WithdrawalRequestDto`/`DepositAddressRequestDto`
+получили `Serialize` (были только `Deserialize` — этот сервис их не сериализует в проде, только
+получает) ровно для этой цели, тем же прецедентом, что `oracle::types::OracleRecordDto` уже
+`Serialize + Deserialize`. Java-сторона (`server/`) читает эти файлы — не assigned path этой задачи
+(см. `ChainSvcContractFixturesTest`'s javadoc, зафиксировавший их отсутствие на момент §16
+`server_design.md` — эта волна их создаёт, добавление читающих кейсов в Java-тест — другая задача,
+другой агент).
+
+### 14.6 `c2-cli`: `send-play` обновляет `<name>.play.json` после успешного push
+
+До этой волны только `issue-play` писал `<name>.play.json` — `send-play` (перевод уже существующей
+CAT-монеты, в т.ч. монеты казначейства, если `--name` совпадает с оператором) никогда его не
+трогал, из-за чего один раз уже потребовался ручной инструмент (`chain/c2-cli/examples/
+reconcile_play.rs`, см. §14.3). `cmd_send_play` (`c2-cli/src/main.rs`) теперь, только после
+успешного (не dry-run) push, пересчитывает монету сдачи тем же способом (`cat.child(sender.
+puzzle_hash, result.change_amount)`, `Cat` — `Copy`, исходная переменная `cat` остаётся валидной
+после того, как её же копия была передана в `build_send_cat`) и перезаписывает `<name>.play.json`
+(`state::save_play_coin`) — тем же «не кэшировать до push» принципом, что уже соблюдает `issue-play`.
+Если сдачи нет (`change_amount == 0`, монета полностью израсходована) — кэш не трогается, с явным
+сообщением оператору, что для казначейского кошелька за это отвечает self-heal (§14.3) на следующем
+тике. Не покрыто офлайн-тестом (`cmd_send_play` — приватная функция бинарника `main.rs`, использует
+живой `chain::client()`) — тот же, уже задокументированный в §1/§13.5 прецедент для остального
+`chain.rs`/`cat_chain::find_cat_coin`: живое использование на testnet11, не офлайн-тест в этом
+проходе. Пример `reconcile_play.rs` оставлен как ручной аварийный инструмент (например, для
+кошелька, отличного от текущего казначейства), его doc-комментарий обновлён, чтобы не утверждать
+устаревшее «self-heal нет».
+
+### 14.7 Не сделано в этой волне
+
+- Реальные транзакции на testnet11 не отправлялись — см. §14.1.
+- Server-side (Java) кейсы, читающие новые `tests/contract/*Play*.json`/`*Withdrawal*.json`/
+  `*Deposit*.json` фикстуры (§14.5) — другой assigned path, другой агент, как и в §13.6.
+- Верхний предел/backoff на «навсегда потерянное» treasury self-heal (казначейство потрачено и
+  замены нет сколь угодно долго) сверх самого флага `treasury_stuck` — не запрошено; ровно тот же
+  объём, что и `WithdrawalTickOutcome::Failed` для отдельной заявки (§13.3), не для казначейства
+  целиком.
+- Полный обход линии генераций (`oracle/lineage.rs`'s эквивалент) для treasury CAT-монеты — по-прежнему
+  открытый вопрос (§13.3): self-heal смотрит только на текущее состояние «потрачена/нет», не
+  восстанавливает историю прошлых `requestId` из сырых CAT-спендов задним числом.

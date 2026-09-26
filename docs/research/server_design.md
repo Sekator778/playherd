@@ -934,3 +934,99 @@ verify`, никакого пересобранного образа/рестар
 - Контрактные JSON-фикстуры для `/v1/play/*` (см. врезку в начале §16) — появятся, когда
   `chain/c2-svc/tests/contract_fixtures.rs` их напишет; `ChainSvcContractFixturesTest` явно
   задокументирован как место, куда их добавить.
+
+## 17. Волна 5 (Р-53 live-verification follow-up, 2026-09-26) — три находки живой проверки
+
+Три пункта задания по итогам живой проверки стенда `herd` после волны 4 (§16): дубликат
+`PlayerRegistered` в `game_events`, ожидание контрактных фикстур `/v1/play/*` для
+`ChainSvcContractFixturesTest`, и per-request payout `coinId` в Withdrawal DTO. Assigned paths —
+`server/` и этот файл; `chain/`/`web/`/`engine/` не тронуты.
+
+### 17.1 Дубликат `PlayerRegistered` — причина и фикс
+
+**Причина** (буквально то, что нашла живая проверка): не гонка и не двойной клик — до этого прохода
+`GameService.registerOrTouchPlayer` **по дизайну** дописывало новый `PlayerRegistered` в
+`game_events` на КАЖДЫЙ успешный `authVerify`, включая возвращающегося игрока (предыдущая редакция
+javadoc так и говорила: «Always re-touches ensureSeasonPack via a fresh PlayerRegistered event,
+even for a returning player»). Значит два ряда для одного `playerId`/адреса (id 8985 и 9048 на
+живом стенде) — это ровно два обычных входа подряд, не баг гонки.
+
+**Фикс** — `GameService.registerOrTouchPlayer`: для нового игрока поведение не изменилось (один
+`PlayerRegistered` при первой регистрации). Для возвращающегося — перед тем как дописывать событие,
+читаем (без мутации) `LedgerBook.seasonRecord(playerId, Season.of(now))`: если запись уже есть,
+`ensureSeasonPack` всё равно был бы no-op (см. его же javadoc), значит новый вход в ТОМ ЖЕ сезоне
+теперь тоже no-op в логе — ничего не дописывается. Если сезон в самом деле сменился с последнего
+касания — событие пишется, как и раньше (это то, что держит рабочим Р-2 «стартовый пакет сразу при
+входе», см. `GameService.account`'s javadoc). Общий код записи вынесен в приватный
+`GameService.appendPlayerRegistered`, которым теперь пользуются и `registerOrTouchPlayer`, и
+`createBotPlayer` (было — дублирующийся `persist`+`apply`).
+
+**Толерантность реплея к уже существующим дубликатам** (id 8985/9048 и любым другим, уже
+записанным до фикса) — отдельного изменения не потребовалось: `EventApplier`'s `PlayerRegistered`
+case как раньше просто зовёт `ensureSeasonPack`, которая уже была идемпотентна по сезону (повторный
+вызов в том же сезоне — no-op, второго стартового пакета не начисляет). Фикс останавливает НОВЫЕ
+дубликаты, а не чинит модель, которая их и так уже переживала корректно.
+
+Тест — `server/src/test/java/crowdvsmarket/server/PlayerRegistrationIdempotencyTest.java`: два
+входа одним и тем же кошельком в одном сезоне → ровно один `PlayerRegistered` в `game_events`
+(читается напрямую через `EventStore.loadAll()`, не мок); отдельный кейс на обычную регистрацию
+нового игрока.
+
+### 17.2 `ChainSvcContractFixturesTest` — фикстуры `/v1/play/*` всё ещё не появились
+
+Поллинг `chain/c2-svc/tests/contract/` каждые 15с в течение 4 минут (2026-09-26, ~10:03–10:07 CEST)
+— по-прежнему только уже существовавшие `Auth*`/`Oracle*` фикстуры из §16-й врезки;
+`chain/c2-svc/tests/contract_fixtures.rs` по-прежнему не содержит ни одного `write_fixture` для
+Play. Ничего не добавлено в `ChainSvcContractFixturesTest` — фикстур-кейсы против несуществующих
+файлов просто упали бы. Класс дополнен только заметкой о повторной проверке (дата/длительность
+поллинга) поверх уже имевшейся врезки, которая описывает, какие кейсы добавить «когда
+`contract_fixtures.rs` их напишет» (по аналогии с уже существующими oracle-кейсами). Java-сторона (DTO
+`ChainSvcRestClient`/`ChainSvcClient`) уже сверена с реальными Rust-типами напрямую (§16-я врезка,
+не повторялось в этом проходе) — готова принять фикстуры, когда они появятся.
+
+### 17.3 Withdrawal DTO: `coinsetVerifyHint` + найденный chain-side баг per-request `coinId`
+
+`Ledger.WithdrawalRequestDto` получил новое аддитивное поле `coinsetVerifyHint` (не в
+`contract.ts`, тот же принцип, что и у `coinId`/`height`/`chainState` из §16): непустая строка вида
+`POST https://testnet11.api.coinset.org/get_coin_record_by_name {"name":"<coinId>"}` — готовая
+команда, которой игрок может сам, без доверия этому серверу, проверить свою выплаченную монету на
+публичном `coinset.org`, тем же способом, что `tools/verify-oracle/verify_oracle.py` уже делает для
+оракула (`docs/research/week1_chain_access.md` §3 — тот же базовый URL). `null`, пока `coinId`
+неизвестен. Строится статическим `Ledger.coinsetVerifyHint(coinId)`, вызывается из
+`WithdrawalDepositRepository.toWithdrawalDto` — единственного места, где этот DTO собирается.
+Хост захардкожен на testnet11 (не читается из `GameConfig.oracleNetwork()`), тем же принципом, что
+уже захардкожено «Network: testnet11» в сообщении для подписи в `AuthService` — пересмотреть, если
+проект когда-нибудь будет работать больше чем с одной сетью.
+
+**Побочная находка (не в объёме этого прохода, для агента `chain/`):** прямое чтение
+`chain/c2-svc/src/play/withdrawal_publisher.rs::advance_in_flight` (строки ~221–237) показывает,
+что подтверждённый `coin_id`, который сохраняется в `queue.confirmed` для КАЖДОЙ заявки в батче —
+это `in_flight.next_coin.coin_id()`, то есть id общей монеты сдачи казначейства (§13.2 в этом же
+файле), один и тот же для всех до 20 заявок батча, а не индивидуальная payout-монета конкретной
+заявки, реально отправленная на её `toAddress`. Задание прямо называет это ожидаемым и обещает
+починку на стороне `chain/` («it will be corrected on the chain side») — здесь это не тронуто (вне
+assigned paths этого прохода), но задокументировано в javadoc `Ledger.WithdrawalRequestDto` с точной
+ссылкой на файл/диапазон строк, чтобы `chain/`-агент нашёл её без повторного ревью. Серверная сторона
+уже готова: она передаёт `coinId` от chainsvc как есть, без своей интерпретации — когда починка
+на chain-стороне будет сделана, `coinId`/`coinsetVerifyHint` автоматически станут корректными без
+дополнительных изменений здесь.
+
+### 17.4 Тесты и реальные числа
+
+`mvn -s ~/.m2/settings-oss.xml -f pom.xml -pl engine,server -am clean verify`, 2026-09-26 (стенд
+`herd-*` не тронут — `docker ps` до/после идентичен, эфемерные Testcontainers-контейнеры Postgres/
+Ryuk от `mvn verify` убраны Ryuk'ом автоматически): `engine` — **6531, 0 упавших** (без изменений —
+задача не трогала `engine/`). `server` — **142, 0 упавших** (было 140 в §16.7; +2 —
+`PlayerRegistrationIdempotencyTest`); `PlayOnChainTest` остался 11 тестов (добавлены только новые
+`assertThat`-проверки `coinsetVerifyHint` внутри уже существующих кейсов, не новые методы),
+`ChainSvcContractFixturesTest` остался 7 (без новых кейсов, см. §17.2). Реактор целиком: **6673
+теста, 0 упавших, 0 ошибок**, `BUILD SUCCESS`.
+
+### 17.5 Не сделано в этом проходе
+
+- Сам chain-side баг «shared batch coin_id вместо per-request payout coin_id» (§17.3) — не
+  починен, это `chain/`, не `server/`.
+- Контрактные JSON-фикстуры `/v1/play/*` — по-прежнему не появились после 4-минутного поллинга
+  (§17.2); `ChainSvcContractFixturesTest` остаётся готов принять их.
+- Сезонный touch без входа (например, скорректировать читающие пути, чтобы не зависеть от логина
+  для видимости нового стартового пакета) — не запрошено, вне объёма фикса дубликата.

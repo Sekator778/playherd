@@ -11,7 +11,11 @@ use serde::{Deserialize, Serialize};
 use c2_cli::keys::TXCH_PREFIX;
 
 /// Wire shape of `POST /v1/play/withdrawals`'s body (exact field names).
-#[derive(Debug, Clone, Deserialize)]
+/// `Serialize` too (this service itself only ever deserializes it -- it's
+/// the request side) so `tests/contract_fixtures.rs` can write a genuine
+/// example straight from this type, same as `oracle::types::OracleRecordDto`
+/// already does for its own request DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WithdrawalRequestDto {
     pub request_id: String,
@@ -74,8 +78,9 @@ pub struct WithdrawalStatusResponse {
     pub reason: Option<String>,
 }
 
-/// `POST /v1/play/deposit-address`'s body.
-#[derive(Debug, Clone, Deserialize)]
+/// `POST /v1/play/deposit-address`'s body. `Serialize` too, same reason as
+/// `WithdrawalRequestDto`'s own doc comment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DepositAddressRequestDto {
     pub player_index: u32,

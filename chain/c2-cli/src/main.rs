@@ -327,7 +327,41 @@ async fn cmd_send_play(name: String, asset_id: String, to: String, amount: u64, 
     println!("sent {amount} CAT mojos of asset {asset_id} to {to}");
     println!("change to self: {} CAT mojos", result.change_amount);
 
-    maybe_push(&client, coin_spends, signature, push).await.map(drop)
+    let pushed = maybe_push(&client, coin_spends, signature, push).await?;
+    // Task fix (`docs/research/chain_service.md` §13): `c2-svc`'s
+    // `WithdrawalPublisher` treats `<name>.play.json` as the treasury's
+    // current PLAY CAT coin -- an operator running `send-play` on that same
+    // wallet (manual top-up/consolidation) used to leave that cache pointing
+    // at a now-spent coin (only `issue-play` ever wrote it), relying
+    // entirely on the service's own self-heal to notice and adopt the
+    // replacement on its next tick. Refreshing it here too (only once the
+    // spend actually landed on chain, same "never cache before push
+    // succeeds" rule `issue-play` above already follows) means the on-disk
+    // cache is never stale in the first place for this operator's own
+    // actions -- self-heal remains the backstop for everything else (a
+    // crash mid-spend, a restored/stale file, chain reorgs). `cat` is still
+    // valid here (`Cat` is `Copy`; it was only ever *copied* into
+    // `build_send_cat` above, not moved out from under this binding).
+    if pushed {
+        if result.change_amount > 0 {
+            let next_cat = cat.child(sender.puzzle_hash, result.change_amount);
+            let lineage_proof = next_cat
+                .lineage_proof
+                .context("internal error: send-play change CAT coin has no lineage proof")?;
+            let play_state = state::PlayCoinState::new(asset_id, next_cat.coin, lineage_proof);
+            let path = state::save_play_coin(&name, &play_state)?;
+            println!("refreshed cached PLAY coin: {}", path.display());
+        } else {
+            println!(
+                "send-play fully drained the spent coin (no change) -- {name}.play.json left \
+                 unchanged; if this was the treasury wallet, c2-svc's own self-heal will adopt \
+                 the correct coin from chain on its next tick"
+            );
+        }
+    } else {
+        println!("dry run: PLAY coin cache left unchanged (nothing was broadcast)");
+    }
+    Ok(())
 }
 
 // --- issue-play ------------------------------------------------------------

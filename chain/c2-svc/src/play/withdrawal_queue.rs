@@ -62,6 +62,13 @@ pub struct InFlightWithdrawalBatch {
     /// Requests this batch pays out, in the order they were taken from
     /// `pending` (`WithdrawalQueueFile::take_batch`).
     pub requests: Vec<WithdrawalRequest>,
+    /// `requests[i]`'s own payout coin id, same order and same length as
+    /// `requests` (task fix, `docs/research/chain_service.md` §13:
+    /// `advance_in_flight` used to record every request in a batch as
+    /// confirmed at the treasury's *change* coin's id instead of each
+    /// request's own -- see `withdrawal_spend::WithdrawalBatchResult::
+    /// payout_coin_ids`'s doc comment for how these are computed).
+    pub payout_coin_ids: Vec<Bytes32>,
     /// The treasury PLAY CAT coin this spend consumes (== `PlayCoinState::
     /// coin` at the time this batch was built).
     pub spent_coin: Coin,
@@ -201,6 +208,7 @@ mod tests {
 
         let batch = queue.take_batch(10);
         queue.in_flight = Some(InFlightWithdrawalBatch {
+            payout_coin_ids: vec![Bytes32::from([3u8; 32])],
             requests: batch,
             spent_coin: Coin::new(Bytes32::from([0u8; 32]), Bytes32::from([0u8; 32]), 1),
             next_coin: Coin::new(Bytes32::from([0u8; 32]), Bytes32::from([0u8; 32]), 1),

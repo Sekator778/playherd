@@ -114,11 +114,12 @@ public class WithdrawalDepositRepository {
         if (rs.wasNull()) {
             height = null;
         }
+        String coinId = rs.getString("coin_id");
         return new Ledger.WithdrawalRequestDto(rs.getString("request_id"), rs.getString("player_id"),
                 BigDecimal.valueOf(rs.getLong("amount_mojos"), 3).toPlainString(),
                 Enums.WithdrawalState.valueOf(rs.getString("state")), rs.getLong("requested_at_ms"),
-                rs.getString("to_address"), rs.getString("chain_state"), rs.getString("coin_id"), height,
-                rs.getString("failure_reason"));
+                rs.getString("to_address"), rs.getString("chain_state"), coinId, height,
+                rs.getString("failure_reason"), Ledger.coinsetVerifyHint(coinId));
     }
 
     public void insertDeposit(Connection c, String requestId, String playerId, long amountMojos, long atMs)

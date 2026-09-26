@@ -1,13 +1,19 @@
-//! One-off operational tool (live-verification reconciliation, 2026-09-26): re-derives the
-//! operator's current on-chain PLAY treasury coin (via the same gap-scan + lineage
-//! reconstruction `send-play`/`play-balance` already use) and refreshes
+//! One-off operational tool (originally written for live-verification reconciliation,
+//! 2026-09-26): re-derives the operator's current on-chain PLAY treasury coin (via the same
+//! gap-scan + lineage reconstruction `send-play`/`play-balance` already use) and refreshes
 //! `~/.c2/testnet11/operator.play.json` to match — read-only against chain, no spend, no key
-//! material printed. Needed because `operator.play.json` was stale (last written by
-//! `issue-play`'s genesis mint) after a later `c2 send-play --name operator` funded the
-//! counterparty wallet, which never updates that cache (see `cmd_send_play` — it has no
-//! `save_play_coin` call, unlike `cmd_issue_play`). `chain/c2-svc`'s withdrawal publisher trusts
-//! this file as-is and has no chain-lineage self-heal for it (unlike the oracle publisher's
-//! §11/§12 fixes), so a stale cache here permanently stalls every withdrawal batch.
+//! material printed.
+//!
+//! Written because `operator.play.json` was stale (last written by `issue-play`'s genesis mint)
+//! after a later `c2 send-play --name operator` funded the counterparty wallet, and neither
+//! `cmd_send_play` nor `chain/c2-svc`'s withdrawal publisher itself noticed or fixed that at the
+//! time. Both gaps are closed now (decision Р-53 follow-up, `docs/research/chain_service.md` §13):
+//! `cmd_send_play` refreshes `<name>.play.json` itself after a successful push, and
+//! `WithdrawalPublisher` self-heals a stale/spent cached coin from the chain at startup and on
+//! every tick (adopting the largest unspent PLAY CAT coin it finds for the treasury key). This
+//! tool is kept only as a manual escape hatch (e.g. reconciling a wallet other than the live
+//! treasury, or forcing an immediate fix without waiting for the next tick) — it is no longer load-
+//! bearing for the treasury's own correctness.
 use anyhow::{Context, Result};
 use bip39::Mnemonic;
 use c2_cli::{cat_chain, chain, keys, keystore, state};

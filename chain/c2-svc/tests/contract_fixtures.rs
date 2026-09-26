@@ -18,11 +18,19 @@
 //! whenever a wire type's shape changes, so the Java side's test catches the drift instead of it
 //! only ever being observed live.
 
+use c2_cli::keys::{TXCH_PREFIX, derive_wallet_key, generate_mnemonic, master_sk_from_mnemonic};
 use c2_svc::auth::{AuthVerifyRequest, AuthVerifyResponse, verify};
 use c2_svc::oracle::types::{
     OracleRecordDto, OracleRecordStatusResponse, OracleRecordsRequest, OracleRecordsResponse, OracleStatusResponse,
     Source,
 };
+use c2_svc::play::deposit::deposit_address;
+use c2_svc::play::types::{
+    DepositAddressRequestDto, DepositAddressResponse, DepositDto, DepositsResponse, WithdrawalAcceptedResponse,
+    WithdrawalRequestDto, WithdrawalStatusResponse,
+};
+use chia_protocol::Bytes32;
+use chia_sdk_utils::Address;
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
@@ -129,4 +137,79 @@ fn write_contract_fixtures() {
         conflicts: vec![],
     };
     write_fixture("OracleStatusResponse", &status);
+
+    // --- POST /v1/play/withdrawals, GET /v1/play/withdrawals/{requestId} ---
+    // (Р-6, decision Р-53 2026-09-26, docs/research/chain_service.md §13). A
+    // genuine txch1... address (not a hand-typed string), same "real
+    // production code path" preference the auth fixtures above follow.
+    let mnemonic = generate_mnemonic().expect("generate mnemonic for play fixtures");
+    let master_sk = master_sk_from_mnemonic(&mnemonic);
+    let player_wallet = derive_wallet_key(&master_sk, 0);
+    let player_address =
+        Address::new(player_wallet.puzzle_hash, TXCH_PREFIX.to_string()).encode().expect("encode player address");
+
+    let withdrawal_request =
+        WithdrawalRequestDto { request_id: "w-205".to_string(), to_address: player_address, amount_mojos: 500_000 };
+    write_fixture("WithdrawalRequestDto", &withdrawal_request);
+
+    write_fixture("WithdrawalAcceptedResponse", &WithdrawalAcceptedResponse { accepted: true });
+
+    write_fixture(
+        "WithdrawalStatusResponse_confirmed",
+        &WithdrawalStatusResponse {
+            request_id: "w-205".to_string(),
+            state: "confirmed",
+            coin_id: Some(format!("0x{}", "ab".repeat(32))),
+            height: Some(4_737_632),
+            reason: None,
+        },
+    );
+    write_fixture(
+        "WithdrawalStatusResponse_failed",
+        &WithdrawalStatusResponse {
+            request_id: "w-206".to_string(),
+            state: "failed",
+            coin_id: None,
+            height: None,
+            reason: Some(
+                "bundle 0xdeadbeef exceeded 5 retry attempts (fee cap of 50000000 mojos reached): \
+                 INVALID_FEE_TOO_CLOSE_TO_ZERO"
+                    .to_string(),
+            ),
+        },
+    );
+    write_fixture(
+        "WithdrawalStatusResponse_queued",
+        &WithdrawalStatusResponse { request_id: "w-207".to_string(), state: "queued", coin_id: None, height: None, reason: None },
+    );
+
+    // --- POST /v1/play/deposit-address, GET /v1/play/deposits ---
+    write_fixture("DepositAddressRequestDto", &DepositAddressRequestDto { player_index: 7 });
+
+    // Real derivation (`play::deposit::deposit_address`, not a hand-copied
+    // address), same asset id convention (a repeated byte) the oracle
+    // fixtures above already use for a placeholder 32-byte hash.
+    let play_asset_id = Bytes32::from([0xabu8; 32]);
+    let derived = deposit_address(&master_sk, play_asset_id, 7).expect("derive deposit address for fixtures");
+    write_fixture(
+        "DepositAddressResponse",
+        &DepositAddressResponse {
+            address: derived.address,
+            inner_puzzle_hash: format!("0x{}", derived.wallet_key.puzzle_hash),
+            cat_puzzle_hash: format!("0x{}", derived.cat_puzzle_hash),
+        },
+    );
+
+    write_fixture(
+        "DepositsResponse",
+        &DepositsResponse {
+            deposits: vec![DepositDto {
+                coin_id: format!("0x{}", "12".repeat(32)),
+                player_index: 7,
+                amount_mojos: 250_000,
+                height: 4_737_640,
+            }],
+            tip_height: 4_737_650,
+        },
+    );
 }

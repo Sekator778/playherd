@@ -1,0 +1,7 @@
+{
+  "requestId": "w-206",
+  "state": "failed",
+  "coinId": null,
+  "height": null,
+  "reason": "bundle 0xdeadbeef exceeded 5 retry attempts (fee cap of 50000000 mojos reached): INVALID_FEE_TOO_CLOSE_TO_ZERO"
+}

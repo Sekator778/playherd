@@ -80,6 +80,9 @@ async fn main() -> Result<()> {
         max_fee_mojos: config.max_fee_mojos,
         fee_target_time_secs: 60,
         queue_lock: tokio::sync::Mutex::new(()),
+        treasury_stuck: tokio::sync::RwLock::new(None),
+        tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
+        tick_failure_threshold: config.tick_failure_threshold,
     });
     let deposit_service = Arc::new(DepositService {
         data_dir: config.data_dir.clone(),
@@ -109,6 +112,17 @@ async fn main() -> Result<()> {
         conflicts = bootstrap_outcome.new_conflicts.len(),
         "startup chain-lineage bootstrap complete"
     );
+
+    // PLAY treasury self-heal (decision Р-53 follow-up, `docs/research/
+    // chain_service.md` §13): same "before accepting or publishing
+    // anything" precedent as the oracle bootstrap just above -- reconcile
+    // the cached treasury PLAY CAT coin against the chain before the
+    // periodic loops below start ticking. A no-op (not an error) when
+    // there's no treasury minted yet (`c2 issue-play` not run).
+    withdrawal_publisher
+        .bootstrap_treasury_from_chain()
+        .await
+        .context("startup PLAY treasury reconciliation (docs/research/chain_service.md §13) failed")?;
 
     // Background oracle-publisher loop: advances in-flight spends /
     // starts new batches from the durable queue on a fixed tick, so a

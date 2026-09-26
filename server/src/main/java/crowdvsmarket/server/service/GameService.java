@@ -213,12 +213,26 @@ public class GameService {
 
     /** Called at the end of every successful {@code authVerify} — both a brand-new player
      *  (Р-1/Р-4: identity key = the address signed with at registration) and a returning one
-     *  (Р-1: "later логины must sign with the same address"). Always re-touches
-     *  {@code ensureSeasonPack} via a fresh {@code PlayerRegistered} event, even for a returning
-     *  player: that is what keeps {@code LedgerBook}'s own (otherwise unexposed) notion of "the
-     *  player's current season" accurate without this server needing its own copy of it — see
-     *  {@link #account}'s javadoc. Idempotent to call every login: a season that has not rolled
-     *  over since the last touch is a no-op inside {@code ensureSeasonPack} itself. */
+     *  (Р-1: "later логины must sign with the same address").
+     *
+     * <p><b>Task item 1 fix (live-verification finding, Р-53 follow-up, 2026-09-26):</b> this used
+     * to unconditionally append a fresh {@code PlayerRegistered} event on EVERY sign-in, by design
+     * (the previous revision of this javadoc said so explicitly) — which is exactly why
+     * {@code game_events} showed two {@code PlayerRegistered} rows for the same {@code playerId}
+     * (ids 8985/9048 on the live stand) after nothing more than a second, completely ordinary
+     * sign-in. Now a returning player only gets a fresh event when it would actually change ledger
+     * state: {@link LedgerBook#seasonRecord} tells us, without mutating anything, whether this
+     * player has already touched {@code now}'s season — if so, {@code ensureSeasonPack} would be a
+     * no-op anyway (see its own javadoc), so nothing is appended; a plain re-login within the same
+     * season is now a true no-op in the log, not another row. A brand-new player, or a returning
+     * one whose season genuinely rolled over since their last touch, still gets one — that is what
+     * keeps the Р-2 "starter pack immediately at sign-in" behavior working (see {@link #account}'s
+     * javadoc) and what {@code EngineRebuildService}'s replay needs to reproduce the exact same
+     * starter-pack credit after a restart. Replay of the OLD, already-persisted duplicate rows is
+     * unaffected and safe without any change here — {@code EventApplier}'s {@code PlayerRegistered}
+     * case has always just called {@code ensureSeasonPack}, which was already idempotent per season
+     * (applying the same-season duplicate a second time is a no-op); see
+     * {@code PlayerRegistrationIdempotencyTest}. */
     public record PlayerTouchResult(Identity.PlayerSummaryDto player, boolean isNewPlayer) {
     }
 
@@ -236,16 +250,28 @@ public class GameService {
                     players.insert(c, finalPlayerId, walletAddress, null, false, null, playerIndex, nowMs);
                     return null;
                 });
+                appendPlayerRegistered(playerId, nowMs);
             } else {
                 playerId = existing.get();
+                Season season = Season.of(Instant.ofEpochMilli(nowMs));
+                boolean seasonAlreadyTouched = hub.ledger().seasonRecord(playerId, season).isPresent();
+                if (!seasonAlreadyTouched) {
+                    appendPlayerRegistered(playerId, nowMs);
+                }
             }
-            GameEvent.PlayerRegistered event = new GameEvent.PlayerRegistered(playerId, nowMs);
-            persist(event, nowMs);
-            eventApplier.apply(event);
             return new PlayerTouchResult(summary(playerId), isNew);
         } finally {
             engineLock.writeLock().unlock();
         }
+    }
+
+    /** Shared by {@link #registerOrTouchPlayer} (new-player and season-rollover-touch cases) and
+     *  {@link #createBotPlayer} — the one place a {@code PlayerRegistered} event is actually
+     *  persisted+applied, so there is exactly one code path to reason about for task item 1's fix. */
+    private void appendPlayerRegistered(String playerId, long nowMs) {
+        GameEvent.PlayerRegistered event = new GameEvent.PlayerRegistered(playerId, nowMs);
+        persist(event, nowMs);
+        eventApplier.apply(event);
     }
 
     /** Used by {@code BotService} to create the 20 labelled bot players once (Р-46), and (with
@@ -261,8 +287,7 @@ public class GameService {
                 players.insert(c, playerId, walletAddress, nickname, true, strategy, playerIndex, nowMs);
                 return null;
             });
-            persist(new GameEvent.PlayerRegistered(playerId, nowMs), nowMs);
-            eventApplier.apply(new GameEvent.PlayerRegistered(playerId, nowMs));
+            appendPlayerRegistered(playerId, nowMs);
             return summary(playerId);
         } finally {
             engineLock.writeLock().unlock();
@@ -722,8 +747,10 @@ public class GameService {
     /** Предложение: {@code currentSeason} is reported as wall-clock "now"'s season, not
      *  {@code LedgerBook}'s own (unexposed) {@code PlayerAccount.currentSeason()} field — accurate
      *  as long as the player has touched the ledger at least once since the season rolled over,
-     *  which every sign-in already guarantees ({@link #registerOrTouchPlayer} always re-runs
-     *  {@code ensureSeasonPack}, see its javadoc), so this is exact for any realistic session. */
+     *  which every sign-in still guarantees ({@link #registerOrTouchPlayer} touches
+     *  {@code ensureSeasonPack} — via a persisted event only when the touch is not already a
+     *  no-op, see its javadoc for the task item 1 fix — so this is exact for any realistic
+     *  session). */
     public Ledger.PlayerAccountDto account(String playerId) {
         ensurePlayerKnown(playerId);
         engineLock.readLock().lock();

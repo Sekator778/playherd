@@ -19,7 +19,13 @@ public sealed interface GameEvent {
 
     /** Grants a first-activity-in-season starter pack immediately at sign-in (Р-2), rather than
      *  waiting for the player's first bet — {@code LedgerBook.ensureSeasonPack} is idempotent
-     *  per season, so this is safe to also happen implicitly again later via a bet/withdrawal. */
+     *  per season, so this is safe to also happen implicitly again later via a bet/withdrawal, and
+     *  tolerates being applied twice for the same season without granting a second starter pack
+     *  (relied on by replay of any already-persisted duplicate row, see
+     *  {@code GameService#registerOrTouchPlayer}'s task item 1 fix javadoc). Since that fix,
+     *  {@code GameService} only actually appends one of these for a brand-new player or a genuine
+     *  season rollover — not on every plain re-login — but a historical duplicate from before the
+     *  fix must still replay safely, which is exactly what this idempotency already gives for free. */
     record PlayerRegistered(String playerId, long atMs) implements GameEvent {
     }
 

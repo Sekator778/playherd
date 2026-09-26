@@ -43,6 +43,14 @@ import org.junit.jupiter.api.Test;
  * cases for the shapes assumed — but deliberately NOT extended here with fixture-reading cases
  * that would fail on the still-missing JSON files. Add the analogous cases here (mirroring the
  * existing oracle ones below) once {@code contract_fixtures.rs} actually writes them.
+ *
+ * <p><b>Re-checked 2026-09-26 (later the same day, task item 2 of the Р-53 live-verification
+ * follow-up):</b> polled {@code chain/c2-svc/tests/contract/} for up to 4 minutes (the chain-side
+ * agent was reported to be writing these fixtures in parallel) — still only the pre-existing
+ * auth/oracle fixtures listed above; {@code contract_fixtures.rs} still has no {@code write_fixture}
+ * call for anything Play-related. Nothing added here as a result — adding cases against files that
+ * do not exist would just fail the build — so this note, and the one above it, are what "the Java
+ * side is kept ready" means until a follow-up pass finds the fixtures actually present.
  */
 @QuarkusTest
 class ChainSvcContractFixturesTest {

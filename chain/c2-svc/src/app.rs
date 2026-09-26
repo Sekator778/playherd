@@ -51,6 +51,23 @@ impl<C: PlayChainClient> Clone for PlayState<C> {
     }
 }
 
+/// `GET /health`'s state (task requirement, decision Р-53 follow-up:
+/// "surface stuck state in status/health like the oracle") -- bundles both
+/// publishers' `health_check` behind one route, rather than only the
+/// oracle's own as before: a wedged PLAY treasury (self-heal found the
+/// cached coin spent with no unspent replacement) now degrades `GET /health`
+/// exactly the way a wedged oracle singleton spend already did.
+struct HealthState<C: PlayChainClient> {
+    oracle: Arc<Publisher<C>>,
+    withdrawals: Arc<WithdrawalPublisher<C>>,
+}
+
+impl<C: PlayChainClient> Clone for HealthState<C> {
+    fn clone(&self) -> Self {
+        Self { oracle: self.oracle.clone(), withdrawals: self.withdrawals.clone() }
+    }
+}
+
 /// FIXED INTERFACE (a): every `/v1/*` route requires
 /// `Authorization: Bearer <token>` (`service_auth::require_bearer_token`);
 /// `GET /health` never does -- it's registered on a separate router merged
@@ -72,7 +89,7 @@ where
         .route("/v1/oracle/records/:seq", get(oracle_record_status::<C>))
         .route("/v1/oracle/status", get(oracle_status::<C>))
         .with_state(publisher.clone());
-    let play_state = PlayState { withdrawals: withdrawal_publisher, deposits: deposit_service };
+    let play_state = PlayState { withdrawals: withdrawal_publisher.clone(), deposits: deposit_service };
     let play_routes = Router::new()
         .route("/v1/play/withdrawals", post(play_withdrawals::<C>))
         .route("/v1/play/withdrawals/:request_id", get(play_withdrawal_status::<C>))
@@ -83,16 +100,19 @@ where
         .merge(play_routes)
         .layer(axum::middleware::from_fn_with_state(svc_token_state, require_bearer_token));
 
-    // Task fix (`docs/research/chain_service.md` §12): `/health` now reads
-    // `Publisher::health_check` (a local-only read, never a network call --
-    // see that method's doc comment) so a wedged publisher (repeated tick
-    // failures, or a specific in-flight spend stuck past its retry budget)
-    // makes this route itself report degraded, not just `GET
-    // /v1/oracle/status`. It needs its own `.with_state(...)` (a plain
-    // `Json<HealthResponse>` health used to need none) -- still a completely
-    // separate `Router` from `protected`, merged in the same order as
-    // before, so it's still never touched by the auth middleware above.
-    Router::new().route("/health", get(health::<C>)).with_state(publisher).merge(protected)
+    // Task fix (`docs/research/chain_service.md` §12, extended by the Р-53
+    // follow-up "treasury self-heal", §13): `/health` reads both `Publisher::
+    // health_check` (oracle) and `WithdrawalPublisher::health_check` (PLAY
+    // treasury) -- local-only reads, never a network call (see either
+    // method's doc comment) -- so a wedged oracle singleton spend OR a
+    // wedged PLAY treasury (self-heal found the cached coin spent with no
+    // unspent replacement) makes this route itself report degraded, not
+    // just `GET /v1/oracle/status`. It needs its own `.with_state(...)` --
+    // still a completely separate `Router` from `protected`, merged in the
+    // same order as before, so it's still never touched by the auth
+    // middleware above.
+    let health_state = HealthState { oracle: publisher, withdrawals: withdrawal_publisher };
+    Router::new().route("/health", get(health::<C>)).with_state(health_state).merge(protected)
 }
 
 #[derive(Serialize)]
@@ -104,15 +124,23 @@ struct HealthResponse {
     reason: Option<String>,
 }
 
-async fn health<C: ChainClient>(State(publisher): State<Arc<Publisher<C>>>) -> Response {
-    let degraded = match publisher.health_check().await {
+async fn health<C: PlayChainClient>(State(state): State<HealthState<C>>) -> Response {
+    let oracle_degraded = match state.oracle.health_check().await {
         Ok(reason) => reason,
         // A genuinely unreadable/corrupt local queue file is exactly the
         // kind of unknown state `/health` should never paper over as
         // healthy -- fail toward "unhealthy", same direction `main.rs`'s own
         // startup bootstrap already fails closed in.
-        Err(e) => Some(format!("queue file unreadable: {e:#}")),
+        Err(e) => Some(format!("oracle queue file unreadable: {e:#}")),
     };
+    let withdrawal_degraded = match state.withdrawals.health_check().await {
+        Ok(reason) => reason,
+        Err(e) => Some(format!("withdrawal queue file unreadable: {e:#}")),
+    };
+    // Oracle checked first (same priority precedent `Publisher::
+    // degraded_reason` itself uses between its own two signals) -- either
+    // one degrades the whole route, task requirement: "like the oracle".
+    let degraded = oracle_degraded.or(withdrawal_degraded);
     match degraded {
         None => (StatusCode::OK, Json(HealthResponse { ok: true, reason: None })).into_response(),
         Some(reason) => {

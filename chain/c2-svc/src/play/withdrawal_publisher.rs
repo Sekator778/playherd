@@ -21,9 +21,9 @@
 //! contorting the oracle one (already hardened by three real incidents,
 //! `docs/research/chain_service.md` §9/§11/§12 -- not touched by this task)
 //! or losing the "obviously mirrors the proven design" readability the task
-//! asks for. There is also deliberately no chain-lineage-walk reconciliation
-//! here (`oracle/lineage.rs`'s equivalent): a plain CAT coin isn't a
-//! singleton with one linear lineage announced via `CREATE_PUZZLE_
+//! asks for. There is also deliberately no chain-lineage-*walk*
+//! reconciliation here (`oracle/lineage.rs`'s equivalent): a plain CAT coin
+//! isn't a singleton with one linear lineage announced via `CREATE_PUZZLE_
 //! ANNOUNCEMENT` the way the oracle is -- reconstructing "every requestId
 //! this treasury coin's lineage has ever paid out" from raw CAT spends alone
 //! (no `seq`-shaped announcement to decode) is materially harder and is left
@@ -31,23 +31,40 @@
 //! this publisher's own durable queue file is its only source of truth for
 //! `requestId` state, same as it was for the oracle queue before §11's fix
 //! (a real, understood risk, not an oversight).
+//!
+//! What *is* reused here (decision Р-53 follow-up, "treasury self-heal",
+//! `docs/research/chain_service.md` §13): the oracle's §12 principle "make
+//! the chain the source of truth for our own position" -- `tick()` (and
+//! `bootstrap_treasury_from_chain` at startup) reconciles the cached
+//! treasury coin (`operator.play.json`) against the chain every cycle
+//! (`reconcile_treasury_with_chain`) and, if it's spent with no in-flight
+//! batch of ours explaining it, finds and adopts the largest unspent PLAY
+//! CAT coin the treasury key actually owns (puzzle-hash lookup +
+//! `Cat::parse_children` lineage reconstruction) rather than ever building a
+//! new batch on a coin the chain already shows spent. Unlike the oracle's
+//! own reconciliation this is a single current-coin check, not a
+//! generation-by-generation walk -- see the paragraph above for why a walk
+//! isn't the right tool here.
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use chia_bls::Signature;
-use chia_protocol::SpendBundle;
+use chia_protocol::{Bytes32, SpendBundle};
 use chia_puzzle_types::Proof;
-use chia_sdk_driver::{Cat, CatInfo};
+use chia_sdk_driver::{Cat, CatInfo, Puzzle};
+use clvmr::{Allocator, serde::node_from_bytes};
 use sha2::{Digest, Sha256};
 
 use c2_cli::builders::fee::build_fee_only;
+use c2_cli::cat_chain::cat_puzzle_hash;
 use c2_cli::cost::measure_bundle_cost;
 use c2_cli::keys::WalletKey;
 use c2_cli::state::PlayCoinState;
 
 use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
+use crate::oracle::publisher::TickFailureState;
 use crate::play_state_file::{load_play_state, save_play_state_atomic};
 
 use super::chain_client::PlayChainClient;
@@ -106,6 +123,31 @@ pub struct WithdrawalPublisher<C: PlayChainClient> {
     /// durable queue file -- same root-cause fix as `oracle::publisher::
     /// Publisher::queue_lock` (`docs/research/chain_service.md` §10).
     pub queue_lock: tokio::sync::Mutex<()>,
+    /// Set by `reconcile_treasury_with_chain` when the cached PLAY treasury
+    /// coin is spent on chain, no in-flight batch of ours explains it, AND
+    /// no unspent replacement PLAY CAT coin was found for the treasury key
+    /// -- needs manual operator reconciliation. Cleared the moment
+    /// reconciliation next finds the cached coin fine or successfully
+    /// adopts a replacement. Read by `health_check` (task requirement:
+    /// "surface stuck state in status/health like the oracle").
+    pub treasury_stuck: tokio::sync::RwLock<Option<String>>,
+    /// Reused from `oracle::publisher` (same shape, no oracle-specific
+    /// fields) rather than redeclared -- `tick()`'s public wrapper records
+    /// every `tick_once()` outcome into this exactly the way `oracle::
+    /// publisher::Publisher::tick` does into its own (`docs/research/
+    /// chain_service.md` §12: "any repeated tick failure (N consecutive)
+    /// must set stuckReason ... and /health must report degraded"), so a
+    /// hard failure *before* `reconcile_treasury_with_chain` ever gets to
+    /// classify a spent coin as healed-or-stuck (e.g. the chain itself being
+    /// unreachable) is still surfaced via `health_check`, not silently
+    /// swallowed the way it would be if only `treasury_stuck` above existed.
+    pub tick_failures: tokio::sync::RwLock<TickFailureState>,
+    /// N consecutive `tick()` failures before `health_check` reports
+    /// degraded -- same knob (`Config::tick_failure_threshold`,
+    /// `C2_TICK_FAILURE_THRESHOLD`) `main.rs` already passes the oracle
+    /// `Publisher`, reused rather than adding a second, parallel env var for
+    /// what is the exact same kind of signal.
+    pub tick_failure_threshold: u32,
 }
 
 impl<C: PlayChainClient> WithdrawalPublisher<C> {
@@ -200,9 +242,234 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
         Ok((owner, cat))
     }
 
+    /// Startup bootstrap (task requirement: "at startup and every tick",
+    /// `docs/research/chain_service.md` §13) -- `main.rs` calls this once,
+    /// synchronously, before opening any listener or spawning the periodic
+    /// `tick()` loop, same "reconcile with the chain before accepting or
+    /// publishing anything" precedent the oracle publisher's own
+    /// `bootstrap_from_chain` sets (`docs/research/chain_service.md` §11).
+    /// Safe to call again later too -- it's the exact same reconciliation
+    /// `tick()` also runs on every regular cycle.
+    pub async fn bootstrap_treasury_from_chain(&self) -> Result<()> {
+        let _guard = self.queue_lock.lock().await;
+        let queue = WithdrawalQueueFile::load(&self.data_dir, &self.operator_name)?;
+        self.reconcile_treasury_with_chain(&queue).await
+    }
+
+    /// `GET /health`'s handler support, alongside the oracle's own
+    /// `Publisher::health_check` (task requirement: "surface stuck state in
+    /// status/health like the oracle") -- `Ok(None)` = healthy, `Ok(Some(
+    /// reason))` = either `tick()` itself has failed `tick_failure_threshold`
+    /// times in a row (checked first, same priority order as the oracle's
+    /// own `degraded_reason`), or `reconcile_treasury_with_chain` found the
+    /// cached PLAY treasury coin spent with no in-flight batch explaining it
+    /// and no unspent replacement either. A plain in-memory read, never a
+    /// network call -- same reasoning as the oracle's own `health_check` doc
+    /// comment, so a slow/stuck coinset can never make `GET /health` itself
+    /// hang.
+    pub async fn health_check(&self) -> Result<Option<String>> {
+        let failures = self.tick_failures.read().await;
+        if failures.consecutive_failures >= self.tick_failure_threshold {
+            return Ok(Some(format!(
+                "play withdrawal publisher tick has failed {} consecutive times (threshold {}): {}",
+                failures.consecutive_failures,
+                self.tick_failure_threshold,
+                failures.last_error.as_deref().unwrap_or("(no error message)")
+            )));
+        }
+        drop(failures);
+        Ok(self.treasury_stuck.read().await.clone())
+    }
+
+    /// Reconciles the cached treasury PLAY CAT coin (`operator.play.json`)
+    /// with the chain, at startup (`bootstrap_treasury_from_chain`) and on
+    /// every regular `tick()` -- task requirement: "like the oracle
+    /// publisher does for its singleton" (`oracle::publisher::Publisher::
+    /// reconcile_queue_with_chain`, `docs/research/chain_service.md` §12's
+    /// "make the chain the source of truth for our own position"), just
+    /// without a lineage *walk*: see this module's own doc comment for why.
+    ///
+    /// Gated on `queue.in_flight.is_none()`, same reasoning as the oracle's
+    /// own gate: whenever a batch of ours is in flight, `in_flight.
+    /// spent_coin` is by construction exactly `play_state.coin`
+    /// (`start_new_batch`/`rebuild_in_flight` always build the next batch
+    /// from the currently cached coin) -- so a spent cached coin while a
+    /// batch is in flight is already explained (task requirement: "no
+    /// in-flight batch of ours explains it"), and `advance_in_flight`'s own
+    /// confirmation/retry logic is what should run next, not this. Only once
+    /// nothing is in flight can an unexplained spend mean genuine
+    /// staleness: an external `c2 send-play` consolidation, a restored/stale
+    /// `operator.play.json`, or a manual top-up that moved the treasury to a
+    /// coin this cache never saw.
+    async fn reconcile_treasury_with_chain(&self, queue: &WithdrawalQueueFile) -> Result<()> {
+        if queue.in_flight.is_some() {
+            return Ok(());
+        }
+        let Ok(owner) = load_operator_wallet_key(&self.data_dir, &self.operator_name) else {
+            return Ok(()); // no operator key yet -- nothing to reconcile
+        };
+        let Ok(play_state) = load_play_state(&self.data_dir, &self.operator_name) else {
+            return Ok(()); // no treasury minted yet (`c2 issue-play` not run) -- nothing to reconcile
+        };
+
+        let record = self
+            .chain
+            .coin_record(play_state.coin.coin_id())
+            .await
+            .context("checking cached PLAY treasury coin against the chain")?;
+        if !record.spent {
+            // Still current (or simply not confirmed on chain yet, e.g.
+            // right after a fresh `issue-play`) -- nothing to heal. Clear
+            // any previous stuck flag either way: either this cache was
+            // never actually broken, or a previous self-heal already fixed
+            // it and this is just reconfirming -- same "success resets it"
+            // convention `TickFailureState` uses.
+            *self.treasury_stuck.write().await = None;
+            return Ok(());
+        }
+
+        let candidates = self
+            .find_unspent_treasury_cats(play_state.asset_id, owner.puzzle_hash)
+            .await
+            .context("scanning for a replacement PLAY treasury coin after finding the cached one spent")?;
+
+        match candidates.into_iter().max_by_key(|c| c.coin.amount) {
+            Some(largest) => {
+                let lineage_proof = largest
+                    .lineage_proof
+                    .context("internal error: adopted PLAY treasury CAT coin has no lineage proof")?;
+                let new_state = PlayCoinState::new(largest.info.asset_id, largest.coin, lineage_proof);
+                save_play_state_atomic(&self.data_dir, &self.operator_name, &new_state)
+                    .context("persisting self-healed PLAY treasury state")?;
+                tracing::warn!(
+                    stale_coin = %play_state.coin.coin_id(),
+                    adopted_coin = %largest.coin.coin_id(),
+                    amount = largest.coin.amount,
+                    "cached PLAY treasury coin was spent on chain with no in-flight batch of ours \
+                     explaining it -- adopted the largest unspent PLAY CAT coin found for the \
+                     treasury key (docs/research/chain_service.md §13)"
+                );
+                *self.treasury_stuck.write().await = None;
+            }
+            None => {
+                let reason = format!(
+                    "cached PLAY treasury coin {} is spent on chain, no in-flight withdrawal batch \
+                     explains it, and no unspent PLAY CAT coin was found for the treasury key -- \
+                     needs manual operator reconciliation (docs/research/chain_service.md §13)",
+                    play_state.coin.coin_id()
+                );
+                tracing::error!(%reason, "PLAY treasury self-heal failed");
+                *self.treasury_stuck.write().await = Some(reason);
+            }
+        }
+        Ok(())
+    }
+
+    /// Finds every currently unspent PLAY CAT coin the treasury key
+    /// (`owner_puzzle_hash`, always `load_operator_wallet_key`'s index-0
+    /// key -- the treasury only ever has one key, never a gap of them) owns
+    /// and reconstructs each as a spendable `Cat` (lineage proof included).
+    /// Task requirement: "hint/puzzle-hash lookup + Cat::parse_children
+    /// lineage" -- the same technique `c2_cli::cat_chain::find_cat_coin`/
+    /// `cat_from_coin_id` use for a wallet's own CAT sync, ported onto the
+    /// generic `ChainClient`/`PlayChainClient` traits instead of a concrete
+    /// `CoinsetClient` (task requirement: unit-testable against the fake
+    /// chain client, see `tests/play_withdrawals.rs`).
+    async fn find_unspent_treasury_cats(&self, asset_id: Bytes32, owner_puzzle_hash: Bytes32) -> Result<Vec<Cat>> {
+        let treasury_cat_puzzle_hash = cat_puzzle_hash(asset_id, owner_puzzle_hash);
+        let records = self
+            .chain
+            .coin_records_by_puzzle_hashes(vec![treasury_cat_puzzle_hash], None)
+            .await
+            .context("scanning for the treasury's current PLAY CAT coin(s)")?;
+
+        let mut cats = Vec::new();
+        for record in records.into_iter().filter(|r| !r.spent) {
+            let cat = self
+                .reconstruct_treasury_cat(asset_id, owner_puzzle_hash, record.coin_id)
+                .await
+                .with_context(|| format!("reconstructing lineage for treasury CAT candidate {}", record.coin_id))?;
+            cats.push(cat);
+        }
+        Ok(cats)
+    }
+
+    /// Reconstructs `coin_id` (expected: an unspent CAT coin of `asset_id`,
+    /// owned by `owner_puzzle_hash`) as a spendable `Cat` by decoding its
+    /// parent's already-confirmed spend -- same technique `c2_cli::
+    /// cat_chain::cat_from_coin_id` uses (that one takes a concrete
+    /// `CoinsetClient` directly; this is the same logic ported onto
+    /// `ChainClient`'s generic `coin_record`/`puzzle_and_solution` so it
+    /// works against the fake chain client in tests too).
+    async fn reconstruct_treasury_cat(&self, asset_id: Bytes32, owner_puzzle_hash: Bytes32, coin_id: Bytes32) -> Result<Cat> {
+        let record = self.chain.coin_record(coin_id).await.context("coin_record")?;
+        let coin = record.coin.with_context(|| format!("coin {coin_id} has no coin record"))?;
+
+        let parent_record =
+            self.chain.coin_record(coin.parent_coin_info).await.context("coin_record (parent)")?;
+        if !parent_record.spent {
+            bail!("parent coin {} of candidate treasury CAT {coin_id} is not spent yet", coin.parent_coin_info);
+        }
+        let parent_spend = self
+            .chain
+            .puzzle_and_solution(coin.parent_coin_info, parent_record.spent_height)
+            .await
+            .context("puzzle_and_solution (parent)")?
+            .with_context(|| format!("no puzzle/solution for parent coin {}", coin.parent_coin_info))?;
+
+        let mut allocator = Allocator::new();
+        let puzzle_ptr = node_from_bytes(&mut allocator, parent_spend.puzzle_reveal.as_ref())
+            .context("parsing parent puzzle_reveal as CLVM")?;
+        let solution_ptr =
+            node_from_bytes(&mut allocator, parent_spend.solution.as_ref()).context("parsing parent solution as CLVM")?;
+        let puzzle = Puzzle::parse(&allocator, puzzle_ptr);
+
+        let children = Cat::parse_children(&mut allocator, parent_spend.coin, puzzle, solution_ptr)
+            .context("parsing CAT children from parent spend")?
+            .with_context(|| format!("parent coin {} spend is not a CAT spend", coin.parent_coin_info))?;
+
+        let cat = children
+            .into_iter()
+            .find(|c| c.coin.coin_id() == coin_id)
+            .with_context(|| format!("coin {coin_id} not found among its parent's CAT children"))?;
+
+        if cat.info.asset_id != asset_id {
+            bail!("coin {coin_id} is a CAT of asset id {}, expected {asset_id}", cat.info.asset_id);
+        }
+        if cat.info.p2_puzzle_hash != owner_puzzle_hash {
+            bail!("coin {coin_id}'s CAT p2 puzzle hash does not match the treasury key");
+        }
+        Ok(cat)
+    }
+
+    /// Runs one iteration of the state machine (`tick_once`), then records
+    /// the outcome into `tick_failures` -- same wrapper `oracle::publisher::
+    /// Publisher::tick` uses around its own `tick_once` (see `tick_failures`'
+    /// doc comment).
     pub async fn tick(&self) -> Result<WithdrawalTickOutcome> {
+        let result = self.tick_once().await;
+        {
+            let mut failures = self.tick_failures.write().await;
+            match &result {
+                Ok(_) => *failures = TickFailureState::default(),
+                Err(e) => {
+                    failures.consecutive_failures += 1;
+                    failures.last_error = Some(format!("{e:#}"));
+                }
+            }
+        }
+        result
+    }
+
+    /// The actual publisher state machine -- see module doc. `tick()` above
+    /// adds failure tracking around it without changing its own logic.
+    async fn tick_once(&self) -> Result<WithdrawalTickOutcome> {
         let _guard = self.queue_lock.lock().await;
         let mut queue = WithdrawalQueueFile::load(&self.data_dir, &self.operator_name)?;
+
+        // Task requirement: "at startup and every tick" -- see
+        // `reconcile_treasury_with_chain`'s own doc comment.
+        self.reconcile_treasury_with_chain(&queue).await?;
 
         if let Some(in_flight) = queue.in_flight.clone() {
             return self.advance_in_flight(&mut queue, in_flight).await;
@@ -233,8 +500,15 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             save_play_state_atomic(&self.data_dir, &self.operator_name, &play_state)
                 .context("persisting advanced PLAY treasury state")?;
 
-            for request in &in_flight.requests {
-                queue.confirmed.insert(request.request_id.clone(), (next_coin_id, record_info.confirmed_height));
+            // Task fix (`docs/research/chain_service.md` §13): each request's
+            // OWN payout coin id, not `next_coin_id` (the treasury's change
+            // coin -- confirming it just proves the whole batch landed,
+            // nothing more) for every request in the batch. `payout_coin_ids`
+            // is always the same length as `requests` (built together, see
+            // `withdrawal_spend::build_play_withdrawal_batch`), so `zip`
+            // covers every request with no fallback needed.
+            for (request, &coin_id) in in_flight.requests.iter().zip(&in_flight.payout_coin_ids) {
+                queue.confirmed.insert(request.request_id.clone(), (coin_id, record_info.confirmed_height));
             }
             let confirmed_count = in_flight.requests.len();
             queue.in_flight = None;
@@ -367,6 +641,7 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
 
         queue.in_flight = Some(InFlightWithdrawalBatch {
             requests,
+            payout_coin_ids: draft.payout_coin_ids,
             spent_coin: treasury.coin,
             next_coin: draft.next_coin,
             next_lineage_proof: draft.next_lineage_proof.into(),
@@ -450,6 +725,7 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
 
         queue.in_flight = Some(InFlightWithdrawalBatch {
             requests: batch,
+            payout_coin_ids: draft.payout_coin_ids,
             spent_coin: treasury.coin,
             next_coin: draft.next_coin,
             next_lineage_proof: draft.next_lineage_proof.into(),

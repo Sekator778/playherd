@@ -154,6 +154,7 @@ class PlayOnChainTest {
         Ledger.WithdrawalRequestDto requested = gameService.requestWithdrawal(playerId, "1000.000",
                 System.currentTimeMillis());
         assertThat(requested.state().name()).isEqualTo("REQUESTED");
+        assertThat(requested.coinsetVerifyHint()).as("no coinId yet -> no verify hint yet").isNull();
         String balanceAfterRequest = gameService.account(playerId).balance();
         assertThat(balanceAfterRequest).isEqualTo("9000.000");
 
@@ -167,6 +168,10 @@ class PlayOnChainTest {
         assertThat(confirmed.state().name()).isEqualTo("CONFIRMED");
         assertThat(confirmed.coinId()).isEqualTo("0xcoin-withdrawal-confirmed");
         assertThat(confirmed.height()).isEqualTo(4_800_300L);
+        // task item 3: a self-serve, no-trust-required hint the player can run themselves.
+        assertThat(confirmed.coinsetVerifyHint()).isEqualTo(
+                "POST https://testnet11.api.coinset.org/get_coin_record_by_name "
+                        + "{\"name\":\"0xcoin-withdrawal-confirmed\"}");
         // balance unaffected by confirmation — the debit already happened at request time
         assertThat(gameService.account(playerId).balance()).isEqualTo("9000.000");
 

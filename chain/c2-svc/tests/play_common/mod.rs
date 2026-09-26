@@ -22,6 +22,11 @@ use c2_svc::play::chain_client::{PlayChainClient, PuzzleHashCoinRecord};
 struct Inner {
     coin_records: HashMap<Bytes32, CoinRecordInfo>,
     puzzle_hash_records: Vec<PuzzleHashCoinRecord>,
+    /// Recorded parent spends (puzzle reveal + solution), keyed by the
+    /// *parent* coin's own id -- backs `puzzle_and_solution`, needed for
+    /// treasury self-heal's `Cat::parse_children` lineage reconstruction
+    /// (`tests/play_withdrawals.rs`'s self-heal tests).
+    puzzle_solutions: HashMap<Bytes32, CoinSpend>,
     peak_height: u32,
     fee_mojos: u64,
     funding_amount: u64,
@@ -37,6 +42,7 @@ impl FakePlayChainClient {
         Self(Mutex::new(Inner {
             coin_records: HashMap::new(),
             puzzle_hash_records: Vec::new(),
+            puzzle_solutions: HashMap::new(),
             peak_height: 1_000,
             fee_mojos: 0,
             funding_amount: 1_000_000,
@@ -87,9 +93,26 @@ impl FakePlayChainClient {
     }
 
     /// Registers a coin as visible to a `coin_records_by_puzzle_hashes` scan
-    /// (deposit detection).
+    /// (deposit detection, and treasury self-heal's own puzzle-hash lookup).
     pub fn add_puzzle_hash_record(&self, record: PuzzleHashCoinRecord) {
         self.0.lock().unwrap().puzzle_hash_records.push(record);
+    }
+
+    /// Full control over a `coin_record` reply, including the queried coin's
+    /// own `Coin` (`set_confirmed`/`set_spent` above always answer `coin:
+    /// None`) -- needed for treasury self-heal's lineage reconstruction,
+    /// which reads a candidate coin's `parent_coin_info` off of exactly this
+    /// field (`CoinRecordInfo::coin`'s own doc comment).
+    pub fn set_coin_record(&self, coin_id: Bytes32, info: CoinRecordInfo) {
+        self.0.lock().unwrap().coin_records.insert(coin_id, info);
+    }
+
+    /// Registers `spend` as the puzzle reveal + solution that spent
+    /// `parent_coin_id` -- backs the `puzzle_and_solution` `ChainClient`
+    /// method below, needed for treasury self-heal's `Cat::parse_children`
+    /// lineage reconstruction.
+    pub fn set_puzzle_and_solution(&self, parent_coin_id: Bytes32, spend: CoinSpend) {
+        self.0.lock().unwrap().puzzle_solutions.insert(parent_coin_id, spend);
     }
 }
 
@@ -132,8 +155,8 @@ impl ChainClient for FakePlayChainClient {
         Ok(self.0.lock().unwrap().in_mempool.get(&tx_id).copied().unwrap_or(false))
     }
 
-    async fn puzzle_and_solution(&self, _coin_id: Bytes32, _height: Option<u32>) -> Result<Option<CoinSpend>> {
-        Ok(None)
+    async fn puzzle_and_solution(&self, coin_id: Bytes32, _height: Option<u32>) -> Result<Option<CoinSpend>> {
+        Ok(self.0.lock().unwrap().puzzle_solutions.get(&coin_id).cloned())
     }
 }
 

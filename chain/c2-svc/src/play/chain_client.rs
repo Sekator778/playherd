@@ -88,14 +88,89 @@ impl PlayChainClient for CoinsetChainClient {
     }
 
     async fn peak_height(&self) -> Result<u32> {
-        let response = self.client().get_blockchain_state().await.context("get_blockchain_state")?;
-        if !response.success {
-            bail!(
-                "get_blockchain_state failed: {}",
-                response.error.unwrap_or_else(|| "(no error message)".to_string())
-            );
+        // Task fix (`docs/research/chain_service.md` §13): testnet11
+        // intermittently answers `peak.height` as a JSON *float* (e.g.
+        // `0.0`) instead of an integer -- `chia_sdk_coinset::
+        // get_blockchain_state()`'s strongly-typed `BlockchainState` (whose
+        // `peak: chia_protocol::BlockRecord` declares `height: u32`) fails
+        // to deserialize the *entire* response the moment that happens,
+        // turning `GET /v1/play/deposits` into a 500. Decode the raw JSON
+        // body ourselves instead (same "only model the fields this service
+        // actually uses" precedent `oracle::chain_client::
+        // FeeEstimateResponse` already sets for `get_fee_estimate`),
+        // tolerant of `height` being a float, and of every other field's
+        // shape (never even named here).
+        let body: serde_json::Value = self
+            .client()
+            .make_post_request("get_blockchain_state", serde_json::json!({}))
+            .await
+            .context("get_blockchain_state")?;
+        parse_peak_height(&body)
+    }
+}
+
+/// Decodes only `peak.height` out of a raw `get_blockchain_state` response
+/// body -- see `peak_height`'s doc comment for why. Kept as a standalone,
+/// synchronous function (no network) so it's directly unit-testable against
+/// a recorded body, without a mock HTTP server.
+fn parse_peak_height(body: &serde_json::Value) -> Result<u32> {
+    if body.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+        bail!(
+            "get_blockchain_state failed: {}",
+            body.get("error").and_then(serde_json::Value::as_str).unwrap_or("(no error message)")
+        );
+    }
+    let height = body
+        .pointer("/blockchain_state/peak/height")
+        .context("get_blockchain_state: missing blockchain_state.peak.height")?;
+    height
+        .as_u64()
+        .or_else(|| height.as_f64().map(|f| f as u64))
+        .and_then(|h| u32::try_from(h).ok())
+        .with_context(|| format!("get_blockchain_state: peak.height is not a valid non-negative height: {height}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Recorded (trimmed) shape reproducing the live testnet11 response that
+    /// broke `GET /v1/play/deposits`: `peak.height` as a JSON float. Only the
+    /// fields `parse_peak_height` touches are included -- it must ignore
+    /// everything else regardless of shape, which this also exercises (an
+    /// extra, irrelevant field with a shape `BlockchainState` wouldn't even
+    /// accept, `sync_progress_height` as a string here).
+    const RECORDED_FLOAT_HEIGHT_BODY: &str = r#"{
+        "success": true,
+        "blockchain_state": {
+            "peak": { "height": 0.0, "weight": 12345 },
+            "sync": { "sync_progress_height": "not-a-number" }
         }
-        let state = response.blockchain_state.context("get_blockchain_state: missing blockchain_state")?;
-        Ok(state.peak.height)
+    }"#;
+
+    #[test]
+    fn tolerates_a_float_height_from_testnet11() {
+        let body: serde_json::Value = serde_json::from_str(RECORDED_FLOAT_HEIGHT_BODY).unwrap();
+        assert_eq!(parse_peak_height(&body).unwrap(), 0);
+    }
+
+    #[test]
+    fn still_works_for_an_ordinary_integer_height() {
+        let body: serde_json::Value =
+            serde_json::from_str(r#"{"success": true, "blockchain_state": {"peak": {"height": 4737632}}}"#).unwrap();
+        assert_eq!(parse_peak_height(&body).unwrap(), 4_737_632);
+    }
+
+    #[test]
+    fn surfaces_a_get_blockchain_state_failure() {
+        let body: serde_json::Value = serde_json::from_str(r#"{"success": false, "error": "boom"}"#).unwrap();
+        let err = parse_peak_height(&body).unwrap_err();
+        assert!(err.to_string().contains("boom"));
+    }
+
+    #[test]
+    fn rejects_a_missing_peak_height() {
+        let body: serde_json::Value = serde_json::from_str(r#"{"success": true, "blockchain_state": {}}"#).unwrap();
+        assert!(parse_peak_height(&body).is_err());
     }
 }
