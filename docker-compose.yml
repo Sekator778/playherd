@@ -166,6 +166,10 @@ services:
       # "web" agent's report documents the identical failure as a sandbox limitation; it recurs
       # here for the same reason (this Mac's Docker default bridge network, not the sandbox).
       network: host
+      args:
+        # Р-55: WalletConnect/Reown projectId for Sage sign-in (public, not a secret —
+        # it ships in the web bundle). Value lives in .env (Р-55, Alex, 2026-09-26).
+        VITE_WALLETCONNECT_PROJECT_ID: ${VITE_WALLETCONNECT_PROJECT_ID:-}
     ports:
       - "${HERD_WEB_PORT:-8480}:80"
     depends_on:
