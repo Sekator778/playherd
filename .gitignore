@@ -41,3 +41,6 @@ local.properties
 # VPS itself; never meant to be committed even if someone runs these scripts from a repo checkout.
 deploy/.deploy-state/
 deploy/backups/
+
+# Claude Code agent worktrees (workflow isolation) — local scratch, never committed.
+.claude/worktrees/
