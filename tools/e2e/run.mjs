@@ -8,12 +8,14 @@
 // (Node 22's plain `import` of a `.wasm` file is still an experimental feature — the flag is
 // required or the process exits immediately with an ExperimentalWarning-turned-error.)
 //
-// What it does (task item 3, verbatim): 4 simulated players, each with its own real key signing
-// like the browser test wallet; sign in via the RPC; set nicknames; place bets in the open
-// betting window (mixed directions/leverages incl. one 40x); verify sides are hidden before
-// start and revealed after; wait through one full HOURLY (3-min) round to settlement; check
-// balances vs engine rules; fetch /api/rounds/{id}/results.json and check sha256 == resultsHash;
-// check that chainsvc queued/published the boundary record(s) to testnet11.
+// What it does (task item 3, verbatim, checks updated 2026-09-26 for Р-62): 4 simulated players,
+// each with its own real key signing like the browser test wallet; sign in via the RPC; set
+// nicknames; place bets in the open betting window (mixed directions/leverages incl. one 40x);
+// verify the crowd split and bet feed are visible live during betting (Р-62, "показывать всё
+// вживую" — replaces Р-22's "sides hidden before start") and that positions are visible once the
+// round starts running; wait through one full HOURLY (3-min) round to settlement; check balances
+// vs engine rules; fetch /api/rounds/{id}/results.json and check sha256 == resultsHash; check that
+// chainsvc queued/published the boundary record(s) to testnet11.
 //
 // `--ci` (or env HERD_E2E_CI=1) — CI mode (.github/workflows/ci.yml's full-stack smoke job):
 // that job's chainsvc runs with a throwaway CI-generated key and C2_PUSH=0 (dry-run, no testnet11
@@ -176,35 +178,54 @@ async function main() {
     }
   }
 
-  // --- 5. sides hidden before start (Р-22): the BETTING-phase DTO structurally carries no
-  //     positions/directions/amounts for anyone, own bet excepted — verify that shape directly,
-  //     and that participantCount reflects the bets just placed. ---
+  // --- 5. live crowd split + bet feed during betting (Р-62, 2026-09-26 — REPLACES Р-22's
+  //     "sides hidden before start"): Alex saw the three prototypes and picked "показывать всё
+  //     вживую" (crowd split and bet feed visible live during the betting window, like Twitch
+  //     Predictions), superseding Р-22's "no positions/crowd fields until the round starts". The
+  //     BETTING-phase DTO now DELIBERATELY carries the live aggregate (upStake/downStake/
+  //     upCount/downCount/majorityDirection/majorityLeverage) and a capped, newest-first bet feed
+  //     (recentBets) — verify that shape directly, that the aggregate reflects the bets just
+  //     placed, and that another player's bet is visible (by design) in recentBets pre-start. ---
   try {
     const pairAfterBets = await players[0].rpc("rounds", "HOURLY");
     const betting = pairAfterBets.betting;
-    const hasNoPositions = !("positions" in betting) && !("crowd" in betting);
+    const hasLiveAggregate =
+      "upStake" in betting && "downStake" in betting && "upCount" in betting && "downCount" in betting;
     check(
-      "sides hidden pre-start: BETTING DTO carries no positions/crowd fields",
-      hasNoPositions,
+      "live split pre-start: BETTING DTO carries upStake/downStake/upCount/downCount (Р-62)",
+      hasLiveAggregate,
       JSON.stringify(Object.keys(betting)),
     );
     check(
-      "sides hidden pre-start: participantCount >= 4 (this run's bets counted)",
+      "live split pre-start: upCount + downCount >= 4 (this run's bets counted)",
+      betting.upCount + betting.downCount >= 4,
+      `upCount=${betting.upCount} downCount=${betting.downCount}`,
+    );
+    check(
+      "live split pre-start: participantCount >= 4 (this run's bets counted)",
       betting.participantCount >= 4,
       `participantCount=${betting.participantCount}`,
     );
+    const feedHasOtherPlayersBets =
+      Array.isArray(betting.recentBets) &&
+      players.some((p) => betting.recentBets.some((b) => b.player.playerId === p.playerId));
+    check(
+      "live feed pre-start: recentBets includes at least one of this run's bets (Р-62, was hidden under Р-22)",
+      feedHasOtherPlayersBets,
+      `recentBets.length=${betting.recentBets?.length}`,
+    );
   } catch (e) {
-    fail("sides hidden pre-start", e);
+    fail("live split/feed pre-start", e);
   }
-  // Cross-check from a second player's point of view: they must not be able to see player 1's
-  // bet anywhere pre-start (no endpoint exposes another player's pending bet — publicProfile
-  // only ever returns past, settled rounds, Р-29).
+  // publicProfile itself is untouched by Р-62 (it's still only ever past, settled rounds, Р-29) —
+  // the still-open round's own live feed is a separate surface (recentBets/betFeed above), so this
+  // assertion keeps its original meaning and still holds.
   try {
     const otherView = await players[1].rpc("publicProfile", players[0].playerId);
     const leaksCurrentRound = otherView.history.some((h) => h.roundId === roundId);
-    check("sides hidden pre-start: publicProfile never lists the still-open round", !leaksCurrentRound);
+    check("publicProfile still never lists the still-open round (Р-29, unaffected by Р-62)", !leaksCurrentRound);
   } catch (e) {
-    fail("sides hidden pre-start: publicProfile cross-check", e);
+    fail("publicProfile cross-check", e);
   }
 
   // --- 6. wait for the round to start running, then settle (Р-19 + Р-46's 3-min HOURLY) ---
