@@ -21,6 +21,12 @@ web/dist/
 .env
 .env.*
 
+# Android release-signing keystores (docs/ops/ci.md "ANDROID_KEYSTORE_*") — CI decodes these from
+# secrets into a runner temp path, never into the repo; this is only a backstop against an
+# accidental local `cp`.
+*.jks
+*.keystore
+
 # Local-only notes with home-network/identifying details (Р-39 redaction, 2026-09-26)
 .local/
 

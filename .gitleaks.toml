@@ -1,0 +1,17 @@
+# Secret-scan config for the "gitleaks" CI job (docs/ops/ci.md). Extends gitleaks' own default
+# ruleset (private keys, cloud provider keys, generic high-entropy secrets, etc.) unchanged, and
+# adds only one narrow allowlist entry for a confirmed false positive — never a blanket path
+# exclusion, so the scan stays meaningful.
+title = "herd gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Confirmed false positives — fixture strings in tests, never real secrets"
+regexes = [
+  # web/src/wallet/walletConnect.test.ts: a placeholder wallet address used to test
+  # localStorage read/write, matched by the generic-api-key entropy heuristic. Not a key,
+  # not derived from a real wallet.
+  '''txch1knownaddr''',
+]

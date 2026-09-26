@@ -21,10 +21,29 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // docs/ops/ci.md "ANDROID_KEYSTORE_*": release.yml decodes those secrets (if present) into a
+    // runner temp file and passes its path/passwords via these same env var names — never
+    // committed, never touching this file. When they're unset (every local/dev build today, and
+    // release.yml until Alex adds the secrets), this signingConfig is simply never referenced
+    // below and `release` stays exactly as it was: unsigned unless AGP's own defaults apply.
+    signingConfigs {
+        release {
+            def ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            if (ksPath) {
+                storeFile file(ksPath)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (System.getenv("ANDROID_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

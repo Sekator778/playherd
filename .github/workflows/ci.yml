@@ -1,0 +1,506 @@
+name: CI
+
+# Single, path-filtered CI pipeline — replaces the previous engine.yml/web.yml/server.yml/
+# chain.yml (each had its own trigger and duplicated the checkout/cache boilerplate). Structure:
+#
+#   changes  -> detects which top-level areas a push/PR actually touched (dorny/paths-filter)
+#   engine-server / chain / web / android / smoke  -> run only when their area (or a workflow
+#     file, so editing this pipeline itself always re-verifies everything) changed; each is
+#     independently useful and independently cacheable
+#   gitleaks -> always runs (a secret can land in any file)
+#   ci-ok    -> the one job branch protection should require: succeeds iff every job above either
+#     passed or was skipped by the path filter (see its own comment for why this pattern exists)
+#   publish-develop -> after ci-ok, on push to develop only: ghcr.io images tagged :develop and
+#     :sha-<short> (release tags are release.yml's job, on `vX.Y.Z` pushes)
+#
+# Branch model (docs/ops/ci.md): feature branches -> PR into develop; develop -> PR into main;
+# a `vX.Y.Z` tag on main is what release.yml turns into a versioned release.
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - develop
+      - main
+      - "ci/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+      server: ${{ steps.filter.outputs.server }}
+      chain: ${{ steps.filter.outputs.chain }}
+      web: ${{ steps.filter.outputs.web }}
+      docker: ${{ steps.filter.outputs.docker }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            engine:
+              - 'engine/**'
+              - 'pom.xml'
+            server:
+              - 'server/**'
+              - 'engine/**'
+              - 'pom.xml'
+            chain:
+              - 'chain/**'
+            web:
+              - 'web/**'
+            docker:
+              - 'docker-compose.yml'
+              - 'docker-compose.ci.yml'
+              - 'server/Dockerfile'
+              - 'chain/c2-svc/Dockerfile'
+              - 'web/Dockerfile'
+              - 'tools/e2e/**'
+            workflows:
+              - '.github/workflows/**'
+
+  gitleaks:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history — gitleaks scans git log, not just the working tree)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Download pinned gitleaks release binary
+        run: |
+          set -euo pipefail
+          version=8.30.1
+          curl -sSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz"
+          curl -sSL -o checksums.txt \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_checksums.txt"
+          grep "gitleaks_${version}_linux_x64.tar.gz" checksums.txt | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/gitleaks"
+          tar -xzf gitleaks.tar.gz -C "${RUNNER_TEMP}/gitleaks" gitleaks
+          echo "${RUNNER_TEMP}/gitleaks" >> "$GITHUB_PATH"
+
+      - name: gitleaks detect
+        run: gitleaks detect --source . --redact -v --config .gitleaks.toml
+
+  engine-server:
+    name: engine + server (mvn verify, real Postgres)
+    needs: changes
+    if: needs.changes.outputs.engine == 'true' || needs.changes.outputs.server == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+
+    services:
+      # Matches docker-compose.yml's `db` service image exactly.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: herd
+          POSTGRES_PASSWORD: herd
+          POSTGRES_DB: herd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U herd -d herd"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 21 (Temurin, Maven cache)
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # engine/ has no parent/this-repo-as-parent relationship (project rule: only additive
+      # changes to engine/) — server/ depends on it as a plain Maven artifact, so the root
+      # aggregator pom.xml (`-pl server -am`, same as server/Dockerfile's own build stage) builds
+      # engine into the reactor (running its own tests too, via Maven's reactor lifecycle) before
+      # packaging/testing server, in one command.
+      #
+      # Dev Services (Quarkus's own Testcontainers-backed throwaway Postgres) is disabled here by
+      # supplying an explicit quarkus.datasource.jdbc.url — Quarkus only starts Dev Services when
+      # no datasource URL is configured for the active profile — pointing tests instead at the
+      # real `postgres` service container above.
+      - name: mvn -B verify (engine + server, real Postgres service)
+        run: >-
+          mvn -B -f pom.xml -pl server -am verify
+          -Dquarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/herd
+          -Dquarkus.datasource.username=herd
+          -Dquarkus.datasource.password=herd
+
+  chain:
+    name: chain (cargo test + clippy)
+    needs: changes
+    if: needs.changes.outputs.chain == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chain
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # actions-rs/toolchain is archived/unmaintained — dtolnay/rust-toolchain is the standard
+      # actively-maintained replacement. It has no version tags; pinned to the `master` branch's
+      # HEAD commit at the time this workflow was written.
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            chain/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('chain/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
+      # No `-D warnings`: `cargo clippy --workspace --all-targets` is not currently clean
+      # (pre-existing warnings in c2-cli's own test files, outside this task's scope) — kept as a
+      # visible, non-blocking report until that's cleaned up independently.
+      - name: cargo clippy --workspace --all-targets (no -D warnings — see comment)
+        run: cargo clippy --workspace --all-targets --locked
+
+  web:
+    name: web (typecheck/lint/test/build)
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: npm run typecheck
+        run: npm run typecheck
+
+      - name: npm run lint
+        run: npm run lint
+
+      - name: npm test -- --run
+        run: npm test -- --run
+
+      - name: npm run build
+        run: npm run build
+
+  android:
+    name: android (assembleDebug)
+    needs: [changes, web]
+    # Runs whenever web/ changed (the Capacitor bundle is built from web/src) even if the `web`
+    # job itself was skipped (e.g. a workflow-only change) — but not if `web` actually ran and
+    # failed.
+    if: |
+      always() &&
+      (needs.changes.outputs.web == 'true' || needs.changes.outputs.workflows == 'true') &&
+      (needs.web.result == 'success' || needs.web.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+
+      - name: Install the SDK platform web/android actually targets
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdk=$(grep -m1 'compileSdkVersion *=' web/android/variables.gradle | grep -o '[0-9]\+')
+          latest_build_tools=$(sdkmanager --list 2>/dev/null | grep -o 'build-tools;[0-9.]\+' | sort -V | tail -1 | cut -d';' -f2)
+          echo "installing platforms;android-${sdk} + build-tools;${latest_build_tools}"
+          sdkmanager "platforms;android-${sdk}" "platform-tools" "build-tools;${latest_build_tools}"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Cache Gradle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('web/android/gradle/wrapper/gradle-wrapper.properties', 'web/android/**/*.gradle') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: npm ci
+        working-directory: web
+        run: npm ci
+
+      # No backend needed: build:capacitor doesn't set VITE_API_MODE, so apiMode.ts defaults to
+      # "mock" — the same offline-demo bundle Alex's local `android:debug` produces.
+      - name: Build web bundle for Capacitor
+        working-directory: web
+        run: npm run build:capacitor
+
+      - name: Sync Capacitor Android project
+        working-directory: web
+        run: npx cap sync android
+
+      - name: ./gradlew assembleDebug
+        working-directory: web/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: herd-android-debug-apk
+          path: web/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke:
+    name: full-stack smoke (compose + e2e)
+    needs: changes
+    if: |
+      needs.changes.outputs.engine == 'true' || needs.changes.outputs.server == 'true' ||
+      needs.changes.outputs.chain == 'true' || needs.changes.outputs.web == 'true' ||
+      needs.changes.outputs.docker == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build server image (local only, not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: server/Dockerfile
+          tags: herd-server:latest
+          load: true
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
+
+      - name: Build chainsvc image (local only, not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: chain
+          file: chain/c2-svc/Dockerfile
+          tags: herd-chainsvc:latest
+          load: true
+          cache-from: type=gha,scope=chainsvc
+          cache-to: type=gha,mode=max,scope=chainsvc
+
+      - name: Build web image (local only, not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: web
+          file: web/Dockerfile
+          tags: herd-web:latest
+          load: true
+          build-args: |
+            VITE_WALLETCONNECT_PROJECT_ID=${{ vars.VITE_WALLETCONNECT_PROJECT_ID }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+      # Only to run `c2 keygen` for a throwaway CI key below — never touches testnet11 (no
+      # `oracle-launch`, no `--push`).
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: stable
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            chain/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('chain/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build c2 CLI (keygen only)
+        working-directory: chain
+        run: cargo build --release --locked -p c2-cli
+
+      # Writes $HOME/.c2/testnet11/operator.json — the exact path docker-compose.yml already
+      # bind-mounts into chainsvc as /data. No funds, no oracle-launch; chainsvc runs with
+      # C2_PUSH=0 (docker-compose.ci.yml) so it never broadcasts anything built from this key.
+      - name: Generate a throwaway CI operator key
+        run: ./chain/target/release/c2 keygen --name operator
+
+      - name: Write .env (throwaway secrets, this CI run only)
+        run: |
+          {
+            echo "HERD_DB_PASSWORD=$(openssl rand -hex 24)"
+            echo "HERD_OPERATOR_TOKEN=$(openssl rand -hex 32)"
+            token=$(openssl rand -hex 32)
+            echo "C2_SVC_TOKEN=${token}"
+            echo "HERD_CHAINSVC_TOKEN=${token}"
+            echo "VITE_WALLETCONNECT_PROJECT_ID=${{ vars.VITE_WALLETCONNECT_PROJECT_ID }}"
+          } > .env
+
+      - name: Start the stand (images already built above — no --build)
+        run: docker compose -p herd -f docker-compose.yml -f docker-compose.ci.yml up -d
+
+      - name: Wait for all services to be healthy
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 300))
+          while true; do
+            rows=$(docker compose -p herd -f docker-compose.yml -f docker-compose.ci.yml ps --format '{{.Service}} {{.Health}}')
+            echo "$rows"
+            if [[ -n "$rows" ]] && ! grep -qE '(starting|unhealthy|^\S+ $)' <<<"$rows"; then
+              echo "all services healthy"
+              break
+            fi
+            if (( SECONDS > deadline )); then
+              docker compose -p herd -f docker-compose.yml -f docker-compose.ci.yml logs --tail=200
+              echo "::error::stand did not become healthy in time"
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Run e2e (CI mode — skips on-chain confirmation checks; see tools/e2e/run.mjs)
+        run: node --experimental-wasm-modules tools/e2e/run.mjs http://localhost:8480 --ci
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -p herd -f docker-compose.yml -f docker-compose.ci.yml logs --tail=500
+
+      - name: Tear down
+        if: always()
+        run: docker compose -p herd -f docker-compose.yml -f docker-compose.ci.yml down -v
+
+  # Branch protection should require only this job. GitHub has no native "required only if this
+  # job actually ran" — a job skipped by a path-filter `if:` reports as skipped, and a required
+  # check stuck on "skipped" blocks merging forever. This job `needs` everything, always runs
+  # (`if: always()`), and passes iff every needed job's result is success or skipped — so a real
+  # failure still blocks the merge, but an irrelevant, correctly-skipped job never does.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [gitleaks, engine-server, chain, web, android, smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that every required job passed or was skipped
+        run: |
+          set -euo pipefail
+          results=(
+            "gitleaks:${{ needs.gitleaks.result }}"
+            "engine-server:${{ needs.engine-server.result }}"
+            "chain:${{ needs.chain.result }}"
+            "web:${{ needs.web.result }}"
+            "android:${{ needs.android.result }}"
+            "smoke:${{ needs.smoke.result }}"
+          )
+          status=0
+          for r in "${results[@]}"; do
+            name="${r%%:*}"
+            result="${r#*:}"
+            echo "${name}: ${result}"
+            if [[ "${result}" != "success" && "${result}" != "skipped" ]]; then
+              echo "::error::${name} did not succeed (${result})"
+              status=1
+            fi
+          done
+          exit "${status}"
+
+  publish-develop:
+    name: publish :develop images to ghcr.io
+    needs: ci-ok
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - image: herd-server
+            context: .
+            file: server/Dockerfile
+            scope: server
+          - image: herd-chainsvc
+            context: chain
+            file: chain/c2-svc/Dockerfile
+            scope: chainsvc
+          - image: herd-web
+            context: web
+            file: web/Dockerfile
+            scope: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata (tags + OCI labels)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/sekator778/${{ matrix.image }}
+          tags: |
+            type=raw,value=develop
+            type=sha,format=short,prefix=sha-
+
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VITE_WALLETCONNECT_PROJECT_ID=${{ vars.VITE_WALLETCONNECT_PROJECT_ID }}
+          cache-from: type=gha,scope=${{ matrix.scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.scope }}
