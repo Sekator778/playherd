@@ -87,4 +87,15 @@ class PlaceBetWindowBoundaryTest {
                 .extracting(e -> ((ApiException) e).code())
                 .isEqualTo(Enums.ApiErrorCode.ROUND_NOT_OPEN_FOR_BETTING);
     }
+
+    @Test
+    void placeBetRejectsAPlayerThatIsNotRegistered() {
+        RoundWindow bettingWindow = BettingWindows.fresh(roundProgress, Interval.HOURLY);
+        Betting.PlaceBetRequest req = new Betting.PlaceBetRequest(bettingWindow.roundId(), Enums.Direction.UP, 2, "100.000");
+
+        assertThatThrownBy(() -> gameService.placeBet("no-such-player", req, bettingWindow.startMs() - 1))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).code())
+                .isEqualTo(Enums.ApiErrorCode.NOT_FOUND);
+    }
 }

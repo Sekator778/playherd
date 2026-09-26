@@ -347,6 +347,13 @@ public class GameService {
             if (!bettingWindow.roundId().equals(req.roundId()) || nowMs >= bettingWindow.startMs()) {
                 throw ApiException.roundNotOpenForBetting(req.roundId());
             }
+            // Only registered players bet. A bot tick that started before the player directory was
+            // reset (test DB cleanup between classes) otherwise waited for this lock and then
+            // placed bets for bots that no longer exist — the ledger's ensureSeasonPack below
+            // would have given them a starter pack.
+            if (players.byId(playerId).isEmpty()) {
+                throw ApiException.notFound("unknown player " + playerId);
+            }
             Leverage leverage;
             try {
                 leverage = new Leverage(req.leverage());
