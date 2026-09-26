@@ -3,7 +3,7 @@
 // dependency (`chia-wallet-sdk-wasm`) is reused straight from `web/node_modules` (see
 // testWallet.mjs). Run with:
 //
-//   node --experimental-wasm-modules tools/e2e/run.mjs [baseUrl]
+//   node --experimental-wasm-modules tools/e2e/run.mjs [baseUrl] [--ci]
 //
 // (Node 22's plain `import` of a `.wasm` file is still an experimental feature — the flag is
 // required or the process exits immediately with an ExperimentalWarning-turned-error.)
@@ -15,15 +15,18 @@
 // balances vs engine rules; fetch /api/rounds/{id}/results.json and check sha256 == resultsHash;
 // check that chainsvc queued/published the boundary record(s) to testnet11.
 //
-// Exits 0 and prints "E2E PASSED" iff every check below passed; otherwise prints the failing
-// checks and exits 1. Deliberately no test framework dependency — this is a single linear
-// scenario, not a suite; a plain assert-and-report loop is easier to read start to finish than
-// wiring up a runner for four checks.
-
+// `--ci` (or env HERD_E2E_CI=1) — CI mode (.github/workflows/ci.yml's full-stack smoke job):
+// that job's chainsvc runs with a throwaway CI-generated key and C2_PUSH=0 (dry-run, no testnet11
+// access, no funds) — so there is no real oracle singleton and check 9 below (chain confirmation)
+// can never see a `launcherId`. CI mode skips only that one check (logged, not failed); every
+// other check, including the resultsHash integrity check, keeps its default (non-CI) behaviour
+// unchanged, since resultsHash is computed by the server independently of chainsvc.
 import { createHash } from "node:crypto";
 import { createTestWallet } from "./testWallet.mjs";
 
-const BASE_URL = process.argv[2] || process.env.HERD_E2E_BASE_URL || "http://localhost:8480";
+const args = process.argv.slice(2);
+const CI_MODE = args.includes("--ci") || process.env.HERD_E2E_CI === "1";
+const BASE_URL = args.find((a) => !a.startsWith("--")) || process.env.HERD_E2E_BASE_URL || "http://localhost:8480";
 const HOURLY_DURATION_MS = 180_000; // Р-46 test mode
 const POLL_MS = 4_000;
 
@@ -317,32 +320,38 @@ async function main() {
   }
 
   // --- 9. chainsvc queued/published the boundary record(s) to testnet11 ---
-  try {
-    const info = await players[0].rpc("serverInfo");
-    const oracle = info.oracle;
-    log(`serverInfo().oracle = ${JSON.stringify(oracle)}`);
-    check(
-      "chainsvc reachable via serverInfo (oracle block populated)",
-      oracle && oracle.launcherId && oracle.operatorBalanceMojos !== null,
-      JSON.stringify(oracle),
-    );
-    if (oracle?.lastConfirmedSeq != null) {
-      log(
-        `ORACLE CONFIRMED ON TESTNET11: seq=${oracle.lastConfirmedSeq} height=${oracle.lastConfirmedHeight} ` +
-          `launcherId=${oracle.launcherId}`,
-      );
-      check("oracle record confirmed on testnet11 (height present)", oracle.lastConfirmedHeight != null);
-    } else {
+  // Skipped in CI mode: the smoke job's chainsvc has no oracle-launch (no testnet11 funds), runs
+  // with C2_PUSH=0, and never gets a `launcherId` — none of that is what this section checks for.
+  if (CI_MODE) {
+    log("CI mode (--ci): skipping on-chain confirmation checks (no oracle-launch in the CI smoke stand)");
+  } else {
+    try {
+      const info = await players[0].rpc("serverInfo");
+      const oracle = info.oracle;
+      log(`serverInfo().oracle = ${JSON.stringify(oracle)}`);
       check(
-        "oracle record at least queued (pendingRecords > 0 or a spend in flight)",
-        (oracle?.pendingRecords ?? 0) >= 0, // presence of the field at all is the real assertion; see log line for the actual count
-        `pendingRecords=${oracle?.pendingRecords}`,
+        "chainsvc reachable via serverInfo (oracle block populated)",
+        oracle && oracle.launcherId && oracle.operatorBalanceMojos !== null,
+        JSON.stringify(oracle),
       );
-      log("not yet confirmed on-chain within this run's window — this is expected (real testnet11 block time); " +
-        "see docs/product/local_stand.md for how to keep watching chainsvc status after this script exits.");
+      if (oracle?.lastConfirmedSeq != null) {
+        log(
+          `ORACLE CONFIRMED ON TESTNET11: seq=${oracle.lastConfirmedSeq} height=${oracle.lastConfirmedHeight} ` +
+            `launcherId=${oracle.launcherId}`,
+        );
+        check("oracle record confirmed on testnet11 (height present)", oracle.lastConfirmedHeight != null);
+      } else {
+        check(
+          "oracle record at least queued (pendingRecords > 0 or a spend in flight)",
+          (oracle?.pendingRecords ?? 0) >= 0, // presence of the field at all is the real assertion; see log line for the actual count
+          `pendingRecords=${oracle?.pendingRecords}`,
+        );
+        log("not yet confirmed on-chain within this run's window — this is expected (real testnet11 block time); " +
+          "see docs/product/local_stand.md for how to keep watching chainsvc status after this script exits.");
+      }
+    } catch (e) {
+      fail("serverInfo/oracle status check", e);
     }
-  } catch (e) {
-    fail("serverInfo/oracle status check", e);
   }
 
   return summarize();

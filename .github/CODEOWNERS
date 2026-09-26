@@ -1,0 +1,11 @@
+# Code owners for Herd (C2 «Толпа против рынка»).
+# Solo project today — one collaborator on repos/Sekator778/herd (verified via
+# `gh api repos/Sekator778/herd/collaborators`, 2026-09-26). This file exists mainly so
+# `docs/ops/branching.md`'s `main` ruleset can require code-owner review once there is more
+# than one contributor (e.g. after the Р-54 public repo attracts outside PRs) — right now it
+# just names the same person the ruleset's admin-bypass already covers.
+#
+# Last matching pattern wins — keep this as a single catch-all unless/until ownership is split
+# by directory.
+
+* @Sekator778
