@@ -36,8 +36,10 @@ public final class LedgerBook {
     private final List<LedgerEntry> entries = new ArrayList<>();
     private final Map<String, WithdrawalRequest> withdrawals = new LinkedHashMap<>();
     private final Map<String, DepositRequest> deposits = new LinkedHashMap<>();
+    private final List<LedgerCorrection> corrections = new ArrayList<>();
     private long sequence = 0;
     private long requestCounter = 0;
+    private long correctionCounter = 0;
 
     // --- reads ---
 
@@ -65,6 +67,12 @@ public final class LedgerBook {
 
     public Optional<DepositRequest> deposit(String requestId) {
         return Optional.ofNullable(deposits.get(requestId));
+    }
+
+    /** Every operator ledger correction ever issued, in order — the public audit trail wave-2's
+     *  {@link #reverseWithdrawalEffect} writes to (see {@link LedgerCorrection}). */
+    public List<LedgerCorrection> corrections() {
+        return List.copyOf(corrections);
     }
 
     private PlayerAccount account(String playerId) {
@@ -109,6 +117,9 @@ public final class LedgerBook {
     /** Reserves {@code stake} for a bet: validates the Р-12 minimum and that it does not exceed
      * the current balance, then debits it. */
     public void reserveStake(String playerId, String roundId, PlayAmount stake, Instant now) {
+        stake.requirePositive("stake"); // wave-2 fix: below-minimum already implies positive (MIN_STAKE
+        // > 0), but this makes the domain's own refusal of non-positive stakes explicit rather than
+        // an accident of MIN_STAKE's value — see PlayAmount#requirePositive's javadoc.
         ensureSeasonPack(playerId, now);
         if (stake.compareTo(MIN_STAKE) < 0) {
             throw new IllegalArgumentException("stake below minimum " + MIN_STAKE + ": " + stake);
@@ -143,6 +154,24 @@ public final class LedgerBook {
 
     /** Reserves {@code amount} pending the on-chain withdrawal (see {@link OnChainWalletPort}). */
     public WithdrawalRequest requestWithdrawal(String playerId, PlayAmount amount, Instant now) {
+        // Wave-2 security fix, deliberately NOT enforced here (see PlayAmount#requirePositive):
+        // this exact method is the one shared code path GameService uses to apply a brand-new,
+        // live withdrawal command AND EventApplier/EngineRebuildService use to REPLAY an already-
+        // persisted historical WithdrawalRequested event on every restart. A non-positive amount
+        // here used to mint PLAY (debit(amount) below negates amount before applying it, so
+        // amount=-5000 became a +5000 credit — the requestWithdrawal("-5000.000") exploit), and
+        // that bug is already an immutable past event this task forbids altering or deleting.
+        // Guarding it HERE would make every future restart crash while replaying that one
+        // historical event (IllegalArgumentException, uncaught, in EngineRebuildService's replay
+        // loop) — i.e. deploying this very fix to a stand that already has the bad event in its
+        // log would break startup, before the operator correction below ever gets a chance to run.
+        // The domain-level guard instead lives at the one place a genuinely NEW withdrawal command
+        // is decided — GameService.requestWithdrawal, BEFORE it ever persists/applies an event —
+        // which is the only caller an external attacker can actually reach; replay only ever
+        // re-applies commands GameService already accepted (or, for this one historical row,
+        // accepted before this fix existed). See #reverseWithdrawalEffect for how the one already-
+        // corrupted balance gets corrected instead: a new, explicit, public event, not a retroactive
+        // edit of this one.
         ensureSeasonPack(playerId, now);
         PlayAmount balance = balance(playerId);
         if (amount.compareTo(balance) > 0) {
@@ -182,8 +211,76 @@ public final class LedgerBook {
         return updated;
     }
 
+    /**
+     * Wave-2 security fix (Р-32/Р-43 pattern): an operator correction that reverses the balance/
+     * season effect a withdrawal request originally applied. Deliberately does <b>not</b> look up
+     * {@code relatedWithdrawalRequestId} in {@link #withdrawal} — the caller (see
+     * {@code GameService#reverseWithdrawal}) reads the request's own {@code originalAmount}/
+     * implied season from live state ONCE, at command time, and this method is given those values
+     * directly. This makes the correction's own replay fully self-contained: it never needs to
+     * re-resolve {@code relatedWithdrawalRequestId} against {@link #withdrawals} at replay time, so
+     * it stays correct even if a future change makes that lookup unavailable or renamed — a
+     * deliberately loose coupling for a correction whose whole point is to outlive the bug it fixes.
+     *
+     * <p>Unlike {@link #failWithdrawal}, this does not require {@code REQUESTED} state and does not
+     * transition the original request's own state at all — the historical record, including
+     * whatever bug produced it, is left exactly as it happened. The correction is its own new,
+     * append-only, publicly-reasoned entry ({@link LedgerEntryType#OPERATOR_CORRECTION} + a
+     * {@link LedgerCorrection}), not a retroactive edit. {@code originalAmount} is applied to the
+     * balance as-is (the exact inverse of what {@code requestWithdrawal}'s {@code debit(amount)}
+     * applied — negating a negated amount reproduces the original sign), and {@code
+     * originalAmount.negate()} is applied to {@code originalSeason}'s {@code withdrawn}
+     * bookkeeping (undoing that same original call's {@code withWithdrawalDelta(amount)}). Can only
+     * be applied once per {@code relatedWithdrawalRequestId} (idempotency guard against
+     * double-correction — tracked via {@link #corrections}, itself replay-safe for the same reason
+     * as above). Never allows the balance to go negative (same guard as every other primitive, via
+     * {@link #applyDelta}).
+     *
+     * @throws IllegalStateException    if {@code relatedWithdrawalRequestId} was already reversed
+     * @throws IllegalArgumentException if {@code reason} is blank
+     */
+    public LedgerCorrection reverseWithdrawalEffect(String playerId, PlayAmount originalAmount, Season originalSeason,
+            String reason, String relatedWithdrawalRequestId, Instant now) {
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("correction reason must not be blank");
+        }
+        boolean alreadyReversed = corrections.stream()
+                .anyMatch(c -> relatedWithdrawalRequestId.equals(c.relatedWithdrawalRequestId()));
+        if (alreadyReversed) {
+            throw new IllegalStateException("withdrawal " + relatedWithdrawalRequestId + " was already reversed");
+        }
+
+        ensureSeasonPack(playerId, now);
+        applyDelta(playerId, originalAmount, LedgerEntryType.OPERATOR_CORRECTION, null, now);
+        adjustSeasonWithdrawn(playerId, originalSeason, originalAmount.negate());
+
+        String id = "c-" + (++correctionCounter);
+        LedgerCorrection correction = new LedgerCorrection(id, playerId, originalAmount, reason,
+                relatedWithdrawalRequestId, now.toEpochMilli());
+        corrections.add(correction);
+        return correction;
+    }
+
+    /** Adjusts {@code season}'s {@code withdrawn} bookkeeping directly (unlike
+     *  {@link #updateCurrentSeasonRecord}, which always targets the player's *current* season) — a
+     *  no-op if that season's record does not exist (defensive; should not happen for a season a
+     *  real withdrawal was recorded against). */
+    private void adjustSeasonWithdrawn(String playerId, Season season, PlayAmount delta) {
+        PlayerAccount acc = account(playerId);
+        SeasonRecord existing = acc.seasons().get(season);
+        if (existing == null) {
+            return;
+        }
+        Map<Season, SeasonRecord> seasons = new LinkedHashMap<>(acc.seasons());
+        seasons.put(season, existing.withWithdrawalDelta(delta));
+        accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), acc.currentSeason(), seasons));
+    }
+
     /** Registers a pending on-chain-to-ledger deposit; no balance change until confirmed. */
     public DepositRequest requestDeposit(String playerId, PlayAmount amount, Instant now) {
+        // Wave-2 security fix — same replay-fidelity reasoning as requestWithdrawal above (this
+        // method is likewise shared between live-apply and startup replay): the guard lives in
+        // GameService.requestDeposit, before a new event is ever persisted, not here.
         ensureSeasonPack(playerId, now);
         String id = "d-" + (++requestCounter);
         DepositRequest request = new DepositRequest(id, playerId, amount, DepositState.REQUESTED, now.toEpochMilli());

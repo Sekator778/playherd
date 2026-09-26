@@ -9,6 +9,7 @@
 # Usage:
 #   HERD_OPERATOR_TOKEN=... tools/herd-operator.sh status
 #   HERD_OPERATOR_TOKEN=... tools/herd-operator.sh cancel <roundId> ["reason"]
+#   HERD_OPERATOR_TOKEN=... tools/herd-operator.sh reverse-withdrawal <requestId> "reason"
 #
 # Env:
 #   HERD_OPERATOR_TOKEN  required — must match the running server's HERD_OPERATOR_TOKEN.
@@ -28,6 +29,7 @@ usage() {
 Usage:
   $(basename "$0") status
   $(basename "$0") cancel <roundId> ["reason"]
+  $(basename "$0") reverse-withdrawal <requestId> "reason"
 
 Env:
   HERD_OPERATOR_TOKEN  required — bearer token, must match the server's own.
@@ -60,6 +62,25 @@ case "$cmd" in
     # send control characters in a reason).
     escaped_reason=$(printf '%s' "$reason" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
     curl -sS -X POST "${SERVER_URL}/api/admin/rounds/${round_id}/cancel" \
+      -H "Authorization: Bearer ${HERD_OPERATOR_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"reason\":\"${escaped_reason}\"}"
+    echo
+    ;;
+  reverse-withdrawal)
+    # Wave-2 security fix (Р-32/Р-43 pattern): reverses a withdrawal request's already-recorded
+    # balance/season effect (e.g. the requestWithdrawal("-5000.000") exploit) without altering or
+    # deleting the original event — see crowdvsmarket.engine.ledger.LedgerBook#reverseWithdrawalEffect
+    # and GameService#reverseWithdrawal. Listed publicly afterwards via the "ledgerCorrections" RPC
+    # method (no auth required), the same way a round cancellation is public via "cancellations".
+    request_id="${2:-}"
+    reason="${3:-}"
+    if [[ -z "$request_id" || -z "$reason" ]]; then
+      echo "error: reverse-withdrawal requires <requestId> and a non-empty \"reason\"" >&2
+      usage
+    fi
+    escaped_reason=$(printf '%s' "$reason" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+    curl -sS -X POST "${SERVER_URL}/api/admin/withdrawals/${request_id}/reverse" \
       -H "Authorization: Bearer ${HERD_OPERATOR_TOKEN}" \
       -H "Content-Type: application/json" \
       -d "{\"reason\":\"${escaped_reason}\"}"

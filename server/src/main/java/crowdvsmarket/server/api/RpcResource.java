@@ -142,6 +142,10 @@ public class RpcResource {
                 result = gameService.publicProfile(playerId);
             }
             case "cancellations" -> result = gameService.cancellations(pageParams(args, 0));
+            // Wave-2 security fix: public, additive (not in contract.ts, same "additive" situation
+            // as the extra ApiErrorCode values above) — the public audit log for operator ledger
+            // corrections (Р-32/Р-43 pattern), unauthenticated exactly like "cancellations".
+            case "ledgerCorrections" -> result = gameService.ledgerCorrections(pageParams(args, 0));
             case "home" -> result = gameService.home(playerId);
             case "serverInfo" -> result = gameService.serverInfo();
             default -> throw ApiException.notFound("unknown RPC method: " + method);

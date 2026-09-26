@@ -44,6 +44,7 @@ public class EventStore {
                 case "DepositRequested" -> GameEvent.DepositRequested.class;
                 case "DepositConfirmed" -> GameEvent.DepositConfirmed.class;
                 case "DepositFailed" -> GameEvent.DepositFailed.class;
+                case "WithdrawalReversed" -> GameEvent.WithdrawalReversed.class;
                 default -> throw new IllegalStateException("unknown game_events.event_type: " + type);
             };
             return db.json().readValue(payloadJson, clazz);

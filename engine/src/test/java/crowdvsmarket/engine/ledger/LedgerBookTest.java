@@ -185,6 +185,114 @@ class LedgerBookTest {
         assertThat(ledger.balance("alice")).isEqualTo(LedgerBook.STARTER_PACK);
     }
 
+    // --- wave-2 security fix: non-positive amounts at every money entry point ---
+    //
+    // Note: LedgerBook.requestWithdrawal/requestDeposit deliberately do NOT reject a non-positive
+    // amount themselves (see their own comments) — that guard lives in GameService, before a new
+    // command is ever turned into an event, precisely so replaying an already-persisted historical
+    // event (like the one this fix corrects, see the "operator correction" tests below) never
+    // breaks. reserveStake has no such historical-compatibility concern (no non-positive stake was
+    // ever accepted, even before this fix), so it guards directly.
+
+    @Test
+    void reserveStakeRejectsZeroAndNegativeStake() {
+        LedgerBook ledger = new LedgerBook();
+        ledger.ensureSeasonPack("alice", APRIL);
+        assertThatThrownBy(() -> ledger.reserveStake("alice", "r1", PlayAmount.ZERO, APRIL))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ledger.reserveStake("alice", "r1", PlayAmount.ofWholePlay(-500), APRIL))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(ledger.balance("alice")).isEqualTo(LedgerBook.STARTER_PACK); // untouched
+    }
+
+    // --- wave-2 security fix: public, replayable operator correction ---
+
+    @Test
+    void reverseWithdrawalEffectUndoesABogusConfirmedWithdrawalExactly() {
+        LedgerBook ledger = new LedgerBook();
+        ledger.ensureSeasonPack("alice", APRIL); // balance 10000
+
+        // The exact wave-2 exploit shape: LedgerBook.requestWithdrawal itself never rejected a
+        // negative amount (that guard lives in GameService, see above) — debit(amount) negates it,
+        // so amount=-5000 becomes a +5000 credit once auto-confirmed (this server's
+        // OnChainWalletPort stub confirms every withdrawal immediately).
+        PlayAmount bogusAmount = PlayAmount.fromMoney(new BigDecimal("-5000.000"));
+        WithdrawalRequest bogus = ledger.requestWithdrawal("alice", bogusAmount, APRIL);
+        ledger.confirmWithdrawal(bogus.requestId());
+        assertThat(ledger.balance("alice")).isEqualTo(PlayAmount.ofWholePlay(15_000)); // the bug, reproduced
+
+        LedgerCorrection correction = ledger.reverseWithdrawalEffect("alice", bogus.amount(), Season.of(APRIL),
+                "wave-2 test exploit: requestWithdrawal(-5000.000) minted PLAY", bogus.requestId(), APRIL.plusSeconds(60));
+
+        assertThat(ledger.balance("alice")).isEqualTo(LedgerBook.STARTER_PACK); // back to honest 10000
+        assertThat(correction.playerId()).isEqualTo("alice");
+        assertThat(correction.delta()).isEqualTo(bogusAmount);
+        assertThat(correction.relatedWithdrawalRequestId()).isEqualTo(bogus.requestId());
+        assertThat(correction.reason()).contains("wave-2");
+        assertThat(ledger.corrections()).containsExactly(correction); // public, listed
+
+        // the original bogus request is untouched — no altering/deleting history
+        WithdrawalRequest stillOnRecord = ledger.withdrawal(bogus.requestId()).orElseThrow();
+        assertThat(stillOnRecord.state()).isEqualTo(WithdrawalState.CONFIRMED);
+        assertThat(stillOnRecord.amount().toMoney()).isEqualByComparingTo("-5000.000");
+
+        // season bookkeeping (withdrawn) is also restored to honest zero, not left at -5000
+        SeasonRecord record = ledger.seasonRecord("alice", Season.of(APRIL)).orElseThrow();
+        assertThat(record.withdrawn()).isEqualTo(PlayAmount.ZERO);
+
+        // replay of entries() still reproduces the corrected balance (event-sourcing invariant)
+        PlayAmount replayed = PlayAmount.ZERO;
+        for (LedgerEntry entry : ledger.entries()) {
+            if (entry.playerId().equals("alice")) {
+                replayed = replayed.plus(entry.delta());
+            }
+        }
+        assertThat(replayed).isEqualTo(ledger.balance("alice"));
+    }
+
+    @Test
+    void reverseWithdrawalEffectWorksFromConfirmedStateUnlikeFailWithdrawal() {
+        // failWithdrawal (the pre-existing on-chain-failure path) requires REQUESTED and would
+        // reject this; reverseWithdrawalEffect must not, since this server auto-confirms every
+        // withdrawal immediately (docs/research/server_design.md §3) — REQUESTED never lingers.
+        LedgerBook ledger = new LedgerBook();
+        ledger.ensureSeasonPack("alice", APRIL);
+        WithdrawalRequest w = ledger.requestWithdrawal("alice", PlayAmount.ofWholePlay(500), APRIL);
+        ledger.confirmWithdrawal(w.requestId());
+        assertThatThrownBy(() -> ledger.failWithdrawal(w.requestId(), APRIL))
+                .isInstanceOf(IllegalStateException.class); // sanity: confirms the precondition above
+
+        ledger.reverseWithdrawalEffect("alice", w.amount(), Season.of(APRIL), "operator test correction",
+                w.requestId(), APRIL.plusSeconds(1));
+
+        assertThat(ledger.balance("alice")).isEqualTo(LedgerBook.STARTER_PACK); // 500 restored
+        // the request itself is still CONFIRMED — reverseWithdrawalEffect never transitions it
+        assertThat(ledger.withdrawal(w.requestId())).map(WithdrawalRequest::state).contains(WithdrawalState.CONFIRMED);
+    }
+
+    @Test
+    void reverseWithdrawalEffectRequiresAReason() {
+        LedgerBook ledger = new LedgerBook();
+        ledger.ensureSeasonPack("alice", APRIL);
+        assertThatThrownBy(() -> ledger.reverseWithdrawalEffect("alice", PlayAmount.ofWholePlay(500), Season.of(APRIL),
+                " ", "w-1", APRIL)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ledger.reverseWithdrawalEffect("alice", PlayAmount.ofWholePlay(500), Season.of(APRIL),
+                null, "w-1", APRIL)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void reverseWithdrawalEffectCannotBeAppliedTwiceForTheSameRequestId() {
+        LedgerBook ledger = new LedgerBook();
+        ledger.ensureSeasonPack("alice", APRIL);
+        WithdrawalRequest w = ledger.requestWithdrawal("alice", PlayAmount.ofWholePlay(500), APRIL);
+        ledger.confirmWithdrawal(w.requestId());
+        ledger.reverseWithdrawalEffect("alice", w.amount(), Season.of(APRIL), "first correction", w.requestId(), APRIL);
+
+        assertThatThrownBy(() -> ledger.reverseWithdrawalEffect("alice", w.amount(), Season.of(APRIL),
+                "second correction", w.requestId(), APRIL))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
     @Test
     void balanceNeverGoesNegative() {
         LedgerBook ledger = new LedgerBook();

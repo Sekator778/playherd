@@ -68,6 +68,32 @@ public record PlayAmount(long mojos) implements Comparable<PlayAmount> {
         return mojos > 0;
     }
 
+    /**
+     * Guards every money-moving entry point (stake, withdrawal, deposit — Р-6, Р-8): throws unless
+     * this amount is strictly positive. Wave-2 security fix: a zero or negative amount here is not
+     * merely "nothing happens" — {@link LedgerBook}'s debit/credit primitives negate a debit amount
+     * before applying it, so a negative "withdrawal" of {@code -5000} silently becomes a {@code
+     * +5000} credit (the exploit that minted PLAY via {@code requestWithdrawal("-5000.000")}).
+     * Callers deciding a brand-new command must call this before ever constructing/persisting the
+     * corresponding event ({@code GameService.requestWithdrawal}/{@code requestDeposit} do; {@link
+     * LedgerBook#reserveStake} calls it directly, since no historical bet ever violated it). {@code
+     * LedgerBook.requestWithdrawal}/{@code requestDeposit} themselves deliberately do
+     * <b>not</b> call this — those two methods are also how a past, already-persisted event replays
+     * on every restart, and this task's own rule ("do not alter or delete existing events") means a
+     * historical amount that predates this guard must keep replaying exactly as it always did; see
+     * those methods' own comments and {@link LedgerBook#reverseWithdrawalEffect} for how the one
+     * already-corrupted balance actually gets fixed instead (a new, explicit, public event).
+     *
+     * @param what names the amount in the exception message (e.g. {@code "withdrawal amount"})
+     * @return {@code this}, for fluent use at a call site
+     */
+    public PlayAmount requirePositive(String what) {
+        if (!isPositive()) {
+            throw new IllegalArgumentException(what + " must be positive: " + this);
+        }
+        return this;
+    }
+
     @Override
     public int compareTo(PlayAmount other) {
         return Long.compare(mojos, other.mojos);

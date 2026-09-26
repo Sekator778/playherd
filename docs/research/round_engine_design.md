@@ -228,3 +228,69 @@ Quarkus-сервисе (параллельные запросы) может по
 4. **«Пророки» при ликвидации (§4.6)** — подтвердить, что угаданное направление засчитывается
    независимо от ликвидации (плечо наказывается балансом, не рейтингом), а не только доигранным до
    конца раундам.
+
+## 6. Волна 2 (security-фиксы по тестам, перед ревью критика) — 2026-09-26
+
+Правит находки второго раунда тестирования (`requestWithdrawal("-5000.000")` минтил PLAY). Затронуты
+только `engine/ledger` — аддитивно, ни один существующий публичный метод не меняет сигнатуру.
+
+**`PlayAmount.requirePositive(String what)`** (предложение) — бросает `IllegalArgumentException`,
+если `mojos <= 0`; возвращает `this` для fluent-использования на месте вызова. Единственный новый
+универсальный «денежный» guard движка.
+
+**Где guard реально стоит, а где — намеренно нет.** `LedgerBook.reserveStake` зовёт его первой
+строкой (безопасно: `MIN_STAKE > 0` и так уже отбрасывал любой неположительный stake во всех
+существующих событиях `BetPlaced` — исторических нарушителей нет). `LedgerBook.requestWithdrawal`/
+`requestDeposit` — **намеренно не зовут** `requirePositive` внутри себя, хотя это тот самый метод,
+где родился баг: `debit(amount)` негирует `amount` перед применением, так что `amount=-5000` тихо
+стало кредитом `+5000` после автоподтверждения (`GameService` подтверждает вывод сразу же, реального
+моста на chain нет, §3). Причина — эти два метода одновременно и «применяют новую живую команду», и
+«переигрывают уже случившееся историческое событие» при рестарте (`EventApplier`/
+`EngineRebuildService`, один и тот же код path для обоих, по замыслу этого движка). Уже
+персистентное события `WithdrawalRequested(amountMojos=-5000000)` — то самое, что породил
+эксплойт до этого фикса — задача прямо запрещает менять или удалять; если бы guard стоял внутри
+`requestWithdrawal`, каждый следующий рестарт падал бы на реплее именно этого события
+(`IllegalArgumentException`, необработанное, в цикле `EngineRebuildService.rebuild()`) — то есть сам
+деплой этого фикса на стенд, где баг уже случился, ронял бы сервер на первом же рестарте, ещё до
+того, как оператор успел бы применить коррекцию. Поэтому guard стоит на уровне команды —
+`GameService.requestWithdrawal`/`requestDeposit`, до того как событие вообще создаётся и
+персистится (server_design.md §14) — а не на уровне «применить уже решённое», которое обязано
+пережить рестарт буквально как было.
+
+**`LedgerEntryType.OPERATOR_CORRECTION`** (предложение, аддитивно) — тип записи для
+`LedgerBook.reverseWithdrawalEffect` (см. ниже); не в `contract.ts`, та же ситуация, что и с
+`INVALID_NICKNAME`/`RATE_LIMITED` на стороне сервера.
+
+**`LedgerCorrection`** (новый record: `correctionId, playerId, delta, reason, relatedWithdrawalRequestId,
+atEpochMs`) + `LedgerBook.corrections()` — публичный, реплеимый журнал операторских коррекций,
+аналог `entries()`/`CrowdAccount.history()` (тоже только в памяти, тоже восстанавливается репleем,
+отдельной read-model таблицы не нужно).
+
+**`LedgerBook.reverseWithdrawalEffect(playerId, originalAmount, originalSeason, reason,
+relatedWithdrawalRequestId, now)`** — операторская коррекция (паттерн Р-32/Р-43): применяет
+`originalAmount` к балансу как есть (ровно обратное тому, что `debit(originalAmount)` применил
+изначально — повторное отрицание восстанавливает исходный знак) и `originalAmount.negate()` — к
+`withdrawn` того сезона, в котором произошёл исходный вызов (`originalSeason`, а не сезон на момент
+коррекции — иначе коррекция после смены сезона испортила бы не тот `SeasonRecord`). Умышленно **не
+ищет** `relatedWithdrawalRequestId` в `withdrawals` — вызывающий (`GameService.reverseWithdrawal`)
+читает текущие `amount`/`requestedAtEpochMs` заявки на вывода ОДИН РАЗ, в момент команды, и передаёт
+их сюда уже готовыми значениями. Это делает реплей самой коррекции независимым от того, реплеилось
+ли исходное (потенциально уже нарушающее новый guard) событие успешно — коррекция описывает себя
+полностью сама. В отличие от `failWithdrawal`, не требует состояния `REQUESTED` (в этом сервере
+вывод подтверждается мгновенно, `REQUESTED` никогда не задерживается) и не трогает состояние самой
+заявки — исторический факт, включая баг, который его породил, остаётся как есть. Защита от повторного
+применения — по `relatedWithdrawalRequestId` внутри уже накопленных `corrections()` (это новый
+список, у него нет исторических нарушителей, так что проверка безопасна и при живом вызове, и при
+реплее).
+
+**`Season.parse(String id)`** (предложение, аддитивно) — обратная операция к `Season.id()`
+(`"YYYY-MM"`), нужна `EventApplier`, чтобы восстановить `Season` из `GameEvent.WithdrawalReversed`'а
+собственного `originalSeasonId` при реплее.
+
+**Тесты** (`engine`, аддитивно к существующим 6519): `PlayAmountTest` (+3:
+`requirePositive` accept/reject-zero/reject-negative), `LedgerBookTest` (+8:
+`reserveStakeRejectsZeroAndNegativeStake`, `reverseWithdrawalEffectUndoesABogusConfirmedWithdrawalExactly`
+— воспроизводит эксплойт целиком через ОТКРЫТЫЙ API (раз `requestWithdrawal` не гардит сам себя,
+`ledger.requestWithdrawal("alice", PlayAmount.fromMoney("-5000.000"), …)` действительно даёт баг, как
+на реальном стенде), плюс `WorksFromConfirmedStateUnlikeFailWithdrawal`/`RequiresAReason`/
+`CannotBeAppliedTwice`). Полный прогон реактора см. `server_design.md` §14.

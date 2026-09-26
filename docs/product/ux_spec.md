@@ -552,8 +552,16 @@ ResultTile.tsx` — тот же компонент, что Home's "Your last res
 - **Empty** (история) — **"No activity yet — your starter pack will appear here once you sign in."**
   (в норме невозможно: `ensureSeasonPack` начисляет пакет сразу при первой активности, но текст
   нужен на случай гонки загрузки).
-- **Withdrawal below balance / above balance** — то же правило валидации, что у ставки:
-  **"You only have {balance} PLAY."**, кнопка задизейблена.
+- **Withdraw/Deposit amount validation** (client-side, fix wave2 2026-09-26 — `api/amountInput.ts`,
+  тот же принцип, что у ставки в §11: сумма должна быть положительной, не более 3 знаков после
+  запятой (масштаб `PlayAmountStr`), а для Withdraw — не больше баланса. Раньше поле принимало
+  отрицательные суммы (`Number(amount) || 0` считало `-50` "истинным" значением, кнопка не
+  блокировалась) и лишние знаки после запятой тихо обрезались на `.toFixed(3)` без предупреждения.
+  Кнопка задизейблена, пока сумма не проходит все применимые проверки; ошибки под полем, каждая
+  своей строкой, показывается первая применимая:
+  - **не положительная** — **"Enter an amount greater than 0."**
+  - **больше 3 знаков после запятой** — **"At most 3 decimal places."**
+  - **(только Withdraw) больше баланса** — **"You only have {balance} PLAY."**
 - **Withdrawal requested** — плашка со статусом: **"Withdrawal requested — {amount} PLAY, pending confirmation."**
   (`WithdrawalState: "REQUESTED"`); при **CONFIRMED** — **"Withdrawal confirmed — {amount} PLAY sent to your wallet."**;
   при **FAILED** — **"Withdrawal failed — {amount} PLAY returned to your balance."** (баланс

@@ -72,4 +72,16 @@ public sealed interface GameEvent {
 
     record DepositFailed(String requestId, long atMs) implements GameEvent {
     }
+
+    /** Wave-2 security fix (Р-32/Р-43 pattern): an operator correction that reverses the balance/
+     *  season effect a withdrawal request originally applied (e.g. the {@code
+     *  requestWithdrawal("-5000.000")} exploit) — {@code GameService#reverseWithdrawal}. Fully
+     *  self-contained on purpose: {@code originalAmountMojos}/{@code originalSeasonId} are captured
+     *  once, at command time, from the request's own already-recorded values, rather than being
+     *  re-derived from {@code relatedWithdrawalRequestId} on replay (see
+     *  {@code crowdvsmarket.engine.ledger.LedgerBook#reverseWithdrawalEffect}'s javadoc).
+     *  {@code relatedWithdrawalRequestId} is carried only for the public audit trail. */
+    record WithdrawalReversed(String playerId, long originalAmountMojos, String originalSeasonId, String reason,
+                                String relatedWithdrawalRequestId, long atMs) implements GameEvent {
+    }
 }

@@ -26,7 +26,29 @@ const INTERVALS: Interval[] = ["HOURLY", "DAILY"];
  * if a real backend DOES show `.running` reaching `"SETTLED"` before rolling over, the primary
  * path below fires first and the fallback never triggers for that round (its dedup key is already
  * handled by the time the fallback would look at it).
+ *
+ * Wave2 fix (Alex, 2026-09-26): the moment fired only sometimes for a desktop player who stayed
+ * on a round page through settlement. Root cause: the fallback's `catch` block treated *any*
+ * failure of the direct `api.round(roundId)` chase — including a transient network hiccup or a
+ * momentary server error — the same as "this round doesn't exist any more", and gave up on it
+ * permanently after a single failed attempt, deleting it from `pending` so it was never retried.
+ * A rolled-over round the player had a stake in is never actually gone (the frontend only ever
+ * learned its id from the server's own `home()` response, and the real backend's atomic
+ * resolve-then-advance step — `RoundSchedulerService.resolveOverdueRounds` — guarantees it has
+ * already settled by the time it rolls out of `.running`), so one failed fetch is not a reason to
+ * stop looking for it. Fixed by retrying a failed chase on later ticks instead of abandoning it
+ * on the first error, bounded (`MAX_CHASE_ATTEMPTS`) only to avoid chasing a truly bogus id
+ * forever, and logging every failure (`console.error`) instead of swallowing it — this file's own
+ * `catch (() => {})` had no visibility at all before this fix, so a real failure here was
+ * indistinguishable from "nothing happened yet".
  */
+
+/** How many consecutive failed `api.round(roundId)` attempts the fallback tolerates for one
+ *  pending round before giving up on it — generous (≈20s at `POLL_MS`) because a rolled-over
+ *  round the player had a stake in always does resolve eventually; this only guards against
+ *  chasing a genuinely bogus id forever. */
+const MAX_CHASE_ATTEMPTS = 10;
+
 export function useSettlementWatcher(): void {
   const api = useApi();
   const { player } = useSession();
@@ -38,6 +60,9 @@ export function useSettlementWatcher(): void {
       ["DAILY", new Set<RoundId>()],
     ]),
   );
+  /** Consecutive failed `api.round()` attempts per pending `roundId`, so a transient error costs
+   *  one retry, not the whole round's result moment. */
+  const failedAttempts = useRef<Map<RoundId, number>>(new Map());
 
   const tick = useCallback(() => {
     if (!player) return;
@@ -83,6 +108,7 @@ export function useSettlementWatcher(): void {
             const key = `${roundId}:${playerId}`;
             if (handled.current.has(key)) {
               pendingSet.delete(roundId);
+              failedAttempts.current.delete(roundId);
               continue;
             }
             try {
@@ -102,14 +128,33 @@ export function useSettlementWatcher(): void {
                   publish(event);
                 }
                 pendingSet.delete(roundId); // resolved either way — stop chasing it
+                failedAttempts.current.delete(roundId);
               }
-            } catch {
-              pendingSet.delete(roundId); // round vanished/errored — stop chasing it
+              // Still RUNNING/BETTING (a genuine, if unexpected, momentary state) — leave it in
+              // `pendingSet` and try again next tick; not an error, so it doesn't count against
+              // MAX_CHASE_ATTEMPTS.
+            } catch (err) {
+              const attempts = (failedAttempts.current.get(roundId) ?? 0) + 1;
+              failedAttempts.current.set(roundId, attempts);
+              console.error(
+                `[useSettlementWatcher] api.round(${roundId}) failed (attempt ${attempts}/${MAX_CHASE_ATTEMPTS}) while chasing a settlement for ${interval}`,
+                err,
+              );
+              if (attempts >= MAX_CHASE_ATTEMPTS) {
+                pendingSet.delete(roundId); // genuinely gone (or a persistent bug) — stop chasing it
+                failedAttempts.current.delete(roundId);
+              }
+              // Otherwise leave it in `pendingSet` — retried on the next tick instead of losing
+              // this result moment to one bad request.
             }
           }
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        // A single failed `home()`/`myAccount()` poll costs one tick, not the moment itself —
+        // `usePoll` calls this again in POLL_MS regardless — but it must not be invisible.
+        console.error("[useSettlementWatcher] poll tick failed", err);
+      });
   }, [api, player]);
 
   usePoll(tick, POLL_MS, [tick]);

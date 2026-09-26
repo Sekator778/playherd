@@ -21,5 +21,13 @@ public enum LedgerEntryType {
     /** A withdrawal reserved pending on-chain confirmation (Р-6) — a debit. */
     WITHDRAWAL,
     /** A reserved withdrawal that failed on-chain and was returned to the balance (Р-6) — a credit. */
-    WITHDRAWAL_REFUND
+    WITHDRAWAL_REFUND,
+    /** Wave-2 security fix (Р-32/Р-43 pattern): an operator-issued, publicly-reasoned correction
+     *  that reverses a bogus debit/credit already recorded by a bug (e.g. a malformed negative
+     *  withdrawal amount) without altering or deleting the original {@link LedgerEntry} — see
+     *  {@link LedgerBook#reverseWithdrawalEffect} and {@link LedgerCorrection}. Sign follows the
+     *  correction itself: can be a credit or a debit. Additive — not in {@code contract.ts}'s
+     *  {@code LedgerEntryType} union (same situation as the server's additive {@code ApiErrorCode}
+     *  values, see docs/research/server_design.md). */
+    OPERATOR_CORRECTION
 }

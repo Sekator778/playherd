@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useApi, useSession } from "../api/ApiContext";
+import { checkPlayAmount, PLAY_DECIMALS } from "../api/amountInput";
 import type {
   DepositRequestDto,
   LedgerEntryDto,
@@ -83,11 +84,12 @@ function WithdrawForm({ balance, onDone }: { balance: string; onDone: () => void
 
   useEffect(() => () => window.clearInterval(pollRef.current), []);
 
-  const amountNum = Number(amount) || 0;
-  const overBalance = amountNum > Number(balance);
+  // Client-side validation (Alex, wave2 fix): positive, ≤ balance, ≤3 decimals — see
+  // `amountInput.ts`'s header for the bug this closes (a negative amount used to pass).
+  const check = checkPlayAmount(amount, Number(balance));
 
   const submit = async () => {
-    const r = await api.requestWithdrawal(amountNum.toFixed(3));
+    const r = await api.requestWithdrawal(check.amount.toFixed(3));
     setRequest(r);
     onDone();
     pollRef.current = window.setInterval(async () => {
@@ -105,15 +107,16 @@ function WithdrawForm({ balance, onDone }: { balance: string; onDone: () => void
       <h3>Withdraw to wallet</h3>
       <div className="field">
         <label htmlFor="withdraw-amount">Amount (PLAY)</label>
-        <input id="withdraw-amount" type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} />
-        {overBalance && <p className="field-error">You only have {formatPlayAmount(balance)} PLAY.</p>}
+        <input id="withdraw-amount" type="number" min={0} step="0.001" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        {amount !== "" && !check.isPositive && <p className="field-error">Enter an amount greater than 0.</p>}
+        {check.isPositive && check.tooManyDecimals && (
+          <p className="field-error">At most {PLAY_DECIMALS} decimal places.</p>
+        )}
+        {check.isPositive && !check.tooManyDecimals && check.overBalance && (
+          <p className="field-error">You only have {formatPlayAmount(balance)} PLAY.</p>
+        )}
       </div>
-      <button
-        type="button"
-        className="btn btn--primary"
-        disabled={!amountNum || overBalance}
-        onClick={() => void submit()}
-      >
+      <button type="button" className="btn btn--primary" disabled={!check.valid} onClick={() => void submit()}>
         Withdraw
       </button>
       {request && (
@@ -139,10 +142,13 @@ function DepositForm({ onDone }: { onDone: () => void }) {
 
   useEffect(() => () => window.clearInterval(pollRef.current), []);
 
-  const amountNum = Number(amount) || 0;
+  // Client-side validation (Alex, wave2 fix): positive, ≤3 decimals — no balance ceiling for a
+  // deposit (see `amountInput.ts`'s header for the bug this closes: a negative amount used to
+  // pass this form too).
+  const check = checkPlayAmount(amount);
 
   const submit = async () => {
-    const r = await api.requestDeposit(amountNum.toFixed(3));
+    const r = await api.requestDeposit(check.amount.toFixed(3));
     setRequest(r);
     onDone();
     pollRef.current = window.setInterval(async () => {
@@ -160,13 +166,17 @@ function DepositForm({ onDone }: { onDone: () => void }) {
       <h3>Deposit from wallet</h3>
       <div className="field">
         <label htmlFor="deposit-amount">Amount you sent (PLAY)</label>
-        <input id="deposit-amount" type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <input id="deposit-amount" type="number" min={0} step="0.001" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        {amount !== "" && !check.isPositive && <p className="field-error">Enter an amount greater than 0.</p>}
+        {check.isPositive && check.tooManyDecimals && (
+          <p className="field-error">At most {PLAY_DECIMALS} decimal places.</p>
+        )}
       </div>
       <div className="field">
         <label htmlFor="deposit-ref">Transaction reference (optional)</label>
         <input id="deposit-ref" type="text" value={reference} onChange={(e) => setReference(e.target.value)} />
       </div>
-      <button type="button" className="btn btn--primary" disabled={!amountNum} onClick={() => void submit()}>
+      <button type="button" className="btn btn--primary" disabled={!check.valid} onClick={() => void submit()}>
         I sent it
       </button>
       {request && (

@@ -24,9 +24,12 @@ public final class Enums {
         BETTING, RUNNING, SETTLED, CANCELLED
     }
 
-    /** contract.ts `LedgerEntryType` — mirrors {@code crowdvsmarket.engine.ledger.LedgerEntryType}. */
+    /** contract.ts `LedgerEntryType` — mirrors {@code crowdvsmarket.engine.ledger.LedgerEntryType}.
+     *  {@code OPERATOR_CORRECTION} (wave-2 security fix) is additive, not in contract.ts's union —
+     *  same situation as {@code ApiErrorCode.INVALID_NICKNAME}/{@code RATE_LIMITED} below. */
     public enum LedgerEntryType {
-        STARTER_PACK, STAKE_DEBIT, STAKE_REFUND, SETTLEMENT, DEPOSIT, WITHDRAWAL, WITHDRAWAL_REFUND
+        STARTER_PACK, STAKE_DEBIT, STAKE_REFUND, SETTLEMENT, DEPOSIT, WITHDRAWAL, WITHDRAWAL_REFUND,
+        OPERATOR_CORRECTION
     }
 
     /** contract.ts `WithdrawalState`. */
@@ -61,6 +64,11 @@ public final class Enums {
         INVALID_NICKNAME,
         /** предложение (task item 2: per-IP rate limit on authChallenge/authVerify/placeBet,
          *  Р-38 VPS stand-in) — same "additive, not in contract.ts" situation as above. */
-        RATE_LIMITED
+        RATE_LIMITED,
+        /** предложение (wave-2 security fix) — {@code requestWithdrawal}/{@code requestDeposit}'s
+         *  dedicated rejection for a zero/negative/otherwise non-positive amount, kept distinct
+         *  from the generic {@code BAD_REQUEST} (parse failure) so a client can tell "not a number"
+         *  apart from "a number, but not a valid one here". Same "additive" situation as above. */
+        INVALID_AMOUNT
     }
 }

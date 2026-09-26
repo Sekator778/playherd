@@ -33,6 +33,20 @@ public record Season(int year, int month) implements Comparable<Season> {
         return "%04d-%02d".formatted(year, month);
     }
 
+    /** Inverse of {@link #id()}. Throws {@link IllegalArgumentException} for anything not shaped
+     *  like {@code "YYYY-MM"} (including via the compact constructor's month range check). */
+    public static Season parse(String id) {
+        String[] parts = id == null ? new String[0] : id.split("-");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("malformed season id: " + id);
+        }
+        try {
+            return new Season(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("malformed season id: " + id, e);
+        }
+    }
+
     @Override
     public int compareTo(Season other) {
         int byYear = Integer.compare(year, other.year);

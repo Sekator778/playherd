@@ -12,13 +12,16 @@ import { realApi } from "./realApi";
  */
 const apiInstance: Api = API_MODE === "real" ? realApi : mockApi;
 
-const ApiInstanceContext = createContext<Api>(apiInstance);
+// Exported (only) so an integration test can wrap a subtree in its own `.Provider` with a fake
+// `Api`/session — `useSettlementWatcher.test.tsx`'s "fake Api + fake timers" harness, e.g. — while
+// every real screen keeps reading through `useApi()`/`useSession()` below as usual.
+export const ApiInstanceContext = createContext<Api>(apiInstance);
 
 export function useApi(): Api {
   return useContext(ApiInstanceContext);
 }
 
-interface SessionState {
+export interface SessionState {
   player: PlayerSummaryDto | null;
   loading: boolean;
   refresh: () => Promise<void>;
@@ -28,7 +31,7 @@ interface SessionState {
   openConnectModal: () => void;
 }
 
-const SessionContext = createContext<SessionState>({
+export const SessionContext = createContext<SessionState>({
   player: null,
   loading: true,
   refresh: async () => {},

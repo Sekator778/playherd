@@ -67,6 +67,13 @@ public final class ApiException extends RuntimeException {
         return new ApiException(Enums.ApiErrorCode.INVALID_NICKNAME, 400, message);
     }
 
+    /** Wave-2 security fix: {@code requestWithdrawal}/{@code requestDeposit} reject a zero/
+     *  negative amount with this, distinct from {@code badRequest} (which covers "not parseable as
+     *  a number at all"). */
+    public static ApiException invalidAmount(String message) {
+        return new ApiException(Enums.ApiErrorCode.INVALID_AMOUNT, 400, message);
+    }
+
     public static ApiException rateLimited() {
         return new ApiException(Enums.ApiErrorCode.RATE_LIMITED, 429,
                 "too many requests — please slow down and try again shortly");

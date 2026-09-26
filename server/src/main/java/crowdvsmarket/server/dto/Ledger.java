@@ -27,4 +27,12 @@ public final class Ledger {
     public record DepositRequestDto(String requestId, String playerId, String amount, Enums.DepositState state,
                                       long requestedAtMs) {
     }
+
+    /** Wave-2 security fix (Р-32/Р-43 pattern) — additive, not in contract.ts: one public,
+     *  reasoned operator ledger correction (see {@code GameService#reverseWithdrawal} /
+     *  {@code AdminResource}), listed the same way {@code CancellationDto} lists a round
+     *  cancellation. {@code delta} carries its own sign (a correction can be a credit or a debit). */
+    public record LedgerCorrectionDto(String correctionId, String playerId, String relatedWithdrawalRequestId,
+                                        String delta, String reason, long atMs) {
+    }
 }

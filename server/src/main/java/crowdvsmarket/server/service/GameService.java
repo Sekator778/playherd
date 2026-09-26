@@ -61,10 +61,29 @@ import java.util.UUID;
 /**
  * The orchestrator behind every mutating {@code Api} method (web/src/api/contract.ts) and most
  * read ones — everything that is not purely auth/session plumbing ({@code AuthService}) or wiring
- * ({@code RpcResource}). Every mutating method is {@code synchronized} on this singleton: none of
- * {@link EngineHub}'s engine objects are internally thread-safe, and the scheduler
- * (round resolution, bots) and HTTP request threads both call in here concurrently — see
- * {@link EngineHub}'s javadoc.
+ * ({@code RpcResource}). None of {@link EngineHub}'s engine objects (or {@code BetBook}/
+ * {@code CrowdAccount}, which are the same kind of plain mutable collections) are internally
+ * thread-safe, and the scheduler (round resolution, bots) and HTTP request threads both call in
+ * here concurrently — see {@link EngineHub}'s javadoc.
+ *
+ * <p><b>Locking (wave-2 MAJOR fix):</b> every method that mutates {@link EngineHub}'s state holds
+ * {@link #engineLock}'s write lock for its whole body; every method that only reads it — including
+ * {@link #home}/{@link #ratings} and any other read path, not just the two the bug report named —
+ * holds the read lock. A {@link java.util.concurrent.locks.ReentrantReadWriteLock} was chosen over
+ * a plain {@code synchronized} monitor (which is what every mutating method used to declare, before
+ * this fix, with reads holding nothing at all — the actual bug: a read iterating {@code
+ * LedgerBook.entries()}/{@code accounts} or a {@code BetBook} map while a concurrent bet/withdrawal/
+ * round-resolution mutated the same {@code ArrayList}/{@code LinkedHashMap} could throw {@code
+ * ArrayIndexOutOfBoundsException}/{@code ConcurrentModificationException}) because this service is
+ * read-heavy relative to how often it mutates (every poll of {@code home}/{@code rounds}/
+ * {@code ratings} from every connected client vs. one {@code placeBet}/round-resolution at a time):
+ * a read/write lock lets those reads run concurrently with each other (never with a writer),
+ * instead of a plain mutex serializing reads behind every other read too, which would otherwise
+ * inflate p99 latency under exactly the concurrent-read load the bug report's test hammers.
+ * {@code EngineRebuildService.rebuild()} — which discards and fully repopulates {@link EngineHub}
+ * from scratch — takes the SAME write lock via {@link #runExclusively}, for the same reason a
+ * rebuild used to run inside {@code synchronized(gameService)}: it must never interleave with any
+ * other read or write here either.
  */
 @ApplicationScoped
 public class GameService {
@@ -99,6 +118,23 @@ public class GameService {
     crowdvsmarket.server.persistence.ServerMetaRepository serverMeta;
 
     private static final BigDecimal ZERO_MONEY = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+
+    /** See the class javadoc's "Locking" section. */
+    private final java.util.concurrent.locks.ReadWriteLock engineLock =
+            new java.util.concurrent.locks.ReentrantReadWriteLock();
+
+    /** Used only by {@code EngineRebuildService.rebuild()}: runs {@code action} holding this
+     *  class's write lock, the same exclusive-access guarantee every mutating method below gets by
+     *  holding it themselves — a rebuild's {@code hub.resetEmpty()} + full event replay must never
+     *  interleave with any other read or write of {@link EngineHub} through this class. */
+    public void runExclusively(Runnable action) {
+        engineLock.writeLock().lock();
+        try {
+            action.run();
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
 
     // ---------------------------------------------------------------------------------------
     // Round id helpers
@@ -171,39 +207,49 @@ public class GameService {
     public record PlayerTouchResult(Identity.PlayerSummaryDto player, boolean isNewPlayer) {
     }
 
-    public synchronized PlayerTouchResult registerOrTouchPlayer(String walletAddress, long nowMs) {
-        Optional<String> existing = players.playerIdForWallet(walletAddress);
-        String playerId;
-        boolean isNew = existing.isEmpty();
-        if (isNew) {
-            playerId = UUID.randomUUID().toString();
-            String finalPlayerId = playerId;
-            db.tx(c -> {
-                players.insert(c, finalPlayerId, walletAddress, null, false, null, nowMs);
-                return null;
-            });
-        } else {
-            playerId = existing.get();
+    public PlayerTouchResult registerOrTouchPlayer(String walletAddress, long nowMs) {
+        engineLock.writeLock().lock();
+        try {
+            Optional<String> existing = players.playerIdForWallet(walletAddress);
+            String playerId;
+            boolean isNew = existing.isEmpty();
+            if (isNew) {
+                playerId = UUID.randomUUID().toString();
+                String finalPlayerId = playerId;
+                db.tx(c -> {
+                    players.insert(c, finalPlayerId, walletAddress, null, false, null, nowMs);
+                    return null;
+                });
+            } else {
+                playerId = existing.get();
+            }
+            GameEvent.PlayerRegistered event = new GameEvent.PlayerRegistered(playerId, nowMs);
+            persist(event, nowMs);
+            eventApplier.apply(event);
+            return new PlayerTouchResult(summary(playerId), isNew);
+        } finally {
+            engineLock.writeLock().unlock();
         }
-        GameEvent.PlayerRegistered event = new GameEvent.PlayerRegistered(playerId, nowMs);
-        persist(event, nowMs);
-        eventApplier.apply(event);
-        return new PlayerTouchResult(summary(playerId), isNew);
     }
 
     /** Used by {@code BotService} to create the 20 labelled bot players once (Р-46), and (with
      *  {@code isBot=false}) by nothing else — bots skip the wallet-signature flow entirely, they
      *  are server-side only. */
-    public synchronized Identity.PlayerSummaryDto createBotPlayer(String nickname, String strategy, long nowMs) {
-        String playerId = "bot-" + strategy.toLowerCase(java.util.Locale.ROOT) + "-" + UUID.randomUUID();
-        String walletAddress = "txbot1" + playerId.replace("-", "").substring(0, Math.min(40, playerId.length()));
-        db.tx(c -> {
-            players.insert(c, playerId, walletAddress, nickname, true, strategy, nowMs);
-            return null;
-        });
-        persist(new GameEvent.PlayerRegistered(playerId, nowMs), nowMs);
-        eventApplier.apply(new GameEvent.PlayerRegistered(playerId, nowMs));
-        return summary(playerId);
+    public Identity.PlayerSummaryDto createBotPlayer(String nickname, String strategy, long nowMs) {
+        engineLock.writeLock().lock();
+        try {
+            String playerId = "bot-" + strategy.toLowerCase(java.util.Locale.ROOT) + "-" + UUID.randomUUID();
+            String walletAddress = "txbot1" + playerId.replace("-", "").substring(0, Math.min(40, playerId.length()));
+            db.tx(c -> {
+                players.insert(c, playerId, walletAddress, nickname, true, strategy, nowMs);
+                return null;
+            });
+            persist(new GameEvent.PlayerRegistered(playerId, nowMs), nowMs);
+            eventApplier.apply(new GameEvent.PlayerRegistered(playerId, nowMs));
+            return summary(playerId);
+        } finally {
+            engineLock.writeLock().unlock();
+        }
     }
 
     public Identity.PlayerSummaryDto summary(String playerId) {
@@ -239,64 +285,84 @@ public class GameService {
     // Betting (Р-8, Р-13, Р-19, Р-22)
     // ---------------------------------------------------------------------------------------
 
-    public synchronized Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
+    public Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
         RoundIdParts parts = parseRoundId(req.roundId());
-        RoundWindow bettingWindow = roundProgress.bettingWindow(parts.interval());
-        if (!bettingWindow.roundId().equals(req.roundId())) {
-            throw ApiException.roundNotOpenForBetting(req.roundId());
-        }
-        Leverage leverage;
+        engineLock.writeLock().lock();
         try {
-            leverage = new Leverage(req.leverage());
-        } catch (IllegalArgumentException e) {
-            throw ApiException.invalidLeverage(e.getMessage());
-        }
-        BigDecimal stakeDecimal;
-        try {
-            stakeDecimal = new BigDecimal(req.stake());
-        } catch (NumberFormatException e) {
-            throw ApiException.badRequest("invalid stake: " + req.stake());
-        }
-        PlayAmount stake;
-        try {
-            stake = PlayAmount.fromMoney(stakeDecimal);
-        } catch (IllegalArgumentException e) {
-            throw ApiException.badRequest(e.getMessage());
-        }
+            RoundWindow bettingWindow = roundProgress.bettingWindow(parts.interval());
+            // Bug fix (wave-2 MINOR finding): reject strictly by wall-clock time against the
+            // window's own startMs, not only by roundId equality against RoundProgress's cursor.
+            // RoundProgress only advances when RoundSchedulerService's tick (every
+            // herd.scheduler.tick-ms, ~1s) actually resolves the previous round — so for up to that
+            // ~1s after a round has, by definition, already started (now >= bettingWindow.startMs()),
+            // the cursor could still name this same roundId as "open for betting" and let a late bet
+            // slip in. Comparing nowMs (the request's own arrival time, not a re-read of
+            // System.currentTimeMillis() here) closes that gap regardless of scheduler timing.
+            if (!bettingWindow.roundId().equals(req.roundId()) || nowMs >= bettingWindow.startMs()) {
+                throw ApiException.roundNotOpenForBetting(req.roundId());
+            }
+            Leverage leverage;
+            try {
+                leverage = new Leverage(req.leverage());
+            } catch (IllegalArgumentException e) {
+                throw ApiException.invalidLeverage(e.getMessage());
+            }
+            BigDecimal stakeDecimal;
+            try {
+                stakeDecimal = new BigDecimal(req.stake());
+            } catch (NumberFormatException e) {
+                throw ApiException.badRequest("invalid stake: " + req.stake());
+            }
+            PlayAmount stake;
+            try {
+                stake = PlayAmount.fromMoney(stakeDecimal);
+            } catch (IllegalArgumentException e) {
+                throw ApiException.badRequest(e.getMessage());
+            }
 
-        LedgerBook ledger = hub.ledger();
-        Instant now = Instant.ofEpochMilli(nowMs);
-        ledger.ensureSeasonPack(playerId, now); // idempotent — also happens inside the event replay below
+            LedgerBook ledger = hub.ledger();
+            Instant now = Instant.ofEpochMilli(nowMs);
+            ledger.ensureSeasonPack(playerId, now); // idempotent — also happens inside the event replay below
 
-        if (stake.compareTo(LedgerBook.MIN_STAKE) < 0) {
-            throw ApiException.stakeBelowMinimum("stake " + stake + " is below the minimum " + LedgerBook.MIN_STAKE);
-        }
-        GameEngine engine = hub.engine(parts.interval());
-        PlayAmount currentBalance = ledger.balance(playerId);
-        Optional<Bet> existing = engine.betBook().betsFor(req.roundId()).stream()
-                .filter(b -> b.playerId().equals(playerId)).findFirst();
-        PlayAmount effectiveBalance = existing.map(b -> currentBalance.plus(b.stake())).orElse(currentBalance);
-        if (stake.compareTo(effectiveBalance) > 0) {
-            throw ApiException.insufficientBalance("stake " + stake + " exceeds balance " + effectiveBalance);
-        }
+            if (stake.compareTo(LedgerBook.MIN_STAKE) < 0) {
+                throw ApiException.stakeBelowMinimum("stake " + stake + " is below the minimum " + LedgerBook.MIN_STAKE);
+            }
+            GameEngine engine = hub.engine(parts.interval());
+            PlayAmount currentBalance = ledger.balance(playerId);
+            Optional<Bet> existing = engine.betBook().betsFor(req.roundId()).stream()
+                    .filter(b -> b.playerId().equals(playerId)).findFirst();
+            PlayAmount effectiveBalance = existing.map(b -> currentBalance.plus(b.stake())).orElse(currentBalance);
+            if (stake.compareTo(effectiveBalance) > 0) {
+                throw ApiException.insufficientBalance("stake " + stake + " exceeds balance " + effectiveBalance);
+            }
 
-        GameEvent.BetPlaced event = new GameEvent.BetPlaced(playerId, parts.interval(), bettingWindow.startMs(),
-                bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs);
-        persist(event, nowMs);
-        eventApplier.apply(event);
-        return new Rounds.BetDto(playerId, req.roundId(), req.direction(), req.leverage(), stake.toMoney().toPlainString());
+            GameEvent.BetPlaced event = new GameEvent.BetPlaced(playerId, parts.interval(), bettingWindow.startMs(),
+                    bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs);
+            persist(event, nowMs);
+            eventApplier.apply(event);
+            return new Rounds.BetDto(playerId, req.roundId(), req.direction(), req.leverage(), stake.toMoney().toPlainString());
+        } finally {
+            engineLock.writeLock().unlock();
+        }
     }
 
-    public synchronized void cancelBet(String playerId, String roundId, long nowMs) {
+    public void cancelBet(String playerId, String roundId, long nowMs) {
         RoundIdParts parts = parseRoundId(roundId);
-        RoundWindow bettingWindow = roundProgress.bettingWindow(parts.interval());
-        if (!bettingWindow.roundId().equals(roundId)) {
-            throw ApiException.roundNotOpenForBetting(roundId);
+        engineLock.writeLock().lock();
+        try {
+            RoundWindow bettingWindow = roundProgress.bettingWindow(parts.interval());
+            // Same wave-2 exact-boundary fix as placeBet above — a bet must not be cancellable (and
+            // its stake refunded) once its round has, by wall-clock time, already started.
+            if (!bettingWindow.roundId().equals(roundId) || nowMs >= bettingWindow.startMs()) {
+                throw ApiException.roundNotOpenForBetting(roundId);
+            }
+            GameEvent.BetCancelled event = new GameEvent.BetCancelled(playerId, parts.interval(), bettingWindow.startMs(),
+                    bettingWindow.endMs(), nowMs);
+            persist(event, nowMs);
+            eventApplier.apply(event);
+        } finally {
+            engineLock.writeLock().unlock();
         }
-        GameEvent.BetCancelled event = new GameEvent.BetCancelled(playerId, parts.interval(), bettingWindow.startMs(),
-                bettingWindow.endMs(), nowMs);
-        persist(event, nowMs);
-        eventApplier.apply(event);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -306,21 +372,26 @@ public class GameService {
     /** Resolves {@code window} now: fetches its price path from {@code priceService}, runs the
      *  engine, hashes and stores the result. Idempotent guard ({@code round_results.exists}) is
      *  the caller's job (RoundSchedulerService), so this always actually resolves. */
-    public synchronized RoundReport resolveRound(RoundWindow window, long nowMs) {
-        RoundPrices prices = priceService.roundPrices();
-        BigDecimal openPrice = prices.openPrice(window);
-        BigDecimal closePrice = prices.closePrice(window);
-        List<Candle> path = prices.path(window);
+    public RoundReport resolveRound(RoundWindow window, long nowMs) {
+        engineLock.writeLock().lock();
+        try {
+            RoundPrices prices = priceService.roundPrices();
+            BigDecimal openPrice = prices.openPrice(window);
+            BigDecimal closePrice = prices.closePrice(window);
+            List<Candle> path = prices.path(window);
 
-        GameEvent.RoundResolved event = new GameEvent.RoundResolved(window.interval(), window.startMs(),
-                window.endMs(), openPrice.toPlainString(), closePrice.toPlainString(),
-                EventApplier.fromCandles(path), nowMs);
-        persist(event, nowMs);
-        RoundReport report = (RoundReport) eventApplier.apply(event);
+            GameEvent.RoundResolved event = new GameEvent.RoundResolved(window.interval(), window.startMs(),
+                    window.endMs(), openPrice.toPlainString(), closePrice.toPlainString(),
+                    EventApplier.fromCandles(path), nowMs);
+            persist(event, nowMs);
+            RoundReport report = (RoundReport) eventApplier.apply(event);
 
-        long sourceTsMs = path.get(path.size() - 1).openTimeMs();
-        storeSettledResult(window, report, sourceTsMs);
-        return report;
+            long sourceTsMs = path.get(path.size() - 1).openTimeMs();
+            storeSettledResult(window, report, sourceTsMs);
+            return report;
+        } finally {
+            engineLock.writeLock().unlock();
+        }
     }
 
     private void storeSettledResult(RoundWindow window, RoundReport report, long sourceTsMs) {
@@ -416,38 +487,45 @@ public class GameService {
     }
 
     /** {@code AdminResource}'s entry point: parses {@code roundId} and delegates to
-     *  {@link #cancelRound(RoundWindow, String, long)}. */
-    public synchronized Rounds.CancellationDto cancelRoundById(String roundId, String reason, long nowMs) {
+     *  {@link #cancelRound(RoundWindow, String, long)} (which takes the write lock itself —
+     *  {@link java.util.concurrent.locks.ReentrantReadWriteLock}'s write lock is reentrant, so
+     *  this needs no locking of its own). */
+    public Rounds.CancellationDto cancelRoundById(String roundId, String reason, long nowMs) {
         return cancelRound(windowFor(roundId), reason, nowMs);
     }
 
     /** Operator/automatic cancellation (Р-23, Р-32). {@code window} must be the currently running
      *  or currently open-for-betting round of its series; already-resolved rounds are rejected. */
-    public synchronized Rounds.CancellationDto cancelRound(RoundWindow window, String reason, long nowMs) {
-        if (roundResults.exists(window.roundId())) {
-            throw ApiException.badRequest("round " + window.roundId() + " is already resolved");
+    public Rounds.CancellationDto cancelRound(RoundWindow window, String reason, long nowMs) {
+        engineLock.writeLock().lock();
+        try {
+            if (roundResults.exists(window.roundId())) {
+                throw ApiException.badRequest("round " + window.roundId() + " is already resolved");
+            }
+            RoundWindow running = roundProgress.next(window.interval());
+            RoundWindow betting = roundProgress.bettingWindow(window.interval());
+            if (!window.equals(running) && !window.equals(betting)) {
+                throw ApiException.badRequest("not the current running or betting round for " + window.interval());
+            }
+
+            int refundedBetCount = hub.engine(window.interval()).betBook().betsFor(window.roundId()).size();
+
+            GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
+                    window.endMs(), reason, nowMs);
+            persist(event, nowMs);
+            eventApplier.apply(event); // refunds every pending bet and clears the round's BetBook entry
+
+            var canonical = crowdvsmarket.server.util.ResultsHasher.build(window.roundId(), window.interval().name(),
+                    "CANCELLED", null, null, List.of(), null);
+            db.tx(c -> {
+                roundResults.insertCancelled(c, window.roundId(), window.interval(), window.startMs(), window.endMs(),
+                        reason, nowMs, refundedBetCount, canonical.hash(), canonical.json());
+                return null;
+            });
+            return new Rounds.CancellationDto(window.roundId(), reason, nowMs, refundedBetCount);
+        } finally {
+            engineLock.writeLock().unlock();
         }
-        RoundWindow running = roundProgress.next(window.interval());
-        RoundWindow betting = roundProgress.bettingWindow(window.interval());
-        if (!window.equals(running) && !window.equals(betting)) {
-            throw ApiException.badRequest("not the current running or betting round for " + window.interval());
-        }
-
-        int refundedBetCount = hub.engine(window.interval()).betBook().betsFor(window.roundId()).size();
-
-        GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
-                window.endMs(), reason, nowMs);
-        persist(event, nowMs);
-        eventApplier.apply(event); // refunds every pending bet and clears the round's BetBook entry
-
-        var canonical = crowdvsmarket.server.util.ResultsHasher.build(window.roundId(), window.interval().name(),
-                "CANCELLED", null, null, List.of(), null);
-        db.tx(c -> {
-            roundResults.insertCancelled(c, window.roundId(), window.interval(), window.startMs(), window.endMs(),
-                    reason, nowMs, refundedBetCount, canonical.hash(), canonical.json());
-            return null;
-        });
-        return new Rounds.CancellationDto(window.roundId(), reason, nowMs, refundedBetCount);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -456,13 +534,18 @@ public class GameService {
 
     public Rounds.RoundsPairDto roundsPair(Enums.Interval intervalDto, String viewerPlayerIdOrNull) {
         crowdvsmarket.engine.market.Interval interval = toEngine(intervalDto);
-        RoundWindow runningWindow = roundProgress.next(interval);
-        RoundWindow bettingWindow = roundProgress.bettingWindow(interval);
-        Rounds.RoundDto running = roundResults.findRoundDto(runningWindow.roundId())
-                .orElseGet(() -> buildRunningDto(runningWindow, System.currentTimeMillis()));
-        Rounds.RoundDto betting = roundResults.findRoundDto(bettingWindow.roundId())
-                .orElseGet(() -> buildBettingDto(bettingWindow, viewerPlayerIdOrNull));
-        return new Rounds.RoundsPairDto(intervalDto, running, betting);
+        engineLock.readLock().lock();
+        try {
+            RoundWindow runningWindow = roundProgress.next(interval);
+            RoundWindow bettingWindow = roundProgress.bettingWindow(interval);
+            Rounds.RoundDto running = roundResults.findRoundDto(runningWindow.roundId())
+                    .orElseGet(() -> buildRunningDto(runningWindow, System.currentTimeMillis()));
+            Rounds.RoundDto betting = roundResults.findRoundDto(bettingWindow.roundId())
+                    .orElseGet(() -> buildBettingDto(bettingWindow, viewerPlayerIdOrNull));
+            return new Rounds.RoundsPairDto(intervalDto, running, betting);
+        } finally {
+            engineLock.readLock().unlock();
+        }
     }
 
     public Rounds.RoundDto round(String roundId, String viewerPlayerIdOrNull) {
@@ -471,15 +554,20 @@ public class GameService {
             return settledOrCancelled.get();
         }
         RoundWindow window = windowFor(roundId);
-        RoundWindow running = roundProgress.next(window.interval());
-        RoundWindow betting = roundProgress.bettingWindow(window.interval());
-        if (window.equals(running)) {
-            return buildRunningDto(window, System.currentTimeMillis());
+        engineLock.readLock().lock();
+        try {
+            RoundWindow running = roundProgress.next(window.interval());
+            RoundWindow betting = roundProgress.bettingWindow(window.interval());
+            if (window.equals(running)) {
+                return buildRunningDto(window, System.currentTimeMillis());
+            }
+            if (window.equals(betting)) {
+                return buildBettingDto(window, viewerPlayerIdOrNull);
+            }
+            throw ApiException.notFound("unknown or not-yet-open round " + roundId);
+        } finally {
+            engineLock.readLock().unlock();
         }
-        if (window.equals(betting)) {
-            return buildBettingDto(window, viewerPlayerIdOrNull);
-        }
-        throw ApiException.notFound("unknown or not-yet-open round " + roundId);
     }
 
     private Rounds.RoundDto buildBettingDto(RoundWindow window, String viewerPlayerIdOrNull) {
@@ -620,16 +708,21 @@ public class GameService {
      *  which every sign-in already guarantees ({@link #registerOrTouchPlayer} always re-runs
      *  {@code ensureSeasonPack}, see its javadoc), so this is exact for any realistic session. */
     public Ledger.PlayerAccountDto account(String playerId) {
-        LedgerBook ledger = hub.ledger();
         ensurePlayerKnown(playerId);
-        PlayAmount balance;
+        engineLock.readLock().lock();
         try {
-            balance = ledger.balance(playerId);
-        } catch (java.util.NoSuchElementException e) {
-            balance = PlayAmount.ZERO;
+            LedgerBook ledger = hub.ledger();
+            PlayAmount balance;
+            try {
+                balance = ledger.balance(playerId);
+            } catch (java.util.NoSuchElementException e) {
+                balance = PlayAmount.ZERO;
+            }
+            return new Ledger.PlayerAccountDto(playerId, balance.toMoney().toPlainString(), Season.of(Instant.now()).id(),
+                    inPlayStake(playerId).toMoney().toPlainString());
+        } finally {
+            engineLock.readLock().unlock();
         }
-        return new Ledger.PlayerAccountDto(playerId, balance.toMoney().toPlainString(), Season.of(Instant.now()).id(),
-                inPlayStake(playerId).toMoney().toPlainString());
     }
 
     /** Bug fix: sum of {@code playerId}'s stakes across every not-yet-settled round of both
@@ -659,11 +752,16 @@ public class GameService {
 
     public Ledger.SeasonRecordDto seasonRecord(String playerId, String seasonIdOrNull) {
         Season season = seasonIdOrNull == null ? Season.of(Instant.now()) : parseSeason(seasonIdOrNull);
-        Optional<SeasonRecord> record = hub.ledger().seasonRecord(playerId, season);
-        return record.map(sr -> new Ledger.SeasonRecordDto(sr.season().id(), sr.baselineBalance().toMoney().toPlainString(),
-                        sr.deposited().toMoney().toPlainString(), sr.withdrawn().toMoney().toPlainString(),
-                        sr.roundsPlayed(), sr.directionEligibleRounds(), sr.directionCorrectRounds()))
-                .orElseGet(() -> new Ledger.SeasonRecordDto(season.id(), "0.000", "0.000", "0.000", 0, 0, 0));
+        engineLock.readLock().lock();
+        try {
+            Optional<SeasonRecord> record = hub.ledger().seasonRecord(playerId, season);
+            return record.map(sr -> new Ledger.SeasonRecordDto(sr.season().id(), sr.baselineBalance().toMoney().toPlainString(),
+                            sr.deposited().toMoney().toPlainString(), sr.withdrawn().toMoney().toPlainString(),
+                            sr.roundsPlayed(), sr.directionEligibleRounds(), sr.directionCorrectRounds()))
+                    .orElseGet(() -> new Ledger.SeasonRecordDto(season.id(), "0.000", "0.000", "0.000", 0, 0, 0));
+        } finally {
+            engineLock.readLock().unlock();
+        }
     }
 
     private static Season parseSeason(String id) {
@@ -678,22 +776,27 @@ public class GameService {
     public Paging.Page<Ledger.LedgerEntryDto> myLedger(String playerId, Paging.PageParams params) {
         long before = params.before() == null ? Long.MAX_VALUE : params.before();
         int limit = params.limitOrDefault();
-        List<LedgerEntry> all = hub.ledger().entries();
-        List<Ledger.LedgerEntryDto> filtered = new ArrayList<>();
-        for (int i = all.size() - 1; i >= 0; i--) {
-            LedgerEntry e = all.get(i);
-            if (!e.playerId().equals(playerId) || e.atEpochMs() >= before) {
-                continue;
+        engineLock.readLock().lock();
+        try {
+            List<LedgerEntry> all = hub.ledger().entries();
+            List<Ledger.LedgerEntryDto> filtered = new ArrayList<>();
+            for (int i = all.size() - 1; i >= 0; i--) {
+                LedgerEntry e = all.get(i);
+                if (!e.playerId().equals(playerId) || e.atEpochMs() >= before) {
+                    continue;
+                }
+                filtered.add(new Ledger.LedgerEntryDto(e.sequence(), Enums.LedgerEntryType.valueOf(e.type().name()),
+                        e.delta().toMoney().toPlainString(), e.roundId(), e.atEpochMs()));
+                if (filtered.size() > limit) {
+                    break;
+                }
             }
-            filtered.add(new Ledger.LedgerEntryDto(e.sequence(), Enums.LedgerEntryType.valueOf(e.type().name()),
-                    e.delta().toMoney().toPlainString(), e.roundId(), e.atEpochMs()));
-            if (filtered.size() > limit) {
-                break;
-            }
+            boolean hasMore = filtered.size() > limit;
+            List<Ledger.LedgerEntryDto> page = hasMore ? filtered.subList(0, limit) : filtered;
+            return new Paging.Page<>(page, hasMore);
+        } finally {
+            engineLock.readLock().unlock();
         }
-        boolean hasMore = filtered.size() > limit;
-        List<Ledger.LedgerEntryDto> page = hasMore ? filtered.subList(0, limit) : filtered;
-        return new Paging.Page<>(page, hasMore);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -702,31 +805,45 @@ public class GameService {
     // docs/research/server_design.md.
     // ---------------------------------------------------------------------------------------
 
-    public synchronized Ledger.WithdrawalRequestDto requestWithdrawal(String playerId, String amount, long nowMs) {
+    public Ledger.WithdrawalRequestDto requestWithdrawal(String playerId, String amount, long nowMs) {
         PlayAmount amt;
         try {
             amt = PlayAmount.fromMoney(new BigDecimal(amount));
         } catch (Exception e) {
             throw ApiException.badRequest("invalid amount: " + amount);
         }
-        PlayAmount balance = hub.ledger().balance(playerId);
-        if (amt.compareTo(balance) > 0) {
-            throw ApiException.withdrawalExceedsBalance("withdrawal " + amt + " exceeds balance " + balance);
+        // Wave-2 CRITICAL security fix: requestWithdrawal("-5000.000") used to mint PLAY — a
+        // negative amount is a debit that LedgerBook.requestWithdrawal's debit(amount) negates
+        // before applying, so it silently became a credit once auto-confirmed. This is the actual
+        // enforcement point (the one place a brand-new withdrawal command is decided, before it is
+        // ever turned into a persisted GameEvent) — see LedgerBook.requestWithdrawal's own comment
+        // for why the engine's shared live/replay method deliberately does not duplicate this check.
+        if (!amt.isPositive()) {
+            throw ApiException.invalidAmount("withdrawal amount must be positive: " + amount);
         }
-        GameEvent.WithdrawalRequested event = new GameEvent.WithdrawalRequested(playerId, amt.mojos(), nowMs);
-        persist(event, nowMs);
-        // LedgerBook assigns its own "w-N" id inside requestWithdrawal (a single counter shared
-        // with deposits' "d-N") — we reuse THAT id as our own external requestId rather than
-        // minting a separate one, precisely so replaying this same event later (same call, same
-        // position in the event order) reproduces the identical id deterministically; see
-        // GameEvent.WithdrawalRequested's javadoc and EventApplier's WithdrawalRequested case.
-        String requestId = (String) eventApplier.apply(event);
-        db.tx(c -> {
-            withdrawalDeposits.insertWithdrawal(c, requestId, playerId, amt.mojos(), nowMs);
-            return null;
-        });
-        confirmWithdrawalNow(requestId, nowMs);
-        return withdrawalDeposits.findWithdrawal(requestId).orElseThrow();
+        engineLock.writeLock().lock();
+        try {
+            PlayAmount balance = hub.ledger().balance(playerId);
+            if (amt.compareTo(balance) > 0) {
+                throw ApiException.withdrawalExceedsBalance("withdrawal " + amt + " exceeds balance " + balance);
+            }
+            GameEvent.WithdrawalRequested event = new GameEvent.WithdrawalRequested(playerId, amt.mojos(), nowMs);
+            persist(event, nowMs);
+            // LedgerBook assigns its own "w-N" id inside requestWithdrawal (a single counter shared
+            // with deposits' "d-N") — we reuse THAT id as our own external requestId rather than
+            // minting a separate one, precisely so replaying this same event later (same call, same
+            // position in the event order) reproduces the identical id deterministically; see
+            // GameEvent.WithdrawalRequested's javadoc and EventApplier's WithdrawalRequested case.
+            String requestId = (String) eventApplier.apply(event);
+            db.tx(c -> {
+                withdrawalDeposits.insertWithdrawal(c, requestId, playerId, amt.mojos(), nowMs);
+                return null;
+            });
+            confirmWithdrawalNow(requestId, nowMs);
+            return withdrawalDeposits.findWithdrawal(requestId).orElseThrow();
+        } finally {
+            engineLock.writeLock().unlock();
+        }
     }
 
     private void confirmWithdrawalNow(String requestId, long nowMs) {
@@ -752,22 +869,31 @@ public class GameService {
         return dto;
     }
 
-    public synchronized Ledger.DepositRequestDto requestDeposit(String playerId, String amount, long nowMs) {
+    public Ledger.DepositRequestDto requestDeposit(String playerId, String amount, long nowMs) {
         PlayAmount amt;
         try {
             amt = PlayAmount.fromMoney(new BigDecimal(amount));
         } catch (Exception e) {
             throw ApiException.badRequest("invalid amount: " + amount);
         }
-        GameEvent.DepositRequested event = new GameEvent.DepositRequested(playerId, amt.mojos(), nowMs);
-        persist(event, nowMs);
-        String requestId = (String) eventApplier.apply(event); // same LedgerBook-id reuse as requestWithdrawal
-        db.tx(c -> {
-            withdrawalDeposits.insertDeposit(c, requestId, playerId, amt.mojos(), nowMs);
-            return null;
-        });
-        confirmDepositNow(requestId, nowMs);
-        return withdrawalDeposits.findDeposit(requestId).orElseThrow();
+        // Wave-2 security fix — same reasoning/enforcement point as requestWithdrawal above.
+        if (!amt.isPositive()) {
+            throw ApiException.invalidAmount("deposit amount must be positive: " + amount);
+        }
+        engineLock.writeLock().lock();
+        try {
+            GameEvent.DepositRequested event = new GameEvent.DepositRequested(playerId, amt.mojos(), nowMs);
+            persist(event, nowMs);
+            String requestId = (String) eventApplier.apply(event); // same LedgerBook-id reuse as requestWithdrawal
+            db.tx(c -> {
+                withdrawalDeposits.insertDeposit(c, requestId, playerId, amt.mojos(), nowMs);
+                return null;
+            });
+            confirmDepositNow(requestId, nowMs);
+            return withdrawalDeposits.findDeposit(requestId).orElseThrow();
+        } finally {
+            engineLock.writeLock().unlock();
+        }
     }
 
     private void confirmDepositNow(String requestId, long nowMs) {
@@ -791,27 +917,106 @@ public class GameService {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Operator ledger corrections (wave-2 security fix, Р-32/Р-43 pattern) — AdminResource only.
+    // ---------------------------------------------------------------------------------------
+
+    /** {@code AdminResource}'s entry point for correcting a withdrawal request's already-recorded
+     *  (bogus) effect — e.g. the {@code requestWithdrawal("-5000.000")} exploit — without altering
+     *  or deleting the original event. Reads {@code requestId}'s CURRENT live amount/timestamp
+     *  ({@code hub.ledger()}, never restarted since the original request, so it is always present)
+     *  and captures both directly into the new event, so the correction's own later replay never
+     *  needs this lookup again — see {@code LedgerBook#reverseWithdrawalEffect}'s javadoc. */
+    public Ledger.LedgerCorrectionDto reverseWithdrawal(String requestId, String reason, long nowMs) {
+        String trimmedReason = reason == null ? "" : reason.strip();
+        if (trimmedReason.isBlank()) {
+            throw ApiException.badRequest("correction reason must not be blank");
+        }
+        engineLock.writeLock().lock();
+        try {
+            LedgerBook ledger = hub.ledger();
+            crowdvsmarket.engine.ledger.WithdrawalRequest request = ledger.withdrawal(requestId)
+                    .orElseThrow(() -> ApiException.notFound("unknown withdrawal request " + requestId));
+            boolean alreadyReversed = ledger.corrections().stream()
+                    .anyMatch(c -> requestId.equals(c.relatedWithdrawalRequestId()));
+            if (alreadyReversed) {
+                throw ApiException.badRequest("withdrawal " + requestId + " was already reversed");
+            }
+            Season originalSeason = Season.of(Instant.ofEpochMilli(request.requestedAtEpochMs()));
+
+            GameEvent.WithdrawalReversed event = new GameEvent.WithdrawalReversed(request.playerId(),
+                    request.amount().mojos(), originalSeason.id(), trimmedReason, requestId, nowMs);
+            persist(event, nowMs);
+            crowdvsmarket.engine.ledger.LedgerCorrection correction =
+                    (crowdvsmarket.engine.ledger.LedgerCorrection) eventApplier.apply(event);
+            return toLedgerCorrectionDto(correction);
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
+    private static Ledger.LedgerCorrectionDto toLedgerCorrectionDto(crowdvsmarket.engine.ledger.LedgerCorrection c) {
+        return new Ledger.LedgerCorrectionDto(c.correctionId(), c.playerId(), c.relatedWithdrawalRequestId(),
+                c.delta().toMoney().toPlainString(), c.reason(), c.atEpochMs());
+    }
+
+    /** The public audit log every operator ledger correction is listed in (wave-2 security fix,
+     *  Р-32/Р-43 pattern: same "public, with reason" requirement as {@link #cancellations}) — no
+     *  session required, same as {@code cancellations}. In-memory only (like {@link #myLedger}'s
+     *  {@code LedgerEntry} log and {@link #crowdAccount}'s history): {@code LedgerCorrection}s are
+     *  rebuilt by the normal event replay, same as everything else {@link EngineHub} holds, so no
+     *  separate read-model table is needed. */
+    public Paging.Page<Ledger.LedgerCorrectionDto> ledgerCorrections(Paging.PageParams params) {
+        long before = params.before() == null ? Long.MAX_VALUE : params.before();
+        int limit = params.limitOrDefault();
+        engineLock.readLock().lock();
+        try {
+            List<crowdvsmarket.engine.ledger.LedgerCorrection> all = hub.ledger().corrections();
+            List<Ledger.LedgerCorrectionDto> filtered = new ArrayList<>();
+            for (int i = all.size() - 1; i >= 0; i--) {
+                crowdvsmarket.engine.ledger.LedgerCorrection c = all.get(i);
+                if (c.atEpochMs() >= before) {
+                    continue;
+                }
+                filtered.add(toLedgerCorrectionDto(c));
+                if (filtered.size() > limit) {
+                    break;
+                }
+            }
+            boolean hasMore = filtered.size() > limit;
+            List<Ledger.LedgerCorrectionDto> page = hasMore ? filtered.subList(0, limit) : filtered;
+            return new Paging.Page<>(page, hasMore);
+        } finally {
+            engineLock.readLock().unlock();
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Crowd account (Р-5, Р-14, Р-17, Р-25, Р-26)
     // ---------------------------------------------------------------------------------------
 
     public Crowd.CrowdAccountDto crowdAccount() {
-        List<CrowdAccount.RoundResult> history = hub.crowdAccount().history();
-        List<BigDecimal> btcHold = comparisonAccounts.btcHoldHistory();
-        List<BigDecimal> antiCrowd = comparisonAccounts.antiCrowdHistory();
-        List<Crowd.CrowdHistoryPointDto> points = new ArrayList<>();
-        String previousSeason = null;
-        for (int i = 0; i < history.size(); i++) {
-            CrowdAccount.RoundResult r = history.get(i);
-            RoundWindow w = windowFor(r.roundId());
-            long atMs = w.endMs() - 1;
-            String thisSeason = Season.of(Instant.ofEpochMilli(atMs)).id();
-            String boundary = (i > 0 && !thisSeason.equals(previousSeason)) ? thisSeason : null;
-            previousSeason = thisSeason;
-            points.add(new Crowd.CrowdHistoryPointDto(r.roundId(), atMs, boundary, r.capitalAfter().toPlainString(),
-                    btcHold.get(i).toPlainString(), antiCrowd.get(i).toPlainString()));
+        engineLock.readLock().lock();
+        try {
+            List<CrowdAccount.RoundResult> history = hub.crowdAccount().history();
+            List<BigDecimal> btcHold = comparisonAccounts.btcHoldHistory();
+            List<BigDecimal> antiCrowd = comparisonAccounts.antiCrowdHistory();
+            List<Crowd.CrowdHistoryPointDto> points = new ArrayList<>();
+            String previousSeason = null;
+            for (int i = 0; i < history.size(); i++) {
+                CrowdAccount.RoundResult r = history.get(i);
+                RoundWindow w = windowFor(r.roundId());
+                long atMs = w.endMs() - 1;
+                String thisSeason = Season.of(Instant.ofEpochMilli(atMs)).id();
+                String boundary = (i > 0 && !thisSeason.equals(previousSeason)) ? thisSeason : null;
+                previousSeason = thisSeason;
+                points.add(new Crowd.CrowdHistoryPointDto(r.roundId(), atMs, boundary, r.capitalAfter().toPlainString(),
+                        btcHold.get(i).toPlainString(), antiCrowd.get(i).toPlainString()));
+            }
+            List<Crowd.SeasonReturnDto> seasonReturns = seasonReturns(points);
+            return new Crowd.CrowdAccountDto(hub.crowdAccount().capital().toPlainString(), points, seasonReturns);
+        } finally {
+            engineLock.readLock().unlock();
         }
-        List<Crowd.SeasonReturnDto> seasonReturns = seasonReturns(points);
-        return new Crowd.CrowdAccountDto(hub.crowdAccount().capital().toPlainString(), points, seasonReturns);
     }
 
     /** Р-25: "рядом доходность за каждый сезон" — one entry per season the continuous crowd curve
@@ -851,22 +1056,27 @@ public class GameService {
 
     public Ratings.RatingsDto ratings(String seasonIdOrNull) {
         Season season = seasonIdOrNull == null ? Season.of(Instant.now()) : parseSeason(seasonIdOrNull);
-        RatingBook ratingBook = new RatingBook(hub.ledger());
-        Map<String, PlayerIdentity> identities = players.identitiesById();
-        List<RatingBook.RichEntry> rich = ratingBook.richList(season, identities);
-        List<RatingBook.ProphetEntry> prophets = ratingBook.prophetList(season, identities);
-        List<Ratings.RichEntryDto> richDtos = new ArrayList<>();
-        for (int i = 0; i < rich.size(); i++) {
-            RatingBook.RichEntry e = rich.get(i);
-            richDtos.add(new Ratings.RichEntryDto(i + 1, summary(e.playerId()), e.growth().toMoney().toPlainString(), e.roundsPlayed()));
+        engineLock.readLock().lock();
+        try {
+            RatingBook ratingBook = new RatingBook(hub.ledger());
+            Map<String, PlayerIdentity> identities = players.identitiesById();
+            List<RatingBook.RichEntry> rich = ratingBook.richList(season, identities);
+            List<RatingBook.ProphetEntry> prophets = ratingBook.prophetList(season, identities);
+            List<Ratings.RichEntryDto> richDtos = new ArrayList<>();
+            for (int i = 0; i < rich.size(); i++) {
+                RatingBook.RichEntry e = rich.get(i);
+                richDtos.add(new Ratings.RichEntryDto(i + 1, summary(e.playerId()), e.growth().toMoney().toPlainString(), e.roundsPlayed()));
+            }
+            List<Ratings.ProphetEntryDto> prophetDtos = new ArrayList<>();
+            for (int i = 0; i < prophets.size(); i++) {
+                RatingBook.ProphetEntry e = prophets.get(i);
+                prophetDtos.add(new Ratings.ProphetEntryDto(i + 1, summary(e.playerId()), e.accuracy().doubleValue(),
+                        e.eligibleRounds(), e.roundsPlayed()));
+            }
+            return new Ratings.RatingsDto(season.id(), RatingBook.DEFAULT_ROUNDS_THRESHOLD, richDtos, prophetDtos);
+        } finally {
+            engineLock.readLock().unlock();
         }
-        List<Ratings.ProphetEntryDto> prophetDtos = new ArrayList<>();
-        for (int i = 0; i < prophets.size(); i++) {
-            RatingBook.ProphetEntry e = prophets.get(i);
-            prophetDtos.add(new Ratings.ProphetEntryDto(i + 1, summary(e.playerId()), e.accuracy().doubleValue(),
-                    e.eligibleRounds(), e.roundsPlayed()));
-        }
-        return new Ratings.RatingsDto(season.id(), RatingBook.DEFAULT_ROUNDS_THRESHOLD, richDtos, prophetDtos);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -878,11 +1088,17 @@ public class GameService {
     public Identity.PublicProfileDto publicProfile(String playerId) {
         ensurePlayerKnown(playerId);
         Identity.PlayerSummaryDto player = summary(playerId);
-        Ledger.SeasonRecordDto seasonRecord = hub.ledger().seasonRecord(playerId, Season.of(Instant.now()))
-                .map(sr -> new Ledger.SeasonRecordDto(sr.season().id(), sr.baselineBalance().toMoney().toPlainString(),
-                        sr.deposited().toMoney().toPlainString(), sr.withdrawn().toMoney().toPlainString(),
-                        sr.roundsPlayed(), sr.directionEligibleRounds(), sr.directionCorrectRounds()))
-                .orElse(null);
+        Ledger.SeasonRecordDto seasonRecord;
+        engineLock.readLock().lock();
+        try {
+            seasonRecord = hub.ledger().seasonRecord(playerId, Season.of(Instant.now()))
+                    .map(sr -> new Ledger.SeasonRecordDto(sr.season().id(), sr.baselineBalance().toMoney().toPlainString(),
+                            sr.deposited().toMoney().toPlainString(), sr.withdrawn().toMoney().toPlainString(),
+                            sr.roundsPlayed(), sr.directionEligibleRounds(), sr.directionCorrectRounds()))
+                    .orElse(null);
+        } finally {
+            engineLock.readLock().unlock();
+        }
         List<Identity.ProfileRoundEntryDto> history = roundResults.playerHistory(playerId, PROFILE_HISTORY_LIMIT);
         return new Identity.PublicProfileDto(player, seasonRecord, history);
     }
@@ -902,13 +1118,21 @@ public class GameService {
     private static final int HOME_TOP_N = 5; // предложение — not fixed by contract.ts
 
     public Home.HomeSummaryDto home(String viewerPlayerIdOrNull) {
-        Rounds.RoundsPairDto hourly = roundsPair(Enums.Interval.HOURLY, viewerPlayerIdOrNull);
-        Rounds.RoundsPairDto daily = roundsPair(Enums.Interval.DAILY, viewerPlayerIdOrNull);
-        Crowd.CrowdAccountDto crowd = crowdAccount();
-        Ratings.RatingsDto ratings = ratings(null);
-        List<Ratings.RichEntryDto> topRich = ratings.rich().stream().limit(HOME_TOP_N).toList();
-        List<Ratings.ProphetEntryDto> topProphets = ratings.prophets().stream().limit(HOME_TOP_N).toList();
-        return new Home.HomeSummaryDto(hourly, daily, crowd, topRich, topProphets);
+        // Held for the whole aggregate (each call below re-acquires this SAME read lock, which is
+        // reentrant) so home() sees one consistent snapshot across rounds/crowd/ratings, not four
+        // independent ones a concurrent write could interleave between.
+        engineLock.readLock().lock();
+        try {
+            Rounds.RoundsPairDto hourly = roundsPair(Enums.Interval.HOURLY, viewerPlayerIdOrNull);
+            Rounds.RoundsPairDto daily = roundsPair(Enums.Interval.DAILY, viewerPlayerIdOrNull);
+            Crowd.CrowdAccountDto crowd = crowdAccount();
+            Ratings.RatingsDto ratings = ratings(null);
+            List<Ratings.RichEntryDto> topRich = ratings.rich().stream().limit(HOME_TOP_N).toList();
+            List<Ratings.ProphetEntryDto> topProphets = ratings.prophets().stream().limit(HOME_TOP_N).toList();
+            return new Home.HomeSummaryDto(hourly, daily, crowd, topRich, topProphets);
+        } finally {
+            engineLock.readLock().unlock();
+        }
     }
 
     // ---------------------------------------------------------------------------------------

@@ -61,22 +61,26 @@ public class EngineRebuildService {
     }
 
     /**
-     * Synchronizes on {@code gameService} — the same monitor every {@code GameService} mutating
-     * method uses (each declared {@code synchronized}, i.e. synchronized on that singleton) — so a
-     * rebuild can never interleave with a live bet/round-resolution/withdrawal and swap
-     * {@link EngineHub}'s engine references out from under an in-flight call.
+     * Runs holding {@code gameService}'s write lock ({@link crowdvsmarket.server.service.GameService
+     * #runExclusively}) — the same exclusive-access guarantee every {@code GameService} mutating
+     * method gets by holding that same lock itself (wave-2 fix: {@code GameService} moved from a
+     * plain {@code synchronized} monitor to a {@link java.util.concurrent.locks.ReentrantReadWriteLock}
+     * so its many read paths, e.g. {@code home}/{@code ratings}, can run concurrently with each
+     * other — see that class's javadoc) — so a rebuild can never interleave with a live bet/round-
+     * resolution/withdrawal, or with any read, and swap {@link EngineHub}'s engine references out
+     * from under an in-flight call.
      *
      * <p>{@link BotService#ensureBotsExist} runs deliberately <b>outside</b> that block: it is
      * idempotent and does not touch {@link EngineHub} directly (it goes through
-     * {@code GameService.createBotPlayer}, which takes the same {@code gameService} lock itself),
-     * and {@link BotService} is a separate monitor that the scheduler's own tick acquires in the
+     * {@code GameService.createBotPlayer}, which takes the same lock itself), and
+     * {@link BotService} is a separate monitor that the scheduler's own tick acquires in the
      * opposite order (bots first, then {@code GameService} calls) — nesting the two here in the
      * other order would be a classic lock-order-inversion deadlock risk against a concurrently
      * running scheduler tick.
      */
     public void rebuild() {
         long now = System.currentTimeMillis();
-        synchronized (gameService) {
+        gameService.runExclusively(() -> {
             roundCalendar.init(now);
             players.reload();
 
@@ -98,7 +102,7 @@ public class EngineRebuildService {
                             + "hourly.next=%s daily.next=%s",
                     events.size(), players.all().size(), hub.ledger().playerIds().size(),
                     roundProgress.next(Interval.HOURLY).roundId(), roundProgress.next(Interval.DAILY).roundId());
-        }
+        });
         botService.ensureBotsExist(now);
     }
 }

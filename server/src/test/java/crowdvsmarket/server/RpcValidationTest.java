@@ -177,4 +177,78 @@ class RpcValidationTest {
         assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
         assertThat(resp.jsonPath().getString("error.code")).isEqualTo("BAD_REQUEST");
     }
+
+    // --- wave-2 CRITICAL security fix: requestWithdrawal/requestDeposit reject non-positive
+    // amounts (the exploited requestWithdrawal("-5000.000") minted PLAY before this fix) ---
+
+    @Test
+    void requestWithdrawalRejectsNegativeAmountAndNeverMintsPlay() {
+        String session = signIn("txch1wd-negative-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        String balanceBefore = rpc(session, "myAccount").jsonPath().getString("balance");
+        assertThat(balanceBefore).isEqualTo("10000.000");
+
+        Response resp = rpc(session, "requestWithdrawal", "-5000.000");
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
+        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("INVALID_AMOUNT");
+
+        String balanceAfter = rpc(session, "myAccount").jsonPath().getString("balance");
+        assertThat(balanceAfter).as("balance must be unchanged, never increased").isEqualTo("10000.000");
+    }
+
+    @Test
+    void requestWithdrawalRejectsZeroAmount() {
+        String session = signIn("txch1wd-zero-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        Response resp = rpc(session, "requestWithdrawal", "0.000");
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
+        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("INVALID_AMOUNT");
+    }
+
+    @Test
+    void requestWithdrawalStillAcceptsAPositiveAmount() {
+        String session = signIn("txch1wd-positive-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        Response resp = rpc(session, "requestWithdrawal", "500.000");
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(200);
+        assertThat(resp.jsonPath().getString("state")).isEqualTo("CONFIRMED");
+        String balanceAfter = rpc(session, "myAccount").jsonPath().getString("balance");
+        assertThat(balanceAfter).isEqualTo("9500.000");
+    }
+
+    @Test
+    void requestDepositRejectsNegativeAmount() {
+        String session = signIn("txch1dep-negative-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        Response resp = rpc(session, "requestDeposit", "-100.000");
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
+        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("INVALID_AMOUNT");
+    }
+
+    @Test
+    void requestDepositRejectsZeroAmount() {
+        String session = signIn("txch1dep-zero-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        Response resp = rpc(session, "requestDeposit", "0.000");
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
+        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("INVALID_AMOUNT");
+    }
+
+    @Test
+    void requestDepositStillAcceptsAPositiveAmount() {
+        String session = signIn("txch1dep-positive-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        Response resp = rpc(session, "requestDeposit", "250.000");
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(200);
+        assertThat(resp.jsonPath().getString("state")).isEqualTo("CONFIRMED");
+        String balanceAfter = rpc(session, "myAccount").jsonPath().getString("balance");
+        assertThat(balanceAfter).isEqualTo("10250.000");
+    }
+
+    @Test
+    void placeBetStillRejectsZeroOrNegativeStakeAsBelowMinimum() {
+        // Defense-in-depth check (task item 1's "stake" entry point): a non-positive stake is
+        // already caught by the pre-existing minimum-stake check, exercised explicitly here so a
+        // future change to that check's ordering cannot silently reopen this entry point.
+        String session = signIn("txch1bet-zero-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        String bettingRoundId = rpc(session, "rounds", "HOURLY").jsonPath().getString("betting.roundId");
+        Response resp = rpc(session, "placeBet", java.util.Map.of("roundId", bettingRoundId, "direction", "UP",
+                "leverage", 2, "stake", "-100.000"));
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(422);
+        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("STAKE_BELOW_MINIMUM");
+    }
 }

@@ -15,9 +15,9 @@ import org.jboss.logging.Logger;
  * Drives the whole game clock: resolves every round whose window has elapsed (catching up in a
  * tight loop after any gap, e.g. a restart — see {@link RoundProgress}'s javadoc), runs bot
  * betting, and drains the oracle publish queue. One tick, one thread — {@code GameService}'s
- * mutating methods are all {@code synchronized} anyway, but the scheduler itself never overlaps
- * itself (Quarkus's {@code @Scheduled} does not run a new invocation while the previous one is
- * still in flight, by default).
+ * mutating methods all take its write lock anyway (see that class's javadoc), but the scheduler
+ * itself never overlaps itself (Quarkus's {@code @Scheduled} does not run a new invocation while
+ * the previous one is still in flight, by default).
  */
 @ApplicationScoped
 public class RoundSchedulerService {

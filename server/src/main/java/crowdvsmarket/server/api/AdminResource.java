@@ -2,6 +2,7 @@ package crowdvsmarket.server.api;
 
 import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.dto.ApiException;
+import crowdvsmarket.server.dto.Ledger;
 import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.dto.ServerInfo;
@@ -56,6 +57,30 @@ public class AdminResource {
         return gameService.cancelRoundById(roundId, reason, System.currentTimeMillis());
     }
 
+    public record ReverseWithdrawalRequest(String reason) {
+    }
+
+    /** Wave-2 security fix (Р-32/Р-43 pattern): reverses a withdrawal request's already-recorded
+     *  balance/season effect (e.g. the {@code requestWithdrawal("-5000.000")} exploit) without
+     *  altering or deleting the original event — {@code reason} is mandatory and becomes part of
+     *  the public, replayable {@code LedgerCorrection} record ({@code GameService#reverseWithdrawal}
+     *  / RpcResource's public {@code ledgerCorrections} method, unauthenticated like {@code
+     *  cancellations}). */
+    @POST
+    @Path("/withdrawals/{requestId}/reverse")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Ledger.LedgerCorrectionDto reverseWithdrawal(@HeaderParam("Authorization") String auth,
+                                                          @PathParam("requestId") String requestId,
+                                                          ReverseWithdrawalRequest body) {
+        requireOperator(auth);
+        String reason = body == null ? null : body.reason();
+        if (reason == null || reason.isBlank()) {
+            throw ApiException.badRequest("reason is required");
+        }
+        return gameService.reverseWithdrawal(requestId, reason, System.currentTimeMillis());
+    }
+
     @GET
     @Path("/status")
     @Produces(MediaType.APPLICATION_JSON)
@@ -63,9 +88,13 @@ public class AdminResource {
         requireOperator(auth);
         ServerInfo.ServerInfoDto info = gameService.serverInfo();
         Paging.Page<Rounds.CancellationDto> recentCancellations = gameService.cancellations(new Paging.PageParams(20, null));
-        return new AdminStatusDto(info, recentCancellations.items());
+        // Wave-2 security fix: same "journal of exceptional operator actions" pattern as
+        // recentCancellations, for ledger corrections (Р-32/Р-43).
+        Paging.Page<Ledger.LedgerCorrectionDto> recentCorrections = gameService.ledgerCorrections(new Paging.PageParams(20, null));
+        return new AdminStatusDto(info, recentCancellations.items(), recentCorrections.items());
     }
 
-    public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations) {
+    public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
+                                   java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections) {
     }
 }

@@ -416,3 +416,118 @@ javadoc про «~1% на бота на раунд») и (б) выявленна
 менялась, кроме типа возврата `oracleRecords`). Не в assigned paths этой волны и не входит в
 перечисленные Р-N/пункты задачи — не тронуто; здесь только задокументировано как факт для
 критика/следующего прохода.
+
+## 14. Волна 2 (security/concurrency-фиксы по тестам, перед ревью критика) — 2026-09-26
+
+Правит находки второго раунда тестирования. Затронуты `server/`, `engine/` (аддитивно —
+`round_engine_design.md` §6), `tools/herd-operator.sh`. `web/` не трогали.
+
+### 14.1 CRITICAL — `requestWithdrawal("-5000.000")` минтил PLAY
+
+`GameService.requestWithdrawal`/`requestDeposit` теперь первым делом проверяют
+`amt.isPositive()` → `ApiException.invalidAmount` (новый `ApiErrorCode.INVALID_AMOUNT`, `400`,
+аддитивный, не в `contract.ts` — та же ситуация, что `INVALID_NICKNAME`/`RATE_LIMITED`) **до**
+создания `GameEvent`, т.е. это единственная реальная точка входа для внешнего атакующего (RPC —
+единственный способ достучаться до `LedgerBook`). `placeBet`'овский stake уже был защищён косвенно
+(`MIN_STAKE=100 > 0`); добавлен явный `LedgerBook.reserveStake`-guard для честности, а не только как
+побочный эффект минимума (`round_engine_design.md` §6 — там же подробно объяснено, почему
+аналогичный guard **намеренно не** добавлен внутрь `LedgerBook.requestWithdrawal`/`requestDeposit`
+самих по себе: это тот же код, что реплеит уже случившееся историческое событие при рестарте, а
+именно испорченное `WithdrawalRequested(amountMojos=-5000000)` уже лежит в `game_events` этого
+стенда и трогать/удалять его нельзя).
+
+### 14.2 Честная коррекция испорченного баланса (Р-32/Р-43 pattern)
+
+Из evidence волны 2 (`scratchpad/wave2b/step1_output.log`, `step1_setup_and_edges.mjs`): игрок
+`3e93a5a8-b5f0-47fa-adaa-d1c103c6ae1d` (ник `W2C wave2c edge negwith`, локальный тестовый кошелёк
+Р-45), заявка на вывод `requestId="w-5"`, `amount="-5000.000"`, `state=CONFIRMED` — баланс вырос с
+`10000.000` до `15000.000`.
+
+Новый эндпоинт `POST /api/admin/withdrawals/{requestId}/reverse` (`{"reason": "..."}`, operator
+bearer-токен, как `cancel`) → `GameService.reverseWithdrawal` → `GameEvent.WithdrawalReversed`
+(новый, аддитивный к sealed `GameEvent`) → `LedgerBook.reverseWithdrawalEffect`
+(`round_engine_design.md` §6 — самодостаточная коррекция, не ищет исходную заявку заново при
+реплее). Не трогает и не удаляет `WithdrawalRequested`/`WithdrawalConfirmed` — только добавляет
+новую запись (`OPERATOR_CORRECTION`).
+
+**Публично, с причиной**: новый RPC-метод `ledgerCorrections` (`RpcResource`, без сессии — тот же
+паттерн, что уже неаутентифицированный `cancellations`) листает `LedgerBook.corrections()`
+постранично (`Ledger.LedgerCorrectionDto`); дополнительно попадает в `AdminStatusDto.
+recentLedgerCorrections` (публичная страница статуса оператора, §9). Двойное применение одной и той
+же `requestId` отклоняется (`400`).
+
+`tools/herd-operator.sh` получил `reverse-withdrawal <requestId> "reason"` (curl-обёртка, тот же
+стиль, что `cancel`).
+
+**Команда, которую нужно выполнить на живом стенде после деплоя этого фикса** (сам вызов —
+не в этой сессии, по задаче: «apply it… after deploy is done by the verify step»):
+
+```
+HERD_OPERATOR_TOKEN=<значение из .env живого стенда> tools/herd-operator.sh reverse-withdrawal \
+  w-5 "wave-2 security test: requestWithdrawal(-5000.000) minted PLAY for player 3e93a5a8-b5f0-47fa-adaa-d1c103c6ae1d (nickname 'W2C wave2c edge negwithd') — reversed per docs/research/server_design.md §14.2, event WithdrawalRequested left unaltered"
+```
+
+(`HERD_SERVER_URL` — по умолчанию `http://localhost:8081`, менять только если стенд слушает не там.)
+Перед выполнением стоит свериться с текущим `GET /api/admin/status` этого же стенда, что заявка
+`w-5` всё ещё непровереная (не была уже кем-то исправлена) — команда идемпотентна в том смысле, что
+повторный вызов на уже исправленной заявке безопасно вернёт `400`, а не испортит баланс второй раз.
+
+### 14.3 MAJOR — `home()`/`ratings()` (и другие чтения) читали состояние движка без блокировки
+
+`GameService` был `synchronized`-методным на мутациях, чтения — вообще без блокировки; конкурентное
+чтение `LedgerBook.entries()`/`accounts` или `BetBook`'овских `LinkedHashMap` во время параллельной
+мутации могло бросить `ArrayIndexOutOfBoundsException`/`ConcurrentModificationException`. Заменено
+на `ReentrantReadWriteLock` (не просто `synchronized` и на чтениях): читающие методы (`home`,
+`ratings`, `roundsPair`, `round`, `account`, `seasonRecord`, `myLedger`, `crowdAccount`,
+`publicProfile`, `ledgerCorrections` — буквально «любой другой путь чтения», не только два названных
+в баг-репорте) держат `readLock()` (конкурентны друг с другом), мутирующие — `writeLock()`
+(эксклюзивны против всех). Выбор именно `ReadWriteLock`, а не общий `synchronized` и на чтениях —
+обоснование: сервис read-heavy (каждый клиент поллит `home`/`rounds`/`ratings` заметно чаще, чем
+кто-то ставит/выводит/резолвится раунд), обычный мьютекс сериализовал бы читателей друг за другом и
+раздувал бы p99 именно под нагрузкой, которую бьёт тест из задачи; при этом запись по-прежнему
+полностью эксклюзивна, как и раньше. `EngineRebuildService.rebuild()` (полный сброс+реплей
+`EngineHub`) раньше синхронизировался на `synchronized(gameService)` — теперь берёт тот же
+write-lock через новый `GameService.runExclusively(Runnable)`, с тем же смыслом: реплей не может
+пересечься ни с одним чтением/записью.
+
+**Тест** — `GameServiceConcurrencyTest`: 8 читающих потоков (`home`/`ratings` в цикле) параллельно с
+4 пишущими (регистрация игрока + `placeBet`), проверяет, что из чтений не вылетает ничего, кроме
+ожидаемых доменных `ApiException` (например, ставка ровно на границе раунда).
+
+### 14.4 MINOR — `placeBet` принимал ставку до ~1с после старта раунда
+
+`roundProgress.bettingWindow(interval)` меняется только когда `RoundSchedulerService`'овский тик
+(раз в `herd.scheduler.tick-ms`, ~1с) фактически резолвит предыдущий раунд — то есть до этого тика
+курсор ещё называет уже стартовавший раунд «открытым для ставок». Фикс — сравнение по
+`nowMs >= bettingWindow.startMs()` (время самого запроса, не повторный `System.currentTimeMillis()`)
+в дополнение к проверке `roundId`, в `placeBet` и симметрично в `cancelBet`. Тест
+(`PlaceBetWindowBoundaryTest`) зовёт `GameService` напрямую с управляемым `nowMs` (не гоняется за
+реальным планировщиком): `startMs()-1` — успех, `startMs()` и позже — `ROUND_NOT_OPEN_FOR_BETTING`.
+
+### 14.5 MINOR — публикация оракула блокировала обработку раундов
+
+`OraclePublisherService.publishPending()` раньше звал `chainSvc.oracleRecords(...)` синхронно на том
+же потоке, что `RoundSchedulerService.tick()` резолвит раунды и гоняет ботов — медленный/недоступный
+chainsvc (до `connect-timeout+read-timeout`) откладывал резолв уже просроченного раунда на весь этот
+тик. Теперь `publishPending()` только сабмитит работу в выделенный `ThreadPoolExecutor` (1 поток,
+очередь `ArrayBlockingQueue(1)`, `DiscardPolicy`) и сразу возвращается; если предыдущая публикация
+ещё не закончилась, следующий тик просто отбрасывается — ничего не теряется (строка остаётся
+`chainsvc_queued=false` и попробуется в следующий раз, `OracleReconciliationService` — независимая
+защита от «отправили, но не подтвердили»). `quarkus.rest-client.chainsvc.*-timeout` подняты
+(3000/5000 → 5000/15000) — раз путь больше не блокирует раунды, можно дать chainsvc больше времени
+на ответ вместо жёсткого таймаута, который раньше был нужен именно чтобы не блокировать надолго.
+Тест — `OraclePublisherServiceTest` (2): `publishPending()` не блокируется на намеренно медленном
+моке (< 500 мс при реальной задержке мока 1500 мс), запись всё равно улетает асинхронно;
+перекрывающиеся вызовы не порождают неограниченную параллельную работу (ограничено очередью).
+
+### 14.6 Тесты и реальные числа
+
+`mvn -s ~/.m2/settings-oss.xml -f pom.xml clean verify`, 2026-09-26: `engine` — **6527, 0 упавших**
+(+8 в `PlayAmountTest`/новых, `round_engine_design.md` §6). `server` — **75, 0 упавших**: новые
+`AdminReverseWithdrawalTest` (5), `GameServiceConcurrencyTest` (1, гоняет 1200 чтений + 600 попыток
+ставки), `PlaceBetWindowBoundaryTest` (4), `scheduler.OraclePublisherServiceTest` (2), плюс
+`RpcValidationTest` вырос на 7 (`requestWithdrawal`/`requestDeposit`
+invalid-amount/positive-still-works, `placeBet` с отрицательным stake). Реактор целиком: **6602
+теста, 0 упавших, 0 ошибок**, `BUILD SUCCESS`. Устойчивость новых конкурентных/асинхронных тестов
+(`GameServiceConcurrencyTest`, `OraclePublisherServiceTest`) проверена тремя последовательными
+прогонами подряд — стабильно зелёные каждый раз.

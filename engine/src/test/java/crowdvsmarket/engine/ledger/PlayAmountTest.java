@@ -48,6 +48,28 @@ class PlayAmountTest {
     }
 
     @Test
+    void requirePositiveAcceptsAPositiveAmountAndReturnsItself() {
+        PlayAmount amount = PlayAmount.ofWholePlay(100);
+        assertThat(amount.requirePositive("stake")).isSameAs(amount);
+    }
+
+    @Test
+    void requirePositiveRejectsZero() {
+        assertThatThrownBy(() -> PlayAmount.ZERO.requirePositive("withdrawal amount"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("withdrawal amount");
+    }
+
+    @Test
+    void requirePositiveRejectsNegative() {
+        // Wave-2 exploit shape: requestWithdrawal("-5000.000").
+        PlayAmount negative = PlayAmount.fromMoney(new BigDecimal("-5000.000"));
+        assertThatThrownBy(() -> negative.requirePositive("withdrawal amount"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("withdrawal amount");
+    }
+
+    @Test
     void comparableOrdersByMojos() {
         PlayAmount small = PlayAmount.ofWholePlay(1);
         PlayAmount big = PlayAmount.ofWholePlay(2);
