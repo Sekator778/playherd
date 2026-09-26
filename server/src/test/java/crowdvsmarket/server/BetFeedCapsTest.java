@@ -10,6 +10,7 @@ import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.testsupport.BettingWindows;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
@@ -62,7 +63,7 @@ class BetFeedCapsTest {
 
     @Test
     void feedOrdersEntriesBySeqAndSupportsSinceSeqPagination() {
-        RoundWindow window = roundProgress.bettingWindow(Interval.HOURLY);
+        RoundWindow window = BettingWindows.fresh(roundProgress, Interval.HOURLY);
         long nowMs = window.startMs() - 1;
         String p1 = signUpPlayer("ord1");
         String p2 = signUpPlayer("ord2");
@@ -103,7 +104,7 @@ class BetFeedCapsTest {
 
     @Test
     void feedCapsOnePageAtPageSizeAndTotalRetentionAtMaxEntriesPerRound() {
-        RoundWindow window = roundProgress.bettingWindow(Interval.DAILY);
+        RoundWindow window = BettingWindows.fresh(roundProgress, Interval.DAILY);
         long nowMs = window.startMs() - 1;
         String soleBettor = signUpPlayer("cap");
 

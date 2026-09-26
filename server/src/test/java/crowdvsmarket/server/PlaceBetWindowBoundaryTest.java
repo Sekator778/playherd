@@ -10,6 +10,7 @@ import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.testsupport.BettingWindows;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.UUID;
@@ -39,7 +40,7 @@ class PlaceBetWindowBoundaryTest {
     @Test
     void placeBetSucceedsOneMillisecondBeforeTheWindowStarts() {
         String playerId = signUpPlayer("ok");
-        RoundWindow bettingWindow = roundProgress.bettingWindow(Interval.HOURLY);
+        RoundWindow bettingWindow = BettingWindows.fresh(roundProgress, Interval.HOURLY);
         Betting.PlaceBetRequest req = new Betting.PlaceBetRequest(bettingWindow.roundId(), Enums.Direction.UP, 2, "100.000");
 
         var bet = gameService.placeBet(playerId, req, bettingWindow.startMs() - 1);
@@ -50,7 +51,7 @@ class PlaceBetWindowBoundaryTest {
     @Test
     void placeBetIsRejectedExactlyAtTheWindowStartMs() {
         String playerId = signUpPlayer("exact");
-        RoundWindow bettingWindow = roundProgress.bettingWindow(Interval.HOURLY);
+        RoundWindow bettingWindow = BettingWindows.fresh(roundProgress, Interval.HOURLY);
         Betting.PlaceBetRequest req = new Betting.PlaceBetRequest(bettingWindow.roundId(), Enums.Direction.UP, 2, "100.000");
 
         // Exactly at window.startMs — the round has, by definition, already started running — must
@@ -65,7 +66,7 @@ class PlaceBetWindowBoundaryTest {
     @Test
     void placeBetIsRejectedWellAfterTheWindowStartMs() {
         String playerId = signUpPlayer("late");
-        RoundWindow bettingWindow = roundProgress.bettingWindow(Interval.HOURLY);
+        RoundWindow bettingWindow = BettingWindows.fresh(roundProgress, Interval.HOURLY);
         Betting.PlaceBetRequest req = new Betting.PlaceBetRequest(bettingWindow.roundId(), Enums.Direction.UP, 2, "100.000");
 
         assertThatThrownBy(() -> gameService.placeBet(playerId, req, bettingWindow.startMs() + 900))
@@ -77,7 +78,7 @@ class PlaceBetWindowBoundaryTest {
     @Test
     void cancelBetIsRejectedExactlyAtTheWindowStartMs() {
         String playerId = signUpPlayer("cancel");
-        RoundWindow bettingWindow = roundProgress.bettingWindow(Interval.HOURLY);
+        RoundWindow bettingWindow = BettingWindows.fresh(roundProgress, Interval.HOURLY);
         Betting.PlaceBetRequest req = new Betting.PlaceBetRequest(bettingWindow.roundId(), Enums.Direction.UP, 2, "100.000");
         gameService.placeBet(playerId, req, bettingWindow.startMs() - 1);
 

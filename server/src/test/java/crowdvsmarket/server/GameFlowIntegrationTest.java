@@ -6,9 +6,12 @@ import static org.awaitility.Awaitility.await;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.server.chain.ChainSvcClient;
+import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.scheduler.EngineRebuildService;
+import crowdvsmarket.server.testsupport.BettingWindows;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
@@ -72,6 +75,8 @@ class GameFlowIntegrationTest {
     RoundResultRepository roundResults;
     @Inject
     EngineRebuildService engineRebuildService;
+    @Inject
+    RoundProgress roundProgress;
 
     private record Session(String playerId, String sessionId) {
     }
@@ -149,6 +154,9 @@ class GameFlowIntegrationTest {
         Session player2 = signIn("txch1player2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         assertThat(player1.playerId()).isNotEqualTo(player2.playerId());
 
+        // 8 s rounds: start from a window with most of its time ahead, or the bets below can land
+        // after it closed (ROUND_NOT_OPEN_FOR_BETTING, CI run 36245612032).
+        BettingWindows.fresh(roundProgress, Interval.HOURLY);
         JsonNode hourlyPair = rpc(player1, "rounds", "HOURLY");
         String bettingRoundId = hourlyPair.path("betting").path("roundId").asText();
         assertThat(hourlyPair.path("betting").path("phase").asText()).isEqualTo("BETTING");
@@ -336,6 +344,7 @@ class GameFlowIntegrationTest {
 
         // player1 can still place a bet after the rebuild (session, engine and RoundProgress all
         // came back correctly, not just the read models)
+        BettingWindows.fresh(roundProgress, Interval.HOURLY);
         JsonNode pairAfterRebuild = rpc(player1, "rounds", "HOURLY");
         String nextBettingRoundId = pairAfterRebuild.path("betting").path("roundId").asText();
         rpc(player1, "placeBet", Map.<String, Object>of("roundId", nextBettingRoundId, "direction", "UP",

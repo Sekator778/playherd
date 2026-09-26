@@ -9,33 +9,46 @@ import java.time.Duration;
 
 /**
  * Betting windows for tests that run the real scheduler with short rounds (8–10 s profiles).
- * {@code RoundCalendar}'s grid is fixed wall-clock time, so "the window open right now" can be a
- * few milliseconds from closing when a test reads it; the scheduler then advances
- * {@link RoundProgress} before the test's own {@code placeBet} and the bet is rejected with
- * ROUND_NOT_OPEN_FOR_BETTING (seen on CI, PR #2's run 36244309916).
+ * Two ways a test used to get a window it could no longer bet into (ROUND_NOT_OPEN_FOR_BETTING on
+ * CI, run 36244309916 and PR #3's first run):
+ * <ul>
+ *   <li>{@code RoundCalendar}'s grid is fixed wall-clock time, so the window open right now can be
+ *       milliseconds from closing when the test reads it;</li>
+ *   <li>after {@code EngineRebuildService.rebuild()} {@link RoundProgress} is seeded from the last
+ *       settled round, i.e. behind wall-clock time, and the next scheduler tick advances it
+ *       through every overdue round — a poll during that catch-up sees windows already in the
+ *       past.</li>
+ * </ul>
+ * Both helpers therefore wait for a window that still has real time ahead of it.
  */
 public final class BettingWindows {
 
     private BettingWindows() {
     }
 
-    /** The current window if more than half of it is still ahead, otherwise the next one. */
+    /** A window with at least min(half its length, 5 s) still ahead — the current one if it
+     *  qualifies, so 180 s default rounds rarely wait. */
     public static RoundWindow fresh(RoundProgress roundProgress, Interval interval) {
-        RoundWindow window = roundProgress.bettingWindow(interval);
-        long duration = window.endMs() - window.startMs();
-        if (window.startMs() - System.currentTimeMillis() >= duration / 2) {
-            return window;
-        }
-        return next(roundProgress, interval);
+        return await().atMost(maxWait(roundProgress, interval)).pollInterval(Duration.ofMillis(50))
+                .until(() -> roundProgress.bettingWindow(interval), BettingWindows::hasMargin);
     }
 
-    /** Waits for the scheduler to open the window after the current one and returns it. */
+    /** Like {@link #fresh} but never the window open at call time — for tests that need a round
+     *  whose betting opened after something they just did (e.g. bots re-created by a rebuild). */
     public static RoundWindow next(RoundProgress roundProgress, Interval interval) {
-        RoundWindow current = roundProgress.bettingWindow(interval);
-        long duration = current.endMs() - current.startMs();
-        String currentRoundId = current.roundId();
-        return await().atMost(Duration.ofMillis(duration + 5_000)).pollInterval(Duration.ofMillis(50))
+        String currentRoundId = roundProgress.bettingWindow(interval).roundId();
+        return await().atMost(maxWait(roundProgress, interval)).pollInterval(Duration.ofMillis(50))
                 .until(() -> roundProgress.bettingWindow(interval),
-                        window -> !window.roundId().equals(currentRoundId));
+                        window -> !window.roundId().equals(currentRoundId) && hasMargin(window));
+    }
+
+    private static boolean hasMargin(RoundWindow window) {
+        long duration = window.endMs() - window.startMs();
+        return window.startMs() - System.currentTimeMillis() >= Math.min(duration / 2, 5_000);
+    }
+
+    private static Duration maxWait(RoundProgress roundProgress, Interval interval) {
+        RoundWindow window = roundProgress.bettingWindow(interval);
+        return Duration.ofMillis(2 * (window.endMs() - window.startMs()) + 5_000);
     }
 }
