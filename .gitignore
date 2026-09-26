@@ -36,3 +36,8 @@ build/
 local.properties
 *.apk
 *.aab
+
+# deploy/ (VPS delivery, docs/ops/deploy.md) — state and backups deploy.sh/backup.sh write on the
+# VPS itself; never meant to be committed even if someone runs these scripts from a repo checkout.
+deploy/.deploy-state/
+deploy/backups/

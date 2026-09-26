@@ -367,9 +367,16 @@ if [[ "$CREATE_ENVIRONMENTS" -eq 1 ]]; then
     PROD_BODY='{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
   fi
   call_api PUT "/environments/production" "$PROD_BODY"
-  # Restrict production deploys to the v* tag pattern (release-only) once custom_branch_policies
-  # is active — separate endpoint, only meaningful once the environment above exists.
+  # Deployment-branch policy for "production". Two entries, both needed:
+  #   - tag v* so a human/manual run against a release tag is allowed;
+  #   - branch main because .github/workflows/deploy.yml's production job is triggered by
+  #     `workflow_run` (after release.yml finishes) — a workflow_run-triggered run's own
+  #     `github.ref` is always the repo's default branch (main), never the tag that triggered
+  #     the upstream run. Without the `main` entry here, GitHub rejects the job from using this
+  #     environment before deploy.yml's own tag-derivation/guard logic ever runs. See deploy.yml's
+  #     "production" job comment and docs/ops/deploy.md "Как это устроено".
   call_api POST "/environments/production/deployment-branch-policies" "{\"name\":\"v*\",\"type\":\"tag\"}"
+  call_api POST "/environments/production/deployment-branch-policies" "{\"name\":\"main\",\"type\":\"branch\"}"
 else
   echo "  [skipped] --skip-environments"
 fi
@@ -387,12 +394,19 @@ cat <<'EOF'
   `permissions: { packages: write }` in release.yml.
 
   Environment "production" secrets (VPS deploy — blocked until Р-38's VPS exists, docs/product/
-  decisions.md; add once Alex has provisioned it):
+  decisions.md; add once Alex has provisioned it — names must match .github/workflows/deploy.yml
+  exactly, which is what actually reads them):
     - VPS_HOST         — VPS hostname/IP
-    - VPS_SSH_USER     — deploy-only SSH user (not Alex's personal account)
+    - VPS_USER         — deploy-only SSH user (not Alex's personal account)
     - VPS_SSH_KEY      — private key for that deploy-only user (generate a NEW keypair for CI;
                           never reuse Alex's own key or the testnet operator key)
+    - VPS_KNOWN_HOSTS  — output of `ssh-keyscan -p <port> <host>`, so deploy.yml can pin the
+                          host key instead of disabling StrictHostKeyChecking
     - VPS_SSH_PORT     — only if not 22
+
+  Same four secrets (VPS_HOST/VPS_USER/VPS_SSH_KEY/VPS_KNOWN_HOSTS, + VPS_SSH_PORT if not 22)
+  again on environment "staging" once it has its own deploy target — deploy.yml's staging job
+  reads them from there, independently of production's copies.
 
   Explicitly NOT a CI/CD secret (per this task's constraint and Р-21, docs/product/decisions.md):
   the Chia testnet11 operator/oracle key. It stays only on whichever machine runs chainsvc
