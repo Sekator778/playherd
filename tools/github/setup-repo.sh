@@ -6,7 +6,7 @@
 #   1. Creates the `develop` branch from `main` if it doesn't exist yet.
 #   2. Optionally sets `develop` as the repo's default branch (new PRs/Dependabot target it).
 #   3. Applies repository rulesets: `main` (PR required, ~1 approval, admin bypass on the PR
-#      requirement only, required "ci-ok" check, linear history, squash-only, no force-push/
+#      requirement only, required "ci-ok" check, merge commit (develop → main) or squash (hotfix/*), no force-push/
 #      delete), `develop` (required "ci-ok", no force-push), tag ruleset on `v*` (immutable:
 #      no delete/move).
 #   4. Enables Dependabot security updates + Dependabot alerts.
@@ -134,7 +134,9 @@ call_api() {
     fi
   fi
   if [[ $status -ne 0 ]]; then
-    if echo "$out" | grep -qi "Upgrade to GitHub Pro"; then
+    # Free-plan private repo: 403 "Upgrade to GitHub Pro" (rulesets) or 422 "ensure the billing
+    # plan supports the required reviewers protection rule" (environment reviewers).
+    if echo "$out" | grep -qiE "Upgrade to GitHub Pro|billing plan supports"; then
       echo "  [skipped — plan limit] ${method} ${path}: private repo on GitHub Free can't use this API." >&2
       echo "      -> either upgrade the account plan, or wait for the Р-54 public repo; see docs/ops/branching.md §7." >&2
       return 0
@@ -210,7 +212,14 @@ section "3. Rulesets"
 
 # ruleset_id_by_name NAME -> prints id or nothing
 ruleset_id_by_name() {
-  gh api "repos/${REPO}/rulesets" --jq ".[] | select(.name==\"$1\") | .id" 2>/dev/null || true
+  # On a 403 (Free-plan private repo) gh still prints the raw error JSON to stdout, which used to
+  # be taken for a ruleset id and abort the script at step 3 — accept a numeric id only.
+  local out
+  out=$(gh api "repos/${REPO}/rulesets" --jq ".[] | select(.name==\"$1\") | .id" 2>/dev/null) || return 0
+  if [[ "$out" =~ ^[0-9]+$ ]]; then
+    echo "$out"
+  fi
+  return 0
 }
 
 # upsert_ruleset NAME JSON_BODY
@@ -255,7 +264,6 @@ if [[ "$APPLY_MAIN_RULESET" -eq 1 ]]; then
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },
-    { "type": "required_linear_history" },
     {
       "type": "pull_request",
       "parameters": {
@@ -264,7 +272,7 @@ if [[ "$APPLY_MAIN_RULESET" -eq 1 ]]; then
         "require_code_owner_review": true,
         "require_last_push_approval": false,
         "required_review_thread_resolution": true,
-        "allowed_merge_methods": ["squash"]
+        "allowed_merge_methods": ["merge", "squash"]
       }
     },
     {

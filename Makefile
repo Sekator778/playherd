@@ -33,7 +33,7 @@ ORACLE_LAUNCHER ?= c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cde
 .PHONY: help check build test \
         test-java build-java test-chain lint-chain build-chain \
         web-deps test-web build-web apk \
-        stand-up stand-down stand-status stand-logs e2e verify-oracle
+        stand-up stand-down stand-status stand-logs tunnel e2e verify-oracle
 
 help: ## list targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -90,6 +90,11 @@ stand-status: ## show stand containers and health
 
 stand-logs: ## follow stand logs
 	tools/stand.sh logs
+
+# Cloudflare quick tunnel: no account, prints a random https://<x>.trycloudflare.com that changes
+# on every start; caffeinate (macOS) keeps the Mac awake while it runs.
+tunnel: ## public https link to the local stand (share with testers)
+	$(if $(shell command -v caffeinate),caffeinate -i,) cloudflared tunnel --no-autoupdate --url http://localhost:$(or $(HERD_WEB_PORT),8480)
 
 e2e: web-deps ## 4-player end-to-end run against WEB_URL (default the local stand)
 	node --experimental-wasm-modules tools/e2e/run.mjs $(WEB_URL)
