@@ -1030,3 +1030,245 @@ Ryuk от `mvn verify` убраны Ryuk'ом автоматически): `engi
   (§17.2); `ChainSvcContractFixturesTest` остаётся готов принять их.
 - Сезонный touch без входа (например, скорректировать читающие пути, чтобы не зависеть от логина
   для видимости нового стартового пакета) — не запрошено, вне объёма фикса дубликата.
+
+## 18. Волна 6 (Р-62: живой расклад толпы, лента ставок, «пока вас не было») — 2026-09-26
+
+Задание по итогам Р-61/Р-62/Р-63 (`docs/product/decisions.md`): концепция «Аркада», раскрытие
+расклада толпы и ленты ставок вживую во время окна ставок (заменяет Р-22), и отдельно — фикс
+основной сессии «игрок, не заходивший к моменту закрытия раунда, никогда не видит момент итога».
+Assigned paths — `server/`, `engine/` (аддитивно — не тронут, см. §18.4), `web/src/api/contract.ts`
+(только аддитивно) и этот файл.
+
+### 18.1 Живой расклад толпы во время `BETTING` (Р-62, пункт 1)
+
+`GameService.buildBettingDto` (вызывается из `rounds()`/`round()` для ещё не начавшегося раунда)
+теперь дополнительно считает `upStake`/`downStake`/`upCount`/`downCount`/`majorityDirection`/
+`majorityLeverage` из ставок, всё ещё лежащих в `BetBook` этого раунда — та же математика
+большинства по сумме ставок и то же средневзвешенное плечо (Р-14), что уже использует
+`buildRunningDto`'s `crowdPreview` и `CrowdAccount.processRound` при реальном расчёте, просто
+на фазу раньше (позиция ещё не открыта, поэтому margin/entryPrice/liquidationPrice здесь не
+считаются — их и не было в задании, только сам расклад и превью направления/плеча толпы).
+`majorityDirection`/`majorityLeverage` оба `null` только при ровной ничьей (включая 0 против 0) —
+то же правило, что уже у `CrowdRoundPositionDto`/`CrowdRoundResultDto`.
+
+**Согласование формы с `web/`-агентом.** К моменту, когда этот проход дошёл до
+`contract.ts`, там уже лежали `RoundBetting.upStake?`/`downStake?`/`recentBets?`/`LiveBetDto` и
+`Api.unseenResults?`/`acknowledgeResults?` — тот же агент параллельно проектировал фронт на
+mock-данных (Р-35) и написал свою версию контракта первым. Не переписано заново: реальный бэкенд
+подстроен под уже написанную (и уже используемую `MockApi`/`fx/useAwayReplay.ts`/
+`useSettlementWatcher`) форму, а не наоборот — `upStake`/`downStake` остались плоскими полями
+`RoundBetting` (не завёрнуты в отдельный DTO), RPC названы `unseenResults`/`acknowledgeResults`
+(не `myUnseenResults`/`ackResults`, как в изначальной формулировке задания — просто другое имя
+того же самого, `RpcResource`'s dispatch-строка это и есть весь контракт метода). Аддитивно
+добавлено то, чего в уже написанной версии не было: `upCount`/`downCount`/`majorityDirection`/
+`majorityLeverage` на `RoundBetting`, плюс отдельный `betFeed` RPC (§18.2) — `web/`-агенту ничего
+менять не нужно, чтобы получить настоящие данные вместо мока под уже написанными полями.
+
+### 18.2 Живая лента ставок — `betFeed` RPC + `RoundBetting.recentBets` (Р-62, пункт 2)
+
+Новый класс `server/domain/BetFeed.java` — in-memory, append-only, по одной записи на каждый
+`BetPlaced` (включая правку ставки, Р-13 — правка не переписывает старую запись, добавляет новую,
+как и не удаляет предыдущий голос зрителя в Twitch Predictions). Единственный писатель —
+`EventApplier`'s `BetPlaced`-ветка (тот же паттерн, что уже даёт `ComparisonAccounts`: и живой
+трафик, и полный реплей при рестарте проходят одним кодом, `EngineRebuildService.rebuild()` зовёт
+`betFeed.reset()` перед реплеем ровно как `comparisonAccounts.reset()`). Два независимых предела:
+`MAX_ENTRIES_PER_ROUND=120` записей на раунд (старые вытесняются), `MAX_ROUNDS_TRACKED=500` раундов
+всего (предложение — числа нигде не зафиксированы, выбраны с запасом для локального стенда, Р-46:
+20 ботов).
+
+Два способа читать одни и те же данные, под разные задачи:
+
+- **`betFeed(roundId, sinceSeq?)`** — публичный RPC (сессия не нужна, та же видимость, что у самого
+  раунда во время BETTING), полная история курсорной пагинацией: `entries` — от старых к новым,
+  `seq > sinceSeq`, не больше `BetFeed.PAGE_SIZE=50` за вызов; `hasMore=true` — сразу звать ещё раз
+  с `seq` последней записи, не дожидаясь следующего тика поллинга. Ряд — `BetFeedEntryDto{seq, atMs,
+  playerDisplayName, isBot, direction, stake, leverage}` (без `playerId`/адреса — только то, что уже
+  публично по Р-15/Р-29).
+- **`RoundBetting.recentBets`** — маленький, всегда присутствующий срез той же ленты (новые
+  первыми, не больше `RECENT_BETS_LIMIT=14`, то самое число, что уже было в mock-версии
+  `web/`-агента), встроенный прямо в ответ `rounds()`/`round()` — не нужен отдельный вызов, если
+  экрану достаточно последних N. Ряд — `LiveBetDto{player: PlayerSummaryDto, direction, leverage,
+  stake, atMs}` (полная идентичность, не сплющенная, как в `betFeedFeedEntryDto` — так уже было
+  написано в контракте до этого прохода).
+
+`BetFeed.Entry` хранит `playerId` ровно для того, чтобы `recentBets`' `LiveBetDto.player` мог
+собрать полный `PlayerSummaryDto` через `GameService.summaryOrFallback` (тот же
+«should not happen, но на всякий случай» fallback, что уже есть в `storeSettledResult`) —
+`BetFeedEntryDto` сам этот `playerId` наружу не отдаёт.
+
+### 18.3 «Пока вас не было» — `unseenResults`/`acknowledgeResults` (Р-62, пункт 3)
+
+Фикс находки основной сессии: игрок, чья вкладка/приложение были закрыты в момент расчёта раунда,
+никогда не видел «момент итога» (`docs/product/design/result-moment.md`) — `useSettlementWatcher`
+(уже в `web/`) ловит расчёт только пока приложение открыто и поллинг идёт. Новая колонка
+`player_round_history.acked_at_ms` (`V6__result_ack.sql`, `NULL` = ещё не показан) — не отдельная
+таблица: у каждой сыгранной позиции и так уже есть ровно одна строка здесь (`V1__init.sql`).
+
+- `unseenResults()` (RPC) → `RoundResultRepository.unseenResults`: собственные расчёты этого
+  игрока с `acked_at_ms IS NULL`, **новые первыми** — так же, как `playerHistory`, и так, как уже
+  зафиксировал doc-комментарий `Api.unseenResults` в контракте до этого прохода (`fx/
+  useAwayReplay.ts` сам разворачивает список, чтобы проиграть моменты от старого к новому, считая
+  баланс до/после в обратном порядке от текущего реального баланса — этот порядок не менялся, только
+  реализована серверная сторона под него). Ограничение `UNSEEN_RESULTS_LIMIT=20` (предложение) —
+  если после долгого отсутствия непросмотренных больше, лишние (самые старые) просто придут
+  следующим вызовом, ничего не теряется.
+- `acknowledgeResults(roundIds)` (RPC) → `RoundResultRepository.ackResults`: `UPDATE ... WHERE
+  player_id = ? AND round_id = ? AND acked_at_ms IS NULL` — идемпотентно (повторный ack и ack
+  неизвестного/чужого `roundId` — тихий no-op, не ошибка) и всегда со скобкой по `player_id`, так
+  что один игрок не может подтвердить чужую запись, даже зная её `roundId`.
+
+Оба — чтение/запись read-model таблицы, не состояния `EngineHub` — не требуют `engineLock` (та же
+логика, что у уже существующего `cancellations`), и переживают рестарт/реплей без всякого
+дополнительного кода: `acked_at_ms` — обычная колонка обычной таблицы, не часть `game_events`.
+
+### 18.4 Что не тронуто
+
+`engine/` — не тронут вообще: вся математика для §18.1 (majority-by-stake, stake-weighted leverage,
+клэмп 2..40) уже существовала на уровне `server/` (`GameService.weightedLeverage`,
+скопирован из уже отревьюженного `buildRunningDto`), новый код не добавляет доменной логики,
+только читает уже посчитанное. `oracle_records`/`results.json`/хеш итогов (Р-41) — семантика
+не менялась: живая лента и «пока вас не было» — обе read-model-надстройки поверх уже
+опубликованных/захешированных результатов, не влияют на то, что подписывается оракулом. Асимметрия
+по активам (§0 задания, `asset` уже `"BTC"`-литерал на `RoundBetting`/`RoundRunning`/
+`RoundSettled`/`RoundCancelled`) дополнена только на двух НОВЫХ DTO, которых раньше не было:
+`ProfileRoundEntryDto` (аддитивное поле `asset`, используется и `unseenResults`, и
+`publicProfile`/`myProfile`) и `BetFeedDto` (поле `asset` на самом ответе `betFeed`, раз он больше
+не вложен внутрь раунда) — реализации других активов это не добавляет, только место, куда её потом
+вписать.
+
+### 18.5 Тесты и реальные числа
+
+Новые: `BetFeedCapsTest` (порядок по `seq`, `sinceSeq`-пагинация, правка ставки = новая запись, оба
+предела — `PAGE_SIZE` на один вызов и `MAX_ENTRIES_PER_ROUND` суммарно на раунд, через прямые
+вызовы `GameService`, `herd.bots.count=0` для детерминированного счёта), `UnseenResultsTest`
+(появление после расчёта → исчезновение после ack → идемпотентность повторного ack → переживает
+`EngineRebuildService.rebuild()`; изоляция по игроку — ack одного не трогает другого).
+`GameFlowIntegrationTest` обновлён: секция «reveal rules» (была — Р-22, «во время ставок раунд
+показывает 0 голосующих и никаких направлений/сумм») переписана под Р-62 — расклад
+(`upStake`/`downStake`/`upCount`/`downCount`, согласованность с `participantCount`,
+`majorityDirection`/`majorityLeverage` присутствуют парой или оба `null`) и лента (`betFeed`,
+порядок по `seq`, `sinceSeq`) видны вживую уже во время `BETTING`, полный список позиций
+(`positions`) по-прежнему появляется только на `RUNNING`/`SETTLED` — так и должно быть по заданию
+(это разные вещи: агрегат+лента вживую vs. полный список с историей после раскрытия).
+
+## 19. CI-регрессия: shared Postgres между `@QuarkusTest`-классами — 2026-09-26
+
+CI (`.github/workflows/ci.yml` на ветке `ci/setup`, задача `engine-server`: `mvn -B -f pom.xml -pl
+server -am verify` против реального `postgres:16-alpine`-сервис-контейнера, Dev Services выключен
+явным `quarkus.datasource.jdbc.url`) стабильно падал в `AdminReverseDepositTest`/
+`AdminReverseWithdrawalTest` с `NoSuchElementException: unknown withdrawal request: w-golden-1`,
+локально — стабильно проходил. Assigned paths: `server/src/test/`, `server/src/main/` (только если
+причина там — не пригодилось, причина целиком в тестах), этот файл.
+
+### 19.1 Воспроизведение
+
+Тот же способ, что и CI: одноразовый `postgres:16-alpine` в Docker на свободном порту (`herd`/
+`herd`/`herd`, без volume), `mvn -s ~/.m2/settings-oss.xml -B -f pom.xml -pl server -am clean
+verify -Dquarkus.datasource.jdbc.url=jdbc:postgresql://localhost:<port>/herd
+-Dquarkus.datasource.username=herd -Dquarkus.datasource.password=herd`, JDK 21 (`~/.sdkman/
+candidates/java/21.0.11-oracle`). Воспроизвелось с первой попытки, byte-for-byte то же исключение,
+что и в описании задачи.
+
+### 19.2 Первопричина
+
+`EventStoreGoldenFixturesTest` (задание item 4, event schema evolution) для каждого из 14 типов
+`GameEvent` делает НАСТОЯЩИЙ, вручную закоммиченный (`Db#tx` — свой JDBC-коннекшен, ручной commit,
+никакого JTA-роллбэка, см. `Db`'s javadoc) `INSERT INTO game_events` — включая синтетические строки
+`WithdrawalConfirmed("w-golden-1", …)`/`WithdrawalReversed(relatedWithdrawalRequestId="w-golden-1",
+…)`. Эта строка НИКОГДА не удалялась и оставалась в `game_events` до конца прогона (все
+`@QuarkusTest`-классы модуля делят один Postgres/одну таблицу на весь `mvn verify`, а не только
+одну JVM — приложение шарит датасорс между классами по определению `Db`).
+
+Шесть тестовых классов вызывают `EngineRebuildService#rebuild()` напрямую (тот же код, что и при
+реальном рестарте — `AdminReverseDepositTest`, `AdminReverseWithdrawalTest`,
+`BotRestartRecoveryTest`, `GameFlowIntegrationTest`, `UnseenResultsTest`,
+`scheduler.PlayOnChainTest`) — `rebuild()` делает `eventStore.loadAll()` по ВСЕЙ таблице и
+реплеит каждую строку в свежий `EngineHub`. `w-golden-1` — синтетическая метка ровно для теста
+декодирования, а не id, который когда-либо выдал `LedgerBook.requestWithdrawal` (тот генерирует
+`"w-N"` сам, реальному `WithdrawalRequested`-фикстуре из этого же файла достаётся другой id) — так
+что любой из этих шести классов, кто выполнялся ПОСЛЕ `EventStoreGoldenFixturesTest` в конкретном
+прогоне, реплеил `WithdrawalConfirmed("w-golden-1")` против свежего `LedgerBook`, где такой заявки
+никогда не было → `NoSuchElementException` из `LedgerBook.transitionWithdrawal`. Порядок классов у
+Surefire по умолчанию — `filesystem` (порядок сканирования classpath), он зависит от ОС/файловой
+системы раннера, не от алфавита — этим объясняется «стабильно на CI (Linux-раннер), стабильно
+проходит локально» (другой, тоже стабильный, но другой порядок).
+
+### 19.3 Фикс 1 — `EventStoreGoldenFixturesTest` больше не оставляет свои строки в общей таблице
+
+`roundTripsAndReplaysThroughTheRealEventStore` теперь удаляет свою же вставленную строку
+(`DELETE FROM game_events WHERE id = ?`) в `finally`, сразу после проверки реплея — round-trip
+через настоящий Postgres/JSONB остаётся, но `game_events` для остальной части прогона выглядит
+так, будто этого теста не было. Устраняет первопричину независимо от порядка классов.
+
+### 19.4 Фикс 2 — изоляция между классами (`CleanDatabasePerTestClass`)
+
+Одного фикса 19.3 недостаточно для зелёного полного прогона: та же db-техника (INSERT в обход
+event-lifecycle) — не единственный источник межклассовой связанности, которую вскрыл этот же
+механизм (`rebuild()` реплеит вообще всё, что накопилось в `game_events`/`players` к моменту его
+вызова, от ЛЮБОГО более раннего класса в том же прогоне). Реально наблюдалось (после фикса 19.3,
+до фикса 19.4, тот же способ прогона §19.1): `BotRestartRecoveryTest` (ожидает ровно
+`herd.bots.count` ботов — видел 20 «чужих», созданных дефолтным профилем более ранней тестовой
+конкретной вкладки), `BetFeedCapsTest` (ожидает ровно 3 записи в ленте — видел лишние от бота из
+ещё живого фонового `RoundSchedulerService` предыдущего класса), `scheduler.PlayOnChainTest`
+(`IllegalStateException: withdrawal w-10 already CONFIRMED` — тот же паттерн, что и 19.2, только
+без синтетики: настоящая заявка одного класса реплеилась в контекст другого).
+
+Новый `server/src/test/java/crowdvsmarket/server/testsupport/CleanDatabasePerTestClass.java`
+(регистрируется через `META-INF/services/io.quarkus.test.junit.callback.
+QuarkusTestBeforeEachCallback`, действует автоматически на все `@QuarkusTest`-классы модуля, без
+изменений в каждом классе по отдельности) перед первым тестовым методом каждого класса (флаг
+"уже сброшено" на статический `Set<Class<?>>` — Surefire по умолчанию гоняет весь модуль в одном
+форке, так что это ровно "один раз на класс за весь прогон"): `TRUNCATE` всех мутируемых таблиц
+(`game_events`, `players`, `round_results`, `player_round_history`, `withdrawal_requests`,
+`deposit_requests`, `auth_challenges`, `sessions`, `oracle_records`, `player_deposit_addresses`,
+`deposit_confirmations` — не тронуты `server_meta` и `flyway_schema_history`, см. класса javadoc)
++ `EngineRebuildService#rebuild()`, тем же способом, каким сам процесс восстанавливается после
+рестарта. Пробовался более лёгкий вариант — `TRUNCATE` из `QuarkusTestAfterAllCallback` (после, а
+не до, полагаясь на то, что Quarkus сам перезапустит приложение для следующего класса с другим
+`@TestProfile`) — не сработал: Quarkus не всегда перезапускает контейнер между классами с разными
+профилями (`BetFeedCapsTest` реально унаследовал ещё живой инстанс от `AdminReverseWithdrawalTest`
+— наблюдалось напрямую по логам, «herd-server stopped/started» между ними не было), так что только
+`TRUNCATE` без принудительного `rebuild()` не гарантирует, что in-memory `EngineHub`/`BetFeed`/
+`PlayerDirectory` заметят пустую БД.
+
+### 19.5 Фикс 3 — три теста с 3–6-секундными окнами получили реальный запас
+
+`RoundCalendar`'s origin epoch — фиксированный момент первого запуска приложения в рамках всего
+прогона (персистится в `server_meta`, не сбрасывается фиксом 19.4 намеренно) — окно раунда поэтому
+«где-то в своей 3-секундной решётке» чисто по случайности момента, когда конкретный класс
+физически стартовал, независимо от `EngineRebuildService.rebuild()`. `BotRestartRecoveryTest`
+(окна 3с/4с) и `UnseenResultsTest`/`GameFlowIntegrationTest` (аналогично) писались/проходили как
+самостоятельный прогон одного класса — там `EngineRebuildService` вызывается ровно один раз (плюс
+явный вызов в самом тесте), и этого хватало. В составе полного прогона добавочная работа фикса 19.4
+(`TRUNCATE` + `rebuild()` перед первым тестом класса) и просто другое положение в общей временной
+шкале иногда не оставляли реальным тикам планировщика (`herd.scheduler.tick-ms` по умолчанию
+1000мс) шанса сработать до закрытия ставок — `BotRestartRecoveryTest` падал на «ни один бот не
+поставил», `UnseenResultsTest`/`GameFlowIntegrationTest` — на `ROUND_NOT_OPEN_FOR_BETTING`.
+
+Правка (все три — только тестовый профиль/сам тест, не движок): `hourly-sec`/`daily-sec` подняты
+с 3–4/4–6 до 8/10 (запас в разы, `await()`-таймауты у всех — 30с, с большим отступом хватает) — и
+дополнительно, только в `BotRestartRecoveryTest` (единственный, кто реально зависит от асинхронного
+тика планировщика, а не от синхронного вызова с явным `nowMs`): `ensureComfortableMargin(Interval)`
+— если в текущем окне осталось меньше половины его длительности, тест дожидается СЛЕДУЮЩЕГО (полного)
+окна вместо гонки с закрытием ставок в текущем. Идентичная регрессия — «бот резюмирует ставки после
+рестарта» — проверяется тем же самым способом, просто не привязана к конкретному окну, которое
+могло выпасть неудачно.
+
+### 19.6 Проверено — реальные числа (два прогона в каждом из двух режимов, 2026-09-26)
+
+CI-like (одноразовый `postgres:16-alpine`, `-Dquarkus.datasource.jdbc.url=…`, Dev Services выключен
+— §19.1 способ), `mvn … clean verify`, свежий контейнер на каждый прогон:
+
+- Прогон 1: `engine` **6531 тест, 0 упавших**; `server` **146 тестов, 0 упавших, 0 ошибок**.
+  `BUILD SUCCESS`.
+- Прогон 2 (новый одноразовый Postgres): те же **6531**/**146**, 0/0. `BUILD SUCCESS`.
+
+Обычный локальный режим (Dev Services Postgres, без `-Dquarkus.datasource.jdbc.url`), `mvn … clean
+verify`, дважды подряд: оба раза **6531** (`engine`) / **146** (`server`), 0 упавших, 0 ошибок,
+`BUILD SUCCESS`. (Dev Services поднимает отдельный одноразовый контейнер на каждую смену
+`@TestProfile`, а не один на весь прогон — сама по себе менее подвержена §19.2/19.4, но фикс не
+предполагает и не полагается на это различие.)
+
+До фикса 19.3 тем же способом (§19.1) — воспроизведено дословно то же `NoSuchElementException:
+unknown withdrawal request: w-golden-1`, что и в описании задачи. После 19.3, до 19.4/19.5 — та же
+установка стабильно давала 3–4 других падения (§19.4/19.5) вместо исходного.
