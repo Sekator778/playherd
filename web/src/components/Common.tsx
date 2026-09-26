@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useApi } from "../api/ApiContext";
 import type { RoundPhase, ServerInfoDto } from "../api/contract";
 import { formatCountdown } from "../format";
@@ -118,6 +118,57 @@ export function OracleDisclosureLine() {
 /** §2 ("Про отсутствие защиты от мультиаккаунтов"). */
 export function MultiAccountDisclosureLine() {
   return <p className="disclaimer-line">Ratings are for fun — we don't detect multiple accounts.</p>;
+}
+
+/**
+ * Shared "copy to clipboard" button (task item 1's deposit address, task item 2's WalletConnect
+ * "Copy connection link") — falls back to a temporary offscreen `<textarea>` +
+ * `document.execCommand("copy")` when the async Clipboard API is unavailable/denied (non-HTTPS
+ * dev, some in-app browsers), rather than silently doing nothing.
+ */
+export function CopyButton({
+  value,
+  label = "Copy",
+  copiedLabel = "Copied!",
+  className = "btn btn--secondary",
+}: {
+  value: string;
+  label?: string;
+  copiedLabel?: string;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(timeoutRef.current), []);
+
+  const onClick = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = value;
+      el.style.position = "fixed";
+      el.style.opacity = "0";
+      document.body.appendChild(el);
+      el.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        // Nothing more to try — the button just won't flash "Copied!" below.
+      }
+      document.body.removeChild(el);
+    }
+    setCopied(true);
+    window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button type="button" className={className} onClick={() => void onClick()}>
+      {copied ? copiedLabel : label}
+    </button>
+  );
 }
 
 export function ErrorState({ message = "Something went wrong.", onRetry }: { message?: string; onRetry?: () => void }) {

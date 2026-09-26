@@ -27,8 +27,7 @@ import {
   type AuthVerifyRequest,
   type BetDto,
   type CancellationDto,
-  type DepositRequestDto,
-  type DepositState,
+  type DepositAddressDto,
   type HomeSummaryDto,
   type LedgerEntryDto,
   type LedgerEntryType,
@@ -69,7 +68,7 @@ import {
   settleOwnBet,
   type OwnBetInfo,
 } from "./mockRounds";
-import { hashSeed, mulberry32 } from "./rng";
+import { hashSeed, mulberry32, randInt, rngFor } from "./rng";
 import {
   LONG,
   SHORT,
@@ -92,7 +91,6 @@ const CANCELLED_AT_MS = CANCELLED_WINDOW.endMs + 55 * 60 * 1000;
 const CANCELLED_REFUNDED_COUNT = 19;
 
 type WithdrawalRecord = WithdrawalRequestDto;
-type DepositRecord = DepositRequestDto;
 
 class MockApi implements Api {
   private player: PlayerSummaryDto | null = null;
@@ -104,7 +102,7 @@ class MockApi implements Api {
   private myHistory: ProfileRoundEntryDto[] = [];
   private challenges = new Map<string, { message: string; expiresAtMs: number; address: string }>();
   private withdrawals = new Map<string, WithdrawalRecord>();
-  private deposits = new Map<string, DepositRecord>();
+  private depositAddress: string | null = null;
 
   // -------------------------------------------------------------------------
   // Settlement sweep — applied lazily whenever any method reads state, since the simulated
@@ -230,7 +228,7 @@ class MockApi implements Api {
     this.settledRoundIds.clear();
     this.myHistory = [];
     this.withdrawals.clear();
-    this.deposits.clear();
+    this.depositAddress = null;
   }
 
   // -------------------------------------------------------------------------
@@ -370,6 +368,11 @@ class MockApi implements Api {
     return paginate(this.ledger, params, (e) => e.atMs);
   }
 
+  /** Real on-chain withdrawal (Р-53) — `toAddress` is always the signed-in player's own
+   *  registered address (Р-57), never a parameter (mirrors `Api.requestWithdrawal`'s doc). Field
+   *  shape (`state`+`chainState` kept separate, `failureReason` not `reason`) matches `server/`'s
+   *  real `Ledger.WithdrawalRequestDto` — see `contract.ts`'s doc comment on `WithdrawalState`/
+   *  `WithdrawalChainState` for why. */
   async requestWithdrawal(amount: string): Promise<WithdrawalRequestDto> {
     this.requireSignedIn();
     const amountNum = Number(amount);
@@ -383,7 +386,12 @@ class MockApi implements Api {
       requestId,
       playerId: this.player!.playerId,
       amount: amountNum.toFixed(3),
+      toAddress: this.player!.walletAddress,
       state: "REQUESTED",
+      chainState: null,
+      coinId: null,
+      height: null,
+      failureReason: null,
       requestedAtMs: simNowMs(),
     };
     this.withdrawals.set(requestId, record);
@@ -391,17 +399,42 @@ class MockApi implements Api {
     return record;
   }
 
+  /**
+   * Simulates the real flow's two moving parts — `requestWithdrawal`'s own synchronous chainsvc
+   * submit attempt, then `WithdrawalPollerService`'s polling (`server/`, task's FIXED INTERFACE)
+   * — moving `chainState` null → "submitted" → "queued" → "in_flight" → "confirmed"/"failed"
+   * (`state` itself only flips to `CONFIRMED`/`FAILED` at that last step). предложение: no
+   * research file measures real timing for any of this (`week1_testnet_results.md` covers
+   * individual spends, not a batched queue's cadence) — tuned only so every state is reachable in
+   * a demo.
+   */
   private scheduleWithdrawalOutcome(requestId: string, amount: number): void {
     const fails = mulberry32(hashSeed(requestId))() < 0.12;
+    const advance = (chainState: NonNullable<WithdrawalRequestDto["chainState"]>, afterMs: number) => {
+      setTimeout(() => {
+        const record = this.withdrawals.get(requestId);
+        if (!record || record.state !== "REQUESTED") return;
+        record.chainState = chainState;
+      }, afterMs);
+    };
+    advance("submitted", 500);
+    advance("queued", 1500);
+    advance("in_flight", 2500);
     setTimeout(() => {
       const record = this.withdrawals.get(requestId);
       if (!record || record.state !== "REQUESTED") return;
       if (fails) {
         record.state = "FAILED" satisfies WithdrawalState;
+        record.chainState = "failed";
+        record.failureReason = "Fee spiked past the treasury batch's retry budget — refunded automatically.";
         this.balance += amount;
         this.appendLedger("WITHDRAWAL_REFUND", amount, null);
       } else {
         record.state = "CONFIRMED" satisfies WithdrawalState;
+        record.chainState = "confirmed";
+        const rng = rngFor("withdrawal-confirm", requestId);
+        record.coinId = `0x${Array.from({ length: 32 }, () => randInt(rng, 0, 15).toString(16)).join("")}`;
+        record.height = randInt(rng, 4_700_000, 4_790_000);
       }
     }, 4000);
   }
@@ -413,42 +446,19 @@ class MockApi implements Api {
     return record;
   }
 
-  async requestDeposit(amount: string): Promise<DepositRequestDto> {
+  /**
+   * `POST /v1/play/deposit-address` proxy (task's FIXED INTERFACE, chainsvc) — see
+   * `DepositAddressDto`'s doc comment for why this replaced `requestDeposit`/`deposit` entirely.
+   * Deterministic per player (`rngFor`, same pattern as every other mock identity in this file),
+   * so it's stable across calls within a session, matching the real endpoint's "stable for as
+   * long as they're the same player" contract.
+   */
+  async myDepositAddress(): Promise<DepositAddressDto> {
     this.requireSignedIn();
-    const amountNum = Number(amount);
-    const requestId = `dep-${this.deposits.size + 1}-${Date.now()}`;
-    const record: DepositRecord = {
-      requestId,
-      playerId: this.player!.playerId,
-      amount: amountNum.toFixed(3),
-      state: "REQUESTED",
-      requestedAtMs: simNowMs(),
-    };
-    this.deposits.set(requestId, record);
-    this.scheduleDepositOutcome(requestId, amountNum);
-    return record;
-  }
-
-  private scheduleDepositOutcome(requestId: string, amount: number): void {
-    const fails = mulberry32(hashSeed(requestId))() < 0.12;
-    setTimeout(() => {
-      const record = this.deposits.get(requestId);
-      if (!record || record.state !== "REQUESTED") return;
-      if (fails) {
-        record.state = "FAILED" satisfies DepositState;
-      } else {
-        record.state = "CONFIRMED" satisfies DepositState;
-        this.balance += amount;
-        this.appendLedger("DEPOSIT", amount, null);
-      }
-    }, 4000);
-  }
-
-  async deposit(requestId: string): Promise<DepositRequestDto> {
-    this.requireSignedIn();
-    const record = this.deposits.get(requestId);
-    if (!record) throw new Error("Deposit request not found.");
-    return record;
+    if (!this.depositAddress) {
+      this.depositAddress = fakeAddress(rngFor("deposit-address", this.player!.playerId));
+    }
+    return { address: this.depositAddress };
   }
 
   // -------------------------------------------------------------------------

@@ -133,6 +133,12 @@ services:
       # FIXED INTERFACE (a): same value as chainsvc's own C2_SVC_TOKEN above.
       HERD_CHAINSVC_TOKEN: ${HERD_CHAINSVC_TOKEN:?set in .env — run tools/stand.sh up, which generates one}
       HERD_OPERATOR_TOKEN: ${HERD_OPERATOR_TOKEN:?set in .env — run tools/stand.sh up, which generates one}
+      # Р-53 live verification (2026-09-26): turns on the real on-chain withdraw/deposit path
+      # (WithdrawalPollerService/DepositPollerService both no-op while these are false) — off by
+      # default (application.properties) until this stand actually needed to exercise it end to
+      # end on testnet11.
+      HERD_WITHDRAWAL_ENABLED: "true"
+      HERD_DEPOSIT_ENABLED: "true"
     depends_on:
       db:
         condition: service_healthy

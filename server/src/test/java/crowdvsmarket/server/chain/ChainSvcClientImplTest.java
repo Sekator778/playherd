@@ -97,6 +97,86 @@ class ChainSvcClientImplTest {
         verify(rest).oracleStatus(eq("Bearer " + TOKEN));
     }
 
+    // --- Р-53: real on-chain PLAY withdraw/deposit ---
+
+    @Test
+    void submitPlayWithdrawalSendsBearerTokenAndMapsAccepted() {
+        when(rest.submitPlayWithdrawal(any(), any()))
+                .thenReturn(new ChainSvcRestClient.PlayWithdrawalAcceptedResponse(true));
+
+        ChainSvcClient.PlayWithdrawalSubmitResult result = impl.submitPlayWithdrawal("w-1", "txch1dest", 500_000L);
+
+        verify(rest).submitPlayWithdrawal(eq("Bearer " + TOKEN),
+                eq(new ChainSvcRestClient.PlayWithdrawalRequest("w-1", "txch1dest", 500_000L)));
+        assertThat(result.accepted()).isTrue();
+    }
+
+    @Test
+    void submitPlayWithdrawalReturnsNullWhenChainsvcUnreachable() {
+        when(rest.submitPlayWithdrawal(any(), any())).thenThrow(new RuntimeException("connection refused"));
+
+        assertThat(impl.submitPlayWithdrawal("w-1", "txch1dest", 500_000L)).isNull();
+    }
+
+    @Test
+    void playWithdrawalStatusSendsBearerToken() {
+        when(rest.playWithdrawalStatus(any(), eq("w-1"))).thenReturn(
+                new ChainSvcRestClient.PlayWithdrawalStatusResponse("w-1", "confirmed", "0xcoin", 123L, null));
+
+        ChainSvcClient.PlayWithdrawalStatus status = impl.playWithdrawalStatus("w-1");
+
+        verify(rest).playWithdrawalStatus(eq("Bearer " + TOKEN), eq("w-1"));
+        assertThat(status.state()).isEqualTo("confirmed");
+        assertThat(status.coinId()).isEqualTo("0xcoin");
+        assertThat(status.height()).isEqualTo(123L);
+    }
+
+    @Test
+    void playWithdrawalStatusReturnsNullWhenChainsvcUnreachable() {
+        when(rest.playWithdrawalStatus(any(), eq("w-1"))).thenThrow(new RuntimeException("timeout"));
+
+        assertThat(impl.playWithdrawalStatus("w-1")).isNull();
+    }
+
+    @Test
+    void playDepositAddressSendsBearerTokenAndPlayerIndex() {
+        when(rest.playDepositAddress(any(), any())).thenReturn(
+                new ChainSvcRestClient.PlayDepositAddressResponse("txch1addr", "0xinner", "0xcat"));
+
+        ChainSvcClient.PlayDepositAddress addr = impl.playDepositAddress(7);
+
+        verify(rest).playDepositAddress(eq("Bearer " + TOKEN), eq(new ChainSvcRestClient.PlayDepositAddressRequest(7)));
+        assertThat(addr.address()).isEqualTo("txch1addr");
+    }
+
+    @Test
+    void playDepositAddressReturnsNullWhenChainsvcUnreachable() {
+        when(rest.playDepositAddress(any(), any())).thenThrow(new RuntimeException("connection refused"));
+
+        assertThat(impl.playDepositAddress(7)).isNull();
+    }
+
+    @Test
+    void playDepositsSendsBearerTokenAndSinceHeightAndMapsItems() {
+        when(rest.playDeposits(any(), eq(1000L))).thenReturn(new ChainSvcRestClient.PlayDepositsResponse(
+                List.of(new ChainSvcRestClient.PlayDepositItem("0xcoin", 3, 250_000L, 1005L)), 1010L));
+
+        ChainSvcClient.PlayDepositsResult result = impl.playDeposits(1000L);
+
+        verify(rest).playDeposits(eq("Bearer " + TOKEN), eq(1000L));
+        assertThat(result.tipHeight()).isEqualTo(1010L);
+        assertThat(result.deposits()).hasSize(1);
+        assertThat(result.deposits().get(0).coinId()).isEqualTo("0xcoin");
+        assertThat(result.deposits().get(0).playerIndex()).isEqualTo(3);
+    }
+
+    @Test
+    void playDepositsReturnsNullWhenChainsvcUnreachable() {
+        when(rest.playDeposits(any(), anyLong())).thenThrow(new RuntimeException("timeout"));
+
+        assertThat(impl.playDeposits(1000L)).isNull();
+    }
+
     @Test
     void healthNeverSendsAToken() {
         when(rest.health()).thenReturn(new ChainSvcRestClient.HealthResponse(true));

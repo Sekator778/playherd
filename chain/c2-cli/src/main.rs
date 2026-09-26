@@ -1,7 +1,7 @@
 //! `c2`: week-1 testnet11 CLI for the PLAY CAT / oracle / offers primitives.
 //! See `docs/research/week1_testnet_cli.md` for the full write-up.
 
-use c2_cli::{builders, chain, cost, hyperliquid, keys, keystore, spend_json, state};
+use c2_cli::{builders, cat_chain, chain, cost, hyperliquid, keys, keystore, spend_json, state};
 
 use anyhow::{Context, Result, bail};
 use bip39::Mnemonic;
@@ -46,6 +46,31 @@ enum Command {
         to: String,
         #[arg(long)]
         amount: u64,
+        #[arg(long, default_value_t = 0)]
+        fee: u64,
+        #[arg(long)]
+        push: bool,
+    },
+    /// Sums unspent PLAY (or any other CAT) coin amounts of --asset-id across a small gap of derived addresses (coinset.org, read-only).
+    PlayBalance {
+        #[arg(long)]
+        name: String,
+        /// Hex asset id (with or without a `0x` prefix) -- e.g. the PLAY CAT's, `~/.c2/testnet11/operator.play.json`.
+        #[arg(long)]
+        asset_id: String,
+    },
+    /// CAT transfer of --asset-id (e.g. PLAY) from this wallet's own on-chain coin to a `txch1...` address. Dry-run unless --push.
+    SendPlay {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        asset_id: String,
+        #[arg(long)]
+        to: String,
+        /// CAT mojos (1 PLAY = 1000 CAT mojos, same convention as `issue-play`/`offer-make`).
+        #[arg(long)]
+        amount: u64,
+        /// Paid from a second, plain-XCH coin of this wallet (a CAT coin's own amount only backs its color, see `builders::fee`).
         #[arg(long, default_value_t = 0)]
         fee: u64,
         #[arg(long)]
@@ -131,6 +156,15 @@ fn main() -> Result<()> {
             fee,
             push,
         } => run_async(cmd_send(name, to, amount, fee, push)),
+        Command::PlayBalance { name, asset_id } => run_async(cmd_play_balance(name, asset_id)),
+        Command::SendPlay {
+            name,
+            asset_id,
+            to,
+            amount,
+            fee,
+            push,
+        } => run_async(cmd_send_play(name, asset_id, to, amount, fee, push)),
         Command::IssuePlay {
             name,
             amount,
@@ -239,6 +273,61 @@ async fn cmd_send(name: String, to: String, amount: u64, fee: u64, push: bool) -
     maybe_push(&client, result.coin_spends, result.signature, push)
         .await
         .map(drop)
+}
+
+// --- play-balance / send-play -----------------------------------------------
+
+/// Parses a hex asset id (`--asset-id`), with or without a `0x`/`0X` prefix.
+fn parse_asset_id(raw: &str) -> Result<chia_protocol::Bytes32> {
+    let stripped = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")).unwrap_or(raw);
+    let bytes = hex::decode(stripped).context("--asset-id: invalid hex")?;
+    let array: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("--asset-id: expected 32 bytes, got {}", bytes.len()))?;
+    Ok(chia_protocol::Bytes32::from(array))
+}
+
+async fn cmd_play_balance(name: String, asset_id: String) -> Result<()> {
+    let asset_id = parse_asset_id(&asset_id)?;
+    let master_sk = load_master_sk(&name)?;
+    let client = chain::client();
+    let total = cat_chain::cat_balance(&client, &master_sk, asset_id, chain::ADDRESS_GAP).await?;
+    println!(
+        "{name}: {total} CAT mojos of asset {asset_id} (unspent, addresses 0..{})",
+        chain::ADDRESS_GAP
+    );
+    Ok(())
+}
+
+async fn cmd_send_play(name: String, asset_id: String, to: String, amount: u64, fee: u64, push: bool) -> Result<()> {
+    let asset_id = parse_asset_id(&asset_id)?;
+    let master_sk = load_master_sk(&name)?;
+    let client = chain::client();
+    let to_puzzle_hash = Address::decode(&to)
+        .context("decoding --to as a bech32m address")?
+        .expect_prefix(keys::TXCH_PREFIX)
+        .context("--to must be a txch1... (testnet11) address")?;
+
+    let (sender, cat) = cat_chain::find_cat_coin(&client, &master_sk, asset_id, amount, chain::ADDRESS_GAP).await?;
+
+    let result = builders::send_cat::build_send_cat(cat, &sender, to_puzzle_hash, amount)?;
+    let mut coin_spends = result.coin_spends;
+    let mut signature = result.signature;
+    if fee > 0 {
+        let (payer, fee_funding_coin) = chain::find_funding_coin(&client, &master_sk, fee, chain::ADDRESS_GAP)
+            .await
+            .context("no XCH coin to pay the send-play fee with")?;
+        let fee_result = builders::fee::build_fee_only(fee_funding_coin, &payer, fee)?;
+        coin_spends.extend(fee_result.coin_spends);
+        signature = signature + &fee_result.signature;
+    }
+
+    print_spend(&coin_spends, &signature, fee)?;
+    println!("sent {amount} CAT mojos of asset {asset_id} to {to}");
+    println!("change to self: {} CAT mojos", result.change_amount);
+
+    maybe_push(&client, coin_spends, signature, push).await.map(drop)
 }
 
 // --- issue-play ------------------------------------------------------------

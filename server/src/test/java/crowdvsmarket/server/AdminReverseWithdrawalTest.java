@@ -3,8 +3,10 @@ package crowdvsmarket.server;
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import crowdvsmarket.server.chain.ChainSvcClient;
 import crowdvsmarket.server.scheduler.EngineRebuildService;
 import crowdvsmarket.server.service.GameService;
+import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
@@ -30,6 +32,12 @@ import org.junit.jupiter.api.Test;
  * {@link WithdrawalEnabledProfile} override so this class's fixture setup (creating a withdrawal
  * request to then reverse) keeps working; the reversal mechanism under test here is independent
  * of whether new withdrawals are currently allowed.
+ *
+ * <p>Р-53 update: {@code requestWithdrawal} now escrows and submits to chainsvc for real, so a
+ * fixture request created here lands {@code REQUESTED} (not immediately {@code CONFIRMED} the way
+ * the old auto-confirm stub left it) — chainsvc is mocked ({@code @InjectMock}) but never stubbed
+ * to report a submission or a status, since the reversal mechanism under test is independent of
+ * whether/how the withdrawal eventually resolves on chain.
  */
 @QuarkusTest
 @TestProfile(AdminReverseWithdrawalTest.WithdrawalEnabledProfile.class)
@@ -41,6 +49,9 @@ class AdminReverseWithdrawalTest {
             return Map.of("herd.withdrawal.enabled", "true");
         }
     }
+
+    @InjectMock
+    ChainSvcClient chainSvcClient;
 
     @ConfigProperty(name = "herd.operator.token")
     String operatorToken;
@@ -93,7 +104,7 @@ class AdminReverseWithdrawalTest {
         String playerId = signUpPlayer("undo");
         long now = System.currentTimeMillis();
         var request = gameService.requestWithdrawal(playerId, "1500.000", now);
-        assertThat(request.state().name()).isEqualTo("CONFIRMED");
+        assertThat(request.state().name()).isEqualTo("REQUESTED");
 
         String reason = "wave-2 test correction: undo withdrawal " + request.requestId();
         Response resp = callReverse(request.requestId(), reason);
@@ -110,9 +121,9 @@ class AdminReverseWithdrawalTest {
         var account = gameService.account(playerId);
         assertThat(new java.math.BigDecimal(account.balance())).isEqualByComparingTo("10000.000");
 
-        // the original withdrawal request itself is untouched — still CONFIRMED, still on record
+        // the original withdrawal request itself is untouched — still REQUESTED, still on record
         var stillOnRecord = gameService.withdrawal(playerId, request.requestId());
-        assertThat(stillOnRecord.state().name()).isEqualTo("CONFIRMED");
+        assertThat(stillOnRecord.state().name()).isEqualTo("REQUESTED");
         assertThat(stillOnRecord.amount()).isEqualTo("1500.000");
 
         // publicly listed with reason via the unauthenticated ledgerCorrections RPC — no session,
@@ -170,7 +181,7 @@ class AdminReverseWithdrawalTest {
         var account = gameService.account(playerId);
         assertThat(new java.math.BigDecimal(account.balance())).isEqualByComparingTo("10000.000");
         var stillOnRecord = gameService.withdrawal(playerId, request.requestId());
-        assertThat(stillOnRecord.state().name()).isEqualTo("CONFIRMED");
+        assertThat(stillOnRecord.state().name()).isEqualTo("REQUESTED");
 
         Response publicList = given().contentType(ContentType.JSON).body(Map.of("args", List.of()))
                 .post("/api/rpc/ledgerCorrections");

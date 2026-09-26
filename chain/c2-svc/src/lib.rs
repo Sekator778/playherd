@@ -15,5 +15,7 @@ pub mod auth;
 pub mod config;
 pub mod keys_file;
 pub mod oracle;
+pub mod play;
+pub mod play_state_file;
 pub mod service_auth;
 pub mod state_file;

@@ -74,21 +74,44 @@ public final class ApiException extends RuntimeException {
         return new ApiException(Enums.ApiErrorCode.INVALID_AMOUNT, 400, message);
     }
 
-    /** Task item 1 (BLOCKER security fix): {@code requestDeposit} rejects every new deposit
-     *  outright — no real on-chain CAT-deposit verifier exists yet (Р-6 decision pending with
-     *  Alex) — rather than crediting an unverified self-reported amount. 503, not 4xx: the
-     *  request itself is well-formed, the feature is just not available. */
+    /** Р-53 update: {@code requestDeposit} (the pre-Р-53 self-report RPC) is now PERMANENTLY
+     *  retired, unconditionally — not merely gated by {@code herd.deposit.enabled} the way it was
+     *  under the original task item 1 fix this method dates from. Self-reporting an amount and
+     *  auto-crediting it was exactly the fraud vector that fix closed (live-reproduced: 5,000,000
+     *  fake PLAY minted in ten seconds); real on-chain deposits (Р-53) are detected and credited
+     *  automatically by the deposit poller once a player sends PLAY to {@code myDepositAddress()}
+     *  — there is no legitimate reason for this RPC to ever credit anything again, flag or no
+     *  flag. Same {@link Enums.ApiErrorCode#DEPOSIT_VERIFICATION_UNAVAILABLE}/503 as before (no
+     *  client-visible code change), reworded. Also reused, unmodified, for {@code
+     *  myDepositAddress} when {@code herd.deposit.enabled} is off — same "the real feature is not
+     *  available yet" meaning as here. */
     public static ApiException depositVerificationUnavailable() {
         return new ApiException(Enums.ApiErrorCode.DEPOSIT_VERIFICATION_UNAVAILABLE, 503,
-                "deposits are not available yet — this demo has no real on-chain CAT-deposit "
-                        + "verification; nothing was credited");
+                "self-reported deposits are no longer accepted — call myDepositAddress() and send "
+                        + "PLAY there; it is credited automatically once confirmed on chain");
     }
 
-    /** Same task item, same reasoning, for {@code requestWithdrawal}. */
+    /** Same task item, same reasoning, for {@code requestWithdrawal} — unlike {@link
+     *  #depositVerificationUnavailable()}, still gated by {@code herd.withdrawal.enabled}
+     *  (Р-53: once enabled, {@code requestWithdrawal} performs the real on-chain flow). */
     public static ApiException withdrawalUnavailable() {
         return new ApiException(Enums.ApiErrorCode.WITHDRAWAL_UNAVAILABLE, 503,
-                "withdrawals are not available yet — this demo does not send PLAY on-chain as a "
-                        + "real CAT; nothing was debited");
+                "withdrawals are not available yet — this server is not configured to send PLAY "
+                        + "on-chain as a real CAT; nothing was debited");
+    }
+
+    /** Р-53: {@code requestWithdrawal} rejects an amount below the minimum (предложение,
+     *  {@code GameService.MIN_WITHDRAWAL}), distinct from {@link #invalidAmount(String)} (which
+     *  covers "not positive at all") so a client can tell the two apart. */
+    public static ApiException withdrawalBelowMinimum(String message) {
+        return new ApiException(Enums.ApiErrorCode.WITHDRAWAL_BELOW_MINIMUM, 422, message);
+    }
+
+    /** Р-53: {@code myDepositAddress} could not reach chainsvc to derive a brand-new player's
+     *  deposit address (never thrown once a player's address is already cached). */
+    public static ApiException chainServiceUnavailable() {
+        return new ApiException(Enums.ApiErrorCode.CHAIN_SERVICE_UNAVAILABLE, 503,
+                "could not reach the chain service to derive a deposit address — please try again shortly");
     }
 
     public static ApiException rateLimited() {

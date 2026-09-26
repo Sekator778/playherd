@@ -338,6 +338,25 @@ public final class LedgerBook {
         accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), acc.currentSeason(), seasons));
     }
 
+    /**
+     * Credits PLAY that a real, chain-confirmed CAT deposit already delivered (Р-53): unlike
+     * {@link #requestDeposit}/{@link #confirmDeposit} (a two-step player-initiated
+     * request-then-confirm, kept only so already-persisted historical self-report rows keep
+     * replaying — see {@code GameService}'s javadoc on why the self-report RPC is permanently
+     * retired), a coin the deposit poller reports from {@code GET /v1/play/deposits} is already
+     * confirmed on chain by the time this is called — there is no separate "request" to
+     * synthesize first, and (unlike a withdrawal) it can never subsequently fail: the PLAY already
+     * arrived. Exactly-once crediting per on-chain coin is the CALLER's job — this method does not
+     * take or track a {@code coinId} itself (see {@code DepositConfirmedOnChain}'s javadoc /
+     * the deposit poller's own coin-id de-dup table for how replay- and restart-safety are
+     * actually enforced one layer up).
+     */
+    public void creditOnChainDeposit(String playerId, PlayAmount amount, Instant now) {
+        ensureSeasonPack(playerId, now);
+        credit(playerId, amount, LedgerEntryType.DEPOSIT, null, now);
+        updateCurrentSeasonRecord(playerId, sr -> sr.withDeposit(amount));
+    }
+
     /** Registers a pending on-chain-to-ledger deposit; no balance change until confirmed. */
     public DepositRequest requestDeposit(String playerId, PlayAmount amount, Instant now) {
         // Wave-2 security fix — same replay-fidelity reasoning as requestWithdrawal above (this

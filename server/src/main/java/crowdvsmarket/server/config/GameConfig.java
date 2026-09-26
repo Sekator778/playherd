@@ -54,16 +54,24 @@ public class GameConfig {
     @ConfigProperty(name = "herd.ratelimit.refill-per-sec")
     double rateLimitRefillPerSecond;
 
-    /** Task item 1 (BLOCKER, docs/reviews/2026-09-26-independent-critique.md): {@code
-     *  requestDeposit} used to credit any self-reported amount with zero on-chain verification.
-     *  Default {@code false} until a real on-chain CAT-deposit verifier exists (Р-6, decision
-     *  pending with Alex) — see docs/research/server_design.md "Withdraw / deposit". */
+    /** Р-53 update: now gates the REAL on-chain deposit path — {@code myDepositAddress()} and
+     *  {@code DepositPollerService} — set {@code true} once chainsvc is deployed with the FIXED
+     *  INTERFACE's {@code /v1/play/*} endpoints. Does NOT gate {@code requestDeposit} any more:
+     *  that self-report RPC (task item 1, BLOCKER, docs/reviews/2026-09-26-independent-critique.md
+     *  — it used to credit any self-reported amount with zero on-chain verification) is now
+     *  PERMANENTLY retired regardless of this flag, see {@code GameService#requestDeposit}'s
+     *  javadoc for why turning real deposits on must never also reopen that fraud vector. Default
+     *  {@code false} until chainsvc is configured — see docs/research/server_design.md "Real PLAY
+     *  withdraw/deposit". */
     @ConfigProperty(name = "herd.deposit.enabled", defaultValue = "false")
     boolean depositEnabled;
 
-    /** Same task item, same reasoning, for withdrawals: {@code requestWithdrawal} auto-confirms
-     *  with no chain call at all, which would otherwise falsely claim a CAT left the game (the
-     *  task's own "prefer disabling withdrawal too" guidance) — default {@code false}. */
+    /** Р-53 update: now gates the REAL on-chain withdrawal path — once {@code true}, {@code
+     *  requestWithdrawal} escrows the amount and actually submits it to chainsvc ({@code
+     *  POST /v1/play/withdrawals}), polled to completion by {@code WithdrawalPollerService}, rather
+     *  than the pre-Р-53 stub this flag originally guarded (task item 1: {@code requestWithdrawal}
+     *  used to auto-confirm with no chain call at all, falsely claiming a CAT left the game).
+     *  Default {@code false} until chainsvc is configured. */
     @ConfigProperty(name = "herd.withdrawal.enabled", defaultValue = "false")
     boolean withdrawalEnabled;
 

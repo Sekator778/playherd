@@ -22,7 +22,7 @@ import {
   type BetDto,
   type CancellationDto,
   type CrowdAccountDto,
-  type DepositRequestDto,
+  type DepositAddressDto,
   type HomeSummaryDto,
   type Interval,
   type LedgerEntryDto,
@@ -153,11 +153,8 @@ class RealApi implements Api {
   withdrawal(requestId: string): Promise<WithdrawalRequestDto> {
     return rpc("withdrawal", [requestId]);
   }
-  requestDeposit(amount: string): Promise<DepositRequestDto> {
-    return rpc("requestDeposit", [amount]);
-  }
-  deposit(requestId: string): Promise<DepositRequestDto> {
-    return rpc("deposit", [requestId]);
+  myDepositAddress(): Promise<DepositAddressDto> {
+    return rpc("myDepositAddress", []);
   }
 
   // --- crowd account ---

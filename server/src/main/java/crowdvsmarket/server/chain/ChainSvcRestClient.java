@@ -7,6 +7,7 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
@@ -77,6 +78,55 @@ public interface ChainSvcRestClient {
     @Path("/v1/oracle/status")
     @Produces(MediaType.APPLICATION_JSON)
     OracleStatusResponse oracleStatus(@HeaderParam("Authorization") String authorization);
+
+    // --- Р-53: real on-chain PLAY withdraw/deposit (FIXED INTERFACE, /v1/play/*) ---
+
+    record PlayWithdrawalRequest(String requestId, String toAddress, long amountMojos) {
+    }
+
+    record PlayWithdrawalAcceptedResponse(boolean accepted) {
+    }
+
+    @POST
+    @Path("/v1/play/withdrawals")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    PlayWithdrawalAcceptedResponse submitPlayWithdrawal(@HeaderParam("Authorization") String authorization,
+                                                          PlayWithdrawalRequest request);
+
+    record PlayWithdrawalStatusResponse(String requestId, String state, String coinId, Long height, String reason) {
+    }
+
+    @GET
+    @Path("/v1/play/withdrawals/{requestId}")
+    @Produces(MediaType.APPLICATION_JSON)
+    PlayWithdrawalStatusResponse playWithdrawalStatus(@HeaderParam("Authorization") String authorization,
+                                                        @PathParam("requestId") String requestId);
+
+    record PlayDepositAddressRequest(int playerIndex) {
+    }
+
+    record PlayDepositAddressResponse(String address, String innerPuzzleHash, String catPuzzleHash) {
+    }
+
+    @POST
+    @Path("/v1/play/deposit-address")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    PlayDepositAddressResponse playDepositAddress(@HeaderParam("Authorization") String authorization,
+                                                    PlayDepositAddressRequest request);
+
+    record PlayDepositItem(String coinId, int playerIndex, long amountMojos, long height) {
+    }
+
+    record PlayDepositsResponse(List<PlayDepositItem> deposits, long tipHeight) {
+    }
+
+    @GET
+    @Path("/v1/play/deposits")
+    @Produces(MediaType.APPLICATION_JSON)
+    PlayDepositsResponse playDeposits(@HeaderParam("Authorization") String authorization,
+                                        @QueryParam("sinceHeight") long sinceHeight);
 
     record HealthResponse(boolean ok) {
     }

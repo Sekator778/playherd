@@ -27,9 +27,12 @@ public final class PlayerDirectory {
 
     private final Map<String, Row> byId = new ConcurrentHashMap<>();
     private final Map<String, String> idByWallet = new ConcurrentHashMap<>();
+    /** Р-53: reverse lookup for the deposit poller — chainsvc's {@code GET /v1/play/deposits}
+     *  reports each coin's {@code playerIndex}, never a {@code playerId}. */
+    private final Map<Integer, String> idByPlayerIndex = new ConcurrentHashMap<>();
 
     public record Row(String playerId, String walletAddress, String nickname, boolean isBot, String botStrategy,
-                        long createdAtMs) {
+                        int playerIndex, long createdAtMs) {
         public PlayerIdentity identity() {
             return new PlayerIdentity(playerId, nickname == null ? shortWallet(walletAddress) : nickname,
                     walletAddress);
@@ -46,13 +49,17 @@ public final class PlayerDirectory {
     public synchronized void reload() {
         byId.clear();
         idByWallet.clear();
+        idByPlayerIndex.clear();
         List<Row> rows = db.read(c -> db.queryList(c,
-                "SELECT player_id, wallet_address, nickname, is_bot, bot_strategy, created_at_ms FROM players",
+                "SELECT player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, created_at_ms "
+                        + "FROM players",
                 rs -> new Row(rs.getString("player_id"), rs.getString("wallet_address"), rs.getString("nickname"),
-                        rs.getBoolean("is_bot"), rs.getString("bot_strategy"), rs.getLong("created_at_ms"))));
+                        rs.getBoolean("is_bot"), rs.getString("bot_strategy"), rs.getInt("player_index"),
+                        rs.getLong("created_at_ms"))));
         for (Row row : rows) {
             byId.put(row.playerId(), row);
             idByWallet.put(row.walletAddress(), row.playerId());
+            idByPlayerIndex.put(row.playerIndex(), row.playerId());
         }
     }
 
@@ -64,6 +71,13 @@ public final class PlayerDirectory {
         return Optional.ofNullable(idByWallet.get(walletAddress));
     }
 
+    /** Р-53: resolves a chainsvc-reported {@code playerIndex} (deposit poller) back to a
+     *  {@code playerId} — {@link Optional#empty()} if unknown (defensive; should not happen for a
+     *  coin chainsvc itself derived from an index this server handed out). */
+    public Optional<String> playerIdForIndex(int playerIndex) {
+        return Optional.ofNullable(idByPlayerIndex.get(playerIndex));
+    }
+
     public Collection<Row> all() {
         return List.copyOf(byId.values());
     }
@@ -72,14 +86,18 @@ public final class PlayerDirectory {
         return byId.values().stream().filter(Row::isBot).toList();
     }
 
-    /** Inserts a brand-new player row (within the caller's transaction) and updates the cache. */
+    /** Inserts a brand-new player row (within the caller's transaction) and updates the cache.
+     *  {@code playerIndex} must come from {@code ServerMetaRepository#reserveNextPlayerIndex()} —
+     *  allocated once, before this call, never re-derived (Р-53). */
     public void insert(Connection c, String playerId, String walletAddress, String nickname, boolean isBot,
-                        String botStrategy, long atMs) throws SQLException {
-        db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, created_at_ms) "
-                        + "VALUES (?, ?, ?, ?, ?, ?)",
-                playerId, walletAddress, nickname, isBot, botStrategy, atMs);
-        byId.put(playerId, new Row(playerId, walletAddress, nickname, isBot, botStrategy, atMs));
+                        String botStrategy, int playerIndex, long atMs) throws SQLException {
+        db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, "
+                        + "player_index, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, atMs);
+        Row row = new Row(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, atMs);
+        byId.put(playerId, row);
         idByWallet.put(walletAddress, playerId);
+        idByPlayerIndex.put(playerIndex, playerId);
     }
 
     public void updateNickname(Connection c, String playerId, String nickname) throws SQLException {
@@ -87,7 +105,7 @@ public final class PlayerDirectory {
         Row prev = byId.get(playerId);
         if (prev != null) {
             byId.put(playerId, new Row(prev.playerId(), prev.walletAddress(), nickname, prev.isBot(),
-                    prev.botStrategy(), prev.createdAtMs()));
+                    prev.botStrategy(), prev.playerIndex(), prev.createdAtMs()));
         }
     }
 

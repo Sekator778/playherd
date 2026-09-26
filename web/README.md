@@ -15,8 +15,9 @@ FIXED INTERFACE (1) — `POST /api/rpc/<method>`). Выбор — перемен
 
 ## Стек и почему
 
-Vite/React/TS(strict)/react-router заданы условием задачи. Остальной выбор — ниже, везде MIT
-или Apache-2.0, зависимостей по минимуму:
+Vite/React/TS(strict)/react-router заданы условием задачи. Остальной выбор — ниже, зависимостей
+по минимуму; лицензии в основном MIT/Apache-2.0, кроме `@walletconnect/sign-client` (см. ниже —
+собственная лицензия Reown, не OSI, использована как есть, наш код остаётся Apache-2.0, Р-36):
 
 - **decimal.js** (MIT) — BigDecimal-эквивалент. `src/api/liquidation.ts` — точный TS-порт
   `LiquidationCalculator.java`/`PositionSizing.java`, формула в формулу, с той же схемой
@@ -60,10 +61,31 @@ Vite/React/TS(strict)/react-router заданы условием задачи. �
   классического Rollup/esbuild и падает на Vite 8's Rolldown-бандлере («missing field `type`»
   из внутреннего SWC re-print шага); не понадобилась — вывод Rolldown уже поддерживает
   top-level await нативно, `npm run build` тому доказательство.
+- **@walletconnect/sign-client** (`2.25.0`, проверено 2026-09-25/26) — реальный вход через Sage
+  (Р-55, `src/wallet/walletConnect.ts`): пейринг-сессия WalletConnect v2, `chia_getAddress`/
+  `chia_signMessageByAddress` (`docs/research/week1_wallet_auth.md` §1.1, «Реализация»).
+  **Лицензия — НЕ MIT/Apache-2.0**: собственная «WalletConnect Community License Agreement»
+  Reown, Inc. (`github.com/WalletConnect/walletconnect-monorepo`,
+  `packages/sign-client/LICENSE.md`, «Release Date: 20 August 2025», прочитано `gh api` 2026-09-26)
+  — бесплатно ниже 2 500 000 RPC/мес или 500 MAU/мес (закрытая альфа Р-42, 5–10 тестеров, далеко
+  ниже порога), обязательно подключение к сети реле Reown (не self-hosted — ровно то, что делает
+  этот модуль), обязательная строка атрибуции (см. ниже). Наш собственный код остаётся
+  Apache-2.0 (Р-36) — это чужая зависимость на её собственных условиях, не наш код.
+  **Portions © 2025 Reown, Inc. All Rights Reserved.** Подгружается лениво (`import()` внутри
+  `wallet/walletConnect.ts`, ~2,7 МБ unpacked по данным `npm view`) — не в главном чанке.
+- **qrcode-generator** (`2.0.4`, MIT, ~15 КБ, без своих зависимостей) — QR-код адреса депозита
+  (Р-53) и QR-код WalletConnect-пейринга (Р-55), `src/wallet/QrCode.tsx`: рисует обычными SVG
+  `<rect>`/`<path>` по сетке модулей библиотеки, не её собственным `createSvgTag()`. Достаточно
+  маленький, чтобы не выносить в отдельный ленивый чанк — в отличие от двух пакетов выше.
 
-Больше зависимостей не добавлялось сверх нужд задачи; `contract.ts` — только аддитивные правки
-(новый метод `serverInfo()`, `PlayerSummaryDto.isBot?`, `resultsHash?` на разрешённом/отменённом
-раунде), как и требовалось.
+Помимо перечисленного выше зависимостей не добавлялось сверх нужд задачи; `contract.ts` —
+только аддитивные правки: `serverInfo()` (+ `walletConnectProjectId?`), `PlayerSummaryDto.isBot?`,
+`resultsHash?` на разрешённом/отменённом раунде, и, для Р-53, `myDepositAddress()`/
+`DepositAddressDto` и `WithdrawalRequestDto`'s `toAddress`/`chainState`/`coinId`/`height`/
+`failureReason` (сверено с реальными полями `server/`, которые строила параллельно другая
+сессия по той же задаче) — старый самоотчётный `requestDeposit(amount)`/`deposit(requestId)`
+убран из `Api` целиком (эксплойт критики 2026-09-26, никогда не подключался из UI и не
+возвращается ни в каком виде).
 
 ## Архитектура
 
@@ -125,7 +147,7 @@ src/pages/                — семь экранов по ux_spec.md §3–9
 | `/crowd` | Crowd |
 | `/ratings` | Ratings |
 | `/profile/:playerId`, `/profile/me` | Profile |
-| `/wallet` | Wallet (desktop-only, Р-31) |
+| `/wallet` | Wallet (desktop и mobile, Р-48 заменяет Р-31) |
 | `/how-it-works` | How it works |
 
 ## Команды
@@ -141,10 +163,11 @@ npm run preview       # собранный dist/
 ```
 
 Все пять команд (`typecheck`/`lint`/`test`/`build`, плюс сам `install`) проверены и проходят
-чисто на момент сдачи (2026-09-25): 122 теста (111 — золотые векторы ликвидации и историческая
-сверка, 11 — рендер-тесты `@testing-library/react` на роутинг/баннер/валидацию бет-слипа), 0
-ошибок линта (3 некритичных warning про fast-refresh в файле с несколькими экспортами
-контекста), сборка — два чанка (~354 KB / ~372 KB до gzip, второй — вынесенный `recharts`).
+чисто на момент последней сдачи (2026-09-26, Р-53/Р-55): 239 тестов, 0 ошибок линта (8
+некритичных warning про fast-refresh в файлах с несколькими экспортами — контекст/константы
+рядом с компонентом), сборка — несколько чанков, самые большие: `chia-wallet-sdk-wasm` (~2,0 МБ
+gzip, тестовый кошелёк) и WalletConnect (~132 КБ gzip) — оба вынесены отдельно и грузятся только
+при реальном открытии окна входа, ни один не в главном чанке (`index-*.js`, ~132 КБ gzip).
 
 ## Доступность
 

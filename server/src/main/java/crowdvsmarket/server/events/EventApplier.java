@@ -109,6 +109,15 @@ public final class EventApplier {
                 yield hub.ledger().reverseDepositEffect(e.playerId(), new PlayAmount(e.originalAmountMojos()),
                         season, e.reason(), e.relatedDepositRequestId(), Instant.ofEpochMilli(e.atMs()));
             }
+            case GameEvent.DepositConfirmedOnChain e -> {
+                hub.ledger().creditOnChainDeposit(e.playerId(), new PlayAmount(e.amountMojos()),
+                        Instant.ofEpochMilli(e.atMs()));
+                yield null;
+            }
+            case GameEvent.WithdrawalConfirmedOnChain e -> {
+                hub.ledger().confirmWithdrawal(e.requestId());
+                yield null;
+            }
         };
     }
 

@@ -13,7 +13,7 @@ see `docs/research/chain_service.md` §1. Write-ups:
 [`docs/research/week1_chain_access.md`](../docs/research/week1_chain_access.md) (network access routes, Р-11 oracle design),
 [`docs/research/week1_testnet_cli.md`](../docs/research/week1_testnet_cli.md) (`c2-cli` command reference, key derivation, offer format),
 [`docs/research/week1_testnet_results.md`](../docs/research/week1_testnet_results.md) (every real testnet11 action this CLI performed: tx/coin ids, block heights, costs, fees, kill-criteria status),
-[`docs/research/chain_service.md`](../docs/research/chain_service.md) (`c2-svc`: FIXED INTERFACE (3), the multi-record oracle-publish batch spend, the durable publisher queue, real `get_fee_estimate`/`get_coin_record_by_name` responses verified against testnet11).
+[`docs/research/chain_service.md`](../docs/research/chain_service.md) (`c2-svc`: FIXED INTERFACE (3), the multi-record oracle-publish batch spend, the durable publisher queue, real `get_fee_estimate`/`get_coin_record_by_name` responses verified against testnet11; §13 adds real on-chain PLAY withdraw/deposit, Р-6/decision Р-53).
 
 ## Layout
 
@@ -47,6 +47,14 @@ see `docs/research/chain_service.md` §1. Write-ups:
   - `send` — plain XCH transfer to any `txch1...` address.
   - `issue-play` — mints the PLAY CAT (single-issuance genesis-by-coin-id
     TAIL; 1 PLAY = 1000 CAT mojos).
+  - `play-balance` / `send-play` — general CAT-coin balance/transfer for any
+    `--asset-id` (not just a coin this same process minted itself): scans
+    `ADDRESS_GAP` indices' CAT puzzle hashes and, for `send-play`,
+    reconstructs the found coin's lineage proof from its parent's on-chain
+    spend (`src/cat_chain.rs::find_cat_coin`/`cat_from_coin_id`,
+    `chia-sdk-driver`'s `Cat::parse_children`) -- what makes a real deposit
+    from another wallet (e.g. `counterparty.json`) possible, see
+    `docs/research/chain_service.md` §13.5.
   - `offer-make` / `offer-take` — PLAY ↔ TXCH offers (`offer1...`, byte-exact
     with the reference wallet's compression format); `offer-make` can offer
     less than a wallet's full cached PLAY coin, with the remainder returned
@@ -92,6 +100,18 @@ see `docs/research/chain_service.md` §1. Write-ups:
     double-spends the singleton, retries a stuck broadcast with backoff, and
     is unit-tested end to end against a fake, in-memory chain client
     (`tests/oracle_queue.rs`, no network).
+  - `POST /v1/play/withdrawals` / `GET /v1/play/withdrawals/{requestId}` /
+    `POST /v1/play/deposit-address` / `GET /v1/play/deposits`
+    (`src/play/`, Р-6, decision Р-53 2026-09-26) — real on-chain PLAY
+    withdraw/deposit. Withdrawals batch up to 20 payouts per treasury CAT
+    spend with change back to the treasury, same durable-queue/never-double-
+    spend/fee-rebuild discipline as the oracle publisher above but as an
+    independent structure keyed by `requestId`
+    (`play/withdrawal_queue.rs`/`withdrawal_publisher.rs`); deposit addresses
+    are derived at a dedicated index range and scanned for by their CAT
+    puzzle hash (`play/deposit.rs`). Unit-tested against a fake chain client
+    (`tests/play_withdrawals.rs`, `tests/play_deposits.rs`, no network). See
+    `docs/research/chain_service.md` §13.
   - `Dockerfile` — multi-stage release build, build context `chain/` (needs
     the `c2-cli` path dependency + the shared `Cargo.lock` in scope).
   - `--dry-run` / `C2_PUSH=0` — builds and signs spends, never broadcasts or

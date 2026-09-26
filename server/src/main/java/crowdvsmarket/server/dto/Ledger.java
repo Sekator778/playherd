@@ -20,8 +20,19 @@ public final class Ledger {
                                    long atMs) {
     }
 
+    /** Р-53: {@code toAddress}/{@code chainState}/{@code coinId}/{@code height}/{@code
+     *  failureReason} are additive (not in contract.ts, same "additive" situation documented
+     *  elsewhere in this file/{@code Enums}) — real on-chain fields, {@code null} for the
+     *  pre-Р-53 rows this server auto-confirmed before real chain tracking existed. {@code
+     *  chainState} is chainsvc's own vocabulary ({@code "submitted"} — this server's own "the
+     *  POST was accepted, not yet polled" placeholder — {@code "queued"|"in_flight"|"confirmed"|
+     *  "failed"} once actually polled); {@code coinId}/{@code height} are only ever non-null once
+     *  the withdrawal is on-chain-confirmed (task: "confirmed... with coinId/height, public in the
+     *  player's ledger" — surfaced here since {@code GameService#withdrawal} is the player's own
+     *  ledger view of their withdrawal request). */
     public record WithdrawalRequestDto(String requestId, String playerId, String amount,
-                                         Enums.WithdrawalState state, long requestedAtMs) {
+                                         Enums.WithdrawalState state, long requestedAtMs, String toAddress,
+                                         String chainState, String coinId, Long height, String failureReason) {
     }
 
     public record DepositRequestDto(String requestId, String playerId, String amount, Enums.DepositState state,

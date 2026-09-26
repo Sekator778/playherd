@@ -68,7 +68,11 @@ class EventStoreGoldenFixturesTest {
                 new Fixture("WithdrawalReversed", new GameEvent.WithdrawalReversed("p-golden-1", 500000L, "2026-09",
                         "golden fixture reversal", "w-golden-1", 1700000006000L)),
                 new Fixture("DepositReversed", new GameEvent.DepositReversed("p-golden-1", 250000L, "2026-09",
-                        "golden fixture reversal", "d-golden-1", 1700000007000L)));
+                        "golden fixture reversal", "d-golden-1", 1700000007000L)),
+                new Fixture("DepositConfirmedOnChain", new GameEvent.DepositConfirmedOnChain("p-golden-1", 7,
+                        250000L, "0xgoldencoin1", 4735705L, 1700000008000L)),
+                new Fixture("WithdrawalConfirmedOnChain", new GameEvent.WithdrawalConfirmedOnChain("w-golden-3",
+                        "0xgoldencoin2", 4735706L, 1700000009000L)));
     }
 
     /** Every {@link GameEvent} record must have exactly one fixture above — catches "added a new

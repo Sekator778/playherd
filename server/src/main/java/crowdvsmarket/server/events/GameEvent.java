@@ -96,4 +96,31 @@ public sealed interface GameEvent {
     record DepositReversed(String playerId, long originalAmountMojos, String originalSeasonId, String reason,
                              String relatedDepositRequestId, long atMs) implements GameEvent {
     }
+
+    /** Р-53: a real, chain-confirmed PLAY CAT deposit detected by {@code DepositPollerService}
+     *  ({@code GET /v1/play/deposits}) — unlike {@link DepositRequested}/{@link DepositConfirmed}
+     *  (the self-report two-step, permanently retired at the RPC level but kept here only so
+     *  already-persisted historical rows keep replaying), there is no separate request: the coin's
+     *  existence on chain, at the player's known deposit address, IS the request and the
+     *  confirmation in one, so this single event carries both. {@code coinId} is this deposit's own
+     *  natural idempotency key — replay safety is enforced one layer up, by {@code
+     *  DepositPollerService} only ever emitting this event the FIRST time it successfully reserves
+     *  a given {@code coinId} in {@code deposit_confirmations} (a plain read-model table, not
+     *  itself replayed); once emitted, ordinary event-log replay re-applies it exactly once, like
+     *  every other event here. {@code playerIndex} is carried for audit/debugging only — {@code
+     *  EventApplier}'s case resolves the credit by {@code playerId}, already resolved once at
+     *  poll time. */
+    record DepositConfirmedOnChain(String playerId, int playerIndex, long amountMojos, String coinId, long height,
+                                     long atMs) implements GameEvent {
+    }
+
+    /** Р-53: the real on-chain counterpart of {@link WithdrawalConfirmed} (kept only for replaying
+     *  pre-Р-53 auto-confirmed rows) — carries the CAT coin's own {@code coinId}/{@code height},
+     *  which the task requires be "public in the player's ledger" once confirmed. The engine-side
+     *  effect is identical to {@code WithdrawalConfirmed} (the escrow debit already happened at
+     *  {@link WithdrawalRequested} time; confirming just closes out the request) — {@code coinId}/
+     *  {@code height} are read-model-only, {@code LedgerBook} itself has no use for them. */
+    record WithdrawalConfirmedOnChain(String requestId, String coinId, long height, long atMs)
+            implements GameEvent {
+    }
 }

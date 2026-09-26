@@ -152,8 +152,7 @@ class FakeApi implements Api {
   myLedger = () => this.unused();
   requestWithdrawal = () => this.unused();
   withdrawal = () => this.unused();
-  requestDeposit = () => this.unused();
-  deposit = () => this.unused();
+  myDepositAddress = () => this.unused();
   crowdAccount = () => this.unused();
   ratings = () => this.unused();
   publicProfile = () => this.unused();

@@ -29,6 +29,20 @@ import org.junit.jupiter.api.Test;
  * <p>Regenerate the fixtures with {@code cargo test -p c2-svc --test contract_fixtures} (from
  * {@code chain/}) whenever a wire type's shape changes on the Rust side; this test then fails
  * loudly here instead of the drift only ever being observed live.
+ *
+ * <p><b>Р-53 note:</b> chainsvc's new {@code /v1/play/*} endpoints (withdrawals, deposit-address,
+ * deposits) have no {@code chain/c2-svc/tests/contract/*.json} fixtures as of this pass — {@code
+ * chain/c2-svc/tests/contract_fixtures.rs} (the Rust generator these fixtures come from) does not
+ * write them yet, even though the chain-side types themselves already exist in parallel
+ * ({@code chain/c2-svc/src/play/types.rs}, checked directly, 2026-09-26 — {@code
+ * WithdrawalRequestDto}/{@code WithdrawalAcceptedResponse}/{@code WithdrawalStatusResponse}/{@code
+ * DepositAddressRequestDto}/{@code DepositAddressResponse}/{@code DepositDto}/{@code
+ * DepositsResponse}, all {@code #[serde(rename_all = "camelCase")]}). This server's {@link
+ * ChainSvcRestClient}/{@link ChainSvcClient} were cross-checked field-by-field against those real
+ * Rust types (not just the FIXED INTERFACE's prose) — see {@code ChainSvcClientImplTest}'s Р-53
+ * cases for the shapes assumed — but deliberately NOT extended here with fixture-reading cases
+ * that would fail on the still-missing JSON files. Add the analogous cases here (mirroring the
+ * existing oracle ones below) once {@code contract_fixtures.rs} actually writes them.
  */
 @QuarkusTest
 class ChainSvcContractFixturesTest {

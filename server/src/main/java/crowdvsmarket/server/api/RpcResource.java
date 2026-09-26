@@ -137,6 +137,13 @@ public class RpcResource {
                 requireSignedIn(playerId);
                 result = gameService.deposit(playerId, str(args, 0));
             }
+            // Р-53: additive, not in contract.ts (same "additive" situation as ledgerCorrections
+            // above) — the real on-chain deposit address a player sends PLAY to; deposits credit
+            // automatically (DepositPollerService), no further RPC needed on the player's end.
+            case "myDepositAddress" -> {
+                requireSignedIn(playerId);
+                result = gameService.myDepositAddress(playerId);
+            }
             case "crowdAccount" -> result = gameService.crowdAccount();
             case "ratings" -> result = gameService.ratings(str(args, 0));
             case "publicProfile" -> result = gameService.publicProfile(str(args, 0));

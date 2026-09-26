@@ -3,3 +3,4 @@ pub mod issue;
 pub mod oracle;
 pub mod offer;
 pub mod send;
+pub mod send_cat;

@@ -972,3 +972,176 @@ self.start_new_batch(&mut queue).await                             // <- пад�
   `operator.oracle.json`) — не часть этой задачи (задание прямо не просило пушить реальные
   транзакции); следующий шаг для Алекса или следующей волны тестирования — тот же паттерн, что
   §9.3 уже проходил живьём для предыдущего инцидента.
+
+## 13. PLAY withdraw/deposit — реальный ончейн вывод/ввод (Р-6, решение Р-53, 2026-09-26)
+
+Источник задания: `docs/product/decisions.md` Р-53 (2026-09-26) — «сделать до альфы» реальный
+ончейн PLAY withdraw/deposit (Р-6) до закрытой альфы. Assigned paths этой задачи — `chain/`
+(`c2-svc` и `c2-cli`) и этот файл. Реализует ровно FIXED INTERFACE из задания: `POST
+/v1/play/withdrawals`, `GET /v1/play/withdrawals/{requestId}`, `POST /v1/play/deposit-address`,
+`GET /v1/play/deposits`. `c2-cli`: `c2 send-play`, `c2 play-balance`.
+
+### 13.1 Итог одной строкой
+
+`cargo test --workspace` в `chain/` (холодная сборка, `cargo clean -p c2-svc -p c2-cli -p
+sim-spike`): **91 passed, 1 ignored (тот же генератор тест-векторов оракула, не баг), 0 failed**
+(было 76/1/0 до этой задачи — +15: 2 юнит-теста `c2-cli` на `builders::send_cat`, 2 симулятор-теста
+`c2-cli/tests/send_play.rs`, 2 юнит-теста `c2-svc::play::withdrawal_queue`, 2 юнит-теста
+`c2-svc::play::deposit`, 3 интеграционных `tests/play_withdrawals.rs`, 3 интеграционных
+`tests/play_deposits.rs`, плюс сама очередь/паблишер не добавляют новых юнит-тестов внутри
+`src/`). Прогнано дважды подряд, идентично. `cargo clippy -p c2-svc --all-targets` даёт ровно тот
+же класс замечания, что и весь остальной код проекта (`cloned_ref_to_slice_refs` в
+`play/withdrawal_spend.rs:111`, тот же паттерн, что уже отмечен в §7 для `oracle/spend.rs:118` и
+для каждого билдера `c2-cli`) — ноль новых категорий предупреждений.
+
+### 13.2 Вывод (withdraw): пакетный CAT-спенд из монеты казначейства
+
+`chain/c2-svc/src/play/withdrawal_spend.rs::build_play_withdrawal_batch` — тратит текущую монету
+казначейства (`operator.play.json`, тот же JSON-формат, что уже пишет `c2 issue-play`,
+`c2_cli::state::PlayCoinState`, читается новым `chain/c2-svc/src/play_state_file.rs` по аналогии с
+`state_file.rs` для `OracleState`) на до 20 (`MAX_WITHDRAWALS_PER_SPEND`, **предложение**, то же
+число, что и `oracle::spend::MAX_RECORDS_PER_SPEND`) `create_coin` — по одному на заявку — плюс
+один coin сдачи обратно казначейству. Ровно тот же примитив (`CatSpend` + `Cat::spend_all`), что
+уже проверен офлайн в `chain/sim-spike/tests/cat_play.rs` и используется в новом
+`c2_cli::builders::send_cat::build_send_cat` (одиночный CAT-перевод, для CLI). Комиссия — отдельной
+plain-XCH монетой (`c2_cli::builders::fee::build_fee_only`), тем же способом, что и
+`oracle-publish`'а комиссия (монета казначейства не может одновременно нести и выплаты, и
+`RESERVE_FEE`).
+
+**Самовоспроизведение монеты казначейства** — тот же принцип, что и у оракульного синглтона
+(`OracleState::current_coin`), только не синглтон-пазл, а обычная CAT-монета: следующая монета
+казначейства вычисляется напрямую (`Cat::child(owner.puzzle_hash, change_amount)`), а не поиском
+среди детей `Cat::spend_all` — так исключается неоднозначность на случай, если чья-то заявка на
+вывод целится в тот же puzzle hash с той же суммой, что и сдача. Батч, который бы **полностью**
+осушил монету казначейства (`change_amount == 0`), отклоняется явной ошибкой — иначе следующему
+батчу было бы не от чего продолжать (**предложение**: казначейство должно всегда держать намного
+больше PLAY, чем один батч выплачивает; настоящее исчерпание требует ручного пополнения оператором
+через `c2 issue-play`/`c2 send-play`, а не тихого тупика).
+
+### 13.3 Устойчивая очередь и паблишер — переиспользован паттерн оракула, не код
+
+`chain/c2-svc/src/play/withdrawal_queue.rs` + `withdrawal_publisher.rs` — та же дисциплина, что и
+у `oracle/queue.rs` + `oracle/publisher.rs` (задание: «reuse its patterns»): запись durable-очереди
+**до** broadcast (`<name>.play_withdrawal_queue.json`, атомарная запись, `atomic_file.rs`), не
+больше одного `in_flight`-батча одновременно («никогда не тратить монету казначейства дважды» —
+перед новым батчем и перед пересборкой отклонённого спенда сервис спрашивает coinset, что текущая
+монета казначейства ещё не потрачена и что отклонённый бандл действительно отсутствует в мемпуле),
+ретраи с бэкоффом, и пересборка с удвоенной/переоценённой комиссией (`get_fee_estimate`, капается
+`C2_MAX_FEE_MOJOS`) при явном отклонении по комиссии (`INVALID_FEE_TOO_CLOSE_TO_ZERO` и подобные) —
+буквально та же арифметика и та же последовательность проверок, что и
+`oracle::publisher::Publisher::{advance_in_flight,rebuild_in_flight,start_new_batch}`, только
+ключ — не `seq`, а `requestId`, и подтверждение спрашивается не про
+`ASSERT_PUZZLE_ANNOUNCEMENT`-синглтон, а про монету сдачи (`next_coin`).
+
+Это **сознательно не общий generic-тип** с `oracle::publisher::Publisher<C: ChainClient>` — тот
+уже прошёл через три реальных инцидента на живом стенде (§9/§11/§12) и трогать его код здесь не
+входило в assigned paths этой задачи; вместо этого — параллельная, но независимая структура
+(`WithdrawalPublisher<C: PlayChainClient>`), которая явно копирует форму, а не implementation по
+наследованию.
+
+Идемпотентность по `requestId` (задание: «idempotent by requestId») — `WithdrawalQueueFile::
+enqueue`/`state` смотрят на реальное состояние (`confirmed`/`failed`/`in_flight`/`pending`), не на
+water-mark — та же защита от «lost update», которую §10 уже закрыло для оракульной очереди,
+применена здесь с самого начала, а не задним числом. `GET /v1/play/withdrawals/{requestId}`
+отвечает `state ∈ {queued, in_flight, confirmed, failed, unknown}` (`failed` — задание прямо
+называет этот статус терминальным: если батч исчерпал лимит попыток, все его заявки помечаются
+`failed` с причиной, а монета казначейства, которую он собирался потратить, остаётся нетронутой —
+значит новый `POST` с новым `requestId` для того же перевода чисто повторяет попытку со следующего
+батча).
+
+**Открытый вопрос (не задача, а честная граница)**: в отличие от `oracle/lineage.rs`, для вывода
+**нет** прохода по цепи, который бы восстанавливал состояние `requestId` заново из истории спендов
+монеты казначейства (обычная CAT-монета не announce-ит `requestId` в чейн ни в каком
+структурированном виде, в отличие от оракула, который announce-ит `seq`) — то есть durable-файл
+очереди остаётся единственным источником истины про то, какие `requestId` уже подтверждены. Это
+ровно тот же класс риска, что и у оракульной очереди **до** фикса §11 (устаревший/испорченный файл
+очереди при редеплое) — там фикс существует (`walk_lineage`/`reconcile_with_chain`), здесь пока
+нет, зафиксировано как открытый риск, не устранённый в этой задаче.
+
+### 13.4 Депозит: деривация адреса и обнаружение по сканированию puzzle hash
+
+`chain/c2-svc/src/play/deposit.rs`. Путь деривации (задание: «document the path»): тот же
+нехардовый путь `m/12381/8444/2/i`, что и у любого другого ключа проекта
+(`c2_cli::keys::derive_wallet_key`, полная цепочка примитивов — в доккомменте того модуля),
+**только на индексе `DEPOSIT_INDEX_OFFSET + playerIndex`** вместо индекса 0. `DEPOSIT_INDEX_OFFSET
+= 1_000_000` — **предложение**, ни один источник конкретное число не фиксирует; выбрано с большим
+запасом выше любого индекса, который оператор-кошелёк использует вручную (index 0 — и оракул-
+менеджер, и владелец казначейства), так что депозитный адрес игрока никогда не совпадёт с
+оракульным/казначейским ключом ни при каком `playerIndex` (переполнение `u32` при сложении явно
+проверяется, а не молча заворачивается).
+
+`address` в ответе — обычный `txch1...`-адрес (bech32m внутреннего/p2 puzzle hash игрока, тот же
+формат, что и любой обычный адрес получения) — отправитель (например, `c2 send-play --to
+<address>`) сам оборачивает его в CAT-слой при переводе, той же логикой, что уже проверена в
+`chain/sim-spike/tests/cat_play.rs` (перевод CAT на обычный p2-адрес получателя). `catPuzzleHash` —
+фактический CAT-puzzle-hash (`CatArgs::curry_tree_hash(PLAY-asset-id, innerPuzzleHash)`,
+`c2_cli::cat_chain::cat_puzzle_hash`, новый модуль в `c2-cli`), именно он и есть «известный
+депозитный CAT puzzle hash» из задания, по которому потом сканируется цепь.
+
+Реестр выданных адресов (`<name>.play_deposit_registry.json`, `playerIndex -> catPuzzleHash`) —
+нужен, потому что (в отличие от оракульного синглтона) у депозитных CAT-монет нет общей линии,
+которую можно было бы одним проходом восстановить с нуля; `GET /v1/play/deposits` сканирует ровно
+те puzzle hash'и, что когда-либо были выданы через `POST /v1/play/deposit-address` (задание: «the
+known deposit CAT puzzle hashes»), не произвольный диапазон индексов.
+
+`GET /v1/play/deposits?sinceHeight=N` — один батч-запрос `get_coin_records_by_puzzle_hashes`
+(`chia-sdk-coinset`, `include_spent_coins: true` — задание: «only confirmed, unspent-or-spent CAT
+coins») по всем зарегистрированным puzzle hash'ам сразу, `start_height = sinceHeight`; `tipHeight`
+— `get_blockchain_state().peak.height`. «Server verifies the coin's puzzle hash matches CAT(PLAY
+tail, inner)» из задания выполняется **по конструкции**, а не отдельной проверкой: сервис
+запрашивает только те puzzle hash'и, которые сам вычислил как `CatArgs::curry_tree_hash(PLAY-asset-
+id, innerPuzzleHash)` — коллизия с другим asset id или произвольной чужой монетой криптографически
+исключена (см. тест `wrong_asset_coin_at_a_deposit_address_is_ignored`,
+`chain/c2-svc/tests/play_deposits.rs`: та же самая монета игрока, но с другим asset id, курьируется
+в совершенно другой puzzle hash и просто никогда не запрашивается). Дедупликация по `coinId`
+(задание: «each coinId reported exactly once … server de-duplicates by coinId») —
+`scan_deposits`'ин `BTreeSet`.
+
+Новый трейт `chain/c2-svc/src/play/chain_client.rs::PlayChainClient` (супертрейт над `oracle::
+chain_client::ChainClient`) добавляет ровно два метода, которых не было (батч-скан по puzzle hash'ам
+и высота тира), реализован для `CoinsetChainClient` — намеренно **не** добавлен прямо в
+`ChainClient`, чтобы не трогать уже 76-тестовый `FakeChainClient` в `tests/oracle_queue.rs`; у PLAY-
+тестов свой фейк (`chain/c2-svc/tests/play_common/mod.rs`).
+
+### 13.5 `c2-cli`: `send-play` / `play-balance` — общий CAT-кошелёк, не только «свой минт»
+
+До этой задачи `c2-cli` умел работать только с CAT-монетой, которую сам же и заминтил в этом
+процессе (`state.rs::PlayCoinState`, кэш ровно одной монеты). Для верификационного шага нужен
+перевод из **чужого** тестового кошелька (`counterparty.json`, 1 000 PLAY) — монеты, которую этот
+процесс никогда не видел. Новый `chain/c2-cli/src/cat_chain.rs::find_cat_coin`/`cat_from_coin_id`
+делает то же, что любой настоящий CAT-кошелёк при синхронизации: сканирует `get_coin_records_by_
+puzzle_hash` по вычисленному CAT-puzzle-hash на каждом из `ADDRESS_GAP` индексов (та же логика, что
+уже использует `chain::find_funding_coin` для plain-XCH монет, §1 переиспользует, не копирует
+паттерн), а для найденной монеты восстанавливает `LineageProof` через `Cat::parse_children` на
+спенде монеты-родителя (`get_puzzle_and_solution` того родителя) — готовый примитив `chia-sdk-
+driver`, а не собственная (де)сборка пруфа.
+
+`c2 send-play --name <wallet> --asset-id <hex> --to <txch address> --amount <mojos> [--fee]
+[--push]` — CAT-перевод (`c2_cli::builders::send_cat::build_send_cat`, тот же `CatSpend`/`Cat::
+spend_all`, что и у сервисного withdrawal-батчера, §13.2, только на одну заявку) с монеты,
+найденной `find_cat_coin`; `--asset-id` — явный аргумент (а не хардкод PLAY-id в коде CLI), тем же
+принципом, что и остальной `c2-cli` — общий инструмент, не привязанный к одному конкретному
+развёртыванию. `c2 play-balance --name <wallet> --asset-id <hex>` — сумма непотраченных CAT-монет
+этого asset id по тому же гэп-скану (`cat_chain::cat_balance`), аналог `c2 balance` для XCH.
+Проверено симулятором (`chain/c2-cli/tests/send_play.rs`, тот же паттерн, что и `tests/send.rs`,
+только через `Cat::single_issuance`/`build_issue_play` вместо превода XCH); сама коинсет-часть
+(`find_cat_coin`) — тонкая read-only обёртка, тестируется так же, как и `chain::find_funding_coin`/
+`chain::balance` — живым использованием на testnet11, отдельного офлайн-теста в этой задаче нет
+(тот же прецедент, что уже задокументирован в §1 для остального `chain.rs`).
+
+### 13.6 Не сделано в этой задаче
+
+- Реальные транзакции на testnet11 не отправлялись — весь функционал проверен `cargo test
+  --workspace` (фейковый chain client / офлайн-симулятор), задание прямо просило «cargo test
+  --workspace green (real counts)», не живой push.
+- Chain-lineage-реконсиляция для вывода (аналог `oracle/lineage.rs` для оракула) — открытый риск,
+  см. §13.3; тот же класс проблемы, что §11 закрыло для оракула, здесь не закрыт.
+- `docker-compose.yml`/переменные окружения на стенде — не тронуты (тот же принцип, что и в
+  §10.6/§10.8/§11.6/§12.6: файл общий с параллельными агентами, никаких новых переменных окружения
+  этот функционал не вводит — `WithdrawalPublisher`/`DepositService` переиспользуют уже
+  существующие `C2_*` переменные `Config`).
+- Реальная выдача Reown/Sage-подписи (Р-55, «Сначала Reown») — отдельная, следующая задача (Алекс
+  регистрирует Reown `projectId`); не пересекается с этим файлом.
+- Server-side (Java) интеграция «дернуть `/v1/play/withdrawals` при запросе игрока», «поллить
+  `/v1/play/deposits`», хранение `playerIndex ↔ address` на уровне игрока — другой assigned path,
+  другой агент, как и в §10.8/§11.6 для оракула.

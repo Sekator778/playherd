@@ -4,6 +4,7 @@
 //! "same code path proven offline" instead of a reimplementation.
 
 pub mod builders;
+pub mod cat_chain;
 pub mod chain;
 pub mod cost;
 pub mod hyperliquid;

@@ -22,10 +22,13 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Task item 1 (BLOCKER security fix): {@code requestDeposit}/{@code requestWithdrawal} are
  * disabled by default (see {@link WithdrawalDepositUnavailableTest} for that default-config
- * behavior) — this class needs its own {@link WithdrawalDepositEnabledProfile} to re-enable them,
- * so its amount-validation tests below (negative/zero/positive) keep exercising exactly what they
- * always tested: the input validation itself, independent of whether the feature is currently
- * turned on.
+ * behavior) — this class needs its own {@link WithdrawalDepositEnabledProfile} to re-enable
+ * {@code requestWithdrawal}, so its amount-validation tests below (negative/zero/positive/below-
+ * minimum) keep exercising exactly what they always tested: the input validation itself,
+ * independent of whether the feature is currently turned on. Р-53 update: {@code requestDeposit}
+ * itself is now PERMANENTLY retired regardless of this profile's {@code herd.deposit.enabled=true}
+ * — see {@code requestDepositIsPermanentlyRetiredEvenWhenDepositEnabledIsTrue} below and {@code
+ * GameService#requestDeposit}'s javadoc.
  */
 @QuarkusTest
 @TestProfile(RpcValidationTest.WithdrawalDepositEnabledProfile.class)
@@ -253,38 +256,52 @@ class RpcValidationTest {
 
     @Test
     void requestWithdrawalStillAcceptsAPositiveAmount() {
+        // Р-53 update: requestWithdrawal now escrows-and-submits-for-real rather than
+        // auto-confirming — chainSvcClient.submitPlayWithdrawal(...) is unstubbed here (returns
+        // null, Mockito's default for a record-returning method), which GameService treats exactly
+        // like a chainsvc outage (leaves the request REQUESTED for WithdrawalPollerService to
+        // retry) — the escrow debit below is unaffected either way.
         String session = signIn("txch1wd-positive-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         Response resp = rpc(session, "requestWithdrawal", "500.000");
         assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(200);
-        assertThat(resp.jsonPath().getString("state")).isEqualTo("CONFIRMED");
+        assertThat(resp.jsonPath().getString("state")).isEqualTo("REQUESTED");
         String balanceAfter = rpc(session, "myAccount").jsonPath().getString("balance");
         assertThat(balanceAfter).isEqualTo("9500.000");
     }
 
     @Test
-    void requestDepositRejectsNegativeAmount() {
-        String session = signIn("txch1dep-negative-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        Response resp = rpc(session, "requestDeposit", "-100.000");
-        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
-        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("INVALID_AMOUNT");
-    }
-
-    @Test
-    void requestDepositRejectsZeroAmount() {
-        String session = signIn("txch1dep-zero-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        Response resp = rpc(session, "requestDeposit", "0.000");
-        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
-        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("INVALID_AMOUNT");
-    }
-
-    @Test
-    void requestDepositStillAcceptsAPositiveAmount() {
-        String session = signIn("txch1dep-positive-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        Response resp = rpc(session, "requestDeposit", "250.000");
-        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(200);
-        assertThat(resp.jsonPath().getString("state")).isEqualTo("CONFIRMED");
+    void requestWithdrawalRejectsBelowMinimum() {
+        // Р-53: minimum withdrawal (предложение, GameService.MIN_WITHDRAWAL) — checked after the
+        // positive-amount check, before the balance check.
+        String session = signIn("txch1wd-below-min-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        Response resp = rpc(session, "requestWithdrawal", "50.000");
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(422);
+        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("WITHDRAWAL_BELOW_MINIMUM");
         String balanceAfter = rpc(session, "myAccount").jsonPath().getString("balance");
-        assertThat(balanceAfter).isEqualTo("10250.000");
+        assertThat(balanceAfter).as("nothing must be debited for a rejected withdrawal").isEqualTo("10000.000");
+    }
+
+    // --- Р-53: requestDeposit (the pre-Р-53 self-report RPC) is now PERMANENTLY retired —
+    // unconditionally, even under this class's own herd.deposit.enabled=true profile (see
+    // GameService#requestDeposit's javadoc for why turning the real on-chain deposit path on must
+    // never also reopen the self-report fraud vector task item 1 closed). This single test replaces
+    // the amount-validation tests this method used to have (negative/zero/positive) — there is no
+    // more input validation to speak of once the RPC is unconditionally rejected before ever
+    // parsing its argument. See WithdrawalDepositUnavailableTest for the equivalent default-profile
+    // (both flags false) coverage. ---
+
+    @Test
+    void requestDepositIsPermanentlyRetiredEvenWhenDepositEnabledIsTrue() {
+        String session = signIn("txch1dep-retired-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        String balanceBefore = rpc(session, "myAccount").jsonPath().getString("balance");
+
+        Response resp = rpc(session, "requestDeposit", "250.000");
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(503);
+        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("DEPOSIT_VERIFICATION_UNAVAILABLE");
+
+        String balanceAfter = rpc(session, "myAccount").jsonPath().getString("balance");
+        assertThat(balanceAfter).as("nothing must be credited — requestDeposit never credits again")
+                .isEqualTo(balanceBefore);
     }
 
     @Test

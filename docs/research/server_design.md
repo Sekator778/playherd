@@ -773,3 +773,164 @@ invalid-amount/positive-still-works, `placeBet` с отрицательным st
 чисто, реальный `docker restart herd-server-1` реплеил все 7053 события (включая 4 новых
 `DepositReversed`) без единой ошибки, все 4 фиктивных депозита (`d-2`/`d-4`/`d-7`/`d-10`) реально
 реверснуты на живых данных (не только в тесте) — команды и результат см. §15.1.
+
+## 16. Волна 4 (Р-53: настоящий on-chain вывод/ввод PLAY) — 2026-09-26
+
+Реализует Р-53 (Алекс, 2026-09-26, `docs/product/decisions.md`: «сделать до альфы») поверх FIXED
+INTERFACE постановки задачи (`server ⇄ chainsvc`, `/v1/play/*`) — `POST /v1/play/withdrawals`,
+`GET /v1/play/withdrawals/{requestId}`, `POST /v1/play/deposit-address`,
+`GET /v1/play/deposits?sinceHeight=N`. Затронуты только `server/`, `engine/` (аддитивно) — задача
+явно не давала правки `chain/`. Параллельно (эта же сессия, чтением исходников) обнаружено, что
+Rust-сторона (`chain/c2-svc/src/play/{types,mod,deposit,chain_client,withdrawal_*}.rs`) уже
+частично написана другой сессией — имена полей (`camelCase` через `#[serde(rename_all =
+"camelCase")]`) сверены с ней напрямую и **совпадают** с тем, что описывает FIXED INTERFACE (см.
+`ChainSvcClientImplTest`'s Р-53-кейсы); контрактных JSON-фикстур (`chain/c2-svc/tests/contract/
+*Play*.json`) на момент этого прохода ещё нет — `chain/c2-svc/tests/contract_fixtures.rs` их не
+генерирует, поэтому `ChainSvcContractFixturesTest` не расширен новыми (упавшими бы) кейсами, только
+задокументирован (её же javadoc) как «добавить, когда фикстуры появятся».
+
+### 16.1 `playerIndex` — стабильный индекс для деривации адреса
+
+`V4__player_index.sql`: новая колонка `players.player_index` (`UNIQUE NOT NULL`), детерминированный
+бэкфилл существующих игроков (`ROW_NUMBER() OVER (ORDER BY created_at_ms, player_id)`), счётчик для
+новых игроков — `server_meta` ключ `next_player_index`, тот же паттерн «reserve-and-advance под
+`FOR UPDATE`», что уже `ServerMetaRepository.reserveOracleSeqRange` (переиспользован, не
+скопирован заново — `reserveNextPlayerIndex`). `PlayerDirectory` получил обратный индекс
+`playerIdForIndex` (нужен паблишеру депозитов — чейнсвик отдаёт только `playerIndex`, не
+`playerId`). Оффсет от oracle/treasury-ключей в деривации — забота `chain/`, этому серверу нужно
+только передать стабильный целочисленный `playerIndex`.
+
+### 16.2 `myDepositAddress()` — кэш адреса
+
+Новый RPC (аддитивный, не в `contract.ts`, тот же случай, что `ledgerCorrections`/доп.
+`ApiErrorCode`): `GameService.myDepositAddress` — при первом вызове зовёт `POST
+/v1/play/deposit-address {playerIndex}`, кэширует тройку `address`/`innerPuzzleHash`/
+`catPuzzleHash` в новой таблице `player_deposit_addresses` (V5-миграция) и больше никогда не
+перезапрашивает (адрес детерминирован по `playerIndex`) — игроку отдаётся только `{address}`
+(буквально по формулировке задачи), остальные два поля — только для собственной бухгалтерии этого
+сервера. Гейтится `herd.deposit.enabled` (см. §16.5 — смысл этого флага поменялся).
+
+### 16.3 Депозиты — `DepositPollerService`, exactly-once по `coinId`
+
+`DepositPollerService` (`@Scheduled(every="30s")`, отключается вместе с `!herd.deposit.enabled`):
+курсор `sinceHeight` — `server_meta` ключ `deposit_poll_since_height` (тот же `originMsOrInit`-
+паттерн), `GET /v1/play/deposits?sinceHeight=N` → для каждого элемента резолвит `playerIndex` →
+`playerId` (`PlayerDirectory.playerIdForIndex`) и зовёт новый `GameService.creditOnChainDeposit`.
+
+**Exactly-once — предложение, явный компромисс**: новая таблица `deposit_confirmations`
+(`PRIMARY KEY(coin_id)`) — `creditOnChainDeposit` сначала пытается `INSERT ... ON CONFLICT DO
+NOTHING` (свою же транзакцию) и только если это **её** инсерт реально что-то вставил — кредитует
+баланс (`persist` + `EventApplier` нового события, см. §16.6) под `engineLock`. Порядок «сначала
+резервируем coinId, потом кредитуем» выбран намеренно **не** в обратную сторону: крэш между двумя
+шагами может (редко, только при падении процесса ровно в этом окне) оставить монету
+«зарезервированной, но не начисленной» — почётно чинится вручную (оператор ищет строку
+`deposit_confirmations` без соответствующей `DEPOSIT`-записи в леджере), — но никогда не даёт
+задвоить кредит. Это то же самое смещение риска, что весь проект уже явно выбирал раньше
+(«никогда не минтить лишний PLAY» — CRITICAL-класс багов волн 2–3) — обратный порядок («кредитуем,
+потом резервируем») отдавал бы противоположный, куда более опасный компромисс (двойной кредит при
+том же крэше). Курсор `sinceHeight` продвигается до `tipHeight` только если **весь** батч этого
+тика обработан без исключений (см. `DepositPollerService`'s javadoc) — частичный сбой просто
+повторно перечитывает тот же (в основном безвредный из-за дедупа) диапазон на следующем тике.
+
+### 16.4 Выводы — `requestWithdrawal` (реальный чейн-вызов) + `WithdrawalPollerService`
+
+`GameService.requestWithdrawal` теперь (после валидации: положительная сумма, `>= MIN_WITHDRAWAL`,
+`<= balance`) — как и раньше — эскроу-дебетует баланс тем же `WithdrawalRequested`-событием, но
+вместо мгновенного фейкового `CONFIRMED` синхронно (вне `engineLock`) шлёт `POST
+/v1/play/withdrawals {requestId, toAddress, amountMojos}`. **`toAddress` всегда — собственный
+зарегистрированный адрес игрока** (`players.wallet_address`, Р-57: identity = адрес входа) —
+предложение: `contract.ts`'s `requestWithdrawal(amount)` не несёт параметра адреса, а получение его
+из уже-подписанной сессии (а не из недоверенного клиентского ввода) закрывает по конструкции риск
+«увести вывод на чужой адрес через скомпрометированную сессию»; поле «вывести на другой адрес» — вне
+объёма этого прохода (не запрошено задачей, потребовало бы правки `web/`, которая этим проходом не
+разрешена).
+
+Новый `WithdrawalPollerService` (`@Scheduled(every="30s")`, тот же паттерн, что
+`OraclePublisherService`/`OracleReconciliationService` — «reuse its patterns» из формулировки
+задачи): (а) ретраит `POST /v1/play/withdrawals` для заявок, чью синхронную попытку
+`requestWithdrawal` не подтвердил (chainsvc был недоступен) — безопасно повторять сколько угодно,
+FIXED INTERFACE прямо называет этот endpoint идемпотентным по `requestId`; (б) опрашивает `GET
+/v1/play/withdrawals/{requestId}` для уже отправленных, но ещё не терминальных заявок →
+`confirmed` → новое событие `WithdrawalConfirmedOnChain` (coinId/height публично видны в
+`Ledger.WithdrawalRequestDto` — прямое требование задачи, «public in the player's ledger»);
+`failed` → переиспользованное `WithdrawalFailed` (тот же рефанд, что уже был) + `failureReason` в
+read-model; `queued`/`in_flight` — просто обновление read-model, без события.
+
+**`MIN_WITHDRAWAL` — предложение, не зафиксировано в `docs/product/decisions.md`**: 100 PLAY, та
+же цифра, что `LedgerBook.MIN_STAKE`, выбрана по аналогии (не по отдельному обоснованию комиссии) —
+подлежит пересмотру, если у чейнсвика окажется другая реальная минимальная экономически осмысленная
+сумма вывода.
+
+### 16.5 `requestDeposit` (self-report) — ПОЛНОСТЬЮ и НАВСЕГДА отключён, независимо от флага
+
+Важное решение этого прохода, не буквально продиктованное текстом задачи, но необходимое по
+безопасности: до Р-53 `herd.deposit.enabled=true` включал и (а) старый self-report `requestDeposit`
+(вводишь любую сумму — сразу кредит, ровно тот баг, что волна 3 уже нашла CRITICAL/BLOCKER) и не
+имел отдельного пути (б) для реального ончейн-ввода, потому что реального пути не существовало.
+Теперь путь (б) реализован — но если бы `herd.deposit.enabled=true` по-прежнему **тоже** включал
+(а), включение настоящих депозитов заново открыло бы фрод-вектор, который уже дважды был
+CRITICAL-находкой в этом проекте. Поэтому `GameService.requestDeposit` теперь **безусловно**
+бросает `DEPOSIT_VERIFICATION_UNAVAILABLE` (тот же код ошибки, что уже был — клиент не видит
+разницы), независимо от `herd.deposit.enabled` — этот флаг теперь целиком означает «реальный путь
+(`myDepositAddress`/`DepositPollerService`) включён», не «self-report включён». Метод `deposit
+(requestId)` (чтение) не тронут — нужен оператору для просмотра/реверса исторических `d-N` заявок
+(`AdminReverseDepositTest`, чья фикстура теперь строит `DepositRequested`+`DepositConfirmed`
+напрямую через `EventStore`/`EventApplier`, а не через отключённый метод — тот же исторический
+формат события, что и раньше, воспроизводимый ровно потому, что `EventStore`/`EventApplier` не
+меняют своей семантики для уже существующих типов событий). `contract.ts`/`web/` не тронуты — тот
+же self-report RPC формально остаётся в контракте, просто больше никогда ничего не кредитует.
+
+### 16.6 Новые события и золотые фикстуры
+
+`GameEvent.DepositConfirmedOnChain(playerId, playerIndex, amountMojos, coinId, height, atMs)` —
+единственное событие для реального депозита (в отличие от старой пары `DepositRequested`+
+`DepositConfirmed` — на чейне «запрос» и «подтверждение» неразличимы, монета уже подтверждена к
+моменту, когда чейнсвик вообще её показывает); `LedgerBook.creditOnChainDeposit` (новый, аддитивный
+метод) — кредитует немедленно, без промежуточного состояния. `GameEvent.WithdrawalConfirmedOnChain
+(requestId, coinId, height, atMs)` — эффект на движок идентичен старому `WithdrawalConfirmed`
+(эскроу уже списан при `WithdrawalRequested`), разница только в read-model (`coinId`/`height`
+публичны). Оба добавлены в `EventStore.decode`'s switch и получили золотые JSON-фикстуры
+(`server/src/test/resources/events/golden/{DepositConfirmedOnChain,WithdrawalConfirmedOnChain}.json`
++ соответствующие `Fixture`-записи в `EventStoreGoldenFixturesTest`) — по тем же «schema-version»
+правилам, что волна 3 ввела (§15.4); отдельной записи в `EventStore.TYPE_ALIASES` не потребовалось
+— это НОВЫЕ типы событий, не переименование существующих (алиас-таблица — только для переименований,
+см. её же javadoc).
+
+### 16.7 Тесты и реальные числа
+
+`mvn -s ~/.m2/settings-oss.xml -f pom.xml -pl engine,server -am clean verify`, 2026-09-26:
+`engine` — **6531, 0 упавших** (+1 — `LedgerBookTest#creditOnChainDepositCreditsImmediatelyAndCountsTowardSeasonDeposited`).
+`server` — **140, 0 упавших**: новый `scheduler.PlayOnChainTest` (11 — кэш `myDepositAddress`,
+недоступность чейнсвика, exactly-once депозита при повторном опросе того же `coinId`, неизвестный
+`playerIndex` не роняет поллер, депозит виден в `myLedger`, подтверждение/отказ вывода с
+рефандом, ретрай отправки после сбоя, реплей после `EngineRebuildService.rebuild()`, параллельные
+запросы на вывод никогда не уводят баланс в минус, параллельные кредиты одного и того же `coinId`
+применяются ровно один раз), `chain.ChainSvcClientImplTest` вырос на 8 (Р-53-методы, включая
+graceful-degradation на недоступность), `events.EventStoreGoldenFixturesTest` вырос на 2,
+`RpcValidationTest` — минус 3 старых депозитных amount-теста (self-report теперь безусловно
+недоступен, валидировать больше нечего), плюс `requestWithdrawalRejectsBelowMinimum` и
+`requestDepositIsPermanentlyRetiredEvenWhenDepositEnabledIsTrue` (нетто −1), `AdminReverseWithdrawalTest`/
+`AdminReverseDepositTest` — те же 6 тестов каждый, but adapted: withdrawal-фикстура теперь ожидает
+`REQUESTED` (не мгновенный fake-`CONFIRMED`), deposit-фикстура строится напрямую через
+`EventStore`/`EventApplier` (см. §16.5). Реактор целиком: **6671 тест, 0 упавших, 0 ошибок**,
+`BUILD SUCCESS`.
+
+Живой стенд (`herd-*`, `docker ps`) не тронут этим проходом (не входило в задачу — только `mvn
+verify`, никакого пересобранного образа/рестарта контейнеров); замечено (не являлось целью проверки)
+одно фоновое `401 Unauthorized` от реального `herd-chainsvc-1` в логах тестового прогона — фоновый
+`@Scheduled`-тик тестового Quarkus-приложения из другого тестового класса достучался до реального
+локального `localhost:8090` (Dev Services/тестовый профиль не переопределяет `HERD_CHAINSVC_URL`) с
+тестовым, не настоящим, токеном; чейнсвик корректно отверг запрос по 401, никакого состояния не
+изменилось — тот же класс фоновой не-детерминированности с реальными `@Scheduled`-тиками, что уже
+задокументирован в §13 (`BotRestartRecoveryTest`'s заметка про гонку с `@InjectMock`), не новая
+находка этого прохода.
+
+### 16.8 Не сделано в этом проходе (явно, по объёму задачи)
+
+- Вывод на адрес, отличный от адреса входа — не запрошено, потребовало бы правки `web/`/`contract.ts`.
+- Автоматическая сверка «зарезервированный, но не начисленный `coinId`» (крайне редкое окно крэша,
+  §16.3) — предложено оператору искать вручную, отдельный сервис не строился.
+- Верхний предел/backoff на «застрявший» вывод (вечно `queued`/`in_flight`) — не запрошено.
+- Контрактные JSON-фикстуры для `/v1/play/*` (см. врезку в начале §16) — появятся, когда
+  `chain/c2-svc/tests/contract_fixtures.rs` их напишет; `ChainSvcContractFixturesTest` явно
+  задокументирован как место, куда их добавить.

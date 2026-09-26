@@ -78,6 +78,15 @@ public final class Enums {
         /** Same task item, same reasoning, for {@code requestWithdrawal} (the task's "prefer
          *  disabling withdrawal too" guidance — it auto-confirms with no chain call, which would
          *  otherwise falsely claim a CAT left the game). */
-        WITHDRAWAL_UNAVAILABLE
+        WITHDRAWAL_UNAVAILABLE,
+        /** Р-53: {@code requestWithdrawal} rejects an amount below the (предложение, documented in
+         *  {@code GameService}) minimum withdrawal — additive, same situation as {@code
+         *  INVALID_AMOUNT} above. */
+        WITHDRAWAL_BELOW_MINIMUM,
+        /** Р-53: {@code myDepositAddress} could not reach chainsvc to derive/cache a brand-new
+         *  player's deposit address (never thrown once already cached — see {@code
+         *  PlayerDepositAddressRepository}). 503, like {@code DEPOSIT_VERIFICATION_UNAVAILABLE}/
+         *  {@code WITHDRAWAL_UNAVAILABLE} above — additive. */
+        CHAIN_SERVICE_UNAVAILABLE
     }
 }

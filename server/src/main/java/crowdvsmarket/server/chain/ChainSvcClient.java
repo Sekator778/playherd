@@ -45,6 +45,59 @@ public interface ChainSvcClient {
     record OracleRecordState(long seq, String state, Long height, String coinId) {
     }
 
+    // --- Р-53: real on-chain PLAY withdraw/deposit (chainsvc FIXED INTERFACE, /v1/play/*) ---
+
+    /** {@code POST /v1/play/withdrawals}'s {@code 202 {accepted:true}} — idempotent by
+     *  {@code requestId} per the FIXED INTERFACE, so {@code WithdrawalPollerService} retries a
+     *  submission it never confirmed the response of exactly the same way it submits a brand-new
+     *  one. */
+    record PlayWithdrawalSubmitResult(boolean accepted) {
+    }
+
+    /** {@code GET /v1/play/withdrawals/{requestId}}. {@code state} is one of
+     *  {@code "queued"|"in_flight"|"confirmed"|"failed"}; {@code coinId}/{@code height} are only
+     *  ever non-null once {@code state} is {@code "confirmed"}; {@code reason} is only ever
+     *  non-null once {@code state} is {@code "failed"}. */
+    record PlayWithdrawalStatus(String requestId, String state, String coinId, Long height, String reason) {
+    }
+
+    /** {@code POST /v1/play/deposit-address}'s response — {@code innerPuzzleHash}/{@code
+     *  catPuzzleHash} are cached alongside {@code address} ({@code
+     *  PlayerDepositAddressRepository}) for this server's own bookkeeping, even though {@code
+     *  myDepositAddress()} only ever hands the player {@code address} itself. */
+    record PlayDepositAddress(String address, String innerPuzzleHash, String catPuzzleHash) {
+    }
+
+    /** One item of {@code GET /v1/play/deposits}'s {@code deposits} array. */
+    record PlayDeposit(String coinId, int playerIndex, long amountMojos, long height) {
+    }
+
+    /** {@code GET /v1/play/deposits}'s full response — {@code tipHeight} is the next
+     *  {@code sinceHeight} {@code DepositPollerService} polls with, once every deposit in this
+     *  batch is fully processed (see that class's javadoc). */
+    record PlayDepositsResult(List<PlayDeposit> deposits, long tipHeight) {
+    }
+
+    /** {@code null} on a chainsvc/network failure — {@code GameService#requestWithdrawal}/{@code
+     *  WithdrawalPollerService} treat that as "not yet accepted, retry next tick", never an error
+     *  surfaced past the escrow debit that already happened (task: "never block the game on chain
+     *  confirmation"). */
+    PlayWithdrawalSubmitResult submitPlayWithdrawal(String requestId, String toAddress, long amountMojos);
+
+    /** {@code null} on a chainsvc/network failure — {@code WithdrawalPollerService} just retries
+     *  next tick, same "degrade gracefully" contract as {@link #oracleRecordStatus(long)}. */
+    PlayWithdrawalStatus playWithdrawalStatus(String requestId);
+
+    /** {@code null} on a chainsvc/network failure — {@code GameService#myDepositAddress} surfaces
+     *  {@link crowdvsmarket.server.dto.ApiException#chainServiceUnavailable()} in that case (unlike
+     *  most chainsvc reads, there is no cached fallback for a player whose address has genuinely
+     *  never been derived yet). */
+    PlayDepositAddress playDepositAddress(int playerIndex);
+
+    /** {@code null} on a chainsvc/network failure — {@code DepositPollerService} just retries next
+     *  tick with the same {@code sinceHeight} (never advances the cursor without a real response). */
+    PlayDepositsResult playDeposits(long sinceHeight);
+
     AuthVerifyResult authVerify(String address, String publicKey, String message, String signature);
 
     OracleRecordsResult oracleRecords(List<OracleRecord> records);

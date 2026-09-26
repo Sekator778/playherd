@@ -16,6 +16,8 @@ public class ServerMetaRepository {
 
     private static final String ORIGIN_MS_KEY = "origin_ms";
     private static final String ORACLE_SEQ_KEY = "oracle_seq";
+    private static final String NEXT_PLAYER_INDEX_KEY = "next_player_index";
+    private static final String DEPOSIT_POLL_SINCE_HEIGHT_KEY = "deposit_poll_since_height";
 
     @Inject
     Db db;
@@ -49,5 +51,38 @@ public class ServerMetaRepository {
             db.update(c, "UPDATE server_meta SET value = ? WHERE key = ?", Long.toString(current + n), ORACLE_SEQ_KEY);
             return first;
         });
+    }
+
+    /** Р-53: the next stable {@code playerIndex} a brand-new player row draws (chainsvc CAT
+     *  deposit-address derivation, see {@code V4__player_index.sql}) — same atomic
+     *  reserve-and-advance shape as {@link #reserveOracleSeqRange}, seeded by that migration to
+     *  continue right after every already-backfilled index. {@code registerOrTouchPlayer}/{@code
+     *  createBotPlayer} call this once per brand-new player, never for a returning one. */
+    public int reserveNextPlayerIndex() {
+        long next = db.tx(c -> {
+            db.update(c, "INSERT INTO server_meta (key, value) VALUES (?, '0') ON CONFLICT (key) DO NOTHING",
+                    NEXT_PLAYER_INDEX_KEY);
+            long current = Long.parseLong(db.queryOne(c, "SELECT value FROM server_meta WHERE key = ? FOR UPDATE",
+                    rs -> rs.getString("value"), NEXT_PLAYER_INDEX_KEY));
+            db.update(c, "UPDATE server_meta SET value = ? WHERE key = ?", Long.toString(current + 1),
+                    NEXT_PLAYER_INDEX_KEY);
+            return current;
+        });
+        return (int) next;
+    }
+
+    /** Р-53: the deposit poller's {@code sinceHeight} cursor (FIXED INTERFACE:
+     *  {@code GET /v1/play/deposits?sinceHeight=N}) — 0 on a server that has never polled, exactly
+     *  {@link #originMsOrInit}'s "insert once, read back unchanged" shape. {@code
+     *  DepositPollerService} advances it to chainsvc's own reported {@code tipHeight} after a fully
+     *  successful poll tick (see that class's javadoc for why "fully successful" matters here). */
+    public long depositPollSinceHeightOrInit() {
+        setIfAbsent(DEPOSIT_POLL_SINCE_HEIGHT_KEY, "0");
+        return Long.parseLong(get(DEPOSIT_POLL_SINCE_HEIGHT_KEY).orElseThrow());
+    }
+
+    public void advanceDepositPollSinceHeight(long newSinceHeight) {
+        db.tx(c -> db.update(c, "UPDATE server_meta SET value = ? WHERE key = ?",
+                Long.toString(newSinceHeight), DEPOSIT_POLL_SINCE_HEIGHT_KEY));
     }
 }

@@ -76,6 +76,57 @@ public class ChainSvcClientImpl implements ChainSvcClient {
         }
     }
 
+    // --- Р-53: real on-chain PLAY withdraw/deposit ---
+
+    @Override
+    public PlayWithdrawalSubmitResult submitPlayWithdrawal(String requestId, String toAddress, long amountMojos) {
+        try {
+            ChainSvcRestClient.PlayWithdrawalAcceptedResponse r = rest.submitPlayWithdrawal(bearerToken(),
+                    new ChainSvcRestClient.PlayWithdrawalRequest(requestId, toAddress, amountMojos));
+            return new PlayWithdrawalSubmitResult(r.accepted());
+        } catch (Exception e) {
+            LOG.warnf(e, "chainsvc /v1/play/withdrawals unreachable for requestId=%s — will retry", requestId);
+            return null;
+        }
+    }
+
+    @Override
+    public PlayWithdrawalStatus playWithdrawalStatus(String requestId) {
+        try {
+            ChainSvcRestClient.PlayWithdrawalStatusResponse r = rest.playWithdrawalStatus(bearerToken(), requestId);
+            return new PlayWithdrawalStatus(r.requestId(), r.state(), r.coinId(), r.height(), r.reason());
+        } catch (Exception e) {
+            LOG.debugf(e, "chainsvc /v1/play/withdrawals/%s unreachable", requestId);
+            return null;
+        }
+    }
+
+    @Override
+    public PlayDepositAddress playDepositAddress(int playerIndex) {
+        try {
+            ChainSvcRestClient.PlayDepositAddressResponse r = rest.playDepositAddress(bearerToken(),
+                    new ChainSvcRestClient.PlayDepositAddressRequest(playerIndex));
+            return new PlayDepositAddress(r.address(), r.innerPuzzleHash(), r.catPuzzleHash());
+        } catch (Exception e) {
+            LOG.warnf(e, "chainsvc /v1/play/deposit-address unreachable for playerIndex=%d", playerIndex);
+            return null;
+        }
+    }
+
+    @Override
+    public PlayDepositsResult playDeposits(long sinceHeight) {
+        try {
+            ChainSvcRestClient.PlayDepositsResponse r = rest.playDeposits(bearerToken(), sinceHeight);
+            List<PlayDeposit> deposits = r.deposits() == null ? List.of() : r.deposits().stream()
+                    .map(d -> new PlayDeposit(d.coinId(), d.playerIndex(), d.amountMojos(), d.height()))
+                    .toList();
+            return new PlayDepositsResult(deposits, r.tipHeight());
+        } catch (Exception e) {
+            LOG.debugf(e, "chainsvc /v1/play/deposits unreachable (sinceHeight=%d)", sinceHeight);
+            return null;
+        }
+    }
+
     @Override
     public boolean health() {
         try {

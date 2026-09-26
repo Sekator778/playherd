@@ -12,6 +12,8 @@ use c2_svc::app;
 use c2_svc::config::{Config, check_startup_auth_config};
 use c2_svc::oracle::chain_client::CoinsetChainClient;
 use c2_svc::oracle::publisher::{Publisher, TickFailureState};
+use c2_svc::play::deposit::DepositService;
+use c2_svc::play::withdrawal_publisher::WithdrawalPublisher;
 
 #[derive(Parser)]
 #[command(name = "c2-svc", about = "C2 chain service: auth/verify + oracle publisher (FIXED INTERFACE 3)")]
@@ -62,6 +64,30 @@ async fn main() -> Result<()> {
         tick_failure_threshold: config.tick_failure_threshold,
     });
 
+    // PLAY withdraw/deposit (Р-6, decision Р-53 2026-09-26): a separate
+    // `WithdrawalPublisher`/`DepositService`, each with their own
+    // `CoinsetChainClient` (cheap to construct again -- same pattern as the
+    // oracle `Publisher` above; no shared mutable state between them besides
+    // the chain itself and the operator's own key/data files, which are
+    // reloaded from disk on every use, never cached across these instances).
+    let withdrawal_publisher = Arc::new(WithdrawalPublisher {
+        data_dir: config.data_dir.clone(),
+        operator_name: config.operator_name.clone(),
+        push_enabled: config.push_enabled,
+        chain: CoinsetChainClient::new(config.coinset_base_url.clone()),
+        retry_backoff: config.retry_backoff,
+        max_retry_attempts: config.max_retry_attempts,
+        max_fee_mojos: config.max_fee_mojos,
+        fee_target_time_secs: 60,
+        queue_lock: tokio::sync::Mutex::new(()),
+    });
+    let deposit_service = Arc::new(DepositService {
+        data_dir: config.data_dir.clone(),
+        operator_name: config.operator_name.clone(),
+        chain: CoinsetChainClient::new(config.coinset_base_url.clone()),
+        registry_lock: tokio::sync::Mutex::new(()),
+    });
+
     // Task fix (`docs/research/chain_service.md` §11): "before accepting or
     // publishing anything" -- walk the oracle singleton lineage and
     // reconcile the local queue against it *before* any listener opens or
@@ -104,6 +130,25 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Background PLAY withdrawal publisher loop -- same tick shape as the
+    // oracle publisher's own loop above, independent `tokio::spawn` so a
+    // slow/stuck withdrawal batch can never delay oracle publishing (or vice
+    // versa); each has its own `queue_lock`, so they never contend either.
+    {
+        let withdrawal_publisher = Arc::clone(&withdrawal_publisher);
+        let tick = config.publisher_tick;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tick);
+            loop {
+                interval.tick().await;
+                match withdrawal_publisher.tick().await {
+                    Ok(outcome) => tracing::debug!(?outcome, "play withdrawal publisher tick"),
+                    Err(e) => tracing::error!("play withdrawal publisher tick failed: {e:#}"),
+                }
+            }
+        });
+    }
+
     // Separate background loop refreshing `operatorBalanceMojos` for
     // `GET /v1/oracle/status` (see `Publisher::balance_snapshot`'s doc
     // comment for the bug this fixes). Deliberately its own loop, not folded
@@ -129,7 +174,7 @@ async fn main() -> Result<()> {
     // `172.28.77.1,127.0.0.1` (see `config.rs::Config::bind_addrs`'s doc
     // comment). One listener + one `axum::serve` task per address, all
     // serving the same `Router` (cheap to `.clone()`, it's an `Arc` inside).
-    let router = app::router(publisher, config.svc_token.clone());
+    let router = app::router(publisher, withdrawal_publisher, deposit_service, config.svc_token.clone());
     let mut listeners = Vec::with_capacity(config.bind_addrs.len());
     for addr in &config.bind_addrs {
         let listener = tokio::net::TcpListener::bind((*addr, config.port))

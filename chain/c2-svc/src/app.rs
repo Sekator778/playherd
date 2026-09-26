@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::auth::{self, AuthVerifyRequest, AuthVerifyResponse};
@@ -22,24 +22,65 @@ use crate::oracle::publisher::Publisher;
 use crate::oracle::types::{
     OracleRecord, OracleRecordStatusResponse, OracleRecordsRequest, OracleRecordsResponse, OracleStatusResponse,
 };
+use crate::play::chain_client::PlayChainClient;
+use crate::play::deposit::DepositService;
+use crate::play::types::{
+    DepositAddressRequestDto, DepositAddressResponse, DepositsResponse, WithdrawalAcceptedResponse,
+    WithdrawalRequest, WithdrawalRequestDto, WithdrawalStatusResponse,
+};
+use crate::play::withdrawal_publisher::WithdrawalPublisher;
 use crate::service_auth::{SvcTokenState, require_bearer_token};
+
+/// Everything the PLAY withdraw/deposit routes need, bundled behind one
+/// `axum::extract::State` (Р-6, decision Р-53 2026-09-26) -- the oracle
+/// routes above keep taking `Arc<Publisher<C>>` directly (unchanged), this
+/// only adds a second, independent piece of router state alongside it (see
+/// `router`'s own doc comment for why `/health` still gets its own separate,
+/// unmerged state as before).
+struct PlayState<C: PlayChainClient> {
+    withdrawals: Arc<WithdrawalPublisher<C>>,
+    deposits: Arc<DepositService<C>>,
+}
+
+// Manual `Clone` (not `#[derive(Clone)]`): a derived impl would add a
+// spurious `C: Clone` bound on the whole struct even though only `Arc<...>`
+// is ever cloned here (a known limitation of derive on generic structs).
+impl<C: PlayChainClient> Clone for PlayState<C> {
+    fn clone(&self) -> Self {
+        Self { withdrawals: self.withdrawals.clone(), deposits: self.deposits.clone() }
+    }
+}
 
 /// FIXED INTERFACE (a): every `/v1/*` route requires
 /// `Authorization: Bearer <token>` (`service_auth::require_bearer_token`);
 /// `GET /health` never does -- it's registered on a separate router merged
 /// in *after* the protected one's `.layer()` call, so it never passes
 /// through that middleware at all.
-pub fn router<C>(publisher: Arc<Publisher<C>>, svc_token: Option<String>) -> Router
+pub fn router<C>(
+    publisher: Arc<Publisher<C>>,
+    withdrawal_publisher: Arc<WithdrawalPublisher<C>>,
+    deposit_service: Arc<DepositService<C>>,
+    svc_token: Option<String>,
+) -> Router
 where
-    C: ChainClient + 'static,
+    C: PlayChainClient + 'static,
 {
     let svc_token_state: SvcTokenState = Arc::new(svc_token);
-    let protected = Router::new()
+    let oracle_routes = Router::new()
         .route("/v1/auth/verify", post(auth_verify::<C>))
         .route("/v1/oracle/records", post(oracle_records::<C>))
         .route("/v1/oracle/records/:seq", get(oracle_record_status::<C>))
         .route("/v1/oracle/status", get(oracle_status::<C>))
-        .with_state(publisher.clone())
+        .with_state(publisher.clone());
+    let play_state = PlayState { withdrawals: withdrawal_publisher, deposits: deposit_service };
+    let play_routes = Router::new()
+        .route("/v1/play/withdrawals", post(play_withdrawals::<C>))
+        .route("/v1/play/withdrawals/:request_id", get(play_withdrawal_status::<C>))
+        .route("/v1/play/deposit-address", post(play_deposit_address::<C>))
+        .route("/v1/play/deposits", get(play_deposits::<C>))
+        .with_state(play_state);
+    let protected = oracle_routes
+        .merge(play_routes)
         .layer(axum::middleware::from_fn_with_state(svc_token_state, require_bearer_token));
 
     // Task fix (`docs/research/chain_service.md` §12): `/health` now reads
@@ -135,4 +176,50 @@ async fn oracle_status<C: ChainClient>(
     State(publisher): State<Arc<Publisher<C>>>,
 ) -> Result<Json<OracleStatusResponse>, AppError> {
     Ok(Json(publisher.status().await?))
+}
+
+// --- PLAY withdraw/deposit (Р-6, decision Р-53 2026-09-26) ------------------
+
+/// `POST /v1/play/withdrawals` -> `202 {accepted: true}` (idempotent by
+/// `requestId`, task's FIXED INTERFACE). Validates `toAddress`/`amountMojos`
+/// here (400 on failure), same split `oracle_records` uses for its own DTOs.
+async fn play_withdrawals<C: PlayChainClient>(
+    State(state): State<PlayState<C>>,
+    Json(req): Json<WithdrawalRequestDto>,
+) -> Result<(StatusCode, Json<WithdrawalAcceptedResponse>), AppError> {
+    let request = WithdrawalRequest::from_dto(&req).map_err(|reason| AppError(StatusCode::BAD_REQUEST, reason))?;
+    state.withdrawals.enqueue(request).await?;
+    Ok((StatusCode::ACCEPTED, Json(WithdrawalAcceptedResponse { accepted: true })))
+}
+
+/// `GET /v1/play/withdrawals/{requestId}`.
+async fn play_withdrawal_status<C: PlayChainClient>(
+    State(state): State<PlayState<C>>,
+    Path(request_id): Path<String>,
+) -> Result<Json<WithdrawalStatusResponse>, AppError> {
+    Ok(Json(state.withdrawals.status(&request_id)?))
+}
+
+/// `POST /v1/play/deposit-address` -> `{address, innerPuzzleHash,
+/// catPuzzleHash}` (derived deterministically; also durably registers this
+/// player index so `GET /v1/play/deposits` knows to scan it).
+async fn play_deposit_address<C: PlayChainClient>(
+    State(state): State<PlayState<C>>,
+    Json(req): Json<DepositAddressRequestDto>,
+) -> Result<Json<DepositAddressResponse>, AppError> {
+    Ok(Json(state.deposits.issue_address(req.player_index).await?))
+}
+
+#[derive(Deserialize)]
+struct DepositsQuery {
+    #[serde(rename = "sinceHeight", default)]
+    since_height: u32,
+}
+
+/// `GET /v1/play/deposits?sinceHeight=N` -> `{deposits: [...], tipHeight}`.
+async fn play_deposits<C: PlayChainClient>(
+    State(state): State<PlayState<C>>,
+    Query(query): Query<DepositsQuery>,
+) -> Result<Json<DepositsResponse>, AppError> {
+    Ok(Json(state.deposits.list_deposits(query.since_height).await?))
 }

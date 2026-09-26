@@ -174,6 +174,20 @@ class LedgerBookTest {
     }
 
     @Test
+    void creditOnChainDepositCreditsImmediatelyAndCountsTowardSeasonDeposited() {
+        // Р-53: unlike requestDeposit/confirmDeposit's two-step (above), a real on-chain deposit
+        // is already confirmed by the time it reaches the ledger — one call, immediate credit.
+        LedgerBook ledger = new LedgerBook();
+        ledger.ensureSeasonPack("alice", APRIL);
+
+        ledger.creditOnChainDeposit("alice", PlayAmount.ofWholePlay(400), APRIL);
+
+        assertThat(ledger.balance("alice")).isEqualTo(LedgerBook.STARTER_PACK.plus(PlayAmount.ofWholePlay(400)));
+        SeasonRecord record = ledger.seasonRecord("alice", Season.of(APRIL)).orElseThrow();
+        assertThat(record.deposited()).isEqualTo(PlayAmount.ofWholePlay(400));
+    }
+
+    @Test
     void failedDepositNeverCreditsBalance() {
         LedgerBook ledger = new LedgerBook();
         ledger.ensureSeasonPack("alice", APRIL);

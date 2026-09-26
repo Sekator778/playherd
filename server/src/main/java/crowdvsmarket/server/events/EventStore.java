@@ -94,6 +94,8 @@ public class EventStore {
                 case "DepositFailed" -> GameEvent.DepositFailed.class;
                 case "WithdrawalReversed" -> GameEvent.WithdrawalReversed.class;
                 case "DepositReversed" -> GameEvent.DepositReversed.class;
+                case "DepositConfirmedOnChain" -> GameEvent.DepositConfirmedOnChain.class;
+                case "WithdrawalConfirmedOnChain" -> GameEvent.WithdrawalConfirmedOnChain.class;
                 default -> throw new IllegalStateException("game_events row id=" + rowId
                         + " has unknown event_type: " + type
                         + (resolvedType.equals(type) ? "" : " (alias table pointed it at unknown type: " + resolvedType + ")"));

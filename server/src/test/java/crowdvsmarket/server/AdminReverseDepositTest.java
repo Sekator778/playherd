@@ -3,6 +3,14 @@ package crowdvsmarket.server;
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import crowdvsmarket.engine.ledger.PlayAmount;
+import crowdvsmarket.server.dto.Enums;
+import crowdvsmarket.server.dto.Ledger;
+import crowdvsmarket.server.events.EventApplier;
+import crowdvsmarket.server.events.EventStore;
+import crowdvsmarket.server.events.GameEvent;
+import crowdvsmarket.server.persistence.Db;
+import crowdvsmarket.server.persistence.WithdrawalDepositRepository;
 import crowdvsmarket.server.scheduler.EngineRebuildService;
 import crowdvsmarket.server.service.GameService;
 import io.quarkus.test.junit.QuarkusTest;
@@ -11,6 +19,7 @@ import io.quarkus.test.junit.TestProfile;
 import io.restassured.http.ContentType;
 import io.restassured.response.Response;
 import jakarta.inject.Inject;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -29,11 +38,16 @@ import org.junit.jupiter.api.Test;
  * LedgerCorrection}/{@code relatedRequestId} shape, see that class and {@code
  * crowdvsmarket.engine.ledger.LedgerBook#reverseDepositEffect}'s javadoc).
  *
- * <p>{@code gameService.requestDeposit} is disabled by default (task item 1's other half) —
- * needs {@link DepositEnabledProfile} so this class's fixture setup (creating a deposit request to
- * then reverse) keeps working; the reversal mechanism under test here is independent of whether
- * new deposits are currently allowed — which is exactly why the operator can still reverse the
- * historical d-2/d-4/d-7/d-10 rows even after this fix disables new ones.
+ * <p>Р-53 update: {@code gameService.requestDeposit} (the self-report RPC this reversal mechanism
+ * was originally built to clean up after) is now PERMANENTLY retired — see its own javadoc — so
+ * this class's fixtures can no longer be created through it. {@link #legacySelfReportedDeposit}
+ * reconstructs exactly the same historical event shape ({@code DepositRequested} +
+ * {@code DepositConfirmed}) directly through {@link EventStore}/{@link EventApplier}, the same
+ * primitives {@code GameService.requestDeposit} used before retirement — this class's whole point
+ * is the *reversal* mechanism for that now-frozen historical shape (the real d-2/d-4/d-7/d-10 fraud
+ * rows on the live stand), independent of whether the retired self-report entry point is still
+ * reachable from the API. {@link DepositEnabledProfile} is kept (harmless) though no longer load-
+ * bearing for the fixture helper itself.
  */
 @QuarkusTest
 @TestProfile(AdminReverseDepositTest.DepositEnabledProfile.class)
@@ -55,10 +69,47 @@ class AdminReverseDepositTest {
     @Inject
     EngineRebuildService engineRebuildService;
 
+    @Inject
+    EventStore eventStore;
+    @Inject
+    EventApplier eventApplier;
+    @Inject
+    Db db;
+    @Inject
+    WithdrawalDepositRepository withdrawalDeposits;
+
     private String signUpPlayer(String label) {
         long now = System.currentTimeMillis();
         String wallet = "txch1revdep" + label + UUID.randomUUID().toString().replace("-", "");
         return gameService.registerOrTouchPlayer(wallet, now).player().playerId();
+    }
+
+    /** See the class javadoc: replays exactly what the now-retired {@code GameService
+     *  .requestDeposit} used to do (self-report request, immediately auto-confirmed), so this
+     *  test class can still build the historical fixture shape its reversal tests exercise. */
+    private Ledger.DepositRequestDto legacySelfReportedDeposit(String playerId, String amount, long nowMs) {
+        PlayAmount amt = PlayAmount.fromMoney(new BigDecimal(amount));
+        GameEvent.DepositRequested requested = new GameEvent.DepositRequested(playerId, amt.mojos(), nowMs);
+        db.tx(c -> {
+            eventStore.append(c, requested, nowMs);
+            return null;
+        });
+        String requestId = (String) eventApplier.apply(requested);
+        db.tx(c -> {
+            withdrawalDeposits.insertDeposit(c, requestId, playerId, amt.mojos(), nowMs);
+            return null;
+        });
+        GameEvent.DepositConfirmed confirmed = new GameEvent.DepositConfirmed(requestId, nowMs);
+        db.tx(c -> {
+            eventStore.append(c, confirmed, nowMs);
+            return null;
+        });
+        eventApplier.apply(confirmed);
+        db.tx(c -> {
+            withdrawalDeposits.updateDepositState(c, requestId, Enums.DepositState.CONFIRMED);
+            return null;
+        });
+        return withdrawalDeposits.findDeposit(requestId).orElseThrow();
     }
 
     private Response callReverse(String requestId, String reason) {
@@ -80,7 +131,7 @@ class AdminReverseDepositTest {
     void reverseWithBlankReasonIsRejected() {
         String playerId = signUpPlayer("blank-reason");
         long now = System.currentTimeMillis();
-        var request = gameService.requestDeposit(playerId, "500.000", now);
+        var request = legacySelfReportedDeposit(playerId, "500.000", now);
 
         Response resp = callReverse(request.requestId(), "  ");
         assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
@@ -96,7 +147,7 @@ class AdminReverseDepositTest {
     void reverseUndoesTheDepositsEffectAndIsPublicallyListedWithReason() {
         String playerId = signUpPlayer("undo");
         long now = System.currentTimeMillis();
-        var request = gameService.requestDeposit(playerId, "5000000.000", now);
+        var request = legacySelfReportedDeposit(playerId, "5000000.000", now);
         assertThat(request.state().name()).isEqualTo("CONFIRMED");
 
         // the fraudulent deposit really did credit the balance, same as the live reproduction
@@ -138,7 +189,7 @@ class AdminReverseDepositTest {
     void reverseCannotBeAppliedTwiceForTheSameRequestId() {
         String playerId = signUpPlayer("twice");
         long now = System.currentTimeMillis();
-        var request = gameService.requestDeposit(playerId, "200.000", now);
+        var request = legacySelfReportedDeposit(playerId, "200.000", now);
 
         Response first = callReverse(request.requestId(), "first correction");
         assertThat(first.statusCode()).as(first.asString()).isEqualTo(200);
@@ -161,7 +212,7 @@ class AdminReverseDepositTest {
     void reversalSurvivesEngineRebuildReplay() {
         String playerId = signUpPlayer("rebuild-replay");
         long now = System.currentTimeMillis();
-        var request = gameService.requestDeposit(playerId, "750.000", now);
+        var request = legacySelfReportedDeposit(playerId, "750.000", now);
 
         String reason = "regression test: rebuild must replay DepositReversed";
         Response resp = callReverse(request.requestId(), reason);

@@ -34,6 +34,7 @@ import crowdvsmarket.server.dto.Home;
 import crowdvsmarket.server.dto.Identity;
 import crowdvsmarket.server.dto.Ledger;
 import crowdvsmarket.server.dto.Paging;
+import crowdvsmarket.server.dto.PlayChain;
 import crowdvsmarket.server.dto.Ratings;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.dto.ServerInfo;
@@ -47,6 +48,7 @@ import crowdvsmarket.server.persistence.WithdrawalDepositRepository;
 import crowdvsmarket.server.price.PriceService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
@@ -116,8 +118,21 @@ public class GameService {
     crowdvsmarket.server.chain.OracleStatusCache oracleStatusCache;
     @Inject
     crowdvsmarket.server.persistence.ServerMetaRepository serverMeta;
+    @Inject
+    ChainSvcClient chainSvc;
+    @Inject
+    crowdvsmarket.server.persistence.PlayerDepositAddressRepository depositAddresses;
+    @Inject
+    crowdvsmarket.server.persistence.DepositConfirmationRepository depositConfirmations;
 
     private static final BigDecimal ZERO_MONEY = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    private static final Logger LOG = Logger.getLogger(GameService.class);
+    /** Р-53: минимум для настоящего on-chain вывода (предложение — не зафиксировано в
+     *  docs/product/decisions.md; та же цифра, что {@code LedgerBook.MIN_STAKE}, но отдельная по
+     *  смыслу константа: одно — минимальная ставка, другое — минимальный вывод, у них нет причины
+     *  всегда совпадать, просто сегодня совпадают). Ниже {@code MIN_WITHDRAWAL} чейновая комиссия
+     *  батч-спенда чейнсвика могла бы съесть непропорционально большую долю выведенной суммы. */
+    private static final PlayAmount MIN_WITHDRAWAL = PlayAmount.ofWholePlay(100);
 
     /** See the class javadoc's "Locking" section. */
     private final java.util.concurrent.locks.ReadWriteLock engineLock =
@@ -216,8 +231,9 @@ public class GameService {
             if (isNew) {
                 playerId = UUID.randomUUID().toString();
                 String finalPlayerId = playerId;
+                int playerIndex = serverMeta.reserveNextPlayerIndex();
                 db.tx(c -> {
-                    players.insert(c, finalPlayerId, walletAddress, null, false, null, nowMs);
+                    players.insert(c, finalPlayerId, walletAddress, null, false, null, playerIndex, nowMs);
                     return null;
                 });
             } else {
@@ -240,8 +256,9 @@ public class GameService {
         try {
             String playerId = "bot-" + strategy.toLowerCase(java.util.Locale.ROOT) + "-" + UUID.randomUUID();
             String walletAddress = "txbot1" + playerId.replace("-", "").substring(0, Math.min(40, playerId.length()));
+            int playerIndex = serverMeta.reserveNextPlayerIndex();
             db.tx(c -> {
-                players.insert(c, playerId, walletAddress, nickname, true, strategy, nowMs);
+                players.insert(c, playerId, walletAddress, nickname, true, strategy, playerIndex, nowMs);
                 return null;
             });
             persist(new GameEvent.PlayerRegistered(playerId, nowMs), nowMs);
@@ -800,19 +817,48 @@ public class GameService {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Withdraw / deposit (Р-6) — OnChainWalletPort stub: predложение. Task item 1 (BLOCKER
-    // security fix, docs/reviews/2026-09-26-independent-critique.md): both used to auto-confirm
-    // immediately with zero on-chain check, so requestDeposit credited any self-reported amount
-    // (live-reproduced: 5,000,000 fake PLAY minted in ten seconds) and requestWithdrawal falsely
-    // claimed a CAT left the game. Real CAT bridging is out of scope (no such endpoint in FIXED
-    // INTERFACE 3) and gated on a decision pending with Alex (Р-6) — until it exists, both are
-    // disabled by default (herd.deposit.enabled / herd.withdrawal.enabled, GameConfig), rejecting
-    // every new request outright rather than crediting/debiting something false. See
-    // docs/research/server_design.md "Withdraw / deposit" for the full reasoning and the operator
-    // reversal path for the deposits that were fraudulently confirmed before this fix
-    // (reverseDeposit below).
+    // Withdraw / deposit (Р-6/Р-53) — real on-chain PLAY, against chainsvc's FIXED INTERFACE
+    // (POST /v1/play/withdrawals, GET /v1/play/withdrawals/{requestId},
+    // POST /v1/play/deposit-address, GET /v1/play/deposits — docs/research/server_design.md).
+    //
+    // History: task item 1 (BLOCKER security fix, docs/reviews/2026-09-26-independent-critique.md)
+    // found both auto-confirmed immediately with zero on-chain check — requestDeposit credited any
+    // self-reported amount (live-reproduced: 5,000,000 fake PLAY minted in ten seconds) and
+    // requestWithdrawal falsely claimed a CAT left the game — and disabled both behind
+    // herd.deposit.enabled/herd.withdrawal.enabled (GameConfig) until real chain bridging existed.
+    // Р-53 (Alex, 2026-09-26, docs/product/decisions.md) is that real bridging, built against the
+    // FIXED INTERFACE above: requestWithdrawal now escrows + submits to chainsvc for real, and
+    // deposits are detected automatically by DepositPollerService once a player sends PLAY to their
+    // own myDepositAddress() — see WithdrawalPollerService/DepositPollerService for the two
+    // scheduled halves of this. The self-report requestDeposit RPC is PERMANENTLY retired (see its
+    // own javadoc below) rather than re-enabled by herd.deposit.enabled, which now gates only the
+    // real address/poller path — turning real deposits on must never simultaneously reopen the
+    // self-report fraud vector task item 1 closed. See docs/research/server_design.md "Real PLAY
+    // withdraw/deposit" for the full reasoning and the operator reversal path (reverseDeposit below)
+    // for the deposits that were fraudulently confirmed before task item 1's fix.
     // ---------------------------------------------------------------------------------------
 
+    /**
+     * Validates (positive, {@code >=} {@link #MIN_WITHDRAWAL}, {@code <=} balance), escrows the
+     * amount (same {@code WithdrawalRequested} event/engine effect as before Р-53 — the debit is
+     * immediate and unconditional, exactly as it always was), then submits the request to chainsvc.
+     * The destination address is always {@code playerId}'s own registered wallet address (Р-57:
+     * player identity IS the address they signed in with) — there is no "withdraw to a different
+     * address" input, so a compromised session can never redirect a withdrawal to an attacker's
+     * address; contract.ts's {@code requestWithdrawal(amount)} shape (no address parameter) needs
+     * no change for this.
+     *
+     * <p>The chainsvc submission itself is best-effort and never throws back to the caller: if it
+     * fails (chainsvc down, timeout, …) the request stays {@code REQUESTED}/not-yet-submitted, and
+     * {@link crowdvsmarket.server.scheduler.WithdrawalPollerService} retries submission on its next
+     * tick (the FIXED INTERFACE documents the submit endpoint as "idempotent by requestId" for
+     * exactly this reason — a retry after an actually-successful-but-unobserved attempt is always
+     * safe). The same poller also polls {@code GET /v1/play/withdrawals/{requestId}} for every
+     * already-submitted, not-yet-terminal request and drives it to
+     * {@link #confirmWithdrawalOnChain}/{@link #failWithdrawalOnChain} — this method itself never
+     * blocks on, or even waits for, chain confirmation (task: "never block the game on chain
+     * confirmation", the same discipline {@code OraclePublisherService} already follows).
+     */
     public Ledger.WithdrawalRequestDto requestWithdrawal(String playerId, String amount, long nowMs) {
         if (!config.withdrawalEnabled()) {
             throw ApiException.withdrawalUnavailable();
@@ -832,12 +878,24 @@ public class GameService {
         if (!amt.isPositive()) {
             throw ApiException.invalidAmount("withdrawal amount must be positive: " + amount);
         }
+        // Р-53: below-minimum is a NEW application-layer guard (like the positive-amount check
+        // above), not an engine-level one — see LedgerBook.requestWithdrawal's own comment on why a
+        // brand-new command's validation belongs here, never inside the method replay also calls.
+        if (amt.compareTo(MIN_WITHDRAWAL) < 0) {
+            throw ApiException.withdrawalBelowMinimum(
+                    "withdrawal " + amt + " is below the minimum " + MIN_WITHDRAWAL);
+        }
+        String requestId;
+        String toAddress;
         engineLock.writeLock().lock();
         try {
             PlayAmount balance = hub.ledger().balance(playerId);
             if (amt.compareTo(balance) > 0) {
                 throw ApiException.withdrawalExceedsBalance("withdrawal " + amt + " exceeds balance " + balance);
             }
+            toAddress = players.byId(playerId)
+                    .orElseThrow(() -> ApiException.notFound("unknown player " + playerId))
+                    .walletAddress();
             GameEvent.WithdrawalRequested event = new GameEvent.WithdrawalRequested(playerId, amt.mojos(), nowMs);
             persist(event, nowMs);
             // LedgerBook assigns its own "w-N" id inside requestWithdrawal (a single counter shared
@@ -845,26 +903,76 @@ public class GameService {
             // minting a separate one, precisely so replaying this same event later (same call, same
             // position in the event order) reproduces the identical id deterministically; see
             // GameEvent.WithdrawalRequested's javadoc and EventApplier's WithdrawalRequested case.
-            String requestId = (String) eventApplier.apply(event);
+            requestId = (String) eventApplier.apply(event);
+            String finalRequestId = requestId;
+            String finalToAddress = toAddress;
             db.tx(c -> {
-                withdrawalDeposits.insertWithdrawal(c, requestId, playerId, amt.mojos(), nowMs);
+                withdrawalDeposits.insertWithdrawal(c, finalRequestId, playerId, amt.mojos(), finalToAddress, nowMs);
                 return null;
             });
-            confirmWithdrawalNow(requestId, nowMs);
-            return withdrawalDeposits.findWithdrawal(requestId).orElseThrow();
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+        submitWithdrawalToChain(requestId, toAddress, amt.mojos(), nowMs);
+        return withdrawalDeposits.findWithdrawal(requestId).orElseThrow();
+    }
+
+    /** Best-effort {@code POST /v1/play/withdrawals} — outside {@link #engineLock} on purpose (a
+     *  network call has no business holding the in-memory engine lock), and never lets a failure
+     *  propagate: the escrow debit already happened and must stand regardless, per the class-level
+     *  javadoc's "never block the game on chain confirmation". {@code
+     *  WithdrawalPollerService.retrySubmissions} is the safety net for a failure here. */
+    private void submitWithdrawalToChain(String requestId, String toAddress, long amountMojos, long nowMs) {
+        try {
+            ChainSvcClient.PlayWithdrawalSubmitResult result =
+                    chainSvc.submitPlayWithdrawal(requestId, toAddress, amountMojos);
+            if (result != null && result.accepted()) {
+                withdrawalDeposits.markWithdrawalSubmitted(requestId, nowMs);
+            }
+        } catch (Exception e) {
+            LOG.warnf(e, "chainsvc withdrawal submit failed for %s — poller will retry", requestId);
+        }
+    }
+
+    /** Р-53: {@code WithdrawalPollerService}'s entry point once {@code GET
+     *  /v1/play/withdrawals/{requestId}} reports {@code state="confirmed"} — persists {@code
+     *  WithdrawalConfirmedOnChain} (engine effect: closes out the request, same as the old {@code
+     *  WithdrawalConfirmed} — the escrow debit already happened at request time) and makes {@code
+     *  coinId}/{@code height} public in the player's own withdrawal view (task requirement). */
+    public void confirmWithdrawalOnChain(String requestId, String coinId, long height, long nowMs) {
+        engineLock.writeLock().lock();
+        try {
+            GameEvent.WithdrawalConfirmedOnChain event =
+                    new GameEvent.WithdrawalConfirmedOnChain(requestId, coinId, height, nowMs);
+            persist(event, nowMs);
+            eventApplier.apply(event);
+            db.tx(c -> {
+                withdrawalDeposits.markWithdrawalConfirmedOnChain(c, requestId, coinId, height, nowMs);
+                return null;
+            });
         } finally {
             engineLock.writeLock().unlock();
         }
     }
 
-    private void confirmWithdrawalNow(String requestId, long nowMs) {
-        GameEvent.WithdrawalConfirmed event = new GameEvent.WithdrawalConfirmed(requestId, nowMs);
-        persist(event, nowMs);
-        eventApplier.apply(event);
-        db.tx(c -> {
-            withdrawalDeposits.updateWithdrawalState(c, requestId, Enums.WithdrawalState.CONFIRMED);
-            return null;
-        });
+    /** Р-53: {@code WithdrawalPollerService}'s entry point once {@code GET
+     *  /v1/play/withdrawals/{requestId}} reports {@code state="failed"} — reuses the pre-existing
+     *  {@code WithdrawalFailed} event (its {@code LedgerBook.failWithdrawal} effect, crediting back
+     *  the escrowed amount, needs no {@code coinId}/{@code height}), recording {@code reason} only
+     *  in the read model. */
+    public void failWithdrawalOnChain(String requestId, String reason, long nowMs) {
+        engineLock.writeLock().lock();
+        try {
+            GameEvent.WithdrawalFailed event = new GameEvent.WithdrawalFailed(requestId, nowMs);
+            persist(event, nowMs);
+            eventApplier.apply(event);
+            db.tx(c -> {
+                withdrawalDeposits.markWithdrawalFailed(c, requestId, reason, nowMs);
+                return null;
+            });
+        } finally {
+            engineLock.writeLock().unlock();
+        }
     }
 
     /** Предложение: {@code requestId} is otherwise a small guessable sequential counter
@@ -880,47 +988,24 @@ public class GameService {
         return dto;
     }
 
+    /**
+     * Р-53: PERMANENTLY retired — see the class-level "Withdraw / deposit" note above for why
+     * {@code herd.deposit.enabled} must never re-enable this specific RPC. Self-reporting "I sent
+     * PLAY, please credit me" with zero on-chain proof was exactly task item 1's fraud vector
+     * (live-reproduced: 5,000,000 fake PLAY minted in ten seconds via this method); real deposits
+     * are now detected automatically by {@link crowdvsmarket.server.scheduler.DepositPollerService}
+     * once a player sends PLAY to their own {@link #myDepositAddress}. contract.ts still declares
+     * {@code requestDeposit(amount)} and {@code web/} still calls it (neither touched by this
+     * change) — every call now simply gets the same {@code DEPOSIT_VERIFICATION_UNAVAILABLE}/503 a
+     * disabled server always gave, unconditionally, explaining the real path to use instead.
+     */
     public Ledger.DepositRequestDto requestDeposit(String playerId, String amount, long nowMs) {
-        if (!config.depositEnabled()) {
-            throw ApiException.depositVerificationUnavailable();
-        }
-        PlayAmount amt;
-        try {
-            amt = PlayAmount.fromMoney(new BigDecimal(amount));
-        } catch (Exception e) {
-            throw ApiException.badRequest("invalid amount: " + amount);
-        }
-        // Wave-2 security fix — same reasoning/enforcement point as requestWithdrawal above.
-        if (!amt.isPositive()) {
-            throw ApiException.invalidAmount("deposit amount must be positive: " + amount);
-        }
-        engineLock.writeLock().lock();
-        try {
-            GameEvent.DepositRequested event = new GameEvent.DepositRequested(playerId, amt.mojos(), nowMs);
-            persist(event, nowMs);
-            String requestId = (String) eventApplier.apply(event); // same LedgerBook-id reuse as requestWithdrawal
-            db.tx(c -> {
-                withdrawalDeposits.insertDeposit(c, requestId, playerId, amt.mojos(), nowMs);
-                return null;
-            });
-            confirmDepositNow(requestId, nowMs);
-            return withdrawalDeposits.findDeposit(requestId).orElseThrow();
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        throw ApiException.depositVerificationUnavailable();
     }
 
-    private void confirmDepositNow(String requestId, long nowMs) {
-        GameEvent.DepositConfirmed event = new GameEvent.DepositConfirmed(requestId, nowMs);
-        persist(event, nowMs);
-        eventApplier.apply(event);
-        db.tx(c -> {
-            withdrawalDeposits.updateDepositState(c, requestId, Enums.DepositState.CONFIRMED);
-            return null;
-        });
-    }
-
-    /** Same ownership note as {@link #withdrawal}. */
+    /** Same ownership note as {@link #withdrawal}. Still live (unlike {@link #requestDeposit}) —
+     *  needed to look up the pre-Р-53 self-reported rows an operator may still need to review/
+     *  reverse ({@link #reverseDeposit}). */
     public Ledger.DepositRequestDto deposit(String requestingPlayerId, String requestId) {
         Ledger.DepositRequestDto dto = withdrawalDeposits.findDeposit(requestId)
                 .orElseThrow(() -> ApiException.notFound("unknown deposit request " + requestId));
@@ -928,6 +1013,72 @@ public class GameService {
             throw ApiException.notFound("unknown deposit request " + requestId);
         }
         return dto;
+    }
+
+    /**
+     * Р-53: {@code myDepositAddress()} — this player's chainsvc-derived PLAY CAT deposit address,
+     * cached ({@link crowdvsmarket.server.persistence.PlayerDepositAddressRepository}) after the
+     * first successful {@code POST /v1/play/deposit-address} call, and never re-derived after that
+     * (the address is deterministic given the player's stable {@code playerIndex} — see
+     * {@code V4__player_index.sql}). Gated by {@code herd.deposit.enabled} like the rest of the
+     * real deposit path (the deposit poller only runs while it is on, so handing out an address
+     * nothing will ever watch would be misleading).
+     */
+    public PlayChain.DepositAddressDto myDepositAddress(String playerId) {
+        if (!config.depositEnabled()) {
+            throw ApiException.depositVerificationUnavailable();
+        }
+        Optional<crowdvsmarket.server.persistence.PlayerDepositAddressRepository.Row> cached =
+                depositAddresses.find(playerId);
+        if (cached.isPresent()) {
+            return new PlayChain.DepositAddressDto(cached.get().address());
+        }
+        int playerIndex = players.byId(playerId)
+                .orElseThrow(() -> ApiException.notFound("unknown player " + playerId))
+                .playerIndex();
+        ChainSvcClient.PlayDepositAddress remote = chainSvc.playDepositAddress(playerIndex);
+        if (remote == null) {
+            throw ApiException.chainServiceUnavailable();
+        }
+        long now = System.currentTimeMillis();
+        db.tx(c -> {
+            depositAddresses.insert(c, playerId, remote.address(), remote.innerPuzzleHash(), remote.catPuzzleHash(), now);
+            return null;
+        });
+        return new PlayChain.DepositAddressDto(remote.address());
+    }
+
+    /**
+     * Р-53: {@link crowdvsmarket.server.scheduler.DepositPollerService}'s entry point for one
+     * chainsvc-reported deposit coin. Reserves {@code coinId} in {@code deposit_confirmations}
+     * FIRST, crediting the balance only if that reservation is the one that actually claimed it —
+     * see that repository's javadoc for why this ordering (rather than crediting first) is the
+     * deliberate, documented trade-off for a ledger that treats "never mint extra PLAY" as the
+     * paramount invariant (task items 1/wave-2's exact class of CRITICAL bug): a crash between the
+     * two steps below can strand a coin reserved-but-uncredited (fixable by hand, an operator can
+     * look for a {@code deposit_confirmations} row with no matching {@code DEPOSIT} ledger entry),
+     * never double-credited.
+     *
+     * @return {@code true} if this call is the one that credited the deposit; {@code false} if
+     *         {@code coinId} was already credited by an earlier call (not an error — chainsvc can
+     *         legitimately re-report the same coin across overlapping {@code sinceHeight} windows)
+     */
+    public boolean creditOnChainDeposit(String playerId, int playerIndex, PlayAmount amount, String coinId,
+                                         long height, long nowMs) {
+        boolean reserved = depositConfirmations.tryReserve(coinId, playerId, playerIndex, amount.mojos(), height, nowMs);
+        if (!reserved) {
+            return false;
+        }
+        engineLock.writeLock().lock();
+        try {
+            GameEvent.DepositConfirmedOnChain event =
+                    new GameEvent.DepositConfirmedOnChain(playerId, playerIndex, amount.mojos(), coinId, height, nowMs);
+            persist(event, nowMs);
+            eventApplier.apply(event);
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+        return true;
     }
 
     // ---------------------------------------------------------------------------------------

@@ -10,8 +10,19 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# Р-55: build-time WalletConnect projectId (`wallet/walletConnect.ts`'s
+# `getWalletConnectProjectId`) — optional, empty until Alex registers one with Reown Cloud
+# (outbound registrations are only ever made with his own go-ahead, `CLAUDE.md`). Left unset here
+# on purpose: `docker-compose.yml`'s `web` service has no matching `build.args:` entry yet (out of
+# this file's own assigned paths) — passing `--build-arg VITE_WALLETCONNECT_PROJECT_ID=<id>` (or
+# adding that `args:` line once someone edits docker-compose.yml) is the build-time route once a
+# projectId exists. Until then, `ServerInfoDto.walletConnectProjectId` (a runtime override from
+# `server/`, once that field exists there — see contract.ts's own doc comment) reaches an already
+# -built image without a rebuild at all, which is the whole reason that override exists.
+ARG VITE_WALLETCONNECT_PROJECT_ID=""
 COPY . .
 ENV VITE_API_MODE=real
+ENV VITE_WALLETCONNECT_PROJECT_ID=${VITE_WALLETCONNECT_PROJECT_ID}
 RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime

@@ -13,8 +13,9 @@
  * challenge/verify sign-in flow) are marked "предложение" and cite the research file they come
  * from, per this project's rule that non-sourced technical choices must be flagged.
  *
- * Sources: docs/product/decisions.md (Р-1…Р-35), docs/research/round_engine_design.md,
- * docs/research/week1_wallet_auth.md, docs/product/ux_walkthrough.md.
+ * Sources: docs/product/decisions.md (Р-1…Р-57), docs/research/round_engine_design.md,
+ * docs/research/week1_wallet_auth.md (§4 for the challenge/verify flow, "Реализация" section for
+ * the real WalletConnect/Sage wiring — Р-55), docs/product/ux_walkthrough.md.
  */
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,14 @@ export type RoundId = string;
 export const STARTER_PACK_PLAY: PlayAmountStr = "10000.000";
 /** LedgerBook.MIN_STAKE (Р-12) — the bet slip's minimum-stake validation. */
 export const MIN_STAKE_PLAY: PlayAmountStr = "100.000";
+/** `GameService.MIN_WITHDRAWAL` (Р-53, `server/`'s own "предложение" — not in decisions.md;
+ *  verified against its source 2026-09-26) — below this, chainsvc's batch-spend fee could eat a
+ *  disproportionate share of the withdrawn amount. Same number as `MIN_STAKE_PLAY` today by
+ *  coincidence, not by rule — kept as its own constant since the two have no reason to always
+ *  match. Client-side-only check (`WalletPage.tsx`'s withdraw form); the server enforces it for
+ *  real (`ApiErrorCode.WITHDRAWAL_BELOW_MINIMUM`, additive — not in this file's `ApiErrorCode`
+ *  union, same situation as every other server-only code documented there). */
+export const MIN_WITHDRAWAL_PLAY: PlayAmountStr = "100.000";
 /** Leverage.MIN — the bet slip's leverage slider lower bound (Р-33). */
 export const LEVERAGE_MIN: Leverage = 2;
 /** Leverage.MAX — the bet slip's leverage slider upper bound (Р-33). */
@@ -120,11 +129,15 @@ export interface ProfileRoundEntryDto {
 }
 
 // ---------------------------------------------------------------------------
-// Sign-in (Р-4; docs/research/week1_wallet_auth.md §4's challenge/verify flow).
-// Until Alex registers a Reown/WalletConnect projectId, the shipped `Api` implementation is a
-// mock that fabricates a testnet-looking address/signature locally instead of calling Sage —
-// these types are still the real contract the mock and the eventual real backend both honor,
-// so no UI code changes when the mock is swapped for the real thing.
+// Sign-in (Р-4; docs/research/week1_wallet_auth.md §4's challenge/verify flow). Same shape for
+// both real routes an app build can offer at once (`ConnectWalletModal.tsx`): the browser test
+// wallet (Р-45, `wallet/testWallet.ts`, always available on this local stand) and real Sage over
+// WalletConnect (Р-55, `wallet/walletConnect.ts`, gated on a Reown `projectId` existing —
+// build-time `VITE_WALLETCONNECT_PROJECT_ID` or `ServerInfoDto.walletConnectProjectId` at
+// runtime; "Coming soon" in the UI until one does). `MockApi` fabricates a testnet-looking
+// address/signature locally instead of verifying a real one — these types are still the real
+// contract every implementation honors, so no UI code changes when one `Api` is swapped for
+// another.
 // ---------------------------------------------------------------------------
 
 export interface AuthChallengeRequest {
@@ -409,27 +422,73 @@ export interface LedgerEntryDto {
   atMs: EpochMs;
 }
 
-/** WithdrawalState.java: requested → confirmed | failed (Р-6). */
+/**
+ * WithdrawalState — the ledger-level outcome of a real on-chain withdrawal (Р-53), unchanged in
+ * shape from before Р-53 (`server/`'s `Enums.WithdrawalState`, verified against its own source
+ * 2026-09-26 rather than assumed): `REQUESTED` the instant the amount is escrowed (debited),
+ * whether or not chainsvc has even accepted the submission yet; `CONFIRMED`/`FAILED` only once
+ * the server's `WithdrawalPollerService` (task's FIXED INTERFACE, chainsvc) observes the
+ * withdrawal confirmed/failed on testnet11. The finer-grained "queued"/"in_flight" progress the
+ * task's UI item asks for lives in `chainState` below, not here — `state` alone stays
+ * `REQUESTED` for that whole window.
+ */
 export type WithdrawalState = "REQUESTED" | "CONFIRMED" | "FAILED";
-/** DepositState.java: requested → confirmed | failed (Р-6). */
-export type DepositState = "REQUESTED" | "CONFIRMED" | "FAILED";
 
-/** WithdrawalRequest.java — balance is already debited (escrowed) at REQUESTED (§4.8). */
+/**
+ * chainsvc's own withdrawal status word (task's FIXED INTERFACE:
+ * `GET /v1/play/withdrawals/{requestId}` → `state: "queued"|"in_flight"|"confirmed"|"failed"`),
+ * mirrored into `WithdrawalRequestDto.chainState` verbatim while the coarser `WithdrawalState`
+ * above is still `REQUESTED` — this is where a `QUEUED`/`IN_FLIGHT` distinction actually comes
+ * from. Plus `"submitted"`: the server's own placeholder the instant its `POST
+ * /v1/play/withdrawals` call is accepted but not yet polled once
+ * (`WithdrawalDepositRepository.markWithdrawalSubmitted`, verified against `server/` 2026-09-26).
+ * `null` before even that (the synchronous submit attempt inside `requestWithdrawal` hasn't
+ * succeeded yet — chainsvc was down/timed out; `WithdrawalPollerService`'s `retrySubmissions` is
+ * the retry path, task: "durable queue").
+ */
+export type WithdrawalChainState = "submitted" | "queued" | "in_flight" | "confirmed" | "failed";
+
+/**
+ * WithdrawalRequest.java — balance is already debited (escrowed) the instant this is created
+ * (`state === "REQUESTED"`), regardless of `chainState`. `toAddress` is always the player's own
+ * registered address (Р-57 — never a free-form destination the player types in; the withdraw
+ * form only shows it, read-only, per `ux_spec.md` §8). `coinId`/`height` are set once
+ * `state === "CONFIRMED"`; `failureReason` only once `state === "FAILED"` — no public testnet11
+ * block explorer is reliably up (`docs/research/week1_testnet_results.md`: spacescan.io 504/403,
+ * coinset.org has no per-network human-readable page), so the UI shows `coinId`/`height` as plain
+ * reference text, not a link. Verified field-for-field against `server/`'s
+ * `Ledger.WithdrawalRequestDto`/`WithdrawalDepositRepository` 2026-09-26 (they were built
+ * concurrently with this file by a different agent working the same task) rather than guessed.
+ */
 export interface WithdrawalRequestDto {
   requestId: string;
   playerId: string;
   amount: PlayAmountStr;
   state: WithdrawalState;
   requestedAtMs: EpochMs;
+  toAddress: string;
+  chainState: WithdrawalChainState | null;
+  coinId: string | null;
+  height: number | null;
+  failureReason: string | null;
 }
 
-/** DepositRequest.java — nothing is credited until CONFIRMED. */
-export interface DepositRequestDto {
-  requestId: string;
-  playerId: string;
-  amount: PlayAmountStr;
-  state: DepositState;
-  requestedAtMs: EpochMs;
+/**
+ * `POST /v1/play/deposit-address` (task's FIXED INTERFACE, chainsvc), proxied by the server for
+ * the signed-in player (`playerIndex` is a server-side/chain concern — never sent to or derived
+ * by the UI, which treats `address` as opaque). Replaces the old self-reported
+ * `requestDeposit(amount)`/`deposit(requestId)` flow entirely (Р-53's blocker fix, independent
+ * critique 2026-09-26: that flow credited any typed-in amount with zero on-chain check — "5,000,000
+ * fake PLAY minted in ten seconds" — and is not coming back in any form). A deposit is no longer
+ * something the player "requests": they send PLAY from their own wallet to this address, and the
+ * server credits it automatically once chainsvc reports it confirmed
+ * (`GET /v1/play/deposits?sinceHeight=N`) — the UI only has to show the address and let
+ * `myAccount()`/`myLedger()` polling (`ux_spec.md` §8) reveal the resulting `DEPOSIT` ledger entry
+ * once it lands; there is no intermediate "pending" state to poll for a specific deposit (chainsvc
+ * only reports already-confirmed coins).
+ */
+export interface DepositAddressDto {
+  address: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -542,6 +601,18 @@ export interface ServerInfoDto {
     operatorBalanceMojos: string | null;
   };
   serverTimeMs: EpochMs;
+  /**
+   * Additive (task item 2, Р-55): a Reown/WalletConnect `projectId` set on the SERVER (env var),
+   * overriding this build's own `VITE_WALLETCONNECT_PROJECT_ID` at runtime — lets Alex's Reown
+   * registration reach a Docker image already built without it, no web rebuild/redeploy needed.
+   * Undefined/empty means "no runtime override, fall back to the build-time env var" (
+   * `wallet/walletConnect.ts`'s `getWalletConnectProjectId`), not "WalletConnect unavailable" —
+   * only absence of BOTH means that. Note for whoever next touches `server/`: this field does not
+   * exist there yet (no `server/` change was made by this task's web agent, out of its assigned
+   * paths) — add `HERD_WALLETCONNECT_PROJECT_ID` (or similar) to `GameConfig`/`serverInfo` to wire
+   * it up; until then this stays build-time-only, exactly as this field's own doc predicts.
+   */
+  walletConnectProjectId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -631,10 +702,16 @@ export interface Api {
   myAccount(): Promise<PlayerAccountDto>;
   mySeasonRecord(season?: SeasonId): Promise<SeasonRecordDto>;
   myLedger(params?: PageParams): Promise<Page<LedgerEntryDto>>;
+  /** Real on-chain withdrawal (Р-53) — `amount` only; the destination is always the caller's own
+   *  registered address (Р-57), never a parameter. */
   requestWithdrawal(amount: PlayAmountStr): Promise<WithdrawalRequestDto>;
+  /** Poll this with the `requestId` from {@link requestWithdrawal} until `state` is `CONFIRMED`
+   *  or `FAILED` (`ux_spec.md` §8). */
   withdrawal(requestId: string): Promise<WithdrawalRequestDto>;
-  requestDeposit(amount: PlayAmountStr): Promise<DepositRequestDto>;
-  deposit(requestId: string): Promise<DepositRequestDto>;
+  /** The signed-in player's dedicated deposit address (Р-53) — stable for as long as they're the
+   *  same player (task's FIXED INTERFACE derives it from a fixed `playerIndex`), so the UI can
+   *  cache it for the session instead of re-fetching on every render. */
+  myDepositAddress(): Promise<DepositAddressDto>;
 
   // --- crowd account (Р-5, Р-14, Р-17, Р-25, Р-26) ---
   crowdAccount(): Promise<CrowdAccountDto>;
