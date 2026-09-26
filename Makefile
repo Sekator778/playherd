@@ -33,7 +33,7 @@ ORACLE_LAUNCHER ?= c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cde
 .PHONY: help check build test \
         test-java build-java test-chain lint-chain build-chain \
         web-deps test-web build-web apk \
-        stand-up stand-down stand-status stand-logs tunnel e2e verify-oracle
+        stand-up stand-down stand-status stand-logs tunnel tunnel-up tunnel-url tunnel-down e2e verify-oracle
 
 help: ## list targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -95,6 +95,24 @@ stand-logs: ## follow stand logs
 # on every start; caffeinate (macOS) keeps the Mac awake while it runs.
 tunnel: ## public https link to the local stand (share with testers)
 	$(if $(shell command -v caffeinate),caffeinate -i,) cloudflared tunnel --no-autoupdate --url http://localhost:$(or $(HERD_WEB_PORT),8480)
+
+# Same tunnel as a launchd job (macOS): survives closing the terminal / agent session. The URL is
+# printed by `make tunnel-url`; it changes on every tunnel-up, so add it to the Reown allowlist
+# again (Sage sign-in) and resend it to testers.
+TUNNEL_LABEL := com.herd.tunnel
+TUNNEL_LOG := $(HOME)/Library/Logs/herd-tunnel.log
+
+tunnel-up: ## start the public tunnel detached from this shell (launchd)
+	@launchctl list $(TUNNEL_LABEL) >/dev/null 2>&1 && { echo "already running — make tunnel-url / make tunnel-down"; exit 1; } || true
+	@: > $(TUNNEL_LOG)
+	launchctl submit -l $(TUNNEL_LABEL) -o $(TUNNEL_LOG) -e $(TUNNEL_LOG) -- /usr/bin/caffeinate -i $(shell command -v cloudflared) tunnel --no-autoupdate --url http://localhost:$(or $(HERD_WEB_PORT),8480)
+	@for i in $$(seq 1 30); do grep -qoE 'https://[a-z0-9-]+\.trycloudflare\.com' $(TUNNEL_LOG) && break; sleep 1; done; $(MAKE) -s tunnel-url
+
+tunnel-url: ## print the current public tunnel URL
+	@grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' $(TUNNEL_LOG) | tail -1
+
+tunnel-down: ## stop the detached tunnel
+	launchctl remove $(TUNNEL_LABEL)
 
 e2e: web-deps ## 4-player end-to-end run against WEB_URL (default the local stand)
 	node --experimental-wasm-modules tools/e2e/run.mjs $(WEB_URL)
