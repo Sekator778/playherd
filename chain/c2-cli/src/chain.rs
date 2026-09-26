@@ -60,22 +60,50 @@ pub async fn balance(client: &CoinsetClient, master_sk: &SecretKey, gap: u32) ->
 
 /// Finds one unspent coin whose amount is at least `min_amount`, scanning
 /// address indices `0..gap`. Used by the spending builders to pick a coin to
-/// fund an issuance/offer/oracle-launch with.
+/// fund an issuance/offer/oracle-launch with. A thin wrapper over
+/// [`find_funding_coin_excluding`] with an empty exclude set -- kept as its
+/// own function so every existing caller (`c2-cli` itself, and `c2-svc`
+/// before the incident below) is unaffected.
 pub async fn find_funding_coin(
     client: &CoinsetClient,
     master_sk: &SecretKey,
     min_amount: u64,
     gap: u32,
 ) -> Result<(WalletKey, Coin)> {
+    find_funding_coin_excluding(client, master_sk, min_amount, gap, &std::collections::HashSet::new()).await
+}
+
+/// Same as [`find_funding_coin`], but skips any candidate coin whose id is
+/// in `exclude` -- task fix (`docs/research/chain_service.md` §15): `c2-svc`
+/// runs more than one independent publisher (the oracle singleton publisher
+/// and the PLAY withdrawal publisher) off the *same* operator wallet, and a
+/// plain gap-scan for "the first unspent coin big enough" is deterministic,
+/// so two publishers that each need a fee coin at the same time reliably
+/// picked the *same* one -- whichever spend confirmed first left the other
+/// permanently double-spending a now-spent input. `exclude` lets a caller
+/// (`c2_svc::fee_allocator::FeeCoinAllocator`) keep every coin a
+/// not-yet-confirmed bundle already depends on out of this scan, so a
+/// second concurrent caller is offered a genuinely different coin (or a
+/// clear "none available" error) instead of silently colliding.
+pub async fn find_funding_coin_excluding(
+    client: &CoinsetClient,
+    master_sk: &SecretKey,
+    min_amount: u64,
+    gap: u32,
+    exclude: &std::collections::HashSet<chia_protocol::Bytes32>,
+) -> Result<(WalletKey, Coin)> {
     let coins = scan_unspent(client, master_sk, gap).await?;
     coins
         .into_iter()
-        .find(|(_, r)| r.coin.amount >= min_amount)
+        .find(|(_, r)| r.coin.amount >= min_amount && !exclude.contains(&r.coin.coin_id()))
         .map(|(wk, r)| (wk, r.coin))
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "no unspent coin with amount >= {min_amount} mojos found in addresses 0..{gap}; \
-                 fund the wallet from https://testnet11-faucet.chia.net/ first"
+                "no unspent, unreserved coin with amount >= {min_amount} mojos found in addresses \
+                 0..{gap} (excluding {} coin(s) already reserved by an in-flight spend elsewhere in \
+                 this process); fund the wallet from https://testnet11-faucet.chia.net/ first, or \
+                 wait for the in-flight spend(s) to confirm",
+                exclude.len()
             )
         })
 }

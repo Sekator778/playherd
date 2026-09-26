@@ -56,6 +56,7 @@ use c2_cli::builders::fee::build_fee_only;
 use c2_cli::cost::measure_bundle_cost;
 use c2_cli::state::{OracleState, ProofDto};
 
+use crate::fee_allocator::{FeeCoinAllocator, fee_coin_of, is_coin_spent_rejection};
 use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
 use crate::state_file::{load_oracle_state, save_oracle_state_atomic};
 
@@ -232,6 +233,13 @@ pub struct Publisher<C: ChainClient> {
     /// N consecutive `tick()` failures before `degraded_reason` reports
     /// degraded (`C2_TICK_FAILURE_THRESHOLD`, task instruction: "e.g. 3").
     pub tick_failure_threshold: u32,
+    /// Shared with every other publisher in this process that also funds
+    /// spends from the operator's plain-XCH wallet (today: `play::
+    /// withdrawal_publisher::WithdrawalPublisher`) -- task fix,
+    /// `docs/research/chain_service.md` §15: prevents two publishers from
+    /// picking the same not-yet-confirmed fee coin. See `fee_allocator`'s
+    /// module doc for the incident this closes.
+    pub fee_allocator: std::sync::Arc<FeeCoinAllocator>,
 }
 
 impl<C: ChainClient> Publisher<C> {
@@ -388,6 +396,18 @@ impl<C: ChainClient> Publisher<C> {
                 .context("persisting chain-reconciled queue (bootstrap)")?;
         }
         Ok(outcome)
+    }
+
+    /// The fee coin id a persisted in-flight spend (if any) currently
+    /// depends on -- used once at startup (`main.rs`, right after
+    /// `bootstrap_from_chain`) to seed the shared `FeeCoinAllocator` before
+    /// any tick runs, so a fresh process's in-memory reservation set
+    /// doesn't forget a fee coin a surviving in-flight bundle from before
+    /// the restart still needs (task fix, `docs/research/chain_service.md`
+    /// §15).
+    pub fn in_flight_fee_coin_id(&self) -> Result<Option<chia_protocol::Bytes32>> {
+        let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        Ok(queue.in_flight.as_ref().and_then(|f| fee_coin_of(&f.bundle, f.spent_coin)).map(|c| c.coin_id()))
     }
 
     /// Walks the chain from `queue.chain_scan_checkpoint` (or the
@@ -597,6 +617,14 @@ impl<C: ChainClient> Publisher<C> {
             queue.last_confirmed_seq =
                 in_flight.records.iter().map(|r| r.seq).max().max(queue.last_confirmed_seq);
             queue.last_confirmed_height = record_info.confirmed_height.or(queue.last_confirmed_height);
+            // The fee coin this confirmed spend consumed is now genuinely,
+            // permanently spent on chain -- release its reservation (task
+            // fix, `docs/research/chain_service.md` §15): a gap-scan will
+            // never offer it again anyway, this is just housekeeping so the
+            // shared allocator's reserved set doesn't grow forever.
+            if let Some(fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
+                self.fee_allocator.release(fee_coin.coin_id()).await;
+            }
             queue.in_flight = None;
             queue
                 .save_atomic(&self.data_dir, &self.operator_name)
@@ -652,6 +680,44 @@ impl<C: ChainClient> Publisher<C> {
             // Not implemented; just wait for it to confirm or fall out of
             // the mempool on its own.
             return Ok(TickOutcome::WaitingForConfirmation);
+        }
+
+        // Task fix (`docs/research/chain_service.md` §15): the singleton
+        // coin was just confirmed unspent above and this bundle isn't in
+        // the mempool -- so if the push was rejected as a double-spend, the
+        // input that's actually spent elsewhere cannot be the singleton
+        // (already ruled out); it can only be this bundle's *fee* coin
+        // (`attach_fee_coin`). Verify that on-chain (never act on the error
+        // text alone) before treating it as "safe to drop and replace": if
+        // it really is spent, release the dead reservation and rebuild
+        // immediately with a freshly allocated fee coin. This is a
+        // deterministic failure -- the exact same push will fail with the
+        // exact same error forever otherwise -- so it must never burn
+        // `max_retry_attempts` the way the old code did (the incident this
+        // fixes: 8 wasted retries, then stuck forever).
+        if !in_flight.last_push_accepted
+            && is_coin_spent_rejection(in_flight.last_push_error.as_deref())
+            && let Some(fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin)
+        {
+            let fee_coin_record = self
+                .chain
+                .coin_record(fee_coin.coin_id())
+                .await
+                .context("checking the fee coin before treating a rejection as a spent fee coin")?;
+            if fee_coin_record.spent {
+                tracing::warn!(
+                    bundle_id = %in_flight.bundle_id,
+                    fee_coin = %fee_coin.coin_id(),
+                    "in-flight oracle publish spend's fee coin was spent elsewhere (not the \
+                     singleton) -- dropping it and rebuilding with a fresh fee coin, no retry \
+                     attempt spent"
+                );
+                return self.rebuild_in_flight(queue, in_flight).await;
+            }
+            // Couldn't positively identify a spent fee coin (neither input
+            // is actually spent -- e.g. a transient node-side hiccup that
+            // merely *said* DOUBLE_SPEND) -- safer to fall through to the
+            // generic retry/stuck handling below than to guess.
         }
 
         // Not in the mempool and the coin is still unspent: the last push
@@ -727,6 +793,18 @@ impl<C: ChainClient> Publisher<C> {
                 oracle_state.current_coin.coin_id(),
                 in_flight.spent_coin.coin_id()
             );
+        }
+
+        // The bundle being rebuilt is dropped in its entirety -- release
+        // whatever fee coin it held (task fix, `docs/research/
+        // chain_service.md` §15) *before* `attach_fee_coin` below reserves
+        // a new one, whether this rebuild was triggered by an underpriced
+        // fee or by the fee coin having been spent elsewhere. Harmless to
+        // release a coin that's still perfectly spendable (the fee-rejection
+        // case): `attach_fee_coin` is free to pick that exact same coin
+        // again if nothing else has reserved it meanwhile.
+        if let Some(old_fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
+            self.fee_allocator.release(old_fee_coin.coin_id()).await;
         }
 
         // Merge any newly queued pending records into this rebuilt batch,
@@ -838,8 +916,8 @@ impl<C: ChainClient> Publisher<C> {
         let master_sk =
             load_operator_master_sk(&self.data_dir, &self.operator_name).context("loading operator master key")?;
         let (payer, fee_coin) = self
-            .chain
-            .find_funding_coin(&master_sk, fee_mojos)
+            .fee_allocator
+            .reserve(&self.chain, &master_sk, fee_mojos)
             .await
             .context("no funding coin to pay the oracle-publish batch fee with")?;
         let fee_result = build_fee_only(fee_coin, &payer, fee_mojos).context("building fee-only coin spend")?;

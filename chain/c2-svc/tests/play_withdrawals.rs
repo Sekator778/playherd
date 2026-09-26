@@ -17,7 +17,8 @@ use c2_cli::cat_chain::cat_puzzle_hash;
 use c2_cli::keys::{TXCH_PREFIX, derive_wallet_key, generate_mnemonic, master_sk_from_mnemonic};
 use c2_cli::keystore::KeyFile;
 use c2_cli::state::PlayCoinState;
-use c2_svc::oracle::chain_client::CoinRecordInfo;
+use c2_svc::fee_allocator::fee_coin_of;
+use c2_svc::oracle::chain_client::{CoinRecordInfo, PushOutcome};
 use c2_svc::play::chain_client::PuzzleHashCoinRecord;
 use c2_svc::play::types::WithdrawalRequest;
 use c2_svc::play::withdrawal_publisher::{WithdrawalPublisher, WithdrawalTickOutcome};
@@ -79,6 +80,7 @@ fn set_up() -> Result<Fixture> {
         treasury_stuck: tokio::sync::RwLock::new(None),
         tick_failures: tokio::sync::RwLock::new(c2_svc::oracle::publisher::TickFailureState::default()),
         tick_failure_threshold: 3,
+        fee_allocator: std::sync::Arc::new(c2_svc::fee_allocator::FeeCoinAllocator::new()),
     };
 
     Ok(Fixture { _tmp: tmp, publisher, data_dir, master_sk })
@@ -137,6 +139,69 @@ async fn batch_withdrawal_pays_out_and_returns_change_to_treasury() -> Result<()
     Ok(())
 }
 
+/// Task fix (`docs/research/chain_service.md` §15): mirrors `tests/
+/// oracle_queue.rs::fee_coin_double_spent_elsewhere_rebuilds_immediately_
+/// without_burning_a_retry` for the withdrawal publisher's own copy of the
+/// same recovery logic -- a double-spend rejection with the treasury coin
+/// confirmed unspent can only be this batch's fee coin, spent by something
+/// else (the incident: the oracle publisher's own batch). Must drop it and
+/// rebuild with a fresh one immediately, not burn a retry attempt.
+#[tokio::test]
+async fn withdrawal_fee_coin_double_spent_elsewhere_rebuilds_immediately_without_burning_a_retry() -> Result<()> {
+    let mut fx = set_up()?;
+    fx.publisher.retry_backoff = std::time::Duration::from_secs(0);
+    // Non-zero, so the very first broadcast actually attaches a fee coin.
+    fx.publisher.chain.set_fee_estimate(1_000);
+
+    let second_fee_coin =
+        Coin::new(Bytes32::from([44u8; 32]), derive_wallet_key(&fx.master_sk, 0).puzzle_hash, 2_000_000);
+    fx.publisher.chain.add_funding_coin(second_fee_coin);
+
+    let alice = Bytes32::from([1u8; 32]);
+    fx.publisher.enqueue(withdrawal_request("w1", alice, 100_000)).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xb7ba8f64, error DOUBLE_SPEND".to_string()),
+    });
+
+    let outcome = fx.publisher.tick().await?; // start_new_batch: picks the default fee coin, rejected
+    assert_eq!(outcome, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: false });
+
+    let queue = WithdrawalQueueFile::load(&fx.data_dir, "operator")?;
+    let first_in_flight = queue.in_flight.expect("should be in flight after the rejected broadcast");
+    let dead_fee_coin =
+        fee_coin_of(&first_in_flight.bundle, first_in_flight.spent_coin).expect("bundle must have a fee coin");
+    assert_ne!(dead_fee_coin, second_fee_coin, "first attempt must use the default coin, not the second one");
+
+    // The fee coin (not the treasury) is now spent on chain -- e.g. the
+    // oracle publisher's batch confirmed first (the incident this closes).
+    fx.publisher.chain.set_spent(dead_fee_coin.coin_id(), 4_738_900, 4_738_927);
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+
+    let outcome = fx.publisher.tick().await?;
+    match outcome {
+        WithdrawalTickOutcome::Rebuilt { requests, accepted, .. } => {
+            assert_eq!(requests, 1);
+            assert!(accepted);
+        }
+        other => panic!("expected Rebuilt, got {other:?}"),
+    }
+
+    let queue = WithdrawalQueueFile::load(&fx.data_dir, "operator")?;
+    let rebuilt = queue.in_flight.expect("still in flight, now awaiting confirmation");
+    assert_eq!(rebuilt.attempts, 1, "a rebuilt batch gets its own fresh retry budget, not attempts=9");
+    let new_fee_coin =
+        fee_coin_of(&rebuilt.bundle, rebuilt.spent_coin).expect("rebuilt bundle must have a fee coin");
+    assert_eq!(new_fee_coin, second_fee_coin, "must pick the OTHER coin, not retry the dead one");
+
+    fx.publisher.chain.set_confirmed(rebuilt.next_coin.coin_id(), 4_738_950);
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, WithdrawalTickOutcome::Confirmed { requests: 1 });
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn enqueue_is_idempotent_by_request_id() -> Result<()> {
     let fx = set_up()?;
@@ -187,6 +252,7 @@ async fn restart_resumes_and_confirms_a_pending_in_flight_batch() -> Result<()> 
         treasury_stuck: tokio::sync::RwLock::new(None),
         tick_failures: tokio::sync::RwLock::new(c2_svc::oracle::publisher::TickFailureState::default()),
         tick_failure_threshold: 3,
+        fee_allocator: std::sync::Arc::new(c2_svc::fee_allocator::FeeCoinAllocator::new()),
     };
     restarted.chain.set_confirmed(next_coin.coin_id(), 5_000_001);
 

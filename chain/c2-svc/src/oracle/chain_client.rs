@@ -11,6 +11,7 @@
 //! the real testnet11 endpoint today, see `docs/research/chain_service.md`
 //! §4 for the exact `curl` output this struct matches.
 
+use std::collections::HashSet;
 use std::future::Future;
 
 use anyhow::{Context, Result};
@@ -66,12 +67,18 @@ pub trait ChainClient: Send + Sync {
     fn fee_estimate_mojos(&self, cost: u64, target_time_secs: u32) -> impl Future<Output = Result<u64>> + Send;
 
     /// Finds one unspent coin of `master_sk`'s wallet with amount >=
-    /// `min_amount` (used both to fund the fee-only coin, and for
-    /// `GET /v1/oracle/status`'s `operatorBalanceMojos` -- see `balance`).
+    /// `min_amount`, skipping any coin id in `exclude` (used to fund the
+    /// fee-only coin, via `fee_allocator::FeeCoinAllocator` -- never called
+    /// directly by a publisher any more, task fix `docs/research/
+    /// chain_service.md` §15: see `find_funding_coin_excluding`'s doc
+    /// comment in `c2_cli::chain` for why `exclude` exists). `GET
+    /// /v1/oracle/status`'s `operatorBalanceMojos` uses `balance` below
+    /// instead, which is unaffected.
     fn find_funding_coin(
         &self,
         master_sk: &SecretKey,
         min_amount: u64,
+        exclude: &HashSet<Bytes32>,
     ) -> impl Future<Output = Result<(WalletKey, chia_protocol::Coin)>> + Send;
 
     fn balance(&self, master_sk: &SecretKey) -> impl Future<Output = Result<u64>> + Send;
@@ -206,8 +213,9 @@ impl ChainClient for CoinsetChainClient {
         &self,
         master_sk: &SecretKey,
         min_amount: u64,
+        exclude: &HashSet<Bytes32>,
     ) -> Result<(WalletKey, chia_protocol::Coin)> {
-        c2_cli::chain::find_funding_coin(&self.client, master_sk, min_amount, ADDRESS_GAP).await
+        c2_cli::chain::find_funding_coin_excluding(&self.client, master_sk, min_amount, ADDRESS_GAP, exclude).await
     }
 
     async fn balance(&self, master_sk: &SecretKey) -> Result<u64> {

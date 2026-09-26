@@ -12,7 +12,7 @@
 //! fixture `operator.oracle.json` -- the same reason `c2 oracle-launch`
 //! itself works fully offline in dry-run mode.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -26,6 +26,7 @@ use c2_cli::builders::oracle::build_oracle_launch;
 use c2_cli::keys::{WalletKey, derive_wallet_key, generate_mnemonic, master_sk_from_mnemonic};
 use c2_cli::keystore::KeyFile;
 use c2_cli::state::OracleState;
+use c2_svc::fee_allocator::{FeeCoinAllocator, fee_coin_of};
 use c2_svc::oracle::chain_client::{ChainClient, CoinRecordInfo, PushOutcome};
 use c2_svc::oracle::lineage::walk_lineage;
 use c2_svc::oracle::publisher::{Publisher, TickFailureState, TickOutcome};
@@ -41,6 +42,13 @@ struct FakeChainClientInner {
     coin_records: HashMap<Bytes32, CoinRecordInfo>,
     fee_mojos: u64,
     funding_amount: u64,
+    /// Extra funding-coin candidates a test registers explicitly (task fix,
+    /// `docs/research/chain_service.md` §15: tests that need more than one
+    /// distinct fee-coin candidate, e.g. to prove a rebuild picks a
+    /// *different* coin once the first is spent/reserved). Empty by
+    /// default, so every pre-existing test keeps seeing the single
+    /// always-available `[7u8; 32]`-parented coin it already relies on.
+    extra_funding_coins: Vec<Coin>,
     push_calls: u32,
     /// Every `push_tx` call returns this outcome; tests flip it between
     /// calls to simulate a failed-then-retried push.
@@ -70,6 +78,7 @@ impl FakeChainClient {
             coin_records: HashMap::new(),
             fee_mojos: 0,
             funding_amount: 1_000_000,
+            extra_funding_coins: Vec::new(),
             push_calls: 0,
             next_push_outcome: PushOutcome {
                 accepted: true,
@@ -84,6 +93,13 @@ impl FakeChainClient {
 
     fn set_delay(&self, delay: Duration) {
         self.0.lock().unwrap().delay = delay;
+    }
+
+    /// Registers an additional fee-coin candidate `find_funding_coin` may
+    /// offer, alongside the always-present default `[7u8; 32]`-parented one
+    /// (task fix, `docs/research/chain_service.md` §15).
+    fn add_funding_coin(&self, coin: Coin) {
+        self.0.lock().unwrap().extra_funding_coins.push(coin);
     }
 
     /// Controls what the *next* `fee_estimate_mojos` call returns (task
@@ -198,21 +214,34 @@ impl ChainClient for FakeChainClient {
         &self,
         master_sk: &SecretKey,
         min_amount: u64,
+        exclude: &HashSet<Bytes32>,
     ) -> impl Future<Output = Result<(WalletKey, Coin)>> + Send {
-        let (amount, delay) = {
-            let inner = self.0.lock().unwrap();
-            (inner.funding_amount, inner.delay)
-        };
         let wallet_key = derive_wallet_key(master_sk, 0);
-        let coin = Coin::new(Bytes32::from([7u8; 32]), wallet_key.puzzle_hash, amount);
+        let (amount, delay, extra, coin_records) = {
+            let inner = self.0.lock().unwrap();
+            (inner.funding_amount, inner.delay, inner.extra_funding_coins.clone(), inner.coin_records.clone())
+        };
+        let default_coin = Coin::new(Bytes32::from([7u8; 32]), wallet_key.puzzle_hash, amount);
+        let mut candidates = vec![default_coin];
+        candidates.extend(extra);
+        let exclude = exclude.clone();
         async move {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
-            if amount < min_amount {
-                anyhow::bail!("fake funding coin has {amount} mojos, need >= {min_amount}");
+            let chosen = candidates.into_iter().find(|c| {
+                c.amount >= min_amount
+                    && !exclude.contains(&c.coin_id())
+                    && !coin_records.get(&c.coin_id()).is_some_and(|r| r.spent)
+            });
+            match chosen {
+                Some(coin) => Ok((wallet_key, coin)),
+                None => anyhow::bail!(
+                    "fake chain client: no unspent, unreserved funding coin >= {min_amount} mojos \
+                     (excluding {} reserved)",
+                    exclude.len()
+                ),
             }
-            Ok((wallet_key, coin))
         }
     }
 
@@ -333,6 +362,7 @@ fn set_up(retry_backoff: Duration) -> Result<Fixture> {
         queue_lock: tokio::sync::Mutex::new(()),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: 3,
+        fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
     };
 
     Ok(Fixture {
@@ -696,6 +726,175 @@ async fn fee_too_low_rejection_rebuilds_with_higher_fee_then_confirms() -> Resul
     Ok(())
 }
 
+/// Task fix (`docs/research/chain_service.md` §15): a rejection naming a
+/// double-spend, with the singleton confirmed unspent, can only be this
+/// bundle's *fee* coin having been spent by something else (e.g. another
+/// publisher sharing the same operator wallet, the incident this closes) --
+/// the publisher must identify that, drop the dead fee coin, and rebuild
+/// with a fresh one immediately, spending zero of its retry budget (a
+/// DOUBLE_SPEND on an already-dead coin will never resolve itself by
+/// retrying the identical bytes).
+#[tokio::test]
+async fn fee_coin_double_spent_elsewhere_rebuilds_immediately_without_burning_a_retry() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    // Non-zero, so the very first broadcast actually attaches a fee coin
+    // (a zero fee estimate, as in the fee-too-low tests above, skips fee
+    // coin attachment entirely -- not the scenario this test is about).
+    fx.publisher.chain.set_fee_estimate(1_000);
+
+    // A second, distinct funding-coin candidate -- stands in for "another
+    // coin in the operator's wallet", available once the allocator excludes
+    // (or, here, the chain shows spent) the first one.
+    let second_fee_coin = Coin::new(Bytes32::from([11u8; 32]), fx.manager.puzzle_hash, 2_000_000);
+    fx.publisher.chain.add_funding_coin(second_fee_coin);
+
+    fx.publisher.enqueue(vec![record(1)]).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some(
+            "Failed to include transaction 0xb7ba8f64, error DOUBLE_SPEND".to_string(),
+        ),
+    });
+
+    let outcome = fx.publisher.tick().await?; // start_new_batch: picks the default fee coin, rejected
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
+    assert_eq!(fx.publisher.chain.push_call_count(), 1);
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let first_in_flight = queue.in_flight.expect("should be in flight after the rejected broadcast");
+    let dead_fee_coin =
+        fee_coin_of(&first_in_flight.bundle, first_in_flight.spent_coin).expect("bundle must have a fee coin");
+    assert_ne!(dead_fee_coin, second_fee_coin, "first attempt must use the default coin, not the second one");
+
+    // The fee coin (not the singleton) is now spent on chain -- e.g. another
+    // publisher's batch confirmed first (the incident this closes).
+    fx.publisher.chain.set_spent(dead_fee_coin.coin_id(), 4_738_900, 4_738_927);
+    fx.publisher
+        .chain
+        .set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+
+    let outcome = fx.publisher.tick().await?;
+    match outcome {
+        TickOutcome::Rebuilt { records, accepted, .. } => {
+            assert_eq!(records, 1);
+            assert!(accepted);
+        }
+        other => panic!("expected Rebuilt, got {other:?}"),
+    }
+    // Exactly one more push (the rebuild's) -- no `Retried` outcome burned a
+    // retry attempt on the doomed original bundle in between.
+    assert_eq!(fx.publisher.chain.push_call_count(), 2);
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let rebuilt = queue.in_flight.expect("still in flight, now awaiting confirmation");
+    assert_eq!(rebuilt.attempts, 1, "a rebuilt bundle gets its own fresh retry budget, not attempts=9");
+    let new_fee_coin =
+        fee_coin_of(&rebuilt.bundle, rebuilt.spent_coin).expect("rebuilt bundle must have a fee coin");
+    assert_eq!(new_fee_coin, second_fee_coin, "must pick the OTHER coin, not retry the dead one");
+    assert!(
+        fx.publisher.fee_allocator.is_reserved(second_fee_coin.coin_id()).await,
+        "the new fee coin must be reserved while its bundle is in flight"
+    );
+    assert!(
+        !fx.publisher.fee_allocator.is_reserved(dead_fee_coin.coin_id()).await,
+        "the dead fee coin's reservation must have been released"
+    );
+
+    fx.publisher.chain.set_confirmed(rebuilt.next_coin.coin_id(), 4_738_950);
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Confirmed { records: 1 });
+    assert!(
+        !fx.publisher.fee_allocator.is_reserved(second_fee_coin.coin_id()).await,
+        "confirming must release the fee coin reservation too"
+    );
+
+    Ok(())
+}
+
+/// Task fix (`docs/research/chain_service.md` §15): "restart with an
+/// in-flight bundle whose fee coin was spent elsewhere -> recovers" -- a
+/// brand-new `Publisher` (fresh chain client, fresh *empty* in-memory
+/// `FeeCoinAllocator`, e.g. after a process restart) reading the same
+/// `data_dir` must, on its very first tick, both re-seed its allocator from
+/// the persisted in-flight bundle's fee coin (the way `main.rs` does right
+/// after startup bootstrap) and correctly recognize+recover from that same
+/// fee coin having been spent while the process was down -- exactly one
+/// rebuild, no wasted retry, full confirmation.
+#[tokio::test]
+async fn restart_recovers_when_the_in_flight_fee_coin_was_spent_while_down() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    // Non-zero, so the pre-restart broadcast actually attaches a fee coin.
+    fx.publisher.chain.set_fee_estimate(1_000);
+    fx.publisher.enqueue(vec![record(1)]).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xdead, error DOUBLE_SPEND".to_string()),
+    });
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.clone().expect("should be in flight after the rejected broadcast");
+    let dead_fee_coin = fee_coin_of(&in_flight.bundle, in_flight.spent_coin).expect("bundle must have a fee coin");
+
+    // Simulate a process restart: brand-new `Publisher` (fresh chain client,
+    // fresh in-memory state, including a fresh, empty `FeeCoinAllocator`)
+    // pointed at the *same* data dir (same convention as
+    // `restart_resumes_a_pending_in_flight_spend` above).
+    let restarted = Publisher {
+        data_dir: fx.publisher.data_dir.clone(),
+        operator_name: fx.publisher.operator_name.clone(),
+        push_enabled: true,
+        chain: FakeChainClient::new(),
+        retry_backoff: Duration::from_secs(0),
+        max_retry_attempts: 3,
+        max_fee_mojos: 50_000_000,
+        fee_target_time_secs: 60,
+        balance_snapshot: tokio::sync::RwLock::new(None),
+        queue_lock: tokio::sync::Mutex::new(()),
+        tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
+        tick_failure_threshold: 3,
+        fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
+    };
+
+    // `main.rs`'s own startup sequence: seed the allocator from whatever
+    // in-flight bundle the durable queue file already committed to, before
+    // the first tick.
+    let seeded = restarted.in_flight_fee_coin_id()?;
+    assert_eq!(seeded, Some(dead_fee_coin.coin_id()));
+    restarted.fee_allocator.reserve_specific(seeded.unwrap()).await;
+
+    // While the process was down, something else spent the fee coin (the
+    // singleton itself is untouched -- still confirmed unspent).
+    restarted.chain.set_spent(dead_fee_coin.coin_id(), 4_738_900, 4_738_927);
+    let fresh_fee_coin = Coin::new(Bytes32::from([33u8; 32]), fx.manager.puzzle_hash, 2_000_000);
+    restarted.chain.add_funding_coin(fresh_fee_coin);
+    restarted.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+
+    let outcome = restarted.tick().await?;
+    match outcome {
+        TickOutcome::Rebuilt { records, accepted, .. } => {
+            assert_eq!(records, 1);
+            assert!(accepted);
+        }
+        other => panic!("expected Rebuilt (immediate recovery, not a wasted retry), got {other:?}"),
+    }
+
+    let queue = QueueFile::load(&restarted.data_dir, "operator")?;
+    let rebuilt = queue.in_flight.expect("still in flight, awaiting confirmation");
+    assert_eq!(rebuilt.attempts, 1, "the restarted process's rebuild must not inherit pre-restart attempts");
+    let new_fee_coin = fee_coin_of(&rebuilt.bundle, rebuilt.spent_coin).expect("must have a fee coin");
+    assert_eq!(new_fee_coin, fresh_fee_coin);
+
+    restarted.chain.set_confirmed(rebuilt.next_coin.coin_id(), 4_738_950);
+    let outcome = restarted.tick().await?;
+    assert_eq!(outcome, TickOutcome::Confirmed { records: 1 }, "restart must fully recover to a confirmed publish");
+
+    Ok(())
+}
+
 /// Task instruction: once the fee has been bumped up to `max_fee_mojos` and
 /// still gets rejected, the publisher must stop escalating and clearly
 /// report "needs operator attention" with a reason, both from `tick()` and
@@ -932,6 +1131,7 @@ async fn restart_resumes_a_pending_in_flight_spend() -> Result<()> {
         queue_lock: tokio::sync::Mutex::new(()),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: 3,
+        fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
     };
 
     restarted.chain.set_confirmed(next_coin.coin_id(), 4_900_000);

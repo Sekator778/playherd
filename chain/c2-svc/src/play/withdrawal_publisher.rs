@@ -63,6 +63,7 @@ use c2_cli::cost::measure_bundle_cost;
 use c2_cli::keys::WalletKey;
 use c2_cli::state::PlayCoinState;
 
+use crate::fee_allocator::{FeeCoinAllocator, fee_coin_of, is_coin_spent_rejection};
 use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
 use crate::oracle::publisher::TickFailureState;
 use crate::play_state_file::{load_play_state, save_play_state_atomic};
@@ -148,6 +149,12 @@ pub struct WithdrawalPublisher<C: PlayChainClient> {
     /// `Publisher`, reused rather than adding a second, parallel env var for
     /// what is the exact same kind of signal.
     pub tick_failure_threshold: u32,
+    /// Same `Arc` instance `main.rs` also gives the oracle `Publisher` --
+    /// task fix, `docs/research/chain_service.md` §15: both publishers fund
+    /// spends from the same operator wallet, so they must share one
+    /// reservation set or they can (and, on this stand, did) pick the same
+    /// not-yet-confirmed fee coin. See `fee_allocator`'s module doc.
+    pub fee_allocator: std::sync::Arc<FeeCoinAllocator>,
 }
 
 impl<C: PlayChainClient> WithdrawalPublisher<C> {
@@ -222,8 +229,8 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
         }
         let master_sk = load_operator_master_sk(&self.data_dir, &self.operator_name).context("loading operator master key")?;
         let (payer, fee_coin) = self
-            .chain
-            .find_funding_coin(&master_sk, fee_mojos)
+            .fee_allocator
+            .reserve(&self.chain, &master_sk, fee_mojos)
             .await
             .context("no funding coin to pay the withdrawal batch fee with")?;
         let fee_result = build_fee_only(fee_coin, &payer, fee_mojos).context("building fee-only coin spend")?;
@@ -254,6 +261,17 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
         let _guard = self.queue_lock.lock().await;
         let queue = WithdrawalQueueFile::load(&self.data_dir, &self.operator_name)?;
         self.reconcile_treasury_with_chain(&queue).await
+    }
+
+    /// The fee coin id a persisted in-flight batch (if any) currently
+    /// depends on -- used once at startup (`main.rs`, right after
+    /// `bootstrap_treasury_from_chain`) to seed the shared
+    /// `FeeCoinAllocator` before any tick runs, same reasoning as
+    /// `oracle::publisher::Publisher::in_flight_fee_coin_id` (task fix,
+    /// `docs/research/chain_service.md` §15).
+    pub fn in_flight_fee_coin_id(&self) -> Result<Option<Bytes32>> {
+        let queue = WithdrawalQueueFile::load(&self.data_dir, &self.operator_name)?;
+        Ok(queue.in_flight.as_ref().and_then(|f| fee_coin_of(&f.bundle, f.spent_coin)).map(|c| c.coin_id()))
     }
 
     /// `GET /health`'s handler support, alongside the oracle's own
@@ -511,6 +529,13 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
                 queue.confirmed.insert(request.request_id.clone(), (coin_id, record_info.confirmed_height));
             }
             let confirmed_count = in_flight.requests.len();
+            // The fee coin this confirmed batch consumed is now genuinely,
+            // permanently spent -- release its reservation (task fix,
+            // `docs/research/chain_service.md` §15), same reasoning as
+            // `oracle::publisher::advance_in_flight`'s own confirm branch.
+            if let Some(fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
+                self.fee_allocator.release(fee_coin.coin_id()).await;
+            }
             queue.in_flight = None;
             queue
                 .save_atomic(&self.data_dir, &self.operator_name)
@@ -547,6 +572,33 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             return Ok(WithdrawalTickOutcome::WaitingForConfirmation);
         }
 
+        // Task fix (`docs/research/chain_service.md` §15): mirrors
+        // `oracle::publisher::advance_in_flight`'s own double-spend
+        // handling exactly -- the treasury coin was just confirmed unspent
+        // above, so a double-spend rejection can only be this batch's *fee*
+        // coin. Verify on-chain, then drop it and rebuild immediately
+        // rather than burning a retry attempt on a failure that will keep
+        // repeating identically forever otherwise.
+        if !in_flight.last_push_accepted
+            && is_coin_spent_rejection(in_flight.last_push_error.as_deref())
+            && let Some(fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin)
+        {
+            let fee_coin_record = self
+                .chain
+                .coin_record(fee_coin.coin_id())
+                .await
+                .context("checking the fee coin before treating a rejection as a spent fee coin")?;
+            if fee_coin_record.spent {
+                tracing::warn!(
+                    bundle_id = %in_flight.bundle_id,
+                    fee_coin = %fee_coin.coin_id(),
+                    "in-flight withdrawal batch's fee coin was spent elsewhere (not the treasury) \
+                     -- dropping it and rebuilding with a fresh fee coin, no retry attempt spent"
+                );
+                return self.rebuild_in_flight(queue, in_flight).await;
+            }
+        }
+
         if !in_flight.last_push_accepted
             && is_fee_rejection(in_flight.last_push_error.as_deref())
             && in_flight.fee_mojos < self.max_fee_mojos
@@ -563,6 +615,13 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
                 self.max_fee_mojos,
                 in_flight.last_push_error.as_deref().unwrap_or("(no error message)")
             );
+            // This batch never actually landed on chain -- its fee coin
+            // (if any) is genuinely still free (task fix, `docs/research/
+            // chain_service.md` §15): release it so a future batch can use
+            // it instead of leaking the reservation forever.
+            if let Some(fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
+                self.fee_allocator.release(fee_coin.coin_id()).await;
+            }
             for request in &in_flight.requests {
                 queue.failed.insert(request.request_id.clone(), reason.clone());
             }
@@ -611,6 +670,14 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
                 treasury.coin.coin_id(),
                 in_flight.spent_coin.coin_id()
             );
+        }
+
+        // The bundle being rebuilt is dropped in its entirety -- release
+        // its fee coin (task fix, `docs/research/chain_service.md` §15)
+        // *before* `attach_fee_coin` below reserves a new one, same
+        // reasoning as `oracle::publisher::rebuild_in_flight`.
+        if let Some(old_fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
+            self.fee_allocator.release(old_fee_coin.coin_id()).await;
         }
 
         let mut requests = in_flight.requests.clone();

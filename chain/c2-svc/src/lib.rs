@@ -13,6 +13,7 @@ pub mod app;
 pub mod atomic_file;
 pub mod auth;
 pub mod config;
+pub mod fee_allocator;
 pub mod keys_file;
 pub mod oracle;
 pub mod play;

@@ -10,6 +10,7 @@ use clap::Parser;
 
 use c2_svc::app;
 use c2_svc::config::{Config, check_startup_auth_config};
+use c2_svc::fee_allocator::FeeCoinAllocator;
 use c2_svc::oracle::chain_client::CoinsetChainClient;
 use c2_svc::oracle::publisher::{Publisher, TickFailureState};
 use c2_svc::play::deposit::DepositService;
@@ -48,6 +49,14 @@ async fn main() -> Result<()> {
         "starting c2-svc"
     );
 
+    // Shared across every publisher that funds spends from the operator's
+    // plain-XCH wallet (task fix, `docs/research/chain_service.md` §15: the
+    // oracle publisher and the PLAY withdrawal publisher used to pick a fee
+    // coin independently, via a plain deterministic gap-scan, and reliably
+    // collided whenever both needed one at once). One `Arc` instance, given
+    // to both publishers below -- see `fee_allocator`'s module doc.
+    let fee_allocator = Arc::new(FeeCoinAllocator::new());
+
     let chain = CoinsetChainClient::new(config.coinset_base_url.clone());
     let publisher = Arc::new(Publisher {
         data_dir: config.data_dir.clone(),
@@ -62,6 +71,7 @@ async fn main() -> Result<()> {
         queue_lock: tokio::sync::Mutex::new(()),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: config.tick_failure_threshold,
+        fee_allocator: Arc::clone(&fee_allocator),
     });
 
     // PLAY withdraw/deposit (Р-6, decision Р-53 2026-09-26): a separate
@@ -69,7 +79,9 @@ async fn main() -> Result<()> {
     // `CoinsetChainClient` (cheap to construct again -- same pattern as the
     // oracle `Publisher` above; no shared mutable state between them besides
     // the chain itself and the operator's own key/data files, which are
-    // reloaded from disk on every use, never cached across these instances).
+    // reloaded from disk on every use, never cached across these instances)
+    // -- except `fee_allocator`, which is deliberately the *same* instance
+    // as the oracle `Publisher`'s (see above).
     let withdrawal_publisher = Arc::new(WithdrawalPublisher {
         data_dir: config.data_dir.clone(),
         operator_name: config.operator_name.clone(),
@@ -83,6 +95,7 @@ async fn main() -> Result<()> {
         treasury_stuck: tokio::sync::RwLock::new(None),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: config.tick_failure_threshold,
+        fee_allocator: Arc::clone(&fee_allocator),
     });
     let deposit_service = Arc::new(DepositService {
         data_dir: config.data_dir.clone(),
@@ -123,6 +136,20 @@ async fn main() -> Result<()> {
         .bootstrap_treasury_from_chain()
         .await
         .context("startup PLAY treasury reconciliation (docs/research/chain_service.md §13) failed")?;
+
+    // Task fix (`docs/research/chain_service.md` §15): seed the shared
+    // `FeeCoinAllocator` from whatever in-flight bundle each publisher's own
+    // durable queue file already committed to, *before* either publisher's
+    // background tick loop starts below -- otherwise a freshly restarted
+    // process would forget a fee coin a surviving in-flight bundle still
+    // depends on, and could immediately hand that same coin to the other
+    // publisher on its very first tick.
+    if let Some(coin_id) = publisher.in_flight_fee_coin_id()? {
+        fee_allocator.reserve_specific(coin_id).await;
+    }
+    if let Some(coin_id) = withdrawal_publisher.in_flight_fee_coin_id()? {
+        fee_allocator.reserve_specific(coin_id).await;
+    }
 
     // Background oracle-publisher loop: advances in-flight spends /
     // starts new batches from the durable queue on a fixed tick, so a

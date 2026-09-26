@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use anyhow::Result;
@@ -30,6 +30,10 @@ struct Inner {
     peak_height: u32,
     fee_mojos: u64,
     funding_amount: u64,
+    /// Extra funding-coin candidates a test registers explicitly -- same
+    /// purpose as `tests/oracle_queue.rs::FakeChainClient`'s own field (task
+    /// fix, `docs/research/chain_service.md` §15).
+    extra_funding_coins: Vec<Coin>,
     push_calls: u32,
     next_push_outcome: PushOutcome,
     in_mempool: HashMap<Bytes32, bool>,
@@ -46,6 +50,7 @@ impl FakePlayChainClient {
             peak_height: 1_000,
             fee_mojos: 0,
             funding_amount: 1_000_000,
+            extra_funding_coins: Vec::new(),
             push_calls: 0,
             next_push_outcome: PushOutcome { accepted: true, status: Some("SUCCESS".to_string()), error: None },
             in_mempool: HashMap::new(),
@@ -54,6 +59,13 @@ impl FakePlayChainClient {
 
     pub fn set_fee_estimate(&self, fee_mojos: u64) {
         self.0.lock().unwrap().fee_mojos = fee_mojos;
+    }
+
+    /// Registers an additional fee-coin candidate `find_funding_coin` may
+    /// offer, alongside the always-present default `[7u8; 32]`-parented one
+    /// (task fix, `docs/research/chain_service.md` §15).
+    pub fn add_funding_coin(&self, coin: Coin) {
+        self.0.lock().unwrap().extra_funding_coins.push(coin);
     }
 
     pub fn set_in_mempool(&self, tx_id: Bytes32, present: bool) {
@@ -131,14 +143,33 @@ impl ChainClient for FakePlayChainClient {
         Ok(self.0.lock().unwrap().fee_mojos)
     }
 
-    async fn find_funding_coin(&self, master_sk: &SecretKey, min_amount: u64) -> Result<(WalletKey, Coin)> {
-        let amount = self.0.lock().unwrap().funding_amount;
+    async fn find_funding_coin(
+        &self,
+        master_sk: &SecretKey,
+        min_amount: u64,
+        exclude: &HashSet<Bytes32>,
+    ) -> Result<(WalletKey, Coin)> {
         let wallet_key = derive_wallet_key(master_sk, 0);
-        if amount < min_amount {
-            anyhow::bail!("fake funding coin has {amount} mojos, need >= {min_amount}");
-        }
-        let coin = Coin::new(Bytes32::from([7u8; 32]), wallet_key.puzzle_hash, amount);
-        Ok((wallet_key, coin))
+        let (amount, extra, coin_records) = {
+            let inner = self.0.lock().unwrap();
+            (inner.funding_amount, inner.extra_funding_coins.clone(), inner.coin_records.clone())
+        };
+        let mut candidates = vec![Coin::new(Bytes32::from([7u8; 32]), wallet_key.puzzle_hash, amount)];
+        candidates.extend(extra);
+        candidates
+            .into_iter()
+            .find(|c| {
+                c.amount >= min_amount
+                    && !exclude.contains(&c.coin_id())
+                    && !coin_records.get(&c.coin_id()).is_some_and(|r| r.spent)
+            })
+            .map(|c| (wallet_key, c))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "fake funding coin(s) exhausted: need >= {min_amount} mojos, excluding {} reserved",
+                    exclude.len()
+                )
+            })
     }
 
     async fn balance(&self, _master_sk: &SecretKey) -> Result<u64> {
