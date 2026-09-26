@@ -36,6 +36,11 @@ jobs:
   changes:
     name: detect changed paths
     runs-on: ubuntu-latest
+    # dorny/paths-filter lists a PR's files through the pull-requests API; with only the
+    # workflow-level `contents: read` it gets 403 "Resource not accessible by integration".
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       engine: ${{ steps.filter.outputs.engine }}
       server: ${{ steps.filter.outputs.server }}
@@ -438,12 +443,18 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [gitleaks, engine-server, chain, web, android, smoke]
+    needs: [changes, gitleaks, engine-server, chain, web, android, smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Check that every required job passed or was skipped
         run: |
           set -euo pipefail
+          # `changes` must succeed outright: when it fails every gated job is skipped, and a
+          # skip alone would otherwise read as green.
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "::error::changes: ${{ needs.changes.result }} — path detection failed, nothing was tested"
+            exit 1
+          fi
           results=(
             "gitleaks:${{ needs.gitleaks.result }}"
             "engine-server:${{ needs.engine-server.result }}"

@@ -4,13 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import crowdvsmarket.engine.market.Interval;
-import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.chain.ChainSvcClient;
 import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.scheduler.EngineRebuildService;
+import crowdvsmarket.server.testsupport.BettingWindows;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
@@ -105,8 +105,11 @@ class BotRestartRecoveryTest {
 
         // --- the betting round each series is open for RIGHT NOW, right after the rebuild —
         // this is "the next betting window" bots must resume betting into. ---
-        String hourlyBettingRoundId = ensureComfortableMargin(Interval.HOURLY).roundId();
-        String dailyBettingRoundId = ensureComfortableMargin(Interval.DAILY).roundId();
+        // Always the NEXT window: when the rebuild re-creates the bots (fresh ids after this
+        // class's database cleanup), BotService schedules bots only when the betting round id
+        // changes, so the window already open at rebuild time never gets the new bots' bets.
+        String hourlyBettingRoundId = BettingWindows.next(roundProgress, Interval.HOURLY).roundId();
+        String dailyBettingRoundId = BettingWindows.next(roundProgress, Interval.DAILY).roundId();
 
         await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofMillis(200))
                 .until(() -> roundResults.exists(hourlyBettingRoundId));
@@ -119,29 +122,6 @@ class BotRestartRecoveryTest {
         assertThat(botPlayerIdsIn(dailyBettingRoundId, botIds))
                 .as("DAILY round %s should have at least one bot bet after the restart", dailyBettingRoundId)
                 .isNotEmpty();
-    }
-
-    /**
-     * {@code RoundCalendar}'s origin epoch is a fixed wall-clock instant (the whole suite run's
-     * first-ever boot), never reset per test/class, so "the round open for betting right now" can
-     * land anywhere in its window purely as a function of how much real time this class happened
-     * to start at relative to that fixed grid — including, unluckily, right before it closes,
-     * leaving the scheduler (1s ticks) no real chance to fire a bot bet. Rather than race that,
-     * wait out a too-close-to-closing window and use the next (fresh, full-margin) one instead —
-     * still the exact same "bots resume betting after a restart" behavior this class regression-
-     * tests, just not tied to catching one specific window by chance.
-     */
-    private RoundWindow ensureComfortableMargin(Interval interval) {
-        RoundWindow window = roundProgress.bettingWindow(interval);
-        long duration = window.endMs() - window.startMs();
-        long remainingMs = window.startMs() - System.currentTimeMillis();
-        if (remainingMs >= duration / 2) {
-            return window;
-        }
-        String staleRoundId = window.roundId();
-        await().atMost(Duration.ofMillis(duration + 5_000)).pollInterval(Duration.ofMillis(100))
-                .until(() -> !roundProgress.bettingWindow(interval).roundId().equals(staleRoundId));
-        return roundProgress.bettingWindow(interval);
     }
 
     private Set<String> botPlayerIdsIn(String roundId, Set<String> botIds) {

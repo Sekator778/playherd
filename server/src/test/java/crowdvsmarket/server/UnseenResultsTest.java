@@ -13,6 +13,7 @@ import crowdvsmarket.server.dto.Identity;
 import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.scheduler.EngineRebuildService;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.testsupport.BettingWindows;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
@@ -90,7 +91,7 @@ class UnseenResultsTest {
     void unseenResultAppearsAfterSettlementAndClearsOnAckAndSurvivesRebuild() {
         mockChainSvc();
         String playerId = signUpPlayer("a");
-        RoundWindow bettingWindow = roundProgress.bettingWindow(Interval.HOURLY);
+        RoundWindow bettingWindow = BettingWindows.fresh(roundProgress, Interval.HOURLY);
         gameService.placeBet(playerId, new Betting.PlaceBetRequest(bettingWindow.roundId(), Enums.Direction.UP, 5,
                 "100.000"), bettingWindow.startMs() - 1);
 
@@ -129,7 +130,7 @@ class UnseenResultsTest {
         mockChainSvc();
         String playerA = signUpPlayer("b1");
         String playerB = signUpPlayer("b2");
-        RoundWindow bettingWindow = roundProgress.bettingWindow(Interval.HOURLY);
+        RoundWindow bettingWindow = BettingWindows.fresh(roundProgress, Interval.HOURLY);
         gameService.placeBet(playerA, new Betting.PlaceBetRequest(bettingWindow.roundId(), Enums.Direction.UP, 2,
                 "100.000"), bettingWindow.startMs() - 1);
         gameService.placeBet(playerB, new Betting.PlaceBetRequest(bettingWindow.roundId(), Enums.Direction.DOWN, 2,
