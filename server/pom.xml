@@ -29,7 +29,7 @@
          maven-metadata.xml, 2026-09-25). Task requirement: "Quarkus (3.x LTS, Java 21)". -->
     <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
     <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
-    <quarkus.platform.version>3.33.3</quarkus.platform.version>
+    <quarkus.platform.version>3.39.4</quarkus.platform.version>
 
     <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
     <surefire-plugin.version>3.6.0</surefire-plugin.version>
@@ -106,7 +106,7 @@
     <dependency>
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
-      <version>3.27.6</version>
+      <version>3.27.7</version>
       <scope>test</scope>
     </dependency>
     <dependency>

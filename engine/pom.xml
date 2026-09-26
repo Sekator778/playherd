@@ -28,7 +28,7 @@
          machine-wide guard against contacting anything but Maven Central — not touched here);
          3.27.6 needs byte-buddy 1.17.7, already cached. -->
     <junit.jupiter.version>6.1.3</junit.jupiter.version>
-    <assertj.version>3.27.6</assertj.version>
+    <assertj.version>3.27.7</assertj.version>
     <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
     <maven.surefire.plugin.version>3.6.0</maven.surefire.plugin.version>
   </properties>
