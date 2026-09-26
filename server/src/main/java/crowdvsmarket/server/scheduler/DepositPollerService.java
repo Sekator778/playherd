@@ -46,7 +46,8 @@ public class DepositPollerService {
     @Inject
     GameConfig config;
 
-    @Scheduled(every = "30s")
+    // SKIP: a pass slower than 30s (chainsvc timeouts) must not overlap the next one.
+    @Scheduled(every = "30s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void poll() {
         if (!config.depositEnabled()) {
             return;

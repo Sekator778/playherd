@@ -256,6 +256,29 @@ class PlayOnChainTest {
         assertThat(stillConfirmed.coinId()).isEqualTo("0xcoin-replay-withdrawal");
     }
 
+    @Test
+    void duplicateChainStatusForASettledWithdrawalIsIgnoredAndReplayStillWorks() {
+        String playerId = signUpPlayer("wd-duplicate-status");
+        org.mockito.Mockito.when(chainSvcClient.submitPlayWithdrawal(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(new ChainSvcClient.PlayWithdrawalSubmitResult(true));
+        Ledger.WithdrawalRequestDto requested = gameService.requestWithdrawal(playerId, "250.000",
+                System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+
+        // A second poll pass that read the row as pending before the first one committed ends up
+        // calling in again after it — the confirm must not reach the event log twice, and a late
+        // "failed" must not refund an already confirmed withdrawal.
+        gameService.confirmWithdrawalOnChain(requested.requestId(), "0xcoin-dup", 4_800_600L, now);
+        gameService.confirmWithdrawalOnChain(requested.requestId(), "0xcoin-dup", 4_800_600L, now);
+        gameService.failWithdrawalOnChain(requested.requestId(), "late failure", now);
+
+        assertThat(gameService.account(playerId).balance()).isEqualTo("9750.000");
+        engineRebuildService.rebuild();
+        assertThat(gameService.account(playerId).balance()).isEqualTo("9750.000");
+        assertThat(gameService.withdrawal(playerId, requested.requestId()).state().name()).isEqualTo("CONFIRMED");
+    }
+
     // --- concurrent requests ---
 
     @Test

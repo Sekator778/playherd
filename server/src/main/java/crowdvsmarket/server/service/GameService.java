@@ -8,6 +8,8 @@ import crowdvsmarket.engine.ledger.LedgerBook;
 import crowdvsmarket.engine.ledger.LedgerEntry;
 import crowdvsmarket.engine.ledger.PlayAmount;
 import crowdvsmarket.engine.ledger.SeasonRecord;
+import crowdvsmarket.engine.ledger.WithdrawalRequest;
+import crowdvsmarket.engine.ledger.WithdrawalState;
 import crowdvsmarket.engine.margin.Leverage;
 import crowdvsmarket.engine.margin.LiquidationCalculator;
 import crowdvsmarket.engine.market.Candle;
@@ -1057,6 +1059,9 @@ public class GameService {
     public void confirmWithdrawalOnChain(String requestId, String coinId, long height, long nowMs) {
         engineLock.writeLock().lock();
         try {
+            if (!withdrawalAwaitingChain(requestId)) {
+                return;
+            }
             GameEvent.WithdrawalConfirmedOnChain event =
                     new GameEvent.WithdrawalConfirmedOnChain(requestId, coinId, height, nowMs);
             persist(event, nowMs);
@@ -1078,6 +1083,9 @@ public class GameService {
     public void failWithdrawalOnChain(String requestId, String reason, long nowMs) {
         engineLock.writeLock().lock();
         try {
+            if (!withdrawalAwaitingChain(requestId)) {
+                return;
+            }
             GameEvent.WithdrawalFailed event = new GameEvent.WithdrawalFailed(requestId, nowMs);
             persist(event, nowMs);
             eventApplier.apply(event);
@@ -1088,6 +1096,25 @@ public class GameService {
         } finally {
             engineLock.writeLock().unlock();
         }
+    }
+
+    /** Idempotence guard for the two on-chain entry points above, checked under the write lock
+     *  before anything is persisted: two poll passes (overlapping ticks, or a tick and a manual
+     *  poll) can both read the same row as pending before either takes the lock. Without it the
+     *  second pass persisted a second terminal event whose apply then threw ("already
+     *  CONFIRMED") — and every later event-log replay threw on it too. Deposits get the same
+     *  guarantee from {@code depositConfirmations.tryReserve}. */
+    private boolean withdrawalAwaitingChain(String requestId) {
+        Optional<WithdrawalRequest> current = hub.ledger().withdrawal(requestId);
+        if (current.isEmpty()) {
+            LOG.warnf("chain status for unknown withdrawal %s ignored", requestId);
+            return false;
+        }
+        if (current.get().state() != WithdrawalState.REQUESTED) {
+            LOG.debugf("withdrawal %s already %s — duplicate chain status ignored", requestId, current.get().state());
+            return false;
+        }
+        return true;
     }
 
     /** Предложение: {@code requestId} is otherwise a small guessable sequential counter
