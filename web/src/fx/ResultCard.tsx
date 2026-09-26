@@ -20,14 +20,18 @@ import { useFxSettings } from "./fxSettings";
 import { TrophyIcon, CrackIcon, MinusDiscIcon, EqualsDiscIcon, SpeakerOnIcon, SpeakerMuteIcon } from "../components/icons";
 
 // Tier tables — result-moment.md §2. Durations in ms.
+// T1 raised 2026-09-26 (Р-59 follow-up, Alex: full-stake WIN/LOSS on Android "не заметил
+// вообще") — T1's own coins/sparks/duration were still each individually less than T2's (kept
+// that way below), but a ~1s total on-screen time made even a full-attention viewer likely to
+// miss it; see result-moment.md §2 changelog for the reasoning and the full before/after table.
 const WIN_TABLE: Record<Tier, { coins: number; sparks: number; confetti: number; glowPulses: number; countUpMs: number; holdMs: number; staggerMs: number }> = {
-  1: { coins: 6, sparks: 12, confetti: 0, glowPulses: 1, countUpMs: 500, holdMs: 500, staggerMs: 60 },
+  1: { coins: 9, sparks: 16, confetti: 0, glowPulses: 1, countUpMs: 600, holdMs: 650, staggerMs: 50 },
   2: { coins: 14, sparks: 30, confetti: 0, glowPulses: 2, countUpMs: 800, holdMs: 700, staggerMs: 45 },
   3: { coins: 26, sparks: 60, confetti: 20, glowPulses: 3, countUpMs: 1100, holdMs: 900, staggerMs: 32 },
   4: { coins: 42, sparks: 90, confetti: 40, glowPulses: 4, countUpMs: 1500, holdMs: 1200, staggerMs: 22 },
 };
 const LOSS_TABLE: Record<Tier, { shards: number; shakeAmp: number; flashOpacity: number; countDownMs: number; holdMs: number }> = {
-  1: { shards: 4, shakeAmp: 2, flashOpacity: 0.18, countDownMs: 400, holdMs: 400 },
+  1: { shards: 7, shakeAmp: 3, flashOpacity: 0.22, countDownMs: 550, holdMs: 550 },
   2: { shards: 8, shakeAmp: 4, flashOpacity: 0.26, countDownMs: 600, holdMs: 550 },
   3: { shards: 14, shakeAmp: 7, flashOpacity: 0.32, countDownMs: 850, holdMs: 700 },
   4: { shards: 22, shakeAmp: 10, flashOpacity: 0.38, countDownMs: 1100, holdMs: 850 },
@@ -88,7 +92,9 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
 
     if (event.kind === "WIN") {
       const t = WIN_TABLE[event.tier];
-      impact(event.tier >= 3 ? "heavy" : event.tier === 2 ? "medium" : "light");
+      // T1 raised light->medium alongside the table above (2026-09-26) — `vibrate(15)` was easy
+      // to miss entirely; `vibrate(30)` (T2's strength) is still below T3/T4's "heavy".
+      impact(event.tier >= 3 ? "heavy" : "medium");
       notification("success");
       playWinJingle(event.tier);
       if (!reducedMotion && cardRef.current) {
@@ -125,7 +131,9 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
       }
     } else if (event.kind === "LOSS") {
       const t = LOSS_TABLE[event.tier];
-      impact(event.tier >= 3 ? "heavy" : event.tier === 2 ? "medium" : "light");
+      // T1 raised light->medium alongside the table above (2026-09-26) — see the WIN branch's
+      // comment; a loss deserves at least as strong a nudge as a same-tier win.
+      impact(event.tier >= 3 ? "heavy" : "medium");
       if (event.tier >= 3) notification("error");
       playLossThud(event.tier);
       if (!reducedMotion && cardRef.current) {

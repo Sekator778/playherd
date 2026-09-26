@@ -1,0 +1,124 @@
+/* Lobby (`/`) — pair tiles (task IA, concept A chosen per Р-61/`docs/product/design/concepts.md`).
+   Tokens reused from index.css/direction.md; no new hex values invented here. */
+
+.lobby-head {
+  padding: 4px 0 16px;
+}
+.lobby-title {
+  font-size: 30px;
+  font-weight: 900;
+  margin: 0;
+}
+.lobby-sub {
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+
+.lobby-tile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 480px) {
+  .lobby-tile-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lobby-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  min-height: 168px;
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  text-decoration: none;
+  color: var(--text);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.lobby-tile--live {
+  background: radial-gradient(120% 140% at 20% 0%, #3a2470 0%, #1c2434 55%, #141a26 100%);
+  box-shadow: var(--shadow-card);
+}
+.lobby-tile--live:active {
+  transform: scale(0.98);
+}
+.lobby-tile__hot {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: var(--gold);
+  color: var(--bg);
+  font-weight: 800;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+.lobby-tile__glyph {
+  position: absolute;
+  top: 8px;
+  left: 14px;
+  font-size: 44px;
+  opacity: 0.35;
+  color: var(--gold);
+}
+.lobby-tile__symbol {
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+.lobby-tile__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+.lobby-tile__meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lobby-tile__live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--up);
+  box-shadow: 0 0 8px var(--up);
+  animation: lobby-pulse-dot 1.4s ease-in-out infinite;
+}
+@keyframes lobby-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.lobby-tile__cta {
+  margin-top: 10px;
+  font-weight: 800;
+  color: var(--accent-text);
+}
+
+.lobby-tile--soon {
+  background: var(--bg-elevated);
+  filter: grayscale(0.6);
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.lobby-tile__lock {
+  color: var(--text-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lobby-tile__live-dot {
+    animation: none;
+  }
+}

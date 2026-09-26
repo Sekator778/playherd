@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { PublicPositionDto, RoundBetting, RoundDto, RoundRunning, RoundSettled } from "../api/contract";
+import type { ProfileRoundEntryDto, PublicPositionDto, RoundBetting, RoundDto, RoundRunning, RoundSettled } from "../api/contract";
 import {
   applyLeverageKicker,
   detectResultEvent,
   liquidationTier,
   lossTier,
+  resultEventFromHistoryEntry,
   roundHasPlayerStake,
   winTier,
 } from "./resultEvent";
@@ -294,6 +295,67 @@ describe("detectResultEvent — hourly and daily settle in the same tick", () =>
     expect(hourlyEvent?.kind).toBe("WIN");
     expect(dailyEvent?.kind).toBe("LOSS");
     expect(hourlyEvent?.id).not.toBe(dailyEvent?.id);
+  });
+});
+
+function historyEntry(overrides: Partial<ProfileRoundEntryDto> = {}): ProfileRoundEntryDto {
+  return {
+    roundId: "1h-0",
+    interval: "HOURLY",
+    asset: "BTC",
+    settledAtMs: 1000,
+    direction: "UP",
+    leverage: 10,
+    stake: "100.000",
+    liquidated: false,
+    directionCorrect: true,
+    payout: "500.000",
+    ...overrides,
+  };
+}
+
+describe("resultEventFromHistoryEntry (fx/useAwayReplay.ts — 'while you were away')", () => {
+  it("WIN: same tier math as the live path, from a settled history entry alone", () => {
+    const entry = historyEntry({ payout: "500.000", stake: "100.000", leverage: 10 }); // 5x -> T3
+    const event = resultEventFromHistoryEntry(entry, PLAYER_ID, { balanceBefore: 10000, balanceAfter: 10400 });
+    expect(event.kind).toBe("WIN");
+    expect(event.netPlay).toBe(400);
+    expect(event.tier).toBe(3);
+    expect(event.balanceBefore).toBe(10000);
+    expect(event.balanceAfter).toBe(10400);
+  });
+
+  it("LOSS: tier by stakeShare of the caller-supplied balanceBefore", () => {
+    const entry = historyEntry({ payout: "80.150", stake: "100.000" }); // net -19.85
+    const event = resultEventFromHistoryEntry(entry, PLAYER_ID, { balanceBefore: 100, balanceAfter: 80.15 });
+    expect(event.kind).toBe("LOSS");
+    expect(event.netPlay).toBeCloseTo(-19.85, 5);
+    expect(event.tier).toBe(4); // stakeShare 100/100 = 100%
+  });
+
+  it("LIQUIDATION wins over settlement even when payout looks like a partial refund", () => {
+    const entry = historyEntry({ liquidated: true, payout: "0.000", stake: "100.000", leverage: 25 });
+    const event = resultEventFromHistoryEntry(entry, PLAYER_ID, { balanceBefore: 9000, balanceAfter: 9500 });
+    expect(event.kind).toBe("LIQUIDATION");
+    expect(event.netPlay).toBe(-100);
+    expect(event.tier).toBe(3); // x25 -> T3
+    // Liquidation never moves the running balance (already debited at placeBet) — the caller's
+    // balanceBefore is ignored in favor of balanceAfter for both fields (result-moment.md §2).
+    expect(event.balanceBefore).toBe(event.balanceAfter);
+  });
+
+  it("EVEN: payout === stake -> net 0, fixed tier 1", () => {
+    const entry = historyEntry({ payout: "100.000", stake: "100.000" });
+    const event = resultEventFromHistoryEntry(entry, PLAYER_ID, { balanceBefore: 10000, balanceAfter: 10100 });
+    expect(event.kind).toBe("EVEN");
+    expect(event.netPlay).toBe(0);
+    expect(event.tier).toBe(1);
+  });
+
+  it("id is the same `${roundId}:${playerId}` dedup key the live path uses", () => {
+    const entry = historyEntry({ roundId: "1h-42" });
+    const event = resultEventFromHistoryEntry(entry, PLAYER_ID, { balanceBefore: 0, balanceAfter: 0 });
+    expect(event.id).toBe(`1h-42:${PLAYER_ID}`);
   });
 });
 

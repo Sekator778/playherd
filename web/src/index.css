@@ -49,7 +49,10 @@
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.25);
 
   --header-height: 60px;
-  --banner-height: 40px;
+  /* Bottom tab bar (task IA: Lobby/Stats/Profile, `Layout.tsx`'s `BottomTabBar`) — replaces the
+     old top nav row; the header no longer sticks below a banner (Р-63 removed the DEMO/replay
+     banners from every screen the header wraps), so `--banner-height` is gone too. */
+  --tabbar-height: 64px;
 
   font-family:
     "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -339,6 +342,13 @@ ol {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   color: var(--text-faint);
+  /* 390px mobile fix (headless Chrome screenshot, 2026-09-26): this line's own text ("PLAY —
+     test tokens…", the oracle/multi-account disclosures) is long, plain sentences, not a single
+     unbreakable token — but without an explicit wrap mode this monospace-font paragraph measured
+     wider than its container on this stand and clipped mid-word instead of wrapping. These two
+     rules force it to always wrap within its box regardless of font metrics. */
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .disclaimer-line {
@@ -360,6 +370,9 @@ ol {
   padding: 8px 14px;
   margin-bottom: 16px;
   letter-spacing: 0.02em;
+  /* Same 390px wrap fix as `.disclaimer-line` above. */
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 /* Bot badge (task item 4 — PlayerSummaryDto.isBot) -------------------------- */
@@ -396,7 +409,7 @@ ol {
 
 .app-header {
   position: sticky;
-  top: var(--banner-height);
+  top: 0;
   z-index: 40;
   display: flex;
   align-items: center;
@@ -602,6 +615,48 @@ ol {
   text-decoration: none;
   border-bottom: 1px solid var(--border);
   font-weight: 600;
+}
+
+/* Bottom tab bar (task IA: Lobby/Stats/Profile) --------------------------- */
+
+.tab-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: flex;
+  height: var(--tabbar-height);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  background: rgba(11, 14, 20, 0.94);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border);
+}
+
+.tab-bar__item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tab-bar__item:hover {
+  color: var(--text);
+}
+
+.tab-bar__item[aria-current="page"] {
+  color: var(--accent-text);
+}
+
+.tab-bar__icon {
+  width: 22px;
+  height: 22px;
 }
 
 /* Cards / sections --------------------------------------------------------- */
@@ -1137,7 +1192,8 @@ ol {
   padding: 4px;
   gap: 4px;
 }
-.tabs button {
+.tabs button,
+.tabs a {
   border: none;
   background: none;
   color: var(--text-muted);
@@ -1146,8 +1202,11 @@ ol {
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
 }
-.tabs button[aria-selected="true"] {
+.tabs button[aria-selected="true"],
+.tabs a[aria-selected="true"] {
   background: var(--accent);
   color: white;
 }
@@ -1297,10 +1356,13 @@ ol {
 
 footer.app-footer {
   border-top: 1px solid var(--border);
-  padding: 24px 0;
+  padding: 24px 0 calc(24px + var(--tabbar-height) + env(safe-area-inset-bottom, 0px));
   text-align: center;
   color: var(--text-faint);
   font-size: 13px;
+}
+footer.app-footer a {
+  color: var(--text-faint);
 }
 
 /* Avatar --------------------------------------------------------------------------- */

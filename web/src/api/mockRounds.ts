@@ -17,6 +17,7 @@ import type {
   CrowdRoundPositionDto,
   CrowdRoundResultDto,
   Direction,
+  LiveBetDto,
   PlayerSummaryDto,
   PublicPositionDto,
   RoundBetting,
@@ -26,7 +27,7 @@ import type {
   RoundWindowDto,
 } from "./contract";
 import { CROWD_MARGIN_SHARE_OF_CAPITAL } from "./contract";
-import { ohlcFor, roundIdFor, type WindowOhlc } from "./clock";
+import { ohlcFor, prevWindow, roundIdFor, simNowMs, type WindowOhlc } from "./clock";
 import { chance, randFloat, randInt, rngFor } from "./rng";
 import {
   LONG,
@@ -208,9 +209,43 @@ function crowdSettledResult(
   };
 }
 
+/** Р-62's live bet feed cap — a demo-only number (no source fixes it), generous enough to feel
+ *  "live" without listing every one of the round's ~12-32 NPC bets at once. */
+const LIVE_FEED_LIMIT = 14;
+
+/**
+ * Р-62's live crowd split/feed, computed purely from `bets` (already-merged NPC + own) — the
+ * actual betting period is the CURRENTLY RUNNING window, not `window` itself (`window` here is
+ * the future round `bets` will open positions in once betting closes, Р-19: "ставки принимаются в
+ * течение всего предыдущего раунда"), hence `prevWindow(window)` below. Timestamps are cosmetic
+ * (same reasoning as `clock.ts`'s own price-path noise) — seeded by `roundId` so a given round's
+ * feed order is stable across polls, except the player's own bet, which always sorts to "just
+ * now" the instant it exists.
+ */
+function liveBetFeed(roundId: string, bets: BetDto[], window: RoundWindowDto, own?: OwnBetInfo | null): LiveBetDto[] {
+  const bettingPeriod = prevWindow(window);
+  const span = Math.max(1, bettingPeriod.endMs - bettingPeriod.startMs);
+  const rng = rngFor("bet-feed-times", roundId);
+  const withTimes = bets.map((bet) => {
+    const isOwn = Boolean(own) && own!.bet.roundId === roundId && bet.playerId === own!.bet.playerId;
+    const atMs = isOwn ? simNowMs() : bettingPeriod.startMs + Math.floor(rng() * span);
+    return { bet, atMs };
+  });
+  withTimes.sort((a, b) => b.atMs - a.atMs);
+  return withTimes.slice(0, LIVE_FEED_LIMIT).map(({ bet, atMs }) => ({
+    player: playerFor(bet.playerId, own),
+    direction: bet.direction,
+    leverage: bet.leverage,
+    stake: bet.stake,
+    atMs,
+  }));
+}
+
 export function buildBettingRound(window: RoundWindowDto, own?: OwnBetInfo | null): RoundBetting {
   const roundId = roundIdFor(window);
   const bets = mergedBets(roundId, own);
+  const upStake = bets.filter((b) => b.direction === "UP").reduce((sum, b) => sum + Number(b.stake), 0);
+  const downStake = bets.filter((b) => b.direction === "DOWN").reduce((sum, b) => sum + Number(b.stake), 0);
   return {
     roundId,
     window,
@@ -218,6 +253,9 @@ export function buildBettingRound(window: RoundWindowDto, own?: OwnBetInfo | nul
     phase: "BETTING",
     participantCount: bets.length,
     myBet: own && own.bet.roundId === roundId ? own.bet : null,
+    upStake: upStake.toFixed(3),
+    downStake: downStake.toFixed(3),
+    recentBets: liveBetFeed(roundId, bets, window, own),
   };
 }
 

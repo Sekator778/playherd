@@ -15,8 +15,10 @@
     "android:debug": "cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.1",
     "@capacitor/core": "^8.5.2",
     "@walletconnect/sign-client": "^2.25.0",
+    "@walletconnect/utils": "^2.25.0",
     "chia-wallet-sdk-wasm": "^0.36.0",
     "decimal.js": "^10.6.0",
     "qrcode-generator": "^2.0.4",

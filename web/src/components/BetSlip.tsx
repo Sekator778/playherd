@@ -23,6 +23,20 @@ interface BetSlipProps {
   /** Round-only reassurance line (`ux_spec.md` §4's "Not signed in" state) — Home doesn't ask
    *  for it, so it stays an opt-in prop rather than baked into the shared "no player" card. */
   noPlayerHint?: string;
+  /**
+   * Optional external direction control (Pair room arena, `docs/product/design/concepts.md`
+   * concept A — "widths reflect the live crowd split... UP/DOWN whose widths reflect the LIVE
+   * crowd split"): the arena's own giant UP/DOWN halves double as the direction picker, so the
+   * slip embedded below it must not keep its own independent selection. Omitted (Home/Round,
+   * unchanged) → the slip manages `direction` itself exactly as before.
+   */
+  direction?: Direction;
+  onDirectionChange?: (direction: Direction) => void;
+  /** Pairs with `direction`/`onDirectionChange` above — true when the caller's own UI (the
+   *  arena) already IS the direction picker, so the slip's built-in UP/DOWN buttons would just be
+   *  a confusing duplicate. Ignored (buttons always shown) unless a controlled `direction` is
+   *  also passed. */
+  hideDirectionPicker?: boolean;
 }
 
 /** Plain-integer default for the stake field's *initial* value — never `MIN_STAKE_PLAY` itself
@@ -51,7 +65,15 @@ function stakeDisplay(amount: string): string {
 
 /** Bet slip (`ux_spec.md` §11) — used embedded on Home and full-size on the Round page, always
  *  the same component so every state/validation rule lives in exactly one place. */
-export function BetSlip({ round, nowMs, onChanged, noPlayerHint }: BetSlipProps) {
+export function BetSlip({
+  round,
+  nowMs,
+  onChanged,
+  noPlayerHint,
+  direction,
+  onDirectionChange,
+  hideDirectionPicker,
+}: BetSlipProps) {
   const { player, openConnectModal } = useSession();
 
   const bettingClosed = nowMs >= round.window.startMs;
@@ -68,10 +90,26 @@ export function BetSlip({ round, nowMs, onChanged, noPlayerHint }: BetSlipProps)
   }
 
   if (!player) {
-    return <BetSlipPreview noPlayerHint={noPlayerHint} onConnect={openConnectModal} />;
+    return (
+      <BetSlipPreview
+        noPlayerHint={noPlayerHint}
+        onConnect={openConnectModal}
+        direction={direction}
+        onDirectionChange={onDirectionChange}
+        hideDirectionPicker={hideDirectionPicker}
+      />
+    );
   }
 
-  return <BetSlipForm round={round} onChanged={onChanged} />;
+  return (
+    <BetSlipForm
+      round={round}
+      onChanged={onChanged}
+      direction={direction}
+      onDirectionChange={onDirectionChange}
+      hideDirectionPicker={hideDirectionPicker}
+    />
+  );
 }
 
 /**
@@ -86,9 +124,23 @@ export function BetSlip({ round, nowMs, onChanged, noPlayerHint }: BetSlipProps)
  * the final action differs, opening the same connect-wallet modal every other "no player" entry
  * point in the app already uses.
  */
-function BetSlipPreview({ noPlayerHint, onConnect }: { noPlayerHint?: string; onConnect: () => void }) {
+function BetSlipPreview({
+  noPlayerHint,
+  onConnect,
+  direction: controlledDirection,
+  onDirectionChange,
+  hideDirectionPicker,
+}: {
+  noPlayerHint?: string;
+  onConnect: () => void;
+  direction?: Direction;
+  onDirectionChange?: (direction: Direction) => void;
+  hideDirectionPicker?: boolean;
+}) {
   const api = useApi();
-  const [direction, setDirection] = useState<Direction>("UP");
+  const [internalDirection, setInternalDirection] = useState<Direction>("UP");
+  const direction = controlledDirection ?? internalDirection;
+  const setDirection = onDirectionChange ?? setInternalDirection;
   const [leverage, setLeverage] = useState<number>(10);
   const [stake, setStake] = useState<string>(DEFAULT_STAKE_DISPLAY);
   const [preview, setPreview] = useState<LiquidationPreviewDto | null>(null);
@@ -115,29 +167,31 @@ function BetSlipPreview({ noPlayerHint, onConnect }: { noPlayerHint?: string; on
     <div className="card bet-slip">
       <p className="test-wallet-tag">PREVIEW — not signed in</p>
 
-      <div className="field">
-        <span id="preview-direction-label">Direction</span>
-        <div className="direction-row" role="group" aria-labelledby="preview-direction-label">
-          <button
-            type="button"
-            className={`direction-btn direction-btn--up ${direction === "UP" ? "direction-btn--selected" : ""}`}
-            aria-pressed={direction === "UP"}
-            onClick={() => setDirection("UP")}
-          >
-            <DirectionGlyph direction="UP" />
-            UP
-          </button>
-          <button
-            type="button"
-            className={`direction-btn direction-btn--down ${direction === "DOWN" ? "direction-btn--selected" : ""}`}
-            aria-pressed={direction === "DOWN"}
-            onClick={() => setDirection("DOWN")}
-          >
-            <DirectionGlyph direction="DOWN" />
-            DOWN
-          </button>
+      {!hideDirectionPicker && (
+        <div className="field">
+          <span id="preview-direction-label">Direction</span>
+          <div className="direction-row" role="group" aria-labelledby="preview-direction-label">
+            <button
+              type="button"
+              className={`direction-btn direction-btn--up ${direction === "UP" ? "direction-btn--selected" : ""}`}
+              aria-pressed={direction === "UP"}
+              onClick={() => setDirection("UP")}
+            >
+              <DirectionGlyph direction="UP" />
+              UP
+            </button>
+            <button
+              type="button"
+              className={`direction-btn direction-btn--down ${direction === "DOWN" ? "direction-btn--selected" : ""}`}
+              aria-pressed={direction === "DOWN"}
+              onClick={() => setDirection("DOWN")}
+            >
+              <DirectionGlyph direction="DOWN" />
+              DOWN
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="field">
         <label htmlFor="preview-leverage-input" className="visually-hidden">
@@ -192,12 +246,26 @@ function BetSlipPreview({ noPlayerHint, onConnect }: { noPlayerHint?: string; on
   );
 }
 
-function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () => void }) {
+function BetSlipForm({
+  round,
+  onChanged,
+  direction: controlledDirection,
+  onDirectionChange,
+  hideDirectionPicker,
+}: {
+  round: RoundBetting;
+  onChanged: () => void;
+  direction?: Direction;
+  onDirectionChange?: (direction: Direction) => void;
+  hideDirectionPicker?: boolean;
+}) {
   const api = useApi();
   const existing = round.myBet;
   const [formOpen, setFormOpen] = useState(!existing);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [direction, setDirection] = useState<Direction>(existing?.direction ?? "UP");
+  const [internalDirection, setInternalDirection] = useState<Direction>(existing?.direction ?? "UP");
+  const direction = controlledDirection ?? internalDirection;
+  const setDirection = onDirectionChange ?? setInternalDirection;
   const [leverage, setLeverage] = useState<number>(existing?.leverage ?? 10);
   const [stake, setStake] = useState<string>(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
 
@@ -332,29 +400,31 @@ function BetSlipForm({ round, onChanged }: { round: RoundBetting; onChanged: () 
         void submit();
       }}
     >
-      <div className="field">
-        <span id="direction-label">Direction</span>
-        <div className="direction-row" role="group" aria-labelledby="direction-label">
-          <button
-            type="button"
-            className={`direction-btn direction-btn--up ${direction === "UP" ? "direction-btn--selected" : ""}`}
-            aria-pressed={direction === "UP"}
-            onClick={() => setDirection("UP")}
-          >
-            <DirectionGlyph direction="UP" />
-            UP
-          </button>
-          <button
-            type="button"
-            className={`direction-btn direction-btn--down ${direction === "DOWN" ? "direction-btn--selected" : ""}`}
-            aria-pressed={direction === "DOWN"}
-            onClick={() => setDirection("DOWN")}
-          >
-            <DirectionGlyph direction="DOWN" />
-            DOWN
-          </button>
+      {!hideDirectionPicker && (
+        <div className="field">
+          <span id="direction-label">Direction</span>
+          <div className="direction-row" role="group" aria-labelledby="direction-label">
+            <button
+              type="button"
+              className={`direction-btn direction-btn--up ${direction === "UP" ? "direction-btn--selected" : ""}`}
+              aria-pressed={direction === "UP"}
+              onClick={() => setDirection("UP")}
+            >
+              <DirectionGlyph direction="UP" />
+              UP
+            </button>
+            <button
+              type="button"
+              className={`direction-btn direction-btn--down ${direction === "DOWN" ? "direction-btn--selected" : ""}`}
+              aria-pressed={direction === "DOWN"}
+              onClick={() => setDirection("DOWN")}
+            >
+              <DirectionGlyph direction="DOWN" />
+              DOWN
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="field">
         <label htmlFor="leverage-input" className="visually-hidden">

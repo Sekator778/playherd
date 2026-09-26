@@ -175,6 +175,15 @@ export function RoundPage() {
           {round.phase === "BETTING" && (
             <>
               <p>{round.participantCount} players have voted</p>
+              {/* Р-62 (replaces Р-22): the crowd split is now live during betting, not just at
+               *  round start — optional fields, so this line simply doesn't render against a
+               *  `RealApi` build that predates Р-62. */}
+              {round.upStake !== undefined && round.downStake !== undefined && (Number(round.upStake) > 0 || Number(round.downStake) > 0) && (
+                <p className="mono muted">
+                  {Math.round((Number(round.upStake) / (Number(round.upStake) + Number(round.downStake))) * 100)}% UP ·{" "}
+                  {Math.round((Number(round.downStake) / (Number(round.upStake) + Number(round.downStake))) * 100)}% DOWN
+                </p>
+              )}
               <BetSlip
                 round={round}
                 nowMs={nowMs}

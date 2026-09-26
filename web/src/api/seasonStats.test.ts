@@ -8,6 +8,7 @@ function entry(overrides: Partial<ProfileRoundEntryDto> & { payout: string; stak
   return {
     roundId: `1h-${overrides.settledAtMs}`,
     interval: "HOURLY",
+    asset: "BTC",
     direction: "UP",
     leverage: 10,
     liquidated: false,

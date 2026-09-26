@@ -117,6 +117,7 @@ function generateHistory(index: number): HistoryEntry[] {
     entries.push({
       roundId: roundIdFor(window),
       interval,
+      asset: "BTC",
       settledAtMs: window.endMs - 1,
       direction,
       leverage,

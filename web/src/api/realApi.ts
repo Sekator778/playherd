@@ -34,9 +34,11 @@ import {
   type PlaceBetRequest,
   type PlayerAccountDto,
   type PlayerSummaryDto,
+  type ProfileRoundEntryDto,
   type PublicProfileDto,
   type RatingsDto,
   type RoundDto,
+  type RoundId,
   type RoundsPairDto,
   type SeasonId,
   type SeasonRecordDto,
@@ -188,6 +190,14 @@ class RealApi implements Api {
   // --- server info (additive, task's FIXED INTERFACE (1)) ---
   serverInfo(): Promise<ServerInfoDto> {
     return rpc("serverInfo", []);
+  }
+
+  // --- "while you were away" (additive proposal — contract.ts's own doc comment) ---
+  unseenResults(): Promise<ProfileRoundEntryDto[]> {
+    return rpc("unseenResults", []);
+  }
+  acknowledgeResults(roundIds: RoundId[]): Promise<void> {
+    return rpc("acknowledgeResults", [roundIds]);
   }
 }
 

@@ -43,4 +43,15 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Result-moment haptics (Р-50, result-moment.md §2's per-tier `vibrate(...)` column).
+         `navigator.vibrate()` under a genuine user gesture already returns `true` on this
+         emulator/WebView build (Android 15, WebView 124) even without this permission, and
+         `logcat`/`dumpsys package` show no SecurityException either way (verified live,
+         2026-09-26, on emulator-5554 with and without this line) — so this specific build's JS
+         return value doesn't prove the permission changes behavior here. Kept anyway: any app
+         calling the Vibration API is expected to declare `VIBRATE` (it is a normal, not
+         dangerous, permission — free to request), and other Android/WebView combinations are
+         documented to silently drop the actual motor call without it even when the JS promise
+         still resolves true, which the emulator's virtual vibrator can't be relied on to surface. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 </manifest>

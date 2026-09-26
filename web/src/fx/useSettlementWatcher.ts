@@ -1,12 +1,26 @@
 import { useCallback, useRef } from "react";
 import { useApi, useSession } from "../api/ApiContext";
 import { usePoll } from "../api/usePoll";
-import type { Interval, RoundDto, RoundId } from "../api/contract";
+import type { Api, Interval, RoundDto, RoundId } from "../api/contract";
 import { detectResultEvent, roundHasPlayerStake } from "./resultEvent";
 import { publish } from "./resultEventBus";
 
 const POLL_MS = 2000;
 const INTERVALS: Interval[] = ["HOURLY", "DAILY"];
+
+/**
+ * Marks a round's result as shown (task item, 2026-09-26 — "while you were away",
+ * `fx/useAwayReplay.ts`'s other half): called from BOTH places below that publish a live moment,
+ * so a round shown live is never replayed as "unseen" on the next reload. Fire-and-forget —
+ * `Api.acknowledgeResults` is optional (a server/build that predates it just never gets called;
+ * `useAwayReplay.ts` would then never find anything "seen" either, which only costs a possible
+ * repeat of the SAME moment on next open, never a lost one or a balance change).
+ */
+function ackResult(api: Api, roundId: RoundId): void {
+  api.acknowledgeResults?.([roundId]).catch((err) => {
+    console.error(`[useSettlementWatcher] acknowledgeResults(${roundId}) failed — may replay on next open`, err);
+  });
+}
 
 /**
  * Global settlement-event detector (`implementation-plan.md` §3) — its own `api.home()` poll,
@@ -90,6 +104,7 @@ export function useSettlementWatcher(): void {
           if (primaryEvent) {
             handled.current.add(primaryEvent.id);
             publish(primaryEvent);
+            ackResult(api, primaryEvent.roundId);
           }
 
           // The running round rolled over to a new window — if the previous one still had our
@@ -126,6 +141,7 @@ export function useSettlementWatcher(): void {
                 if (event) {
                   handled.current.add(event.id);
                   publish(event);
+                  ackResult(api, roundId);
                 }
                 pendingSet.delete(roundId); // resolved either way — stop chasing it
                 failedAttempts.current.delete(roundId);

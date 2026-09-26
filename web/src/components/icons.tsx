@@ -198,6 +198,50 @@ export function ArrowUpTrayIcon({ className = "" }: { className?: string }) {
   );
 }
 
+/** Bottom tab bar icons (task IA: "Lobby / Stats / Profile") — same inline-SVG,
+ *  `currentColor`-driven pattern as every other icon in this file, so the tab bar's own
+ *  active/inactive text color drives the icon too, no separate color prop needed. */
+export function LobbyTabIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+export function StatsTabIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+      <path d="M5 19V10M12 19V5M19 19v-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M4 19h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function ProfileTabIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+      <circle cx="12" cy="8.6" r="3.4" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M4.8 19.4c1.1-3.4 4-5.2 7.2-5.2s6.1 1.8 7.2 5.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** "Coming soon" pair tile lock (Lobby) — same inline-SVG pattern as everywhere else in this
+ *  file, not a platform emoji (direction.md §3: an emoji lock rendered as an indistinct dark
+ *  badge on the Android/WebView combo this app was verified on). */
+export function LockIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+      <rect x="5.5" y="10.5" width="13" height="9" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
 /** The HUD balance's coin glyph (direction.md §3) — fixed gold tokens, not `currentColor`: a coin
  *  is gold everywhere it appears, unlike the outcome icons above which inherit their container's
  *  semantic color. */

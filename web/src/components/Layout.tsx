@@ -5,19 +5,30 @@ import { useClock } from "../api/useClock";
 import { totalInPlayStake } from "../api/inPlay";
 import { formatPlayAmount } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
-import { DemoBanner, ServerInfoBanner } from "./Common";
-import { CoinIcon, SpeakerOnIcon, SpeakerMuteIcon, VibrationOnIcon, VibrationOffIcon } from "./icons";
+import { CoinIcon, SpeakerOnIcon, SpeakerMuteIcon, VibrationOnIcon, VibrationOffIcon, LobbyTabIcon, StatsTabIcon, ProfileTabIcon } from "./icons";
 import { useSettlementWatcher } from "../fx/useSettlementWatcher";
+import { useAwayReplay } from "../fx/useAwayReplay";
+import { useAndroidBackButton } from "../fx/useAndroidBackButton";
 import { ResultMomentHost } from "../fx/ResultMomentHost";
 import { RollingDigits } from "../fx/RollingDigits";
 import { useFxSettings } from "../fx/fxSettings";
 import { primeAudioContext } from "../fx/sound";
 
-const NAV_LINKS = [
-  { to: "/", label: "Home", end: true },
-  { to: "/crowd", label: "Crowd" },
-  { to: "/ratings", label: "Ratings" },
-  { to: "/how-it-works", label: "How it works" },
+/**
+ * Bottom tab bar (task IA: "Lobby / Stats / Profile") — replaces the old top nav row
+ * (Home/Crowd/Ratings/How it works) as the app's PRIMARY navigation, on both mobile and desktop
+ * (one nav paradigm, not two). "How it works" moved to the footer (`Layout` below) — it's
+ * reference material, not a tab a player taps every session.
+ *
+ * Player review fix (2026-09-26, item 2): "Profile" used to point at `/wallet` — tapping it opened
+ * a balance/deposit screen, never a profile (nickname, rounds, accuracy, history). It now opens
+ * `/profile/me` (`MyProfilePage.tsx`), which shows that profile with Wallet moved inside it as a
+ * sub-tab; `/wallet` is unchanged as a direct deep link (header balance pill, profile menu).
+ */
+const TAB_LINKS = [
+  { to: "/", label: "Lobby", end: true, Icon: LobbyTabIcon },
+  { to: "/stats", label: "Stats", end: false, Icon: StatsTabIcon },
+  { to: "/profile/me", label: "Profile", end: false, Icon: ProfileTabIcon },
 ];
 
 function BalancePill() {
@@ -191,54 +202,49 @@ function ProfileMenu() {
   );
 }
 
+/**
+ * Header — now just logo, sound/vibration, balance and sign-in/profile: the primary nav row
+ * (Home/Crowd/Ratings/How it works) moved to {@link BottomTabBar} (task IA), and the honest
+ * DEMO/replay banners that used to sit above this header are gone from every screen this header
+ * wraps (Р-63 — "removed"; the same facts now live as plain text on Wallet/How it works and in
+ * the connect-wallet onboarding, not a sticky top plaque).
+ */
 function Header() {
   const { player, openConnectModal } = useSession();
-  const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <>
-      <header className="app-header">
-        <NavLink to="/" className="app-header__logo">
-          Herd
+    <header className="app-header">
+      <NavLink to="/" className="app-header__logo">
+        Herd
+      </NavLink>
+      <div className="app-header__right">
+        <FxMenu />
+        <BalancePill />
+        {player ? (
+          <ProfileMenu />
+        ) : (
+          <button type="button" className="btn btn--primary" onClick={openConnectModal}>
+            CONNECT WALLET
+          </button>
+        )}
+      </div>
+    </header>
+  );
+}
+
+/** Task IA: "bottom tab bar: Lobby / Stats / Profile" — the app's one primary nav, desktop and
+ *  mobile alike (concept A, `docs/product/design/concepts.md`: "плавающая нижняя навигация-
+ *  таблетка с иконками"). */
+function BottomTabBar() {
+  return (
+    <nav className="tab-bar" aria-label="Main">
+      {TAB_LINKS.map(({ to, label, end, Icon }) => (
+        <NavLink key={to} to={to} end={end} className="tab-bar__item">
+          <Icon className="tab-bar__icon" />
+          <span>{label}</span>
         </NavLink>
-        <nav className="app-header__nav" aria-label="Main">
-          {NAV_LINKS.map((link) => (
-            <NavLink key={link.to} to={link.to} end={link.end}>
-              {link.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="app-header__right">
-          <FxMenu />
-          <BalancePill />
-          {player ? (
-            <ProfileMenu />
-          ) : (
-            <button type="button" className="btn btn--primary" onClick={openConnectModal}>
-              CONNECT WALLET
-            </button>
-          )}
-        </div>
-        <button
-          type="button"
-          className="hamburger"
-          aria-expanded={mobileOpen}
-          aria-label="Open navigation menu"
-          onClick={() => setMobileOpen((v) => !v)}
-        >
-          ☰
-        </button>
-      </header>
-      {mobileOpen && (
-        <nav className="mobile-nav" aria-label="Main mobile">
-          {NAV_LINKS.map((link) => (
-            <NavLink key={link.to} to={link.to} end={link.end} onClick={() => setMobileOpen(false)}>
-              {link.label}
-            </NavLink>
-          ))}
-        </nav>
-      )}
-    </>
+      ))}
+    </nav>
   );
 }
 
@@ -246,23 +252,30 @@ export function Layout() {
   // Global settlement-event watcher (implementation-plan.md §3) — runs regardless of which page
   // is mounted below, so a result moment fires "видно с любой страницы" (game-designer.md).
   useSettlementWatcher();
+  // "While you were away" one-shot catch-up (task item) — same reasoning: lives at the layout
+  // level, not on any one page, so it runs no matter which screen the app opens on.
+  useAwayReplay();
+  // Android hardware Back (player review fix item 4) — native-only no-op on web, see the hook's
+  // own doc comment.
+  useAndroidBackButton();
 
   return (
     <div className="page">
       <a href="#main-content" className="skip-link">
         Skip to content
       </a>
-      <DemoBanner />
       <Header />
       <main id="main-content" className="main-content">
         <div className="container">
-          <ServerInfoBanner />
           <Outlet />
         </div>
       </main>
       <footer className="app-footer">
-        <div className="container">Herd — crowd vs market. A toy-money demo on Chia testnet11.</div>
+        <div className="container">
+          Herd — crowd vs market. A toy-money demo on Chia testnet11. <NavLink to="/how-it-works">How it works</NavLink>
+        </div>
       </footer>
+      <BottomTabBar />
       <ConnectWalletModal />
       {/* Portal-ish host (result-moment.md §1) — outside <Outlet/>, on top of everything. */}
       <ResultMomentHost />

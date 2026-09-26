@@ -117,6 +117,10 @@ export interface PublicProfileDto {
 export interface ProfileRoundEntryDto {
   roundId: RoundId;
   interval: Interval;
+  /** Additive (multi-pair readiness, docs/research/multi_pair_architecture.md §8) — literal
+   *  `"BTC"` until other assets exist; present so a client can start branching on it without a
+   *  later breaking change. */
+  asset: "BTC";
   settledAtMs: EpochMs;
   direction: Direction;
   leverage: Leverage;
@@ -286,12 +290,94 @@ interface RoundBase {
 
 export interface RoundBetting extends RoundBase {
   phase: "BETTING";
-  /** Only the headcount is public before round start (Р-22) — no directions, no amounts. */
+  /** Headcount — public even before Р-62 and still meaningful standalone (e.g. for a screen that
+   *  only wants "N playing", like the lobby tile, `docs/research/multi_pair_architecture.md` §8's
+   *  proposed pair-list endpoint). */
   participantCount: number;
   /** The signed-in viewer's own pending bet on this round, if any — private to them, and the
    *  basis for the "already bet this round" edit/cancel state (Р-13). Null if signed out or has
    *  no bet yet. */
   myBet: BetDto | null;
+  /**
+   * Additive (Р-62, 2026-09-26 — "Расклад толпы (UP/DOWN в %, число игроков)... видны вживую во
+   * время окна ставок, как в Twitch Predictions", **replaces Р-22**'s "count only" during
+   * BETTING): the live stake split by direction, updating throughout the betting window — the
+   * arena's UP/DOWN half-widths (`docs/product/design/concepts.md` concept A) read straight from
+   * these two numbers. Optional so a `RealApi` build that predates Р-62 still degrades to the old
+   * Р-22 behavior (participant count only, no split) rather than crashing on a missing field.
+   */
+  upStake?: PlayAmountStr;
+  downStake?: PlayAmountStr;
+  /**
+   * Additive (server-side extension of the same Р-62 live split above, `docs/research/
+   * server_design.md`): headcount by side — `upCount + downCount === participantCount`. Optional
+   * for the same reason as `upStake`/`downStake`.
+   */
+  upCount?: number;
+  downCount?: number;
+  /**
+   * Additive (server-side extension of Р-62): the crowd's majority side previewed one phase early
+   * — same majority-by-stake rule and stake-weighted-average leverage calc (Р-14) as
+   * `CrowdRoundPositionDto`/`CrowdRoundResultDto` use once the round actually opens a position,
+   * just computed straight from the still-pending bets. Both `null` only for a tie (including 0
+   * vs 0 — same tie rule as `RoundRunning.crowd`/`RoundSettled.crowd`). Optional for the same
+   * reason as `upStake`/`downStake`.
+   */
+  majorityDirection?: Direction | null;
+  majorityLeverage?: Leverage | null;
+  /**
+   * Additive (Р-62's "лента ставок видна вживую") — recent bets placed during this betting
+   * window, newest first, capped server-side (mock: 14). Never reveals anything before it's
+   * placed — this is bets that have already happened becoming visible live, not a retroactive
+   * lift of Р-22 on unplaced bets. Optional, same fallback reasoning as `upStake`/`downStake`
+   * above: absent → the room simply shows no live feed. For the FULL history of this same feed,
+   * with cursor-based pagination instead of a small fixed cap, see `betFeed()` below.
+   */
+  recentBets?: LiveBetDto[];
+}
+
+/** One row of Р-62's live bet feed — same identity/direction/leverage/stake shape as a settled
+ *  position already exposes (`PublicPositionDto`), just for a bet that hasn't reached round start
+ *  yet. */
+export interface LiveBetDto {
+  player: PlayerSummaryDto;
+  direction: Direction;
+  leverage: Leverage;
+  stake: PlayAmountStr;
+  atMs: EpochMs;
+}
+
+/**
+ * Additive (server-side, Р-62): one row of the FULL live bet feed (`betFeed()` below) — the same
+ * underlying activity `RoundBetting.recentBets`/`LiveBetDto` above already gives a small,
+ * newest-first, uncapped-history preview of, just paginated with a `seq` cursor instead of a fixed
+ * small cap, and with `player` flattened to just `playerDisplayName`/`isBot` (nicknames are already
+ * public per Р-15/Р-29; a feed row has no other use for the rest of `PlayerSummaryDto`). A new
+ * entry appears every time a player places OR edits a bet (Р-13's "modify before start" shows as a
+ * new row too, same as a Twitch Predictions viewer changing their vote never erases the earlier
+ * one).
+ */
+export interface BetFeedEntryDto {
+  seq: number;
+  atMs: EpochMs;
+  playerDisplayName: string;
+  isBot: boolean;
+  direction: Direction;
+  stake: PlayAmountStr;
+  leverage: Leverage;
+}
+
+/**
+ * `entries`: oldest-first among those with `seq > sinceSeq` passed to `betFeed()`, capped per call
+ * (server's own page size). `hasMore=true` means more already-placed entries exist beyond this
+ * page — call `betFeed()` again immediately with this page's last entry's `seq` rather than
+ * waiting for the next poll tick.
+ */
+export interface BetFeedDto {
+  roundId: RoundId;
+  asset: "BTC";
+  entries: BetFeedEntryDto[];
+  hasMore: boolean;
 }
 
 export interface RoundRunning extends RoundBase {
@@ -690,6 +776,16 @@ export interface Api {
   // --- rounds (Р-8, Р-13, Р-19, Р-22, Р-23, Р-32) ---
   rounds(interval: Interval): Promise<RoundsPairDto>;
   round(roundId: RoundId): Promise<RoundDto>;
+  /**
+   * Additive (server-side, Р-62): the FULL live bet feed for `roundId`, public — no session
+   * required, same visibility as the round itself during BETTING. Omit `sinceSeq` for the first
+   * page, then pass the previous call's last `entries[].seq` to keep paging forward. Optional on
+   * `Api`, same "graceful fallback" reasoning as `unseenResults`/`acknowledgeResults` below: a
+   * `RealApi` build or server that predates this RPC leaves `api.betFeed` `undefined`, and a caller
+   * that only needs the small always-present `RoundBetting.recentBets` preview never needs this at
+   * all.
+   */
+  betFeed?(roundId: RoundId, sinceSeq?: number): Promise<BetFeedDto>;
   btcReferencePrice(): Promise<MarketReferenceDto>;
   previewLiquidation(req: LiquidationPreviewRequest): Promise<LiquidationPreviewDto>;
   /** Also used to MODIFY an existing bet on the same round (Р-13) — mirrors
@@ -728,6 +824,28 @@ export interface Api {
 
   // --- home aggregate (Р-34) ---
   home(): Promise<HomeSummaryDto>;
+
+  // --- "while you were away" (task item, 2026-09-26 IA follow-up) ---
+  /**
+   * Additive proposal: settled positions the signed-in player has not yet been shown a result
+   * moment for, across sessions/devices/reloads — reuses `ProfileRoundEntryDto`'s exact shape
+   * (already enough to rebuild a `ResultEvent`, see `fx/resultEvent.ts`'s
+   * `resultEventFromHistoryEntry`), newest first, same convention as `PublicProfileDto.history`.
+   * Optional on `Api`, like `serverInfo` below: a `RealApi` build talking to a server that
+   * predates this RPC simply gets `undefined` back from `api.unseenResults?.()`, and the caller
+   * (`fx/useAwayReplay.ts`) falls back to showing nothing extra on open rather than guessing —
+   * "fall back gracefully if absent" per the task. Unlike `serverInfo`, `MockApi` DOES implement
+   * this one (see its own doc comment) so the away-replay flow has something real to demo.
+   */
+  unseenResults?(): Promise<ProfileRoundEntryDto[]>;
+  /**
+   * Marks the given rounds' results as shown — called after `unseenResults` above fires its
+   * moments, AND after the live `useSettlementWatcher` fires one in real time (both paths must
+   * ack, or a round shown live would show again as "unseen" on the next reload). Fire-and-forget
+   * from every caller's point of view: a failed ack costs at most one repeated result moment on
+   * the next reload, never a lost one, and never touches balances/ledger.
+   */
+  acknowledgeResults?(roundIds: RoundId[]): Promise<void>;
 
   /** Additive (task's FIXED INTERFACE (1)) — optional on the `Api` type itself: `MockApi`
    *  intentionally does not implement it (there is no "server" to report on in the mock era),

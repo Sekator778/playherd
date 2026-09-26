@@ -1,0 +1,273 @@
+/* Pair room (`/play/:asset`) — concept A arena (Р-61/`docs/product/design/concepts.md`). Tokens
+   reused from index.css/direction.md; no new hex values invented here. */
+
+.room-root {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.room-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  gap: 10px;
+  padding: 4px 0 8px;
+}
+.room-back {
+  flex: none;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 14px;
+}
+.room-back:hover {
+  color: var(--text);
+}
+.room-price {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.room-price__symbol {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.room-price__num {
+  font-size: 21px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-countdown {
+  flex: none;
+}
+
+/* 390px mobile fix: "← BTC/USD $84,xxx.xx" + "Closes in 00:xx" together are wider than a phone
+   viewport once real prices/countdowns are in (headless Chrome screenshot at 390px, 2026-09-26)
+   — force the countdown onto its own row below the price instead of letting it clip off-screen,
+   the same deterministic-wrap pattern the header uses for the balance pill at this width. */
+@media (max-width: 480px) {
+  .room-countdown {
+    flex-basis: 100%;
+    order: 3;
+    text-align: right;
+  }
+}
+
+.room-arena-wrap {
+  position: relative;
+  margin: 12px 0 16px;
+}
+
+.room-arena {
+  display: flex;
+  gap: 4px;
+  height: 128px;
+  margin: 0;
+}
+
+/* Fix (player review item 3): brief "just locked" acknowledgement — the arena underneath still
+   belongs to the next, genuinely open round (it doubles as the bet slip's direction picker), so
+   this only dims/mutes it for the couple of seconds the overlay is up rather than disabling it. */
+.room-arena--locked {
+  filter: grayscale(0.35) brightness(0.6);
+  transition: filter 0.3s ease;
+}
+
+.room-arena__lock {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: rgba(10, 12, 20, 0.55);
+  color: white;
+  cursor: pointer;
+  animation: room-lock-in 0.25s ease-out;
+}
+.room-arena__lock-icon {
+  opacity: 0.9;
+}
+.room-arena__lock-label {
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.9;
+}
+.room-arena__lock-side {
+  font-size: 14px;
+  font-weight: 700;
+}
+.room-arena__lock-side--up {
+  color: var(--up);
+}
+.room-arena__lock-side--down {
+  color: var(--down);
+}
+@keyframes room-lock-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .room-arena__lock {
+    animation: none;
+  }
+  .room-arena--locked {
+    transition: none;
+  }
+}
+.room-arena__side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  border-radius: var(--radius-lg);
+  font-size: 21px;
+  font-weight: 900;
+  color: white;
+  transition: flex-basis 0.4s var(--ease-out-expo, ease);
+  cursor: pointer;
+  min-width: 64px;
+}
+.room-arena__side--up {
+  background: linear-gradient(180deg, var(--up) 0%, var(--up-strong) 100%);
+}
+.room-arena__side--down {
+  background: linear-gradient(180deg, var(--down) 0%, var(--down-strong) 100%);
+}
+.room-arena__side--selected {
+  outline: 3px solid var(--gold);
+  outline-offset: -3px;
+}
+.room-arena__side:disabled {
+  cursor: default;
+}
+.room-arena__pct {
+  font-size: 13px;
+  opacity: 0.85;
+}
+.room-arena__count {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+.room-section-title {
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 20px 0 10px;
+}
+
+.room-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.room-feed__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+.room-feed__row--up {
+  border-left: 3px solid var(--up);
+}
+.room-feed__row--down {
+  border-left: 3px solid var(--down);
+}
+.room-feed__name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-feed__stake {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  flex: none;
+}
+
+.room-cancelled {
+  margin-top: 12px;
+}
+
+/* Fix (player review item 1): the compact "live round" summary that replaced the always-on full
+   PositionsList stage under the arena — players count + a few top-mover chips, "See all
+   positions" is the only way to reach the full list now. */
+.room-live-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.room-live-strip__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.room-live-strip__link {
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.room-movers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+.room-mover-chip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+}
+.room-mover-chip--up {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--up) 55%, transparent);
+}
+.room-mover-chip--down {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--down) 55%, transparent);
+}
+.room-mover-chip__avatar {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+.room-mover-chip__result {
+  font-size: 13px;
+  font-weight: 700;
+}

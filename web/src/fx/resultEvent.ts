@@ -4,7 +4,7 @@
  * unit-тестов") — `useSettlementWatcher.ts` is the only caller, and owns the dedup `Set` and the
  * previous-round `Map` this module treats as inputs, not state.
  */
-import type { Interval, PublicPositionDto, RoundDto, RoundId } from "../api/contract";
+import type { Interval, ProfileRoundEntryDto, PublicPositionDto, RoundDto, RoundId } from "../api/contract";
 import { netFromPayoutAndStake, positionStakeStr } from "../api/outcome";
 
 export type ResultKind = "WIN" | "LOSS" | "LIQUIDATION" | "EVEN";
@@ -81,6 +81,59 @@ export function roundHasPlayerStake(round: RoundDto, playerId: string): boolean 
     return round.positions.some((p) => p.playerId === playerId);
   }
   return false;
+}
+
+/**
+ * Rebuilds a `ResultEvent` from a settled `ProfileRoundEntryDto` (`myProfile().history`/
+ * `unseenResults()`) instead of a live BETTING→RUNNING→SETTLED diff — the "while you were away"
+ * path (`fx/useAwayReplay.ts`), where the whole thing already happened before this session ever
+ * observed the round. Tier math is identical to `detectResultEvent`'s settlement branch; the only
+ * difference is where the inputs come from. `opts.balanceBefore`/`balanceAfter` are the caller's
+ * job (`useAwayReplay.ts` chains them across a batch of unseen entries back from the player's
+ * current real balance) — this function does no balance bookkeeping of its own.
+ */
+export function resultEventFromHistoryEntry(
+  entry: ProfileRoundEntryDto,
+  playerId: string,
+  opts: { balanceBefore: number; balanceAfter: number },
+): ResultEvent {
+  const id = `${entry.roundId}:${playerId}`;
+  const stake = Number(entry.stake);
+  const base = {
+    id,
+    roundId: entry.roundId,
+    interval: entry.interval,
+    stakePlay: stake,
+    leverage: entry.leverage,
+    balanceBefore: opts.balanceBefore,
+    balanceAfter: opts.balanceAfter,
+    atMs: entry.settledAtMs,
+  };
+
+  // Liquidation always wins over settlement-LOSS, same rule `detectResultEvent` enforces live
+  // (§1's dedup) — balance is already fully reflected by the time this fires (the stake was
+  // debited at placeBet, not at settlement), so before/after are equal regardless of what the
+  // caller passed in.
+  if (entry.liquidated) {
+    return {
+      ...base,
+      kind: "LIQUIDATION",
+      netPlay: -stake,
+      balanceBefore: opts.balanceAfter,
+      tier: liquidationTier(entry.leverage),
+    };
+  }
+
+  const net = netFromPayoutAndStake(entry.payout, entry.stake);
+  if (net > 0) {
+    const multiplier = stake > 0 ? Number(entry.payout) / stake : 1;
+    return { ...base, kind: "WIN", netPlay: net, tier: applyLeverageKicker(winTier(multiplier), entry.leverage) };
+  }
+  if (net < 0) {
+    const stakeShare = opts.balanceBefore > 0 ? stake / opts.balanceBefore : 1;
+    return { ...base, kind: "LOSS", netPlay: net, tier: applyLeverageKicker(lossTier(stakeShare), entry.leverage) };
+  }
+  return { ...base, kind: "EVEN", netPlay: 0, tier: 1 };
 }
 
 export interface DetectParams {

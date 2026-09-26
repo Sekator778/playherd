@@ -3,11 +3,26 @@ import { useApi, useSession } from "../api/ApiContext";
 import { checkPlayAmount, PLAY_DECIMALS } from "../api/amountInput";
 import { usePoll } from "../api/usePoll";
 import { MIN_WITHDRAWAL_PLAY, type LedgerEntryDto, type LedgerEntryType, type PlayerAccountDto, type WithdrawalRequestDto } from "../api/contract";
-import { CopyButton, EmptyState, ErrorState, Skeleton } from "../components/Common";
+import { CopyButton, EmptyState, ErrorState, ServerInfoBanner, Skeleton } from "../components/Common";
 import { formatDateTimeUtc, formatPlayAmount, shortenAddress } from "../format";
 import { RollingDigits } from "../fx/RollingDigits";
+import { useFxSettings } from "../fx/fxSettings";
+import { primeAudioContext } from "../fx/sound";
 import { QrCode } from "../wallet/QrCode";
-import { ArrowDownTrayIcon, ArrowUpTrayIcon, ChipIcon, EqualsDiscIcon, GiftIcon, MinusDiscIcon, RefundIcon, TrophyIcon } from "../components/icons";
+import {
+  ArrowDownTrayIcon,
+  ArrowUpTrayIcon,
+  ChipIcon,
+  EqualsDiscIcon,
+  GiftIcon,
+  MinusDiscIcon,
+  RefundIcon,
+  SpeakerMuteIcon,
+  SpeakerOnIcon,
+  TrophyIcon,
+  VibrationOffIcon,
+  VibrationOnIcon,
+} from "../components/icons";
 
 const LEDGER_LABEL: Record<LedgerEntryType, string> = {
   STARTER_PACK: "Starter pack",
@@ -309,7 +324,56 @@ function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; 
   );
 }
 
-function WalletContent() {
+/** Task IA: "Profile (wallet, deposit/withdraw, settings incl. sound/vibration)" — the same
+ *  toggles the header's `FxMenu` popover already exposes (`Layout.tsx`, `fx/fxSettings.ts`), also
+ *  surfaced here as plain, always-visible rows — the Profile tab's own home for them, not a
+ *  second independent setting. */
+function SettingsCard() {
+  const fx = useFxSettings();
+  return (
+    <div className="card">
+      <h3>Settings</h3>
+      <ul className="list-card">
+        <li className="list-row">
+          <span className="list-row__main">
+            <span className="list-row__icon" aria-hidden="true">
+              {fx.sfxEnabled ? <SpeakerOnIcon /> : <SpeakerMuteIcon />}
+            </span>
+            Sound
+          </span>
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() => {
+              if (!fx.sfxEnabled) primeAudioContext();
+              fx.setSfxEnabled(!fx.sfxEnabled);
+            }}
+          >
+            {fx.sfxEnabled ? "On" : "Off"}
+          </button>
+        </li>
+        <li className="list-row">
+          <span className="list-row__main">
+            <span className="list-row__icon" aria-hidden="true">
+              {fx.hapticsEnabled ? <VibrationOnIcon /> : <VibrationOffIcon />}
+            </span>
+            Vibration
+          </span>
+          <button type="button" className="btn btn--secondary" onClick={() => fx.setHapticsEnabled(!fx.hapticsEnabled)}>
+            {fx.hapticsEnabled ? "On" : "Off"}
+          </button>
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+/** Exported (player review item 2) so `MyProfilePage.tsx` can embed the exact same balance/
+ *  deposit/withdraw/settings content as a sub-tab of the Profile tab, instead of duplicating it —
+ *  self-contained (reads `useApi`/`useSession` itself), so it needs no props from either host.
+ *  `/wallet` itself is untouched and still works as its own standalone route (header balance
+ *  pill, profile-menu "Wallet" link, old bookmarks) — this just gives it a second caller. */
+export function WalletContent() {
   const api = useApi();
   const { player } = useSession();
   const [account, setAccount] = useState<PlayerAccountDto | null>(null);
@@ -390,6 +454,7 @@ function WalletContent() {
       <div className="stack" style={{ gap: 16 }}>
         {player && <WithdrawCard balance={Number(account.balance)} address={player.walletAddress} onBalanceChange={load} />}
         <DepositCard />
+        <SettingsCard />
       </div>
     </div>
   );
@@ -401,6 +466,15 @@ export function WalletPage() {
   return (
     <div>
       <h1>Wallet</h1>
+      {/* Р-63: the sticky top DEMO banner is gone from every screen — this is where that fact
+       *  still lives, as plain text, on the screen where balances/deposits/withdrawals actually
+       *  happen (task: "keep factual labels where they matter... in the wallet/How it works
+       *  page"). */}
+      <p className="disclaimer-line">PLAY — test tokens on Herd's test network. Nothing here is real money.</p>
+      {/* Р-63: same fact `ServerInfoBanner` used to show as a sticky top strip on every screen —
+       *  renders nothing at all against `MockApi` (no `serverInfo()`, `Common.tsx`'s own doc
+       *  comment) or a live (non-replay) `RealApi` build; only ever appears in test/replay mode. */}
+      <ServerInfoBanner />
       {!player ? (
         <div className="state-card">
           <p className="state-card__title">Connect your wallet to see your balance</p>

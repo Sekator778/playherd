@@ -103,6 +103,10 @@ class MockApi implements Api {
   private challenges = new Map<string, { message: string; expiresAtMs: number; address: string }>();
   private withdrawals = new Map<string, WithdrawalRecord>();
   private depositAddress: string | null = null;
+  // "While you were away" (unseenResults/acknowledgeResults) — every settled `myHistory` entry
+  // starts unacknowledged; a result moment (shown live via `useSettlementWatcher` or caught up via
+  // `useAwayReplay`) acks its `roundId` so it never replays again this session.
+  private acknowledgedRoundIds = new Set<string>();
 
   // -------------------------------------------------------------------------
   // Settlement sweep — applied lazily whenever any method reads state, since the simulated
@@ -125,6 +129,7 @@ class MockApi implements Api {
       this.myHistory.unshift({
         roundId,
         interval: parsed.interval,
+        asset: "BTC",
         settledAtMs: window.endMs - 1,
         direction: bet.direction,
         leverage: bet.leverage,
@@ -200,6 +205,7 @@ class MockApi implements Api {
     this.myBets.clear();
     this.settledRoundIds.clear();
     this.myHistory = [];
+    this.acknowledgedRoundIds.clear();
     return { player: this.player, isNewPlayer: true };
   }
 
@@ -229,6 +235,7 @@ class MockApi implements Api {
     this.myHistory = [];
     this.withdrawals.clear();
     this.depositAddress = null;
+    this.acknowledgedRoundIds.clear();
   }
 
   // -------------------------------------------------------------------------
@@ -543,6 +550,20 @@ class MockApi implements Api {
       topRich: ratingsDto.rich.slice(0, 5),
       topProphets: ratingsDto.prophets.slice(0, 5),
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // "While you were away" (fx/useAwayReplay.ts)
+  // -------------------------------------------------------------------------
+
+  async unseenResults(): Promise<ProfileRoundEntryDto[]> {
+    this.processSettlements();
+    this.requireSignedIn();
+    return this.myHistory.filter((h) => !this.acknowledgedRoundIds.has(h.roundId));
+  }
+
+  async acknowledgeResults(roundIds: string[]): Promise<void> {
+    for (const id of roundIds) this.acknowledgedRoundIds.add(id);
   }
 }
 

@@ -341,7 +341,9 @@ export function ConnectWalletModal() {
         {step === "starter-pack" && (
           <div className="text-center">
             <h2 id="connect-modal-title">You've got {formatPlayAmount(STARTER_PACK_PLAY)} PLAY</h2>
-            <p className="muted">Toy money for this demo — place your first bet or explore the crowd account.</p>
+            <p className="muted">
+              PLAY — test tokens for this demo, not real money. Place your first bet or explore the crowd account.
+            </p>
             <div className="modal-actions stack" style={{ gap: 10 }}>
               <button
                 type="button"
