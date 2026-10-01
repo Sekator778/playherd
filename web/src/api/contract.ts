@@ -919,7 +919,7 @@ export interface ServerInfoDto {
     firstSeq?: number | null;
   };
   serverTimeMs: EpochMs;
-  /** PLAY CAT asset id (hex, no 0x) on `oracle.network` — what a wallet needs to show PLAY and to
+  /** PLAY CAT asset id ("0x" + 64 hex) on `oracle.network` — what a wallet needs to show PLAY and to
    *  send a deposit. Absent when the server has no chain service configured. */
   playAssetId?: string;
   /** Whether the browser test wallet (Р-45) is offered on the sign-in sheet. Absent → offered. */
