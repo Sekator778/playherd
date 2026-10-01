@@ -23,7 +23,7 @@
 
 | # | Решение |
 |---|---|
-| Т-1 | Категории: `crypto`, `politics`, `sports`, `stocks`, `indices`, `commodities`. Первые три — в порядке слов Алекса (Р-69); остальные три — потому что у Hyperliquid есть такие перпы (`hl_multi_asset_live.md` §7), а у Polymarket Perps — такие же чипы. |
+| Т-1 | Категории: `crypto`, `politics`, `sports`, `stocks`, `indices`, `commodities`. Первые три названы Алексом (Р-69: спорт, политика, криптовалюта); порядок показа `crypto → politics → sports` — предложение (крипто первой: в ней исходная пара BTC и больше всего живых пар), меняется в одном месте — `Category.ORDER` на сервере и `CATEGORY_ORDER` в `web/src/api/marketMeta.ts`; остальные три — потому что у Hyperliquid есть такие перпы (`hl_multi_asset_live.md` §7), а у Polymarket Perps — такие же чипы. |
 | Т-2 | Два вида рынков. `PERP` — mark price перпа Hyperliquid в USD (основной dex и dex `xyz`). `ODDS` — вероятность (0..1) одного исхода рынка Polymarket (CLOB midpoint). Механика одна: раунд, UP/DOWN, плечо, ликвидация по формуле Hyperliquid. |
 | Т-3 | Лот-цена. Движок считает цены с 2 знаками (`Candle`, `LiquidationCalculator`). Сервер подаёт в движок цену лота: `engine = raw × 10^lotExp`, `lotExp = clamp(3 − floor(log10(raw)), 0, 8)` в момент листинга (для `ODDS` всегда 4), дальше не меняется. `priceDecimals = 2 + lotExp`. Наружу (API, график) идёт сырая цена с `priceDecimals` знаками. P&L и ликвидация от масштаба не зависят. |
 | Т-4 | Плечо рынка: `PERP` — `min(40, maxLeverage)` из `meta` Hyperliquid (тир 0); `ODDS` — 10 (`herd.markets.odds.max-leverage`). Ставка поддерживающей маржи — `1/(2·maxLeverage)`. |
@@ -116,6 +116,8 @@ FIXED INTERFACE (E) — `engine/README.md`, раздел «Markets»: `MarketSpe
 | `myPositions` | — | `MyPositionDto[]` | да |
 | `crowdAccount` | `marketId?` (по умолчанию `BTC`) | `CrowdAccountDto` | нет |
 | `crowdOverview` | — | `CrowdOverviewDto` | нет |
+
+Дополнения контракта от 2026-10-02 (после первой реализации экранов и ядра, все — в `contract.ts`): `RoundRunning.openPrice` может быть `null` (цена открытия ещё неизвестна — показывать ожидание, не ноль); `MyPositionDto.durationSec`, `MyPositionDto.size`; `ProfileRoundEntryDto.durationSec`; `MarketDto.eventStartsAtMs` (начало матча), `closedAtMs`, `closeReason`, `oracleIndex`; строки `CrowdOverviewDto` несут `title` и `status`; `ServerInfoDto.playAssetId`, `testWallet`; `priceSeries(sinceMs)` — тики строго после `sinceMs`, не больше 600, при избытке прореживаются равномерно; для `ODDS` изменение за 24 часа показывается в пунктах.
 
 Все цены в ответах — сырые, строкой с `priceDecimals` знаками рынка. Новые коды ошибок: `MARKET_NOT_FOUND`, `MARKET_CLOSED`, `PRICE_UNAVAILABLE`. `home` остаётся и описывает BTC.
 

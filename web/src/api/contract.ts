@@ -153,6 +153,9 @@ export interface ProfileRoundEntryDto {
   marketId: MarketId;
   /** The market's `symbol` at settlement time ("BTC", "NVDA", "GER"). */
   asset: string;
+  /** Real length of the round in seconds — label the row by it ("3 MIN", "1 HOUR"), so the label
+   *  survives the market leaving `markets()`. Optional: absent from a server that predates it. */
+  durationSec?: number;
   settledAtMs: EpochMs;
   direction: Direction;
   leverage: Leverage;
@@ -417,7 +420,10 @@ export interface BetFeedDto {
 
 export interface RoundRunning extends RoundBase {
   phase: "RUNNING";
-  openPrice: PriceStr;
+  /** The price at round start (Р-8). Null while the server does not know it yet — a market listed
+   *  moments ago, or a source outage across the boundary: show "waiting for the opening price",
+   *  never a zero. `positions` is empty and `crowd` is null for as long as it is null. */
+  openPrice: PriceStr | null;
   /** Revealed at round start, together with the crowd position (Р-22). */
   positions: PublicPositionDto[];
   /** Null only for a tie / zero bets on both sides (Р-5). */
@@ -682,7 +688,10 @@ export interface CategoryDto {
 export interface MarketPriceDto {
   price: PriceStr;
   asOfMs: EpochMs;
-  /** Relative change vs 24h ago, e.g. `0.0098` = +0.98%; null when the source does not give it. */
+  /** Relative change vs 24h ago, e.g. `0.0098` = +0.98%; null when the source does not give it.
+   *  For an `ODDS` market show it in percentage points instead: the price 24h ago is
+   *  `price / (1 + change24h)`, so the move is `price - price / (1 + change24h)` (0.64 → 0.65 is
+   *  "+1.0 pt", not "+1.56%"). */
   change24h: number | null;
   /** True when the last tick is older than the source's staleness limit: betting stays open, the
    *  card shows the price as stale. */
@@ -736,8 +745,19 @@ export interface MarketDto {
   maxLeverage: Leverage;
   priceDecimals: number;
   status: "ACTIVE" | "CLOSED";
-  /** `ODDS`: when the underlying market is scheduled to end. Null otherwise. */
+  /** `ODDS`: when the underlying market is scheduled to end. Null otherwise — also null for a
+   *  sports game, whose source "end date" is the kick-off (see `eventStartsAtMs`). */
   endsAtMs: EpochMs | null;
+  /** `ODDS` sports game: kick-off time. Before it the card says "Starts in …", after it "Live".
+   *  Null/absent for everything else. */
+  eventStartsAtMs?: EpochMs | null;
+  /** Set once `status === "CLOSED"`: when the market left and why, in plain words ("The source
+   *  market ended", "Price left the 3%–97% range") — the card shows the reason as is. */
+  closedAtMs?: EpochMs | null;
+  closeReason?: string | null;
+  /** The market's index in the on-chain oracle record (0 = BTC; `GET /api/markets/registry.json`
+   *  is the public list) — shown next to "Anchored on Chia". */
+  oracleIndex?: number;
   source: "hyperliquid" | "polymarket" | "synthetic";
   /** Null until the first tick arrives. */
   price: MarketPriceDto | null;
@@ -775,13 +795,20 @@ export interface MyPositionDto {
   symbol: string;
   roundId: RoundId;
   interval: Interval;
+  /** Real length of the round in seconds (label: "3 MIN", "1 HOUR"). */
+  durationSec: number;
   phase: "BETTING" | "RUNNING";
   direction: Direction;
   leverage: Leverage;
   stake: PlayAmountStr;
-  /** RUNNING only. */
+  /** RUNNING only. Both are null while the round's opening price is not known yet
+   *  (`RoundRunning.openPrice === null`). */
   entryPrice: PriceStr | null;
   liquidationPrice: PriceStr | null;
+  /** RUNNING only: the position size the server opened, in lots, 8dp (`PositionDto.size`) — use it
+   *  for live P&L instead of re-deriving it from the stake. Null in BETTING or while the opening
+   *  price is unknown. */
+  size?: string | null;
   /** RUNNING only: already liquidated on the path so far. */
   liquidated: boolean;
   /** BETTING: when the round starts. RUNNING: when it ends. */
@@ -796,6 +823,10 @@ export interface CrowdOverviewDto {
   markets: Array<{
     marketId: MarketId;
     symbol: string;
+    /** `MarketDto.title` and `status` — a closed market keeps its row here after it has left
+     *  `markets()`. */
+    title: string;
+    status: "ACTIVE" | "CLOSED";
     category: CategoryId;
     capital: UsdStr;
     returnPct: number;
@@ -888,6 +919,11 @@ export interface ServerInfoDto {
     firstSeq?: number | null;
   };
   serverTimeMs: EpochMs;
+  /** PLAY CAT asset id (hex, no 0x) on `oracle.network` — what a wallet needs to show PLAY and to
+   *  send a deposit. Absent when the server has no chain service configured. */
+  playAssetId?: string;
+  /** Whether the browser test wallet (Р-45) is offered on the sign-in sheet. Absent → offered. */
+  testWallet?: boolean;
   /**
    * Additive (task item 2, Р-55): a Reown/WalletConnect `projectId` set on the SERVER (env var),
    * overriding this build's own `VITE_WALLETCONNECT_PROJECT_ID` at runtime — lets Alex's Reown
@@ -982,7 +1018,9 @@ export interface Api {
 
   // --- markets (Р-69, Р-70) ---
   markets(): Promise<MarketsDto>;
-  /** Ticks of the last 15 minutes, or since `sinceMs` (at most 600 points). */
+  /** Ticks of the last 15 minutes, or — with `sinceMs` — the ticks with `atMs > sinceMs`. At most
+   *  600 points; when more exist the newest 600 are returned, thinned evenly so they still span
+   *  the whole requested range. */
   priceSeries(marketId: MarketId, sinceMs?: EpochMs): Promise<PriceSeriesDto>;
   referencePrice(marketId: MarketId): Promise<MarketReferenceDto>;
   /** Every pending bet and open position of the signed-in player, all markets. */
