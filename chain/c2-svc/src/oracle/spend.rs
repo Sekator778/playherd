@@ -1,6 +1,6 @@
 //! Extends `c2_cli::builders::oracle`'s minimal oracle singleton (decision
 //! Р-11: one manager-key-controlled singleton, self-recreating, no action
-//! layer) so **one spend carries up to 20 records**, each as its own
+//! layer) so **one spend carries up to `MAX_RECORDS_PER_SPEND` (40) records**, each as its own
 //! `CREATE_PUZZLE_ANNOUNCEMENT` (task instruction). `chain/c2-cli` itself is
 //! left unmodified (`docs/research/chain_service.md` §1) -- this is new
 //! code, not a copy of `c2_cli::builders::oracle::build_oracle_publish`,
@@ -10,7 +10,10 @@
 //!
 //! Announcement message per record (task instruction, exact order):
 //! `(seq ts priceCents resultsHash sourceFlag sourceTs)`, a CLVM proper list
-//! (`clvm_list!`), `sourceFlag` 0=live 1=replay.
+//! (`clvm_list!`), `sourceFlag` 0=live 1=replay. Record v2 appends a seventh
+//! element `asset` -- only when the record's `asset` is non-zero, so a BTC
+//! record (asset 0) is still byte-identical to every announcement published
+//! before v2 (`docs/research/chain_service.md` §16).
 
 use anyhow::{Result, bail};
 use chia_bls::Signature;
@@ -31,8 +34,20 @@ use c2_cli::sign::sign_transaction;
 use super::types::OracleRecord;
 
 /// Task instruction: "several pending records go into ONE singleton spend
-/// (max 20)".
-pub const MAX_RECORDS_PER_SPEND: usize = 20;
+/// (max 20)", raised to 40 for the multi-market oracle
+/// (`docs/research/markets_architecture.md` §7 item 8): with a record per
+/// round per market, one boundary of 10 markets x two series already fills 20,
+/// and the singleton can only be spent once per confirmation, so batching is
+/// the only throughput lever. A code constant, not a protocol limit. Every
+/// place that caps a batch reads this constant -- `build_oracle_publish_batch`
+/// below, `QueueFile::take_batch`'s callers (`publisher::start_new_batch`)
+/// and the rebuild merge (`publisher::rebuild_in_flight`) -- so they cannot
+/// disagree. The simulator test
+/// `a_batch_of_the_maximum_forty_records_runs_in_the_simulator_under_the_cost_budget`
+/// (tests/oracle_multi_announce.rs) builds and runs a full batch and asserts
+/// its cost stays under 150,000,000 (an 11,000,000,000 block); raise this only
+/// together with a test at the new size.
+pub const MAX_RECORDS_PER_SPEND: usize = 40;
 
 pub struct OraclePublishBatchResult {
     pub coin_spends: Vec<CoinSpend>,
@@ -50,7 +65,7 @@ pub struct OraclePublishBatchResult {
 
 /// Spends the oracle singleton one generation forward: recreates itself
 /// (same inner puzzle / manager key) and emits one
-/// `CREATE_PUZZLE_ANNOUNCEMENT` per record in `records` (1..=20 of them).
+/// `CREATE_PUZZLE_ANNOUNCEMENT` per record in `records` (1..=`MAX_RECORDS_PER_SPEND`).
 pub fn build_oracle_publish_batch(
     launcher_id: Bytes32,
     current_coin: Coin,
@@ -77,14 +92,28 @@ pub fn build_oracle_publish_batch(
     let mut announcement_messages = Vec::with_capacity(records.len());
     for record in records {
         let seq = i64::try_from(record.seq)?;
-        let message_ptr = ctx.alloc(&clvm_list!(
-            seq,
-            record.ts,
-            record.price_cents,
-            record.results_hash,
-            record.source_flag,
-            record.source_ts
-        ))?;
+        // Two shapes on purpose (`clvm_list!` expands to a tuple type per
+        // arity): asset 0 must not gain a trailing element.
+        let message_ptr = if record.asset == 0 {
+            ctx.alloc(&clvm_list!(
+                seq,
+                record.ts,
+                record.price_cents,
+                record.results_hash,
+                record.source_flag,
+                record.source_ts
+            ))?
+        } else {
+            ctx.alloc(&clvm_list!(
+                seq,
+                record.ts,
+                record.price_cents,
+                record.results_hash,
+                record.source_flag,
+                record.source_ts,
+                i64::from(record.asset)
+            ))?
+        };
         let message: Bytes = ctx.serialize(&message_ptr)?.into_inner();
         conditions = conditions.create_puzzle_announcement(message.clone());
         announcement_messages.push(message);

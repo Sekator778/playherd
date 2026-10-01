@@ -24,14 +24,20 @@
 //!    reservation set, shared (one `Arc` instance, constructed once by
 //!    `main.rs`) between every publisher that funds spends this way.
 //!    `reserve` never hands out a coin id another not-yet-confirmed bundle
-//!    already holds; `release` gives one back once its bundle either
+//!    already holds, and hands out the *smallest* coin that is big enough
+//!    (best fit, `docs/research/chain_service.md` §16 -- it used to be the first
+//!    one in scan order, which kept chewing through the big coins and left the
+//!    small ones idle); `release` gives one back once its bundle either
 //!    confirms (the coin really is spent now, nothing left to protect) or
 //!    is abandoned before ever landing on chain (a rebuild dropping a dead
 //!    fee coin before picking a replacement, or a terminal `Failed` state).
 //!    Not itself durable -- `reserve_specific` re-seeds it from each
 //!    publisher's own already-durable queue file once at startup (see
 //!    `main.rs`), so a restart never forgets a reservation a surviving
-//!    in-flight bundle still depends on.
+//!    in-flight bundle still depends on. The same allocator also owns the
+//!    **fee-coin reserve** (`fee_reserve.rs`): the maintenance step that keeps
+//!    the wallet holding enough free coins for both publishers to have one at the
+//!    same time.
 //! 2. **Detection + recovery** -- `fee_coin_of` and
 //!    `is_coin_spent_rejection` below, called from both publishers'
 //!    `advance_in_flight`: recognize a rejection as "some input is already
@@ -45,31 +51,53 @@
 
 use std::collections::HashSet;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use chia_bls::SecretKey;
 use chia_protocol::{Bytes32, Coin, SpendBundle};
 
 use c2_cli::keys::WalletKey;
 
+use crate::fee_reserve::{FeeCoinPolicy, FeeCoinView, FeeCoinsBusy, ReserveState};
 use crate::oracle::chain_client::ChainClient;
 
 /// In-process (not persisted -- see module doc) set of fee coin ids
-/// currently backing some publisher's not-yet-confirmed in-flight bundle.
+/// currently backing some publisher's not-yet-confirmed in-flight bundle,
+/// plus the fee-coin reserve's own in-memory state (`fee_reserve.rs`).
 #[derive(Debug, Default)]
 pub struct FeeCoinAllocator {
-    reserved: tokio::sync::Mutex<HashSet<Bytes32>>,
+    pub(crate) reserved: tokio::sync::Mutex<HashSet<Bytes32>>,
+    pub(crate) policy: FeeCoinPolicy,
+    pub(crate) reserve_state: std::sync::Mutex<ReserveState>,
 }
 
 impl FeeCoinAllocator {
+    /// An allocator with the default reserve policy (`FeeCoinPolicy::default`:
+    /// 4 coins of 200,000,000 mojos).
     pub fn new() -> Self {
-        Self { reserved: tokio::sync::Mutex::new(HashSet::new()) }
+        Self::default()
     }
 
-    /// Picks and reserves one unspent coin >= `min_amount`, atomically with
-    /// respect to every other `reserve` call on this same allocator
-    /// (whichever publisher, same process): the lock is held across the
-    /// whole chain round-trip, so two concurrent callers can never both
-    /// observe the same coin as available and both reserve it.
+    /// An allocator that keeps the wallet to `policy` (`main.rs`, from
+    /// `C2_FEE_COINS_MIN` / `C2_FEE_COIN_MOJOS`).
+    pub fn with_policy(policy: FeeCoinPolicy) -> Self {
+        Self { policy, ..Self::default() }
+    }
+
+    /// Picks and reserves the unspent coin that fits best: the smallest one that
+    /// is >= `min_amount` and not already reserved (ties: first in scan order).
+    /// Atomic with respect to every other `reserve` call on this same allocator
+    /// (whichever publisher, same process): the lock is held across the whole
+    /// chain round-trip, so two concurrent callers can never both observe the
+    /// same coin as available and both reserve it.
+    ///
+    /// Best fit, not first fit: a fee bundle consumes its coin whole and
+    /// returns the change as a new coin, so taking the smallest sufficient one
+    /// keeps the large coins -- the ones the reserve is made of, and the ones
+    /// a split can still be cut from -- for when they are needed.
+    ///
+    /// When nothing fits only because the fee-coin split holds the one big coin,
+    /// the error is `FeeCoinsBusy` (a publisher waits a tick); otherwise the wallet
+    /// really has no free coin that big.
     pub async fn reserve<C: ChainClient>(
         &self,
         chain: &C,
@@ -77,8 +105,28 @@ impl FeeCoinAllocator {
         min_amount: u64,
     ) -> Result<(WalletKey, Coin)> {
         let mut reserved = self.reserved.lock().await;
-        let (wallet_key, coin) = chain.find_funding_coin(master_sk, min_amount, &reserved).await?;
+        let mut coins = chain.unspent_coins(master_sk).await?;
+        let snapshot: Vec<(Bytes32, u64)> = coins.iter().map(|(_, coin)| (coin.coin_id(), coin.amount)).collect();
+        let best = (0..coins.len())
+            .filter(|&i| coins[i].1.amount >= min_amount && !reserved.contains(&snapshot[i].0))
+            .min_by_key(|&i| (coins[i].1.amount, i));
+        let Some(best) = best else {
+            self.state().view = Some(FeeCoinView::of(&snapshot, &reserved, &self.policy));
+            if self.split_in_flight() {
+                return Err(FeeCoinsBusy.into());
+            }
+            return Err(anyhow!(
+                "no unspent, unreserved coin with amount >= {min_amount} mojos found in addresses 0..{} \
+                 (excluding {} coin(s) already reserved by an in-flight spend elsewhere in this process); \
+                 fund the wallet from https://testnet11-faucet.chia.net/ first, or wait for the in-flight \
+                 spend(s) to confirm",
+                c2_cli::chain::ADDRESS_GAP,
+                reserved.len()
+            ));
+        };
+        let (wallet_key, coin) = coins.swap_remove(best);
         reserved.insert(coin.coin_id());
+        self.state().view = Some(FeeCoinView::of(&snapshot, &reserved, &self.policy));
         Ok((wallet_key, coin))
     }
 

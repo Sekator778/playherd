@@ -109,6 +109,9 @@ fn write_contract_fixtures() {
         results_hash: format!("0x{}", "ab".repeat(32)),
         source: Source::Live,
         source_ts: 1_790_400_001,
+        // Non-zero on purpose: the Java mirror's round-trip must prove the field is
+        // wired through (a 0 would also pass if the component were missing).
+        asset: 3,
     };
     let records_request = OracleRecordsRequest { records: vec![record] };
     write_fixture("OracleRecordsRequest", &records_request);
@@ -136,6 +139,11 @@ fn write_contract_fixtures() {
         operator_balance_mojos: Some("999999999".to_string()),
         stuck_reason: None,
         conflicts: vec![],
+        // Pending seqs 206..=209 sit above the confirmed 205.
+        max_known_seq: 209,
+        record_format: 2,
+        fee_coins_free: Some(4),
+        fee_coins_free_mojos: Some("800000000".to_string()),
     };
     write_fixture("OracleStatusResponse", &status);
 

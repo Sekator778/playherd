@@ -5,7 +5,8 @@
 //! from the launcher (or from a persisted checkpoint coin, forward) and
 //! decoding each spend's `CREATE_PUZZLE_ANNOUNCEMENT` conditions with the
 //! fixed record format (`(seq ts priceCents resultsHash sourceFlag
-//! sourceTs)`, §3.1) -- instead of ever trusting `QueueFile::pending`
+//! sourceTs)` plus, since record v2, an optional seventh `asset`, §3.1/§16)
+//! -- instead of ever trusting `QueueFile::pending`
 //! blindly. That local file is exactly what a stale/race-corrupted restart
 //! (§11.1: redeploying onto an old queue file) got wrong: 76 records the
 //! chain already had, byte-identical, got rebuilt and rebroadcast because
@@ -77,7 +78,7 @@ pub struct LineageWalkOutcome {
     /// starting coin was already the tip, or doesn't exist yet on chain --
     /// e.g. before `c2 oracle-launch` has run).
     pub generations_advanced: u64,
-    /// An on-chain announcement that didn't decode as the fixed 6-field
+    /// An on-chain announcement that didn't decode as the fixed 6/7-field
     /// record format (e.g. this exact testnet11 launcher's very first-ever
     /// spend, made by the old single-record `c2-cli` publisher's 3-field
     /// format before `c2-svc` existed -- see `docs/research/
@@ -101,15 +102,15 @@ pub fn genesis_coin(launcher_id: Bytes32, manager_synthetic_pk: PublicKey) -> Co
 
 /// CLVM shape of one announcement message (task instruction, `spend.rs`
 /// module doc, exact field order): `(seq ts priceCents resultsHash
-/// sourceFlag sourceTs)`, a proper list. `#[clvm(list)]` decodes the first
-/// six list elements into these fields and ignores anything past them
-/// (matches `clvm-traits`' own documented behavior, `clvm_traits::lib.rs`'s
-/// `test_solution_struct`) -- irrelevant here since every record this
-/// service ever publishes is exactly six elements, but it means a message
-/// with *fewer* than six elements (e.g. the old 3-field pre-`c2-svc` format,
-/// `docs/research/chain_service.md` §1/§11) fails to decode instead of
-/// silently misreading fields, which is exactly the "not our format, skip
-/// it" signal `walk_lineage` needs.
+/// sourceFlag sourceTs [asset])`, a proper list. `#[clvm(list)]` decodes the
+/// first six list elements into the required fields, an optional seventh into
+/// `asset` (`#[clvm(default = 0)]`: absent = BTC, the 6-element form every
+/// announcement had before record v2), and ignores anything past them (matches
+/// `clvm-traits`' own documented behavior, `clvm_traits::lib.rs`'s
+/// `test_solution_struct`). A message with *fewer* than six elements (e.g.
+/// the old 3-field pre-`c2-svc` format, `docs/research/chain_service.md`
+/// §1/§11) fails to decode instead of silently misreading fields, which is
+/// exactly the "not our format, skip it" signal `walk_lineage` needs.
 #[derive(Debug, Clone, clvm_traits::FromClvm)]
 #[clvm(list)]
 struct AnnouncementMessage {
@@ -119,14 +120,27 @@ struct AnnouncementMessage {
     results_hash: Bytes32,
     source_flag: i64,
     source_ts: i64,
+    /// Decoded as a *signed* integer like every other field, then range-checked
+    /// into a `u32` by `decode_oracle_record`: clvm-traits' own unsigned
+    /// decoding reads the single byte `ff` (the signed encoding of -1) as 255,
+    /// which would make this decoder disagree with the public Python verifier
+    /// (`atom_to_int`, signed) about what an out-of-range asset atom means.
+    #[clvm(default = 0)]
+    asset: i64,
 }
 
-fn decode_oracle_record(message: &[u8]) -> Result<OracleRecord> {
+/// Decodes one announcement message (the CLVM bytes of a
+/// `CREATE_PUZZLE_ANNOUNCEMENT`) into an [`OracleRecord`]. Accepts the
+/// 6-element form (asset 0) and the 7-element form of record v2. Public so
+/// tests can decode a message straight out of the builder.
+pub fn decode_oracle_record(message: &[u8]) -> Result<OracleRecord> {
     let mut allocator = Allocator::new();
     let ptr = node_from_bytes(&mut allocator, message).context("parsing announcement message as CLVM")?;
     let decoded = AnnouncementMessage::from_clvm(&allocator, ptr)
-        .context("decoding announcement as (seq ts priceCents resultsHash sourceFlag sourceTs)")?;
+        .context("decoding announcement as (seq ts priceCents resultsHash sourceFlag sourceTs [asset])")?;
     let seq = u64::try_from(decoded.seq).with_context(|| format!("announcement seq {} is negative", decoded.seq))?;
+    let asset = u32::try_from(decoded.asset)
+        .with_context(|| format!("announcement asset {} is outside 0..=u32::MAX", decoded.asset))?;
     Ok(OracleRecord {
         seq,
         ts: decoded.ts,
@@ -134,6 +148,7 @@ fn decode_oracle_record(message: &[u8]) -> Result<OracleRecord> {
         results_hash: decoded.results_hash,
         source_flag: decoded.source_flag,
         source_ts: decoded.source_ts,
+        asset,
     })
 }
 

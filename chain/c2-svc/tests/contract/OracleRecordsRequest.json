@@ -6,7 +6,8 @@
       "priceCents": 8561200,
       "resultsHash": "0xabababababababababababababababababababababababababababababababab",
       "source": "live",
-      "sourceTs": 1790400001
+      "sourceTs": 1790400001,
+      "asset": 3
     }
   ]
 }

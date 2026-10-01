@@ -35,6 +35,11 @@ struct Inner {
     /// fix, `docs/research/chain_service.md` §15).
     extra_funding_coins: Vec<Coin>,
     push_calls: u32,
+    /// Every bundle `push_tx` was called with, in order (fee-coin reserve tests inspect the
+    /// split bundle the maintenance step pushed).
+    pushed: Vec<SpendBundle>,
+    /// Coin ids `coin_in_mempool` reports as being spent by some mempool item.
+    mempool_coins: HashSet<Bytes32>,
     next_push_outcome: PushOutcome,
     in_mempool: HashMap<Bytes32, bool>,
 }
@@ -52,6 +57,8 @@ impl FakePlayChainClient {
             funding_amount: 1_000_000,
             extra_funding_coins: Vec::new(),
             push_calls: 0,
+            pushed: Vec::new(),
+            mempool_coins: HashSet::new(),
             next_push_outcome: PushOutcome { accepted: true, status: Some("SUCCESS".to_string()), error: None },
             in_mempool: HashMap::new(),
         }))
@@ -61,11 +68,31 @@ impl FakePlayChainClient {
         self.0.lock().unwrap().fee_mojos = fee_mojos;
     }
 
-    /// Registers an additional fee-coin candidate `find_funding_coin` may
-    /// offer, alongside the always-present default `[7u8; 32]`-parented one
-    /// (task fix, `docs/research/chain_service.md` §15).
+    /// Registers an additional wallet coin `unspent_coins` reports, alongside the
+    /// always-present default `[7u8; 32]`-parented one (task fix,
+    /// `docs/research/chain_service.md` §15).
     pub fn add_funding_coin(&self, coin: Coin) {
         self.0.lock().unwrap().extra_funding_coins.push(coin);
+    }
+
+    /// The amount of the default `[7u8; 32]`-parented wallet coin (1,000,000 unless set).
+    pub fn set_funding_amount(&self, amount: u64) {
+        self.0.lock().unwrap().funding_amount = amount;
+    }
+
+    /// Whether `coin_in_mempool(coin_id)` reports a mempool item spending `coin_id`.
+    pub fn set_coin_in_mempool(&self, coin_id: Bytes32, present: bool) {
+        let mut inner = self.0.lock().unwrap();
+        if present {
+            inner.mempool_coins.insert(coin_id);
+        } else {
+            inner.mempool_coins.remove(&coin_id);
+        }
+    }
+
+    /// Every bundle `push_tx` was called with, oldest first.
+    pub fn pushed_bundles(&self) -> Vec<SpendBundle> {
+        self.0.lock().unwrap().pushed.clone()
     }
 
     pub fn set_in_mempool(&self, tx_id: Bytes32, present: bool) {
@@ -143,12 +170,7 @@ impl ChainClient for FakePlayChainClient {
         Ok(self.0.lock().unwrap().fee_mojos)
     }
 
-    async fn find_funding_coin(
-        &self,
-        master_sk: &SecretKey,
-        min_amount: u64,
-        exclude: &HashSet<Bytes32>,
-    ) -> Result<(WalletKey, Coin)> {
+    async fn unspent_coins(&self, master_sk: &SecretKey) -> Result<Vec<(WalletKey, Coin)>> {
         let wallet_key = derive_wallet_key(master_sk, 0);
         let (amount, extra, coin_records) = {
             let inner = self.0.lock().unwrap();
@@ -156,29 +178,23 @@ impl ChainClient for FakePlayChainClient {
         };
         let mut candidates = vec![Coin::new(Bytes32::from([7u8; 32]), wallet_key.puzzle_hash, amount)];
         candidates.extend(extra);
-        candidates
+        // Every candidate the chain has not shown spent, each with a fresh copy of the key
+        // (`WalletKey` is not `Clone`) -- what the real wallet scan returns.
+        Ok(candidates
             .into_iter()
-            .find(|c| {
-                c.amount >= min_amount
-                    && !exclude.contains(&c.coin_id())
-                    && !coin_records.get(&c.coin_id()).is_some_and(|r| r.spent)
-            })
-            .map(|c| (wallet_key, c))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "fake funding coin(s) exhausted: need >= {min_amount} mojos, excluding {} reserved",
-                    exclude.len()
-                )
-            })
+            .filter(|c| !coin_records.get(&c.coin_id()).is_some_and(|r| r.spent))
+            .map(|c| (derive_wallet_key(master_sk, 0), c))
+            .collect())
     }
 
-    async fn balance(&self, _master_sk: &SecretKey) -> Result<u64> {
-        Ok(self.0.lock().unwrap().funding_amount)
+    async fn coin_in_mempool(&self, coin_id: Bytes32) -> Result<bool> {
+        Ok(self.0.lock().unwrap().mempool_coins.contains(&coin_id))
     }
 
-    async fn push_tx(&self, _bundle: SpendBundle) -> Result<PushOutcome> {
+    async fn push_tx(&self, bundle: SpendBundle) -> Result<PushOutcome> {
         let mut inner = self.0.lock().unwrap();
         inner.push_calls += 1;
+        inner.pushed.push(bundle);
         Ok(inner.next_push_outcome.clone())
     }
 

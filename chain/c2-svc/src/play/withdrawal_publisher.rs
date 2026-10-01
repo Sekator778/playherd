@@ -64,6 +64,7 @@ use c2_cli::keys::WalletKey;
 use c2_cli::state::PlayCoinState;
 
 use crate::fee_allocator::{FeeCoinAllocator, fee_coin_of, is_coin_spent_rejection};
+use crate::fee_reserve::FeeCoinsBusy;
 use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
 use crate::oracle::publisher::TickFailureState;
 use crate::play_state_file::{load_play_state, save_play_state_atomic};
@@ -767,6 +768,16 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
         let draft_cost = measure_bundle_cost(&draft.coin_spends).context("measuring draft spend cost")?;
 
         let fee_mojos = match self.chain.fee_estimate_mojos(draft_cost.total_cost, self.fee_target_time_secs).await {
+            // Capped at `C2_MAX_FEE_MOJOS` from the first attempt on, like every rebuild (the oracle
+            // publisher does the same).
+            Ok(fee) if fee > self.max_fee_mojos => {
+                tracing::warn!(
+                    estimate = fee,
+                    cap = self.max_fee_mojos,
+                    "get_fee_estimate is above C2_MAX_FEE_MOJOS -- capping the first attempt's fee"
+                );
+                self.max_fee_mojos
+            }
             Ok(fee) => fee,
             Err(e) => {
                 tracing::warn!("get_fee_estimate failed, falling back to fee=0: {e:#}");
@@ -785,7 +796,17 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             return Ok(WithdrawalTickOutcome::DryRun { requests: batch_len });
         }
 
-        let (coin_spends, signature) = self.attach_fee_coin(draft.coin_spends, draft.signature, fee_mojos).await?;
+        let (coin_spends, signature) = match self.attach_fee_coin(draft.coin_spends, draft.signature, fee_mojos).await {
+            Ok(attached) => attached,
+            // The wallet's only free fee coin is held by the fee-coin split waiting for confirmation
+            // (`fee_reserve.rs`): wait a tick, the requests go back to `pending`, unsaved.
+            Err(e) if e.downcast_ref::<FeeCoinsBusy>().is_some() => {
+                tracing::info!("not starting a withdrawal batch yet: the fee-coin split is holding the wallet's only fee coin");
+                queue.pending.splice(0..0, batch);
+                return Ok(WithdrawalTickOutcome::WaitingForConfirmation);
+            }
+            Err(e) => return Err(e),
+        };
         let bundle_id = bundle_display_id(&signature);
         let bundle = SpendBundle::new(coin_spends, signature);
         let now = now_unix();

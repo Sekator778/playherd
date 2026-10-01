@@ -14,6 +14,7 @@ pub mod atomic_file;
 pub mod auth;
 pub mod config;
 pub mod fee_allocator;
+pub mod fee_reserve;
 pub mod keys_file;
 pub mod oracle;
 pub mod play;

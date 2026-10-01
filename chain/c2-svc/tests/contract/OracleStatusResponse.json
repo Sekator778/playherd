@@ -7,5 +7,9 @@
   "inFlightBundleId": null,
   "operatorBalanceMojos": "999999999",
   "stuckReason": null,
-  "conflicts": []
+  "conflicts": [],
+  "maxKnownSeq": 209,
+  "recordFormat": 2,
+  "feeCoinsFree": 4,
+  "feeCoinsFreeMojos": "800000000"
 }

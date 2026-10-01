@@ -12,7 +12,9 @@
 //! fixture `operator.oracle.json` -- the same reason `c2 oracle-launch`
 //! itself works fully offline in dry-run mode.
 
-use std::collections::{HashMap, HashSet};
+mod oracle_golden;
+
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -30,10 +32,12 @@ use c2_svc::fee_allocator::{FeeCoinAllocator, fee_coin_of};
 use c2_svc::oracle::chain_client::{ChainClient, CoinRecordInfo, PushOutcome};
 use c2_svc::oracle::lineage::walk_lineage;
 use c2_svc::oracle::publisher::{Publisher, TickFailureState, TickOutcome};
-use c2_svc::oracle::queue::QueueFile;
-use c2_svc::oracle::spend::build_oracle_publish_batch;
+use c2_svc::oracle::queue::{QueueFile, ReconcileOutcome};
+use c2_svc::oracle::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
 use c2_svc::oracle::types::{OracleRecord, Source};
 use c2_svc::state_file::save_oracle_state_atomic;
+
+use oracle_golden::{SIX_ELEMENT_MESSAGE_HEX, announcing_coin_spend, fixed_record};
 
 // --- fake chain client -------------------------------------------------
 
@@ -95,12 +99,13 @@ impl FakeChainClient {
         self.0.lock().unwrap().delay = delay;
     }
 
-    /// Registers an additional fee-coin candidate `find_funding_coin` may
-    /// offer, alongside the always-present default `[7u8; 32]`-parented one
-    /// (task fix, `docs/research/chain_service.md` §15).
+    /// Registers an additional wallet coin `unspent_coins` reports, alongside the
+    /// always-present default `[7u8; 32]`-parented one (task fix,
+    /// `docs/research/chain_service.md` §15).
     fn add_funding_coin(&self, coin: Coin) {
         self.0.lock().unwrap().extra_funding_coins.push(coin);
     }
+
 
     /// Controls what the *next* `fee_estimate_mojos` call returns (task
     /// instruction: "re-estimate with get_fee_estimate ... on each
@@ -210,51 +215,42 @@ impl ChainClient for FakeChainClient {
         }
     }
 
-    fn find_funding_coin(
-        &self,
-        master_sk: &SecretKey,
-        min_amount: u64,
-        exclude: &HashSet<Bytes32>,
-    ) -> impl Future<Output = Result<(WalletKey, Coin)>> + Send {
+    fn unspent_coins(&self, master_sk: &SecretKey) -> impl Future<Output = Result<Vec<(WalletKey, Coin)>>> + Send {
         let wallet_key = derive_wallet_key(master_sk, 0);
         let (amount, delay, extra, coin_records) = {
             let inner = self.0.lock().unwrap();
             (inner.funding_amount, inner.delay, inner.extra_funding_coins.clone(), inner.coin_records.clone())
         };
-        let default_coin = Coin::new(Bytes32::from([7u8; 32]), wallet_key.puzzle_hash, amount);
-        let mut candidates = vec![default_coin];
+        let mut candidates = vec![Coin::new(Bytes32::from([7u8; 32]), wallet_key.puzzle_hash, amount)];
         candidates.extend(extra);
-        let exclude = exclude.clone();
+        let puzzle_hash = wallet_key.puzzle_hash;
         async move {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
-            let chosen = candidates.into_iter().find(|c| {
-                c.amount >= min_amount
-                    && !exclude.contains(&c.coin_id())
-                    && !coin_records.get(&c.coin_id()).is_some_and(|r| r.spent)
-            });
-            match chosen {
-                Some(coin) => Ok((wallet_key, coin)),
-                None => anyhow::bail!(
-                    "fake chain client: no unspent, unreserved funding coin >= {min_amount} mojos \
-                     (excluding {} reserved)",
-                    exclude.len()
-                ),
-            }
+            // Every candidate the chain has not shown spent, each with a fresh copy of the key
+            // (`WalletKey` is not `Clone`) -- what the real wallet scan returns.
+            Ok(candidates
+                .into_iter()
+                .filter(|c| !coin_records.get(&c.coin_id()).is_some_and(|r| r.spent))
+                .map(|c| {
+                    debug_assert_eq!(c.puzzle_hash, puzzle_hash, "fake wallet coins belong to the operator");
+                    (derive_wallet_key(master_sk, 0), c)
+                })
+                .collect())
         }
     }
 
-    fn balance(&self, _master_sk: &SecretKey) -> impl Future<Output = Result<u64>> + Send {
-        let (amount, delay) = {
-            let inner = self.0.lock().unwrap();
-            (inner.funding_amount, inner.delay)
-        };
+    /// No oracle-publisher test here involves a pending fee-coin split (those are in
+    /// `tests/fee_allocator.rs`, whose fake records mempool coins), so nothing is ever "in the
+    /// mempool" for this fake.
+    fn coin_in_mempool(&self, _coin_id: Bytes32) -> impl Future<Output = Result<bool>> + Send {
+        let delay = self.0.lock().unwrap().delay;
         async move {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
-            Ok(amount)
+            Ok(false)
         }
     }
 
@@ -411,6 +407,7 @@ fn record(seq: u64) -> OracleRecord {
         results_hash: Bytes32::from([seq as u8; 32]),
         source_flag: Source::Live.flag(),
         source_ts: 1_789_999_000 + seq as i64,
+        asset: 0,
     }
 }
 
@@ -1100,6 +1097,89 @@ async fn record_status_reports_every_state() -> Result<()> {
     Ok(())
 }
 
+/// Record v2, `GET /v1/oracle/status`'s `maxKnownSeq` (a server with a lost
+/// counter raises it to this before handing out the next seq): the highest seq
+/// in ANY state -- each source below is made the sole maximum in turn, so a
+/// field that forgot one of them would be caught -- 0 for an empty queue, and
+/// `recordFormat` says 2.
+#[tokio::test]
+async fn status_reports_the_highest_seq_known_in_any_state_and_record_format_2() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    let status = fx.publisher.status().await?;
+    assert_eq!(status.max_known_seq, 0, "nothing known -> 0");
+    assert_eq!(status.record_format, 2);
+
+    type MakeMaximum = Box<dyn Fn(&mut QueueFile)>;
+    let low = |q: &mut QueueFile| {
+        q.last_accepted_seq = Some(3);
+        q.last_confirmed_seq = Some(2);
+        q.confirmed.insert(1, c2_svc::oracle::queue::ConfirmedRecordInfo { height: Some(1), coin_id: "0x01".into() });
+        q.pending = vec![record(2)];
+    };
+    let scenarios: Vec<(&str, MakeMaximum)> = vec![
+        ("last_accepted_seq", Box::new(|q| q.last_accepted_seq = Some(100))),
+        ("last_confirmed_seq", Box::new(|q| q.last_confirmed_seq = Some(101))),
+        (
+            "confirmed map key",
+            Box::new(|q| {
+                q.confirmed.insert(102, c2_svc::oracle::queue::ConfirmedRecordInfo { height: None, coin_id: "0x66".into() });
+            }),
+        ),
+        (
+            "conflicts key",
+            Box::new(|q| {
+                q.conflicts.insert(
+                    103,
+                    c2_svc::oracle::queue::ConflictInfo {
+                        local: record(103),
+                        chain: record(103),
+                        chain_height: None,
+                        chain_coin_id: "0x67".into(),
+                    },
+                );
+            }),
+        ),
+        ("pending record", Box::new(|q| q.pending.push(record(104)))),
+        (
+            "in-flight record",
+            Box::new(|q| {
+                let mut f = in_flight_stub(&[record(105), record(7)]);
+                f.spent_coin = Coin::new(Bytes32::from([1u8; 32]), Bytes32::from([2u8; 32]), 1);
+                q.in_flight = Some(f);
+            }),
+        ),
+    ];
+    for (i, (source, make_maximum)) in scenarios.iter().enumerate() {
+        let mut queue = QueueFile::default();
+        low(&mut queue);
+        make_maximum(&mut queue);
+        let expected = 100 + i as u64;
+        assert_eq!(queue.max_known_seq(), expected, "{source} must count towards maxKnownSeq");
+        queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+        assert_eq!(fx.publisher.status().await?.max_known_seq, expected, "{source}: via GET /v1/oracle/status");
+    }
+    Ok(())
+}
+
+/// A minimal in-flight spend around `records`, for tests that only look at the
+/// queue file's bookkeeping.
+fn in_flight_stub(records: &[OracleRecord]) -> c2_svc::oracle::queue::InFlightSpend {
+    c2_svc::oracle::queue::InFlightSpend {
+        records: records.to_vec(),
+        spent_coin: Coin::new(Bytes32::from([3u8; 32]), Bytes32::from([4u8; 32]), 1),
+        next_coin: Coin::new(Bytes32::from([5u8; 32]), Bytes32::from([4u8; 32]), 1),
+        next_proof: c2_cli::state::ProofDto::Eve { parent_parent_coin_info: Bytes32::from([6u8; 32]), parent_amount: 1 },
+        bundle: SpendBundle::new(vec![], chia_bls::Signature::default()),
+        bundle_id: "0x00".into(),
+        fee_mojos: 0,
+        broadcast_at_unix: 0,
+        last_attempt_at_unix: 0,
+        attempts: 1,
+        last_push_accepted: true,
+        last_push_error: None,
+    }
+}
+
 /// Task instruction: "restart with records in queue/in_flight" -- a `tick()`
 /// on a brand-new `Publisher` (fresh in-memory state, e.g. after a process
 /// restart) reading the *same* `data_dir` must correctly resume: it
@@ -1390,6 +1470,151 @@ async fn bootstrap_flags_conflict_when_chain_content_differs() -> Result<()> {
     Ok(())
 }
 
+/// Bootstraps a fixture whose chain announced `record(1)` with `chain_asset`
+/// while the local queue still holds the same seq -- identical price, hash and
+/// timestamps -- with `local_asset`.
+async fn bootstrap_against_chain_record_with_asset(
+    chain_asset: u32,
+    local_asset: u32,
+) -> Result<(Fixture, ReconcileOutcome)> {
+    let fx = set_up(Duration::from_secs(300))?;
+    let (gen1_coin, gen1_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        1_000_000,
+        &[OracleRecord { asset: chain_asset, ..record(1) }],
+    )?;
+    fx.publisher.chain.set_confirmed(gen1_coin.coin_id(), 1_000_000);
+    let oracle_state = OracleState {
+        launcher_id: fx.launcher_id,
+        manager_synthetic_pk: fx.manager.synthetic_pk,
+        current_coin: gen1_coin,
+        current_proof_dto: gen1_proof.into(),
+        next_sequence: 2,
+    };
+    save_oracle_state_atomic(&fx.publisher.data_dir, "operator", &oracle_state)?;
+
+    let mut queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    queue.pending = vec![OracleRecord { asset: local_asset, ..record(1) }];
+    queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+
+    let outcome = fx.publisher.bootstrap_from_chain().await?;
+    Ok((fx, outcome))
+}
+
+/// Record v2: the reconcile comparison includes `asset`. A record that differs
+/// from the chain's ONLY in its market index is a different record -- a
+/// conflict surfaced to the operator, never "already confirmed" (that would
+/// mark an ETH round anchored when the chain holds a BTC one) and never
+/// republished. Both directions: chain 6-element vs local asset 3, and chain
+/// 7-element (asset 3) vs local asset 0.
+#[tokio::test]
+async fn reconcile_flags_a_conflict_when_only_the_asset_differs() -> Result<()> {
+    for (chain_asset, local_asset) in [(0, 3), (3, 0), (3, 4)] {
+        let (fx, outcome) = bootstrap_against_chain_record_with_asset(chain_asset, local_asset).await?;
+        assert_eq!(outcome.new_conflicts, vec![1], "chain asset {chain_asset} vs local asset {local_asset}");
+        assert!(outcome.dropped_confirmed.is_empty());
+        assert_eq!(fx.publisher.chain.push_call_count(), 0, "a conflicting record must never be published");
+
+        let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+        assert!(queue.pending.is_empty());
+        assert!(!queue.confirmed.contains_key(&1), "an asset mismatch must not be recorded as confirmed");
+        let conflict = queue.conflicts.get(&1).expect("seq 1 must be recorded as a conflict");
+        assert_eq!(conflict.local.asset, local_asset);
+        assert_eq!(conflict.chain.asset, chain_asset);
+        assert_eq!(fx.publisher.record_status(1)?.state, "conflict");
+        assert_eq!(fx.publisher.status().await?.conflicts, vec![1]);
+    }
+    Ok(())
+}
+
+/// Positive control for the test above: the same record with the same non-zero
+/// asset on both sides is identical, so it is dropped as already confirmed.
+#[tokio::test]
+async fn reconcile_treats_an_identical_seven_element_record_as_already_confirmed() -> Result<()> {
+    let (fx, outcome) = bootstrap_against_chain_record_with_asset(3, 3).await?;
+    assert_eq!(outcome.dropped_confirmed, vec![1]);
+    assert!(outcome.new_conflicts.is_empty());
+    assert_eq!(fx.publisher.record_status(1)?.state, "confirmed");
+    assert_eq!(fx.publisher.chain.push_call_count(), 0);
+    Ok(())
+}
+
+/// Records with different assets queue, persist and ride in one spend side by
+/// side; the asset is still on every record in the in-flight spend and after a
+/// reload from disk (a restart must not turn an asset-3 record into BTC).
+#[tokio::test]
+async fn records_of_different_assets_share_one_spend_and_keep_their_asset() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    let accepted = fx
+        .publisher
+        .enqueue(vec![record(1), OracleRecord { asset: 3, ..record(2) }, OracleRecord { asset: 200, ..record(3) }])
+        .await?;
+    assert_eq!(accepted, vec![1, 2, 3]);
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 3, accepted: true });
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.expect("one spend in flight");
+    assert_eq!(in_flight.records.iter().map(|r| (r.seq, r.asset)).collect::<Vec<_>>(), vec![(1, 0), (2, 3), (3, 200)]);
+    Ok(())
+}
+
+/// `MAX_RECORDS_PER_SPEND` (40) caps a fresh batch: 45 pending records go out
+/// as 40 now and 5 on the next spend, oldest first, none lost.
+#[tokio::test]
+async fn a_new_batch_takes_at_most_the_maximum_records_per_spend() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    let total = MAX_RECORDS_PER_SPEND as u64 + 5;
+    fx.publisher.enqueue((1..=total).map(record).collect()).await?;
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: MAX_RECORDS_PER_SPEND, accepted: true });
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.clone().expect("in flight");
+    assert_eq!(in_flight.records.iter().map(|r| r.seq).collect::<Vec<_>>(), (1..=MAX_RECORDS_PER_SPEND as u64).collect::<Vec<_>>());
+    assert_eq!(queue.pending.iter().map(|r| r.seq).collect::<Vec<_>>(), (MAX_RECORDS_PER_SPEND as u64 + 1..=total).collect::<Vec<_>>());
+
+    fx.publisher.chain.set_confirmed(in_flight.next_coin.coin_id(), 100);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: MAX_RECORDS_PER_SPEND });
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 5, accepted: true });
+    Ok(())
+}
+
+/// The other place that caps a spend: the rebuild merge. 38 records in a
+/// rejected spend plus 5 newly queued ones: the rebuilt spend takes exactly the
+/// 2 that still fit under the maximum, the other 3 stay pending.
+#[tokio::test]
+async fn the_rebuild_merge_never_exceeds_the_maximum_records_per_spend() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    let first = MAX_RECORDS_PER_SPEND as u64 - 2;
+    fx.publisher.enqueue((1..=first).map(record).collect()).await?;
+    fx.publisher.chain.set_fee_estimate(0);
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
+    });
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: first as usize, accepted: false });
+
+    fx.publisher.enqueue((first + 1..=first + 5).map(record).collect()).await?;
+    fx.publisher.chain.set_fee_estimate(1_000_000);
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+    match fx.publisher.tick().await? {
+        TickOutcome::Rebuilt { records, .. } => assert_eq!(records, MAX_RECORDS_PER_SPEND),
+        other => panic!("expected Rebuilt, got {other:?}"),
+    }
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(queue.in_flight.as_ref().unwrap().records.len(), MAX_RECORDS_PER_SPEND);
+    assert_eq!(queue.pending.iter().map(|r| r.seq).collect::<Vec<_>>(), vec![first + 3, first + 4, first + 5]);
+    Ok(())
+}
+
 /// "Persist the checkpoint so later restarts only scan forward": a second
 /// reconciliation must resume from the previous scan's tip, not re-walk the
 /// whole lineage from the launcher every time.
@@ -1488,6 +1713,57 @@ async fn lineage_duplicate_seq_keeps_first_occurrence() -> Result<()> {
     );
     assert_eq!(outcome.generations_advanced, 2);
 
+    Ok(())
+}
+
+/// Record v2 characterization (2026-10-01, written before `asset` existed):
+/// the lineage decoder reads the 6-element announcement every BTC record has
+/// ever been published as. The announcement here is the frozen golden byte
+/// string fed through a hand-made spend, not the production encoder's output,
+/// so this keeps proving "old history still decodes" even if the encoder
+/// changes.
+#[tokio::test]
+async fn lineage_decodes_the_golden_six_element_announcement() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    let message = hex::decode(SIX_ELEMENT_MESSAGE_HEX)?;
+    fx.publisher.chain.set_lineage_spend(
+        fx.eve_coin,
+        1_000_000,
+        1_000_000,
+        announcing_coin_spend(fx.eve_coin, &message),
+    );
+
+    let outcome = walk_lineage(&fx.publisher.chain, fx.eve_coin).await?;
+
+    assert!(outcome.decode_warnings.is_empty(), "unexpected decode warnings: {:?}", outcome.decode_warnings);
+    let on_chain = outcome.confirmed.get(&1145).expect("seq 1145 must decode out of the 6-element message");
+    assert_eq!(on_chain.record, fixed_record());
+    assert_eq!(on_chain.height, Some(1_000_000));
+    assert_eq!(outcome.generations_advanced, 1);
+    Ok(())
+}
+
+/// The very first announcement on the real singleton (week 1, before Р-41:
+/// `(priceCents ts seq)`, three elements, `docs/research/oracle_verification.md`
+/// §5) is not an oracle record. It must be reported as a warning and skipped,
+/// never misread as a record with shifted fields -- and the walk goes on.
+#[tokio::test]
+async fn lineage_skips_the_three_field_week_one_announcement_with_a_warning() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    let three_field = hex::decode("ff8400801ed4ff846ab6a055ff0180")?;
+    fx.publisher.chain.set_lineage_spend(
+        fx.eve_coin,
+        1_000_000,
+        1_000_000,
+        announcing_coin_spend(fx.eve_coin, &three_field),
+    );
+
+    let outcome = walk_lineage(&fx.publisher.chain, fx.eve_coin).await?;
+
+    assert!(outcome.confirmed.is_empty(), "a 3-element announcement must not decode into a record");
+    assert_eq!(outcome.decode_warnings.len(), 1, "{:?}", outcome.decode_warnings);
+    assert!(outcome.decode_warnings[0].contains("did not decode as an oracle record"));
+    assert_eq!(outcome.generations_advanced, 1);
     Ok(())
 }
 

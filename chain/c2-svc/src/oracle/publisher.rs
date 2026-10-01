@@ -15,7 +15,7 @@
 //!    exact same bundle (any other rejection reason, task instruction
 //!    "retries with backoff");
 //! 3. no in-flight spend and records are pending -> build, sign, persist
-//!    (durably, before broadcasting), and broadcast a new batch (<=20
+//!    (durably, before broadcasting), and broadcast a new batch (<=40
 //!    records, task instruction);
 //! 4. nothing pending -> idle.
 //!
@@ -35,7 +35,7 @@
 //! that blocks progress. Once `advance_in_flight` confirms via coinset that
 //! the coin is genuinely still unspent *and* the rejected bundle is genuinely
 //! absent from the mempool, it rebuilds the same records (plus any newly
-//! queued ones, still <=20) with a re-estimated, multiplied fee (capped at
+//! queued ones, still <=`MAX_RECORDS_PER_SPEND`) with a re-estimated, multiplied fee (capped at
 //! `Publisher::max_fee_mojos`) and broadcasts that instead -- resetting the
 //! per-bundle `attempts` counter, since it's a materially different
 //! transaction with its own retry budget. This is also how a stuck spend
@@ -57,6 +57,7 @@ use c2_cli::cost::measure_bundle_cost;
 use c2_cli::state::{OracleState, ProofDto};
 
 use crate::fee_allocator::{FeeCoinAllocator, fee_coin_of, is_coin_spent_rejection};
+use crate::fee_reserve::{FeeCoinsBusy, MaintenanceOutcome, MaintenanceParams};
 use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
 use crate::state_file::{load_oracle_state, save_oracle_state_atomic};
 
@@ -64,7 +65,7 @@ use super::chain_client::ChainClient;
 use super::lineage::{genesis_coin, tip_lineage_proof, walk_lineage};
 use super::queue::{ConfirmedRecordInfo, InFlightSpend, QueueFile, ReconcileOutcome, RecordState};
 use super::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
-use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusResponse};
+use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusResponse, RECORD_FORMAT};
 
 /// Task instruction: "A push that the node REJECTS (never entered the
 /// mempool -- e.g. INVALID_FEE_TOO_CLOSE_TO_ZERO, fee too low) is not 'in
@@ -142,7 +143,9 @@ pub enum TickOutcome {
     Rebuilt { records: usize, accepted: bool, fee_mojos: u64 },
     /// An in-flight spend exists but isn't due for a retry yet, or is
     /// sitting in the mempool / has its coin already spent by something
-    /// else -- either way, nothing to do this tick but wait.
+    /// else -- either way, nothing to do this tick but wait. Also: a new
+    /// batch is ready but the wallet's only free fee coin is held by the
+    /// fee-coin split that is waiting for confirmation (`fee_reserve.rs`).
     WaitingForConfirmation,
     /// An in-flight spend hit `max_retry_attempts` on its current bundle and
     /// can no longer be escalated (fee already at `max_fee_mojos`, or the
@@ -294,6 +297,9 @@ impl<C: ChainClient> Publisher<C> {
         let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
         let oracle_state = load_oracle_state(&self.data_dir, &self.operator_name).ok();
         let operator_balance_mojos = self.balance_snapshot.read().await.clone();
+        // The fee-coin gauge is the last wallet scan's view, read from memory like the balance --
+        // never a chain call here (see `balance_snapshot`'s doc comment).
+        let fee_coin_view = self.fee_allocator.view();
 
         let in_flight_records = queue.in_flight.as_ref().map(|f| f.records.len()).unwrap_or(0);
         let stuck = self.degraded_reason(&queue).await;
@@ -315,6 +321,10 @@ impl<C: ChainClient> Publisher<C> {
             operator_balance_mojos,
             stuck_reason: stuck,
             conflicts,
+            max_known_seq: queue.max_known_seq(),
+            record_format: RECORD_FORMAT,
+            fee_coins_free: fee_coin_view.map(|view| u32::try_from(view.free_coins).unwrap_or(u32::MAX)),
+            fee_coins_free_mojos: fee_coin_view.map(|view| view.free_mojos.to_string()),
         })
     }
 
@@ -370,11 +380,76 @@ impl<C: ChainClient> Publisher<C> {
     /// `RwLock`, held just long enough to swap the cached value, never
     /// across a network call).
     pub async fn refresh_balance_snapshot(&self) {
+        // One wallet scan feeds both numbers: the balance is the sum of the coins, and the same
+        // coins are what the fee-coin gauge (`feeCoinsFree`) counts.
         let snapshot = match load_operator_master_sk(&self.data_dir, &self.operator_name) {
-            Ok(master_sk) => self.chain.balance(&master_sk).await.ok().map(|mojos| mojos.to_string()),
-            Err(_) => None,
+            Ok(master_sk) => match self.chain.unspent_coins(&master_sk).await {
+                Ok(coins) => {
+                    self.fee_allocator.record_scan(&coins).await;
+                    let balance: u64 = coins.iter().map(|(_, coin)| coin.amount).sum();
+                    Some(balance.to_string())
+                }
+                Err(_) => {
+                    self.fee_allocator.clear_view();
+                    None
+                }
+            },
+            Err(_) => {
+                self.fee_allocator.clear_view();
+                None
+            }
         };
         *self.balance_snapshot.write().await = snapshot;
+    }
+
+    /// One pass of the fee-coin reserve (`fee_reserve.rs`, `docs/research/chain_service.md`
+    /// §16) on behalf of this publisher: polls a split that is in flight and, only when
+    /// `may_start` (the oracle has nothing in flight), starts one if the wallet holds fewer free
+    /// fee coins than `C2_FEE_COINS_MIN` and no fee coin is reserved by anyone. Best effort by
+    /// design: a failed pass is logged and forgotten -- housekeeping never fails a tick, so it can
+    /// never degrade `/health` or hold up a publish. `None` = nothing ran (reserve off, dry run, no
+    /// operator key yet) or the pass failed.
+    pub async fn maintain_fee_coins(&self, may_start: bool) -> Option<MaintenanceOutcome> {
+        if !self.push_enabled || self.fee_allocator.policy().min_free == 0 {
+            return None;
+        }
+        let master_sk = load_operator_master_sk(&self.data_dir, &self.operator_name).ok()?;
+        let params = MaintenanceParams {
+            push_enabled: self.push_enabled,
+            max_fee_mojos: self.max_fee_mojos,
+            fee_target_time_secs: self.fee_target_time_secs,
+            retry_backoff: self.retry_backoff,
+        };
+        match self.fee_allocator.maintain(&self.chain, &master_sk, &params, may_start).await {
+            Ok(outcome) => {
+                match &outcome {
+                    MaintenanceOutcome::SplitPushed { input, outputs, fee_mojos } => tracing::info!(
+                        input = %input,
+                        outputs,
+                        fee_mojos,
+                        "fee-coin reserve: pushed a split of the largest wallet coin into fee-sized coins"
+                    ),
+                    MaintenanceOutcome::SplitConfirmed => tracing::info!("fee-coin reserve: the split confirmed"),
+                    MaintenanceOutcome::SplitDropped => tracing::warn!(
+                        "fee-coin reserve: the split is neither confirmed nor in the mempool -- will try again after the backoff"
+                    ),
+                    MaintenanceOutcome::SplitRejected { error } => {
+                        tracing::warn!(%error, "fee-coin reserve: the node rejected the split -- will try again after the backoff")
+                    }
+                    MaintenanceOutcome::NoCoinLargeEnough { largest, needed } => tracing::warn!(
+                        largest,
+                        needed,
+                        "fee-coin reserve is below C2_FEE_COINS_MIN but no wallet coin is big enough to split -- fund the operator wallet"
+                    ),
+                    other => tracing::debug!(?other, "fee-coin reserve"),
+                }
+                Some(outcome)
+            }
+            Err(e) => {
+                tracing::warn!("fee-coin reserve pass failed (will retry): {e:#}");
+                None
+            }
+        }
     }
 
     /// Startup bootstrap (task fix, `docs/research/chain_service.md` §11):
@@ -530,6 +605,21 @@ impl<C: ChainClient> Publisher<C> {
     /// (`main.rs`'s background loop, every existing test) see exactly the
     /// same `tick()` behavior as before this fix.
     pub async fn tick(&self) -> Result<TickOutcome> {
+        // Fee-coin reserve housekeeping (`fee_reserve.rs`) -- before the state machine, and
+        // deliberately outside `queue_lock`: a wallet scan is 20 sequential coinset calls (~12 s
+        // measured on testnet11, 2026-10-01), and holding the lock that long would stall every
+        // `POST /v1/oracle/records` behind it. The pass never touches the queue file; it only
+        // reads `in_flight` (written solely by this task's own `tick_once`, so an unlocked read
+        // here cannot race -- `enqueue` only ever appends to `pending`). It polls a split in
+        // flight on every tick and may start one only while the oracle has nothing in flight (and,
+        // inside the pass, nothing reserved by anyone). Records that are merely pending do not
+        // block it: the only thing a split can ever delay is a batch that wants the wallet's one
+        // and only usable coin, by the few blocks the split needs, once -- and that single-coin
+        // trap is exactly what the reserve exists to end (`start_new_batch` waits, it does not
+        // fail, see `FeeCoinsBusy`). Never fails the tick; not counted in `tick_failures`.
+        let may_start = QueueFile::load(&self.data_dir, &self.operator_name).is_ok_and(|queue| queue.in_flight.is_none());
+        self.maintain_fee_coins(may_start).await;
+
         let result = self.tick_once().await;
         {
             let mut failures = self.tick_failures.write().await;
@@ -770,7 +860,7 @@ impl<C: ChainClient> Publisher<C> {
 
     /// Rebuilds the in-flight spend's records (plus any newly queued ones,
     /// task instruction: "merging any newly queued records into the
-    /// rebuilt spend (<=20)") against the *same* singleton coin, with a
+    /// rebuilt spend (<=`MAX_RECORDS_PER_SPEND`)") against the *same* singleton coin, with a
     /// re-estimated and multiplied fee, and broadcasts it in place of the
     /// rejected bundle. Only ever called after `advance_in_flight` has
     /// confirmed the singleton coin is unspent and the previous bundle is
@@ -968,6 +1058,16 @@ impl<C: ChainClient> Publisher<C> {
             .fee_estimate_mojos(draft_cost.total_cost, self.fee_target_time_secs)
             .await
         {
+            // The first attempt is capped at `C2_MAX_FEE_MOJOS` just like every rebuild: an estimate
+            // from a briefly insane mempool must not be able to spend more than the operator allowed.
+            Ok(fee) if fee > self.max_fee_mojos => {
+                tracing::warn!(
+                    estimate = fee,
+                    cap = self.max_fee_mojos,
+                    "get_fee_estimate is above C2_MAX_FEE_MOJOS -- capping the first attempt's fee"
+                );
+                self.max_fee_mojos
+            }
             Ok(fee) => fee,
             Err(e) => {
                 tracing::warn!("get_fee_estimate failed, falling back to fee=0: {e:#}");
@@ -992,7 +1092,18 @@ impl<C: ChainClient> Publisher<C> {
             return Ok(TickOutcome::DryRun { records: batch_len });
         }
 
-        let (coin_spends, signature) = self.attach_fee_coin(draft.coin_spends, draft.signature, fee_mojos).await?;
+        let (coin_spends, signature) = match self.attach_fee_coin(draft.coin_spends, draft.signature, fee_mojos).await {
+            Ok(attached) => attached,
+            // The only wallet coin big enough is the input of the fee-coin split that is waiting for
+            // confirmation (`fee_reserve.rs`): not a failure, a wait of a few blocks. The drained
+            // batch goes back to `pending`, unsaved -- nothing on disk changed.
+            Err(e) if e.downcast_ref::<FeeCoinsBusy>().is_some() => {
+                tracing::info!("not starting a batch yet: the fee-coin split is holding the wallet's only fee coin");
+                queue.pending.splice(0..0, batch);
+                return Ok(TickOutcome::WaitingForConfirmation);
+            }
+            Err(e) => return Err(e),
+        };
         let bundle_id = bundle_display_id(&signature);
         let bundle = SpendBundle::new(coin_spends, signature);
         let next_proof_dto: ProofDto = draft.next_proof.into();

@@ -11,7 +11,6 @@
 //! the real testnet11 endpoint today, see `docs/research/chain_service.md`
 //! §4 for the exact `curl` output this struct matches.
 
-use std::collections::HashSet;
 use std::future::Future;
 
 use anyhow::{Context, Result};
@@ -66,22 +65,31 @@ pub trait ChainClient: Send + Sync {
     /// CLVM cost to confirm within `target_time_secs`.
     fn fee_estimate_mojos(&self, cost: u64, target_time_secs: u32) -> impl Future<Output = Result<u64>> + Send;
 
-    /// Finds one unspent coin of `master_sk`'s wallet with amount >=
-    /// `min_amount`, skipping any coin id in `exclude` (used to fund the
-    /// fee-only coin, via `fee_allocator::FeeCoinAllocator` -- never called
-    /// directly by a publisher any more, task fix `docs/research/
-    /// chain_service.md` §15: see `find_funding_coin_excluding`'s doc
-    /// comment in `c2_cli::chain` for why `exclude` exists). `GET
-    /// /v1/oracle/status`'s `operatorBalanceMojos` uses `balance` below
-    /// instead, which is unaffected.
-    fn find_funding_coin(
+    /// Every unspent coin of `master_sk`'s wallet at address indices
+    /// `0..ADDRESS_GAP`, each paired with the key that owns it -- plain
+    /// standard (p2) coins only: the scan is by the wallet's own standard
+    /// puzzle hashes, so the oracle singleton (singleton puzzle hash) and the
+    /// PLAY treasury (CAT puzzle hash) can never appear in it.
+    ///
+    /// The one wallet read behind the fee-coin pool: `fee_allocator::
+    /// FeeCoinAllocator::reserve` picks the smallest sufficient coin out of it
+    /// (task fix `docs/research/chain_service.md` §15/§16), the fee-coin
+    /// reserve counts and splits coins from it, and `Publisher::
+    /// refresh_balance_snapshot` sums it into `operatorBalanceMojos`. (It
+    /// replaced `find_funding_coin`, "the first coin that is big enough", and
+    /// `balance`, which was this same scan summed -- 20 sequential coinset
+    /// calls, `c2_cli::chain::ADDRESS_GAP`, so callers scan once and reuse.)
+    fn unspent_coins(
         &self,
         master_sk: &SecretKey,
-        min_amount: u64,
-        exclude: &HashSet<Bytes32>,
-    ) -> impl Future<Output = Result<(WalletKey, chia_protocol::Coin)>> + Send;
+    ) -> impl Future<Output = Result<Vec<(WalletKey, Coin)>>> + Send;
 
-    fn balance(&self, master_sk: &SecretKey) -> impl Future<Output = Result<u64>> + Send;
+    /// Whether any mempool item spends `coin_id` -- the node's own answer
+    /// (`get_mempool_items_by_coin_name`). The fee-coin split uses it so that
+    /// a process restarted while its split is still waiting in the mempool does
+    /// not build a second split from the same coin: the pending state lives in
+    /// the node, not in a file of ours.
+    fn coin_in_mempool(&self, coin_id: Bytes32) -> impl Future<Output = Result<bool>> + Send;
 
     fn push_tx(&self, bundle: SpendBundle) -> impl Future<Output = Result<PushOutcome>> + Send;
 
@@ -209,17 +217,22 @@ impl ChainClient for CoinsetChainClient {
             .context("get_fee_estimate: empty estimates array")
     }
 
-    async fn find_funding_coin(
-        &self,
-        master_sk: &SecretKey,
-        min_amount: u64,
-        exclude: &HashSet<Bytes32>,
-    ) -> Result<(WalletKey, chia_protocol::Coin)> {
-        c2_cli::chain::find_funding_coin_excluding(&self.client, master_sk, min_amount, ADDRESS_GAP, exclude).await
+    async fn unspent_coins(&self, master_sk: &SecretKey) -> Result<Vec<(WalletKey, Coin)>> {
+        let found = c2_cli::chain::scan_unspent(&self.client, master_sk, ADDRESS_GAP).await?;
+        Ok(found.into_iter().map(|(wallet_key, record)| (wallet_key, record.coin)).collect())
     }
 
-    async fn balance(&self, master_sk: &SecretKey) -> Result<u64> {
-        c2_cli::chain::balance(&self.client, master_sk, ADDRESS_GAP).await
+    async fn coin_in_mempool(&self, coin_id: Bytes32) -> Result<bool> {
+        // Verified live against `https://testnet11.api.coinset.org/
+        // get_mempool_items_by_coin_name` (2026-10-01) for a coin id nobody
+        // spends: `{"mempool_items": [], "success": true}` -- an empty list, not
+        // an error, so "not in the mempool" needs no special-casing of `success`.
+        let response = self
+            .client
+            .get_mempool_items_by_coin_name(coin_id)
+            .await
+            .context("get_mempool_items_by_coin_name")?;
+        Ok(response.mempool_items.is_some_and(|items| !items.is_empty()))
     }
 
     async fn push_tx(&self, bundle: SpendBundle) -> Result<PushOutcome> {

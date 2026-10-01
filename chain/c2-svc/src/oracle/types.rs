@@ -4,6 +4,13 @@
 //! announcement per record = `CREATE_PUZZLE_ANNOUNCEMENT` with message =
 //! CLVM list `(seq ts priceCents resultsHash sourceFlag sourceTs)`,
 //! `sourceFlag` 0=live 1=replay").
+//!
+//! **Record format v2** (`docs/research/markets_architecture.md` §7,
+//! `docs/research/chain_service.md` §16): a record also carries `asset`, the
+//! index of its market in the public registry (BTC = 0, the only asset
+//! before v2). The announcement gets a seventh element `asset` only when
+//! `asset > 0`, so every BTC announcement stays byte-identical to the 6-element
+//! history already on chain; decoders read both shapes (`asset` defaults to 0).
 
 use chia_protocol::Bytes32;
 use serde::{Deserialize, Serialize};
@@ -39,6 +46,11 @@ pub struct OracleRecordDto {
     pub source: Source,
     /// Unix seconds.
     pub source_ts: i64,
+    /// Index of the record's market in the public registry (record v2).
+    /// Absent on the wire (an older server) means 0 = BTC, the only market
+    /// there was.
+    #[serde(default)]
+    pub asset: u32,
 }
 
 // Serialize is additive (task item 5, contract test Java<->Rust): production code only ever
@@ -91,6 +103,13 @@ pub struct OracleRecord {
     /// 0 = live, 1 = replay (`Source::flag`).
     pub source_flag: i64,
     pub source_ts: i64,
+    /// Record v2: market index (BTC = 0). `#[serde(default)]` is mandatory,
+    /// not cosmetic: the live queue file already holds records without this
+    /// field (`pending`, `in_flight`, `conflicts`), and `QueueFile::load`
+    /// fails the whole file on any parse error -- which would make `enqueue`,
+    /// `tick`, `status` and `health_check` all fail right after an upgrade.
+    #[serde(default)]
+    pub asset: u32,
 }
 
 impl OracleRecord {
@@ -116,9 +135,19 @@ impl OracleRecord {
             results_hash: Bytes32::from(array),
             source_flag: dto.source.flag(),
             source_ts: dto.source_ts,
+            asset: dto.asset,
         })
     }
 }
+
+/// The record/announcement format this build understands and publishes,
+/// reported as `GET /v1/oracle/status`'s `recordFormat`. 1 = the original 6-field
+/// record (no `asset` field exists at all); 2 = record v2 (`asset`, announced
+/// as an optional 7th element). A server that wants to send a record with
+/// `asset > 0` must first see `recordFormat >= 2` here: an older chainsvc would
+/// drop the unknown JSON key and publish the record as BTC, silently
+/// (`OracleRecordDto` has no `deny_unknown_fields`).
+pub const RECORD_FORMAT: u32 = 2;
 
 /// `GET /v1/oracle/status` (FIXED INTERFACE (3); also the shape
 /// `ServerInfoDto.oracle` reuses field-for-field).
@@ -150,4 +179,27 @@ pub struct OracleStatusResponse {
     /// empty when there are none. Full detail (local vs. chain content) for
     /// one of these is `GET /v1/oracle/records/{seq}` (`state: "conflict"`).
     pub conflicts: Vec<u64>,
+    /// Record v2 (`docs/research/markets_architecture.md` §7 item 3): the highest
+    /// `seq` known to this service in ANY state -- accepted, confirmed
+    /// (including the per-record `confirmed` map and the chain-lineage
+    /// reconciliation that fills it), conflicting, pending or in flight; 0 when
+    /// nothing is known. A server whose own counter was lost (empty database
+    /// against a chainsvc that already published 1..N) raises it to this value
+    /// before it hands out the next `seq` -- `lastConfirmedSeq` alone is not
+    /// enough, pending and in-flight records can be higher.
+    pub max_known_seq: u64,
+    /// See [`RECORD_FORMAT`]. Always 2 from this build on.
+    pub record_format: u32,
+    /// Fee-coin reserve (`docs/research/chain_service.md` §16): how many
+    /// unreserved standard coins of at least `C2_FEE_COIN_MOJOS` the operator
+    /// wallet holds right now, from the last wallet scan (refreshed every
+    /// `publisher_tick`, never fetched inside this request -- same rule as
+    /// `operatorBalanceMojos`). `None` until the first scan has completed or
+    /// when the last one failed. The maintenance step splits a coin when this
+    /// falls below `C2_FEE_COINS_MIN`.
+    pub fee_coins_free: Option<u32>,
+    /// Sum, in mojos, of those `feeCoinsFree` coins -- a decimal string, like
+    /// `operatorBalanceMojos`, so a u64 amount never loses precision in a JSON
+    /// number. `None` exactly when `feeCoinsFree` is.
+    pub fee_coins_free_mojos: Option<String>,
 }

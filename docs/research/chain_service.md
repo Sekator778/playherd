@@ -974,8 +974,10 @@ self.start_new_batch(&mut queue).await                             // <- пад�
 
 ### 12.6 Не сделано в этой задаче (по scope, не по ограничению)
 
-- `docker-compose.yml`'s healthcheck `test:` — не переведён на реальный HTTP-запрос к `/health`,
-  см. §12.4 — открытый интеграционный пункт, не assigned path этой задачи.
+- `docker-compose.yml`'s healthcheck `test:` — на момент этого раздела не был переведён на реальный
+  HTTP-запрос к `/health` (см. §12.4). **Закрыто позже, пункт больше не открыт**: сейчас
+  `docker-compose.yml:109-113` делает настоящий `GET /health` через `/dev/tcp` и требует ответ `200`,
+  то есть `503` при деградации переводит контейнер в unhealthy (проверено чтением файла 2026-10-01).
 - Директориальный `fsync` после `rename` в `atomic_file.rs` (найдено и не устранено ещё в §10.4) —
   по-прежнему открытый риск, не тронуто и в этой задаче.
 - Реальные транзакции на testnet11 в рамках этой задачи не отправлялись — весь фикс проверен
@@ -1541,3 +1543,302 @@ sim-spike`): **108 passed, 1 ignored (тот же генератор тест-в
   вопрос) — не связана с этим инцидентом, не тронута.
 - FIXED INTERFACE (c) (серверная реконсиляция, Java-сторона) — другой assigned path, другой агент,
   как и в §10.8/§11.6/§12.6/§13.6/§14.7.
+
+## 16. Оракул v2, запас комиссионных монет, fsync каталога (2026-10-01)
+
+Источник задания: фиксированные интерфейсы рынков — `docs/research/markets_architecture.md` §7 (Т-9,
+пункты 1–9), открытые пункты `docs/HANDOFF.md` §6 п. 3 (запас комиссионных монет) и п. 8 (`fsync`
+каталога после `rename`, реконсиляция очереди выводов), независимая критика
+`docs/reviews/2026-09-26-independent-critique.md` (rustls). Assigned paths этой работы — `chain/`,
+`tools/verify-oracle/`, этот файл и `docs/research/oracle_verification.md`; серверная (Java) сторона,
+`docker-compose.yml` и `chain/c2-svc/Dockerfile` — другие агенты, не тронуты.
+
+### 16.1 Итог одной строкой
+
+`cargo test --workspace --locked` в `chain/` (2026-10-01, тёплая сборка): **166 passed, 1 ignored
+(тот же генератор тест-векторов, не баг), 0 failed** — было 108/1/0, +58 тестов:
+
+| бинарь | было | стало | что добавлено |
+|---|---|---|---|
+| `c2_svc` (unit) | 31 | 42 | `atomic_file` 3, `fee_reserve` 8 |
+| `tests/oracle_record_format.rs` | — | 8 | формат записи v2 (новый файл) |
+| `tests/oracle_multi_announce.rs` | 2 | 7 | симулятор: 7 элементов, смешанный батч, 40 записей |
+| `tests/oracle_queue.rs` | 28 | 36 | lineage 6/3 элемента, конфликт по `asset`, `maxKnownSeq`, лимит батча |
+| `tests/fee_allocator.rs` | 2 | 23 | запас комиссионных монет, лучшая подгонка, потолок первой комиссии |
+| `tests/fee_reserve.rs` | — | 5 | симулятор: split-спенд против правил консенсуса (новый файл) |
+
+Верификатор — 55 офлайн-тестов `unittest` (`docs/research/oracle_verification.md` §7).
+`cargo clippy --workspace --all-targets --locked` — новых категорий предупреждений нет (остались прежние
+`cloned_ref_to_slice_refs`, §7/§13.1/§14.1/§15.5).
+
+### 16.2 Запись v2: поле `asset` (Т-9, §7 п. 1–2)
+
+- `OracleRecordDto` и `OracleRecord` получили `asset: u32` с `#[serde(default)]` (`oracle/types.rs`):
+  поле отсутствует на проводе — значит 0 = BTC, единственный рынок до v2. `from_dto` переносит его.
+- **Announcement** (`oracle/spend.rs`, две ветки `clvm_list!`): `(seq ts priceCents resultsHash
+  sourceFlag sourceTs)` при `asset == 0` и то же плюс седьмой элемент `asset` при `asset > 0`. Для BTC
+  сообщение **побайтно прежнее**: 59 байт на `seq` 1145; золотая hex-строка записана кодом до изменения и
+  сверена независимым кодировщиком (`chia_rs.Program.to([...])`), лежит в `tests/oracle_golden/mod.rs` и
+  дословно повторена в `tools/verify-oracle/test_verify_oracle.py` — два декодера привязаны к одним байтам.
+  Седьмой элемент стоит +2 байта (asset 1…127) или +4 (128…32767, двухбайтовая знаковая запись `00c8` для 200).
+- **Декодер lineage** (`oracle/lineage.rs::decode_oracle_record`, теперь `pub`): `#[clvm(default = 0)] asset`
+  — читает 6 и 7 элементов. `asset` декодируется **знаково** (`i64`, как все остальные поля) и затем
+  проверяется на `0..=u32::MAX`. Это не вкус, а находка теста `the_lineage_decoder_rejects_what_is_not_a_record`:
+  беззнаковый `u32` из `clvm-traits` читает однобайтовый атом `ff` (знаковую запись −1) как 255 — декодер
+  Rust и питоновский верификатор (`atom_to_int`, знаково) расходились бы в том, что значит такой атом.
+  Короче 6 элементов (3-элементное сообщение недели 1) — ошибка декодирования: запись пропускается с
+  предупреждением, как и раньше. Восьмой и далее элементы декодер **игнорирует** (поведение derive
+  `#[clvm(list)]`, исходники `clvm-derive-0.36.1/src/from_clvm.rs`); это закреплено тестом-сторожем
+  `an_eighth_element_is_ignored_by_the_lineage_decoder` на случай апгрейда `clvm-traits` 0.36 → 0.50
+  (Dependabot, `docs/HANDOFF.md` §6 п. 11) — на 0.50 поведение **не проверялось** (UNVERIFIED).
+- **Реконсиляция** (`QueueFile::reconcile_with_chain`) сравнивает `chain_record.record == record` — это
+  `PartialEq` по всем полям, так что `asset` входит автоматически: запись, отличающаяся от цепи только
+  рынком, — конфликт, а не «уже подтверждена» (`reconcile_flags_a_conflict_when_only_the_asset_differs`:
+  цепь 0 / локально 3, цепь 3 / локально 0, цепь 3 / локально 4; положительный контроль —
+  `reconcile_treats_an_identical_seven_element_record_as_already_confirmed`).
+- **Файл очереди**: `#[serde(default)]` на `OracleRecord.asset` обязателен — `QueueFile::load` падает целиком
+  при любой ошибке разбора (`atomic_file::read_json_or_default`), и файл со старыми записями без него
+  остановил бы `enqueue`, `tick`, `status` и `health_check` сразу после обновления. Характеризационная
+  фикстура `tests/fixtures/oracle_queue_pre_asset.json` записана **самим кодом до изменения**
+  (`QueueFile::save_atomic`, внутри настоящий бандл, записи в `pending`, `in_flight` и в обеих половинах
+  `conflicts`), не руками.
+- **Совместимость**: старый сервер → новый chainsvc — безопасно (нет поля = 0). Новый сервер → **старый**
+  chainsvc — небезопасно для `asset > 0`: serde молча отбрасывает неизвестное поле (`OracleRecordDto` без
+  `deny_unknown_fields`) и запись публикуется как BTC; защита — `recordFormat >= 2` в статусе (§16.3), который
+  сервер обязан увидеть до отправки `asset > 0` (`markets_architecture.md` §7 п. 4), плюс порядок деплоя
+  chainsvc → сервер. Публичный верификатор версии до v2 считает 7-элементные сообщения «неразобранными»
+  и показывает их `seq` дырами — верификатор v2 (§16.8) должен выйти раньше первой не-BTC записи.
+
+Тесты (имена как в коде): характеризационные, написаны **до** изменения и зелёные на старом коде —
+`announcement_message_of_a_fixed_record_is_byte_identical_to_the_pre_v2_encoding`,
+`queue_file_written_before_the_asset_field_still_loads`, `lineage_decodes_the_golden_six_element_announcement`,
+`lineage_skips_the_three_field_week_one_announcement_with_a_warning`; v2 —
+`a_record_with_asset_zero_announces_six_elements_and_a_nonzero_asset_announces_seven`,
+`the_lineage_decoder_reads_both_the_six_and_the_seven_element_shapes`,
+`the_wire_dto_defaults_a_missing_asset_to_zero_and_carries_a_present_one`,
+`the_queue_file_keeps_asset_and_old_files_load_as_asset_zero`,
+`seven_element_announcement_round_trips_through_the_simulator_spend_and_the_lineage_decoder` (спенд в
+`chia-sdk-test::Simulator`, потребитель утверждает ровно эти байты, декодер читает обратно ту же запись),
+`a_consumer_asserting_the_six_element_form_of_an_asset_record_is_rejected` (asset входит в анонсируемые
+байты: цену одного рынка нельзя выдать за другой),
+`a_batch_mixing_asset_zero_and_asset_three_records_announces_each_in_its_own_shape` (смешанный батч:
+формы `[6, 7, 6, 7, 7]`, BTC-сообщение равно золотому, каждое проверяемо потребителем),
+`records_of_different_assets_share_one_spend_and_keep_their_asset`.
+
+### 16.3 Статус `GET /v1/oracle/status` (§7 п. 3, п. 9)
+
+Все прежние поля сохранены; добавлены (`oracle/types.rs::OracleStatusResponse`, camelCase):
+
+| поле | тип | значение |
+|---|---|---|
+| `maxKnownSeq` | число | максимум по `last_accepted_seq`, `last_confirmed_seq`, ключам `confirmed` и `conflicts`, `pending` и `in_flight`; 0, если ничего не известно (`QueueFile::max_known_seq`). Каждый источник сделан единственным максимумом в тесте `status_reports_the_highest_seq_known_in_any_state_and_record_format_2` |
+| `recordFormat` | число | константа 2 (`RECORD_FORMAT`): 1 — запись без `asset`, 2 — v2 |
+| `feeCoinsFree` | число или `null` | сколько свободных (не зарезервированных) стандартных монет не меньше `C2_FEE_COIN_MOJOS` в кошельке оператора по последнему сканированию; `null` до первого скана и после неудачного |
+| `feeCoinsFreeMojos` | строка или `null` | их сумма в mojo — десятичной строкой, как `operatorBalanceMojos`, чтобы u64 не терял точность; `null` ровно тогда, когда `feeCoinsFree` — `null` |
+
+`feeCoinsFree*` читаются из памяти (последний скан кошелька, который уже делает фоновый цикл
+`refresh_balance_snapshot` раз в `publisher_tick` — теперь одним вызовом `ChainClient::unspent_coins` на
+баланс и на счётчик), никогда не из сети внутри запроса: тот же закон, что у `operatorBalanceMojos` (§9).
+
+Контрактные фикстуры, перегенерированные `cargo test -p c2-svc --test contract_fixtures` (изменились **ровно
+две**; остальные 13 байт-в-байт прежние): `chain/c2-svc/tests/contract/OracleRecordsRequest.json` (поле
+`"asset": 3` в записи — ненулевое нарочно, чтобы круговая проверка на Java доказала, что поле проведено) и
+`chain/c2-svc/tests/contract/OracleStatusResponse.json` (`maxKnownSeq: 209`, `recordFormat: 2`,
+`feeCoinsFree: 4`, `feeCoinsFreeMojos: "800000000"`).
+
+### 16.4 `MAX_RECORDS_PER_SPEND` 20 → 40 (§7 п. 8)
+
+Константа `oracle/spend.rs::MAX_RECORDS_PER_SPEND = 40`. Все места, где батч ограничивается, читают именно её —
+билдер (`build_oracle_publish_batch`), новый батч (`publisher::start_new_batch`), слияние при пересборке
+(`publisher::rebuild_in_flight`) — расхождения быть не может; у HTTP-хендлера `POST /v1/oracle/records`
+ограничения на число записей нет (`app.rs::oracle_records` проверяет только «не пусто»), chainsvc сам режет
+очередь на спенды. Тесты: `a_batch_of_the_maximum_forty_records_runs_in_the_simulator_under_the_cost_budget`
+(смешанные активы, 40 уникальных сообщений, спенд синглтона **плюс комиссионный спенд** прогнаны в симуляторе,
+каждое из 40 утверждений проверено потребителем), `the_builder_refuses_more_than_the_maximum_records_per_spend`
+(41-я запись — отказ билдера), `a_new_batch_takes_at_most_the_maximum_records_per_spend` (45 в очереди → 40 и 5),
+`the_rebuild_merge_never_exceeds_the_maximum_records_per_spend` (38 + 5 → пересборка берёт ровно 2).
+
+**Измеренная стоимость** (тест печатает, 2026-10-01): спенд синглтона на 40 записей **53 382 908**
+(байты 49 860 000, исполнение 522 908, условия 3 000 000); весь бандл с комиссионным спендом
+**61 174 188** — тест требует `< 150 000 000` (блок — 11 000 000 000). Однозаписевый спенд — 21 509 048
+(`docs/research/week1_testnet_results.md:48`), то есть 40 записей стоят примерно в 2,5 раза больше одной.
+
+### 16.5 Запас комиссионных монет (§7 п. 9, `docs/HANDOFF.md` §6 п. 3)
+
+**Проблема** (§15): каждый бандл в полёте съедает целую комиссионную монету (`build_fee_only` возвращает
+сдачу новой монетой); оракул и паблишер выводов держат по одной, поэтому при единственной монете в кошельке
+второй получает «no unspent, unreserved coin» — сбой тика, три подряд переводят `/health` в degraded.
+Решение — не умнее аллокатор, а больше монет: `chain/c2-svc/src/fee_reserve.rs` (модуль, документация в
+шапке файла — полное описание), вызывается из тика оракул-паблишера (`Publisher::maintain_fee_coins`).
+
+**Один проход** (`FeeCoinAllocator::maintain`):
+
+1. Если этот процесс уже отправил split — опрашиваем: входная монета потрачена → подтверждён; не потрачена и
+   бандла нет в мемпуле после `retry_backoff` → «потерян», пауза и новая попытка позже. Пока split в полёте,
+   второй не начинается («дождаться подтверждения перед следующей попыткой»).
+2. Иначе — только если у оракула ничего нет в полёте **и аллокатор не держит ни одной резервации** (ни один
+   бандл ни одного паблишера не держит комиссионную монету) и в кошельке меньше `C2_FEE_COINS_MIN` (4)
+   свободных монет не меньше `C2_FEE_COIN_MOJOS` (200 000 000): берётся **самая крупная** стандартная монета и
+   тратится одним спендом в `C2_FEE_COINS_MIN` монет по `C2_FEE_COIN_MOJOS` плюс сдача; комиссию split
+   платит из той же монеты (оценка `get_fee_estimate` для стоимости черновика, потолок `C2_MAX_FEE_MOJOS`).
+   Записи, ожидающие в `pending`, проход не останавливают: единственное, что split может задержать, — батч,
+   которому нужна единственная пригодная монета кошелька, на те несколько блоков, что split подтверждается,
+   один раз; а эта ловушка единственной монеты — ровно то, что запас устраняет.
+3. Входная монета split-а резервируется в аллокаторе, пока split в полёте: ни один паблишер не возьмёт её
+   комиссионной.
+
+Проход идёт в `Publisher::tick` **до** конечного автомата и **вне `queue_lock`**: скан кошелька — 20
+последовательных запросов к coinset (`ADDRESS_GAP`), на живой сети измерено **12,1 с** (testnet11, 2026-10-01,
+`ChainClient::unspent_coins` для одноразового ключа без монет), и держать лок это время значило бы остановить
+каждый `POST /v1/oracle/records` за ним. Файл очереди проход не трогает, а `in_flight` читает без лока —
+пишет его только `tick_once` той же задачи, `enqueue` лишь добавляет в `pending`. Свежий скан нужен редко:
+пока кэшированный вид (фоновый цикл обновляет его тем же сканом, что и баланс) говорит «монет достаточно»,
+проход не делает ни одного сетевого вызова; после отказа ноды, потерянного split-а и «нет достаточно
+крупной монеты» (раз в 5 минут) он выдерживает паузу.
+
+**Выходы отличаются на 1 mojo** (`C2_FEE_COIN_MOJOS`, `+1`, `+2`, `+3`): консенсус Chia не принимает
+бандл, создающий одну и ту же монету дважды (id монеты — хеш родителя, puzzle hash и суммы; одинаковые выходы
+одного родителя на один puzzle hash совпадают) — `ErrorCode::DuplicateOutput`; это закреплено тестом
+`identical_outputs_would_be_rejected_as_a_duplicate_output` на симуляторе. Если сдача случайно совпала бы с
+суммой выхода, лишний mojo уходит из сдачи в комиссию (тест `a_colliding_change_is_nudged_and_the_spend_is_still_valid`).
+
+**Никогда**: не делает split в dry-run (`C2_PUSH=0`) — не читает даже кошелёк; не трогает зарезервированную
+монету; не тратит синглтон оракула и казначейство PLAY — скан кошелька идёт по **стандартным** puzzle hash
+оператора (у синглтона и CAT-монеты они другие), а `build_fee_coin_split` отказывается от любой монеты, чей
+puzzle hash не равен puzzle hash владельца (`a_coin_that_is_not_the_owners_plain_coin_is_refused`,
+`a_coin_of_another_puzzle_is_never_split`); не начинает split с монеты, которую нода уже показывает
+тратящейся в мемпуле (`ChainClient::coin_in_mempool`, ниже).
+
+**Устойчивость к рестарту без нового файла**: состояние — в цепи и в мемпуле ноды. Перезапущенный процесс видит
+кошелёк ниже минимума, выбирает ту же самую крупнейшую монету и спрашивает ноду, тратит ли её что-то в мемпуле
+(`get_mempool_items_by_coin_name`); если split, отправленный до рестарта, ещё там — ждёт, а не строит второй
+(`a_restart_while_the_split_is_in_the_mempool_does_not_split_again`). Даже построив второй, он не может
+потратить монету дважды: оба тратят одну входную монету — подтвердится максимум один. Если оракул или вывод
+успели взять эту монету комиссионной до рестарта — это случай §15 (потрачена не нами), восстанавливается
+пересборкой со свежей монетой. Живая проверка эндпоинта (2026-10-01, только чтение):
+`POST https://testnet11.api.coinset.org/get_mempool_items_by_coin_name` для монеты, которую никто не тратит, →
+`{"mempool_items": [], "success": true}` (пустой список, не ошибка).
+
+**Ожидание вместо ошибки**: пока split держит единственную монету, `FeeCoinAllocator::reserve` отвечает
+типизированной ошибкой `FeeCoinsBusy` (только если причина отсутствия монеты именно split), оба паблишера
+(`start_new_batch`) возвращают её как `WaitingForConfirmation`, записи остаются в `pending`, **сбоем тика это не
+считается** (иначе три такта подряд сделали бы `/health` degraded). Тест
+`publishers_wait_instead_of_failing_while_the_split_holds_the_only_fee_coin` (4 такта сверх порога 3,
+`health_check` чист, после подтверждения оракул берёт монету `200 000 000`, вывод — `200 000 001`) и
+`pending_records_do_not_stop_the_split_and_wait_for_it_without_failing`.
+
+**Лучшая подгонка** (`FeeCoinAllocator::reserve`): теперь берётся **наименьшая** достаточная монета, а не первая
+по порядку скана — комиссионный бандл съедает монету целиком и возвращает сдачу новой, поэтому крупные монеты
+(из которых и состоит запас, и из которых можно резать split) берегутся, пока есть мелкие
+(`reserve_hands_out_coins_smallest_first_and_never_a_reserved_one`,
+`the_oracle_pays_its_fee_with_the_smallest_coin_that_covers_it`). Для этого `ChainClient` получил
+`unspent_coins` (один скан кошелька вместо `find_funding_coin` и `balance`) и `coin_in_mempool`.
+
+**Первая комиссия под потолком**: первая попытка и оракула, и вывода теперь ограничена `C2_MAX_FEE_MOJOS`, как
+и пересборки (`the_first_fee_attempt_is_capped_at_the_maximum_fee`, `the_splits_own_fee_is_capped_at_the_maximum_fee`);
+раньше первая попытка была без потолка (§9.3: потолок действовал только на пересборки).
+
+**Конфигурация** (`config.rs`, **предложение** — значения не из источника): `C2_FEE_COINS_MIN` (по умолчанию 4;
+`0` выключает запас) и `C2_FEE_COIN_MOJOS` (по умолчанию 200 000 000 = 0.0002 TXCH, вчетверо больше
+умолчания `C2_MAX_FEE_MOJOS`, так что и удвоенная до потолка комиссия не оставит монету неспособной платить
+снова). Менять `docker-compose.yml` не нужно — умолчания годятся.
+
+**Стоимость split** (симулятор, `the_split_costs_a_fraction_of_a_blocks_budget`): 17 212 506 (байты 6 936 000,
+исполнение 76 506, условия 10 200 000); при курсе 0,0711 mojo/cost (`get_fee_estimate` 2026-09-25, §3.5) это
+порядка 1,2 млн mojo — DERIVED. Против 200 000 000 на монету — ничто.
+
+**Тесты на фейковом chain client** (`tests/fee_allocator.rs`): split ровно один раз ниже минимума
+(`a_wallet_below_the_minimum_is_split_once_and_then_left_alone`: один спенд, 4 выхода по 200 000 000…03 и сдача,
+`RESERVE_FEE` равен заявленному, потом 3 такта без второго push, после подтверждения — `Healthy { free: 5 }`);
+нет split при достаточном числе монет (`no_split_when_enough_fee_coins_exist`) и если мелкие монеты не считаются
+(`only_coins_of_the_full_fee_coin_size_count`); пропуск, пока монета зарезервирована
+(`no_split_while_a_fee_coin_is_reserved_by_an_in_flight_spend`,
+`no_split_while_the_withdrawal_publisher_has_a_batch_in_flight`) или у оракула есть батч в полёте
+(`no_split_while_the_oracle_has_a_batch_in_flight`); никогда в dry-run (`a_dry_run_never_splits`); выключение
+(`a_minimum_of_zero_switches_the_reserve_off`); нет достаточно крупной монеты
+(`no_split_when_no_coin_is_large_enough`: `NoCoinLargeEnough`, без повторного скана каждый тик); отказ ноды
+(`a_rejected_split_releases_its_coin_and_backs_off`, `a_rejected_split_is_tried_again_once_the_backoff_has_passed`);
+потерянный split заменяется, а не дублируется (`a_split_that_vanished_from_the_mempool_is_replaced_not_duplicated`);
+статус (`status_shows_the_free_fee_coins_from_the_last_wallet_scan`); `FeeCoinsBusy` только когда причина — split
+(`reserve_reports_busy_only_when_the_split_is_the_reason_nothing_is_free`). Против консенсуса —
+`tests/fee_reserve.rs` на `Simulator`: `the_split_spend_is_accepted_by_consensus_and_creates_the_fee_coins_and_the_change`
+и перечисленные выше.
+
+**Границы**: запас пополняется только пока работает тик оракул-паблишера и ни одна комиссионная монета не
+зарезервирована; при непрерывной нагрузке, когда у оракула всегда что-то в полёте, split не стартует — старая
+конкуренция за единственную монету остаётся до первой паузы. Если самая крупная монета кошелька меньше
+`C2_FEE_COINS_MIN × C2_FEE_COIN_MOJOS + 6 + комиссия`, ничего не делается — в лог идёт предупреждение
+(раз в 5 минут) и `feeCoinsFree` показывает нехватку: нужно пополнить кошелёк оператора. Текущий баланс
+оператора на стенде **UNVERIFIED** (последняя документированная комиссионная монета — 9 486 487 612 mojo на
+2026-09-26, §15.1). Живой push split-а на testnet11 не выполнялся (задание запрещает реальные транзакции) —
+первый split на стенде произойдёт на первом тике после деплоя, если в кошельке одна монета.
+
+### 16.6 Долговечность записи на диск и очередь выводов (`docs/HANDOFF.md` §6 п. 8)
+
+**`fsync` каталога** (`atomic_file.rs::write_json_atomic` → `sync_dir`): после `rename` каталог открывается и
+синхронизируется. Зачем (§10.4): `fsync` временного файла делает долговечными *данные*, но `rename` — изменение
+*каталога*, и без его сброса после потери питания или падения ядра может вернуться прежняя запись; для очереди
+оракула это `POST /v1/oracle/records`, на который ответили `202`, и который потерялся. Штатная остановка
+(`docker compose up -d --build`, SIGTERM) этого не показывает, жёсткий крах — может. Платформы: Unix (Linux,
+macOS) — `fsync` по дескриптору каталога; на macOS, как и для файла, он доходит до накопителя, но не просит его
+сбросить собственный кэш (`F_FULLFSYNC`) — предел тот же, что у `fsync` файла, не ухудшен. Файловая система,
+которая вообще не умеет синхронизировать каталог (`EINVAL`/`ENOTSUP`, часть FUSE и сетевых монтирований),
+терпится — отказывать каждой записи ради гарантии, которой монтирование дать не может, значило бы положить сервис;
+любая другая ошибка (`EIO`) возвращается и проваливает запись, как провал `fsync` файла. Windows — no-op (сервис
+работает в Linux-контейнерах). Пустой родитель (`state.json` без каталога) трактуется как `.`. Тесты в
+`atomic_file::tests`: запись/перезапись/круговая проверка, отсутствие временных файлов и создание родителя,
+`sync_dir_opens_and_flushes_the_directory` (несуществующий каталог — ошибка, то есть вызов не мёртвый).
+
+**Реконсиляция очереди выводов с цепью — НЕ сделана, и вот что именно отсутствует и почему.** Аналог §11 для
+`play/withdrawal_queue.rs` не ложится чисто на самовосстановление казначейства (§14.3), потому что:
+
+1. **`requestId` в цепи нет.** Выплата — `create_coin(to_puzzle_hash, amount, hint(to_puzzle_hash))`
+   (`play/withdrawal_spend.rs:114-115`): на цепи видны получатель и сумма, но не идентификатор заявки. Две
+   заявки с одинаковыми (получатель, сумма) неразличимы, и сверка по содержимому ошибалась бы в обе стороны —
+   либо сняла бы законную вторую выплату как «уже оплаченную» (деньги не дойдут), либо не отличила бы оплаченную
+   от неоплаченной (двойная выплата PLAY). Для оракула такой проблемы не было: он анонсирует `seq` в цепь.
+2. **Обхода линии казначейской CAT-монеты нет.** Самовосстановление §14.3 сравнивает **одну** закэшированную
+   монету со статусом «потрачена»; `reconstruct_treasury_cat` декодирует **один** родительский спенд
+   (`Cat::parse_children`). Нет ни обхода поколений (`puzzle_and_solution` + `Cat::parse_children` на каждое), ни
+   контрольной точки в файле очереди (аналога `chain_scan_checkpoint`), ни правила для скачков: самовосстановление
+   усыновляет *самую крупную* непотраченную монету после внешнего `c2 send-play`, а она не потомок
+   закэшированной — линия казначейства не обязана быть одной цепочкой.
+3. **Что сделало бы сверку честной**: класть в memos выплаты `sha256(requestId)` рядом с hint (memos не входят в
+   id монеты, `payout_coin_ids` не меняются). Это изменение формата выплат на цепи, как v2 у оракула, —
+   решение до реализации; выплаты, сделанные до него, останутся неатрибутируемыми, сверять можно только новые.
+4. **Почему не сделано частично**: без п. 1 сверка по содержимому небезопасна, а обход (п. 2) без атрибуции
+   ничего пригодного не даёт. Последствие для PLAY тяжелее, чем у оракула (§11: сожжённая комиссия): устаревший
+   файл очереди при редеплое может привести к повторной выплате — поэтому пункт стоит делать, но после решения
+   по memos.
+
+### 16.7 Зависимости (критика 2026-09-26)
+
+`cargo update -p rustls` в `chain/`: `Cargo.lock` — `rustls` 0.23.42 → **0.23.45**, `rustls-webpki` 0.103.13 →
+0.103.15; больше не изменилось ничего (два пакета, патч-уровень). `chia-wallet-sdk` и `clvm`-крейты не тронуты.
+`cargo audit` после обновления (2026-10-01): RUSTSEC-2026-0285 (rustls) ушёл; остались RUSTSEC-2023-0071 (`rsa`
+0.10.0-rc.18, фикса нет, транзитивно через `chia-wallet-sdk`) и четыре предупреждения — `bincode` 2.0.1 и
+`paste` 1.0.15 (unmaintained), `chacha20` 0.10.1 и `yoke-derive` 0.8.3 (yanked); `yoke-derive` в критике не
+упоминался, не трогался. Тесты после обновления зелёные (§16.1).
+
+### 16.8 Публичный верификатор v2
+
+`tools/verify-oracle/verify_oracle.py` читает 6- и 7-элементные announcement (3-элементное первое остаётся
+«неразобранным»), учитывает `asset` в сравнении дубликатов и конфликтов, со `--stand-url` берёт соответствие
+`seq → раунд` из журнала `GET /api/oracle/records` и сверяет хеш, цену закрытия и индекс актива, умеет
+`--from-seq` и `--strict`, различает код выхода 1 (находка) и 2 (сеть, аргументы). Подробности, реальный прогон
+по testnet11 и тесты — `docs/research/oracle_verification.md` §7 и `tools/verify-oracle/README.md`.
+
+### 16.9 Не сделано и открыто
+
+- Реконсиляция очереди выводов с цепью — §16.6, нужно решение по memos выплат.
+- Очередь оракула по-прежнему: `confirmed` не прореживается и не хранит `resultsHash`; `enqueue` молча
+  игнорирует `seq`, уже известный в любом состоянии, даже с другим содержимым (`oracle/queue.rs::enqueue`,
+  `record_state != Unknown → continue`) — конфликт содержимого виден только при реконсиляции с цепью.
+- Живой push split-а запаса на testnet11 и живая проверка записи v2 с `asset > 0` — не выполнялись (реальные
+  транзакции запрещены заданием); поведение проверено симулятором и фейковым chain client.
+- Сторона сервера (Java): зеркало двух изменённых фикстур, проверка `recordFormat >= 2` перед отправкой
+  `asset > 0`, подъём счётчика `seq` до `maxKnownSeq`, эндпоинты `/api/oracle/records` и
+  `/api/markets/registry.json` — другой агент (`markets_architecture.md` §7 п. 4–6).
+- Питоновский верификатор по-прежнему не запускается в CI (`.github/` — не assigned path).
+- `docker-compose.yml` не тронут: новых обязательных переменных нет (умолчания `C2_FEE_COINS_MIN` и
+  `C2_FEE_COIN_MOJOS` годятся).

@@ -93,9 +93,13 @@ see `docs/research/chain_service.md` §1. Write-ups:
     `tests/auth_verify.rs`.
   - `POST /v1/oracle/records` / `GET /v1/oracle/status`
     (`src/oracle/`) — extends `c2-cli`'s single-record oracle-publish
-    singleton spend to up to 20 records per spend
-    (`oracle/spend.rs::build_oracle_publish_batch`, simulator-tested in
-    `tests/oracle_multi_announce.rs`), backed by a durable, crash-safe
+    singleton spend to up to 40 records per spend (`MAX_RECORDS_PER_SPEND`;
+    `oracle/spend.rs::build_oracle_publish_batch`, simulator-tested in
+    `tests/oracle_multi_announce.rs`, a full batch measured at ~61M cost),
+    each as a 6-element announcement `(seq ts priceCents resultsHash
+    sourceFlag sourceTs)` or, for a non-BTC market, a 7-element one with a
+    trailing `asset` index (record format v2, `docs/research/chain_service.md`
+    §16), backed by a durable, crash-safe
     publish queue (`oracle/queue.rs`, `oracle/publisher.rs`) that never
     double-spends the singleton, retries a stuck broadcast with backoff, and
     is unit-tested end to end against a fake, in-memory chain client
@@ -112,6 +116,12 @@ see `docs/research/chain_service.md` §1. Write-ups:
     puzzle hash (`play/deposit.rs`). Unit-tested against a fake chain client
     (`tests/play_withdrawals.rs`, `tests/play_deposits.rs`, no network). See
     `docs/research/chain_service.md` §13.
+  - Fee-coin reserve (`src/fee_reserve.rs`, `docs/research/chain_service.md`
+    §16): keeps the operator wallet at `C2_FEE_COINS_MIN` (4) free fee coins of
+    `C2_FEE_COIN_MOJOS` (200 000 000) each by splitting its largest coin when
+    the oracle publisher is not mid-spend, so the oracle and the withdrawal
+    publisher never wait for each other's coin; `GET /v1/oracle/status` shows
+    `feeCoinsFree`/`feeCoinsFreeMojos`, `maxKnownSeq` and `recordFormat`.
   - `Dockerfile` — multi-stage release build, build context `chain/` (needs
     the `c2-cli` path dependency + the shared `Cargo.lock` in scope).
   - `--dry-run` / `C2_PUSH=0` — builds and signs spends, never broadcasts or

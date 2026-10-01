@@ -9,6 +9,8 @@
 use std::net::IpAddr;
 use std::path::PathBuf;
 
+use crate::fee_reserve::FeeCoinPolicy;
+
 /// `C2_PUSH=0` (or `--dry-run` on the CLI, see `main.rs`) disables every
 /// real chain write this service would otherwise make: `push_tx` is never
 /// called, and neither the oracle state file nor the durable record queue
@@ -79,6 +81,14 @@ pub struct Config {
     /// healthcheck notices promptly without flapping on one transient
     /// coinset hiccup.
     pub tick_failure_threshold: u32,
+    /// Fee-coin reserve (`fee_reserve.rs`, `docs/research/chain_service.md` §16): the
+    /// operator wallet is kept at no fewer than `C2_FEE_COINS_MIN` free standard coins of at
+    /// least `C2_FEE_COIN_MOJOS` each -- when it falls below, the oracle publisher's tick splits
+    /// the largest coin (while the oracle has nothing in flight and no fee coin is reserved).
+    /// **предложение**: 4 coins of 200 000 000 mojos (0.0002 TXCH, four times `max_fee_mojos`'s
+    /// default). `C2_FEE_COINS_MIN=0` turns the reserve off.
+    pub fee_coins_min: usize,
+    pub fee_coin_mojos: u64,
     /// FIXED INTERFACE (a): the token every `/v1/*` request (except
     /// `GET /health`) must present as `Authorization: Bearer <token>`.
     /// `C2_SVC_TOKEN`, matched against the server's `HERD_CHAINSVC_TOKEN` --
@@ -160,6 +170,15 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(3);
+        let fee_reserve_default = FeeCoinPolicy::default();
+        let fee_coins_min = std::env::var("C2_FEE_COINS_MIN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(fee_reserve_default.min_free);
+        let fee_coin_mojos = std::env::var("C2_FEE_COIN_MOJOS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(fee_reserve_default.coin_mojos);
         let svc_token = std::env::var("C2_SVC_TOKEN").ok().filter(|s| !s.is_empty());
         let allow_no_auth = std::env::var("C2_SVC_ALLOW_NO_AUTH").is_ok_and(|v| v == "1");
         let bind_addrs = parse_bind_addrs(&std::env::var("C2_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1".to_string()))
@@ -175,6 +194,8 @@ impl Config {
             max_retry_attempts: 8,
             max_fee_mojos,
             tick_failure_threshold,
+            fee_coins_min,
+            fee_coin_mojos,
             svc_token,
             allow_no_auth,
             bind_addrs,

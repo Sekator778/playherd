@@ -278,6 +278,29 @@ impl QueueFile {
         self.pending.len()
     }
 
+    /// The highest `seq` this queue knows of in any state: the accepted
+    /// watermark, the confirmed high-water mark, every key of `confirmed` and
+    /// `conflicts`, and every pending and in-flight record -- 0 for an empty
+    /// queue (`GET /v1/oracle/status`'s `maxKnownSeq`, record v2). Each source
+    /// is needed: after a reconciliation against the chain `confirmed` can hold
+    /// seqs above `last_accepted_seq`, and pending/in-flight records can be above
+    /// `last_confirmed_seq`; a hand-edited or partially restored file can
+    /// disagree with itself, so no one field is trusted to be the maximum.
+    pub fn max_known_seq(&self) -> u64 {
+        [
+            self.last_accepted_seq,
+            self.last_confirmed_seq,
+            self.confirmed.keys().next_back().copied(),
+            self.conflicts.keys().next_back().copied(),
+            self.pending.iter().map(|r| r.seq).max(),
+            self.in_flight.as_ref().and_then(|f| f.records.iter().map(|r| r.seq).max()),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(0)
+    }
+
     /// Applies a chain-lineage walk's findings (`oracle/lineage.rs::
     /// walk_lineage`) to this queue -- the reconciliation half of the task
     /// fix (`docs/research/chain_service.md` §11): "pending/in_flight

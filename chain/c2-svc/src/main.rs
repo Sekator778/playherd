@@ -11,6 +11,7 @@ use clap::Parser;
 use c2_svc::app;
 use c2_svc::config::{Config, check_startup_auth_config};
 use c2_svc::fee_allocator::FeeCoinAllocator;
+use c2_svc::fee_reserve::FeeCoinPolicy;
 use c2_svc::oracle::chain_client::CoinsetChainClient;
 use c2_svc::oracle::publisher::{Publisher, TickFailureState};
 use c2_svc::play::deposit::DepositService;
@@ -46,6 +47,8 @@ async fn main() -> Result<()> {
         port = config.port,
         bind_addrs = ?config.bind_addrs,
         auth_enabled = config.svc_token.is_some(),
+        fee_coins_min = config.fee_coins_min,
+        fee_coin_mojos = config.fee_coin_mojos,
         "starting c2-svc"
     );
 
@@ -55,7 +58,14 @@ async fn main() -> Result<()> {
     // coin independently, via a plain deterministic gap-scan, and reliably
     // collided whenever both needed one at once). One `Arc` instance, given
     // to both publishers below -- see `fee_allocator`'s module doc.
-    let fee_allocator = Arc::new(FeeCoinAllocator::new());
+    //
+    // The same allocator owns the fee-coin reserve (`fee_reserve.rs`, `docs/research/
+    // chain_service.md` §16): `C2_FEE_COINS_MIN` free coins of `C2_FEE_COIN_MOJOS` each, kept by
+    // splitting a big coin from the oracle publisher's tick (only while the oracle has nothing in flight).
+    let fee_allocator = Arc::new(FeeCoinAllocator::with_policy(FeeCoinPolicy {
+        min_free: config.fee_coins_min,
+        coin_mojos: config.fee_coin_mojos,
+    }));
 
     let chain = CoinsetChainClient::new(config.coinset_base_url.clone());
     let publisher = Arc::new(Publisher {
@@ -193,11 +203,13 @@ async fn main() -> Result<()> {
     // Separate background loop refreshing `operatorBalanceMojos` for
     // `GET /v1/oracle/status` (see `Publisher::balance_snapshot`'s doc
     // comment for the bug this fixes). Deliberately its own loop, not folded
-    // into the tick loop above: `chain::balance`'s coinset scan (20
-    // sequential address lookups, `ADDRESS_GAP`) is the slowest chain call
+    // into the tick loop above: the wallet scan (`ChainClient::unspent_coins`,
+    // 20 sequential address lookups, `ADDRESS_GAP`) is the slowest chain call
     // this service makes, and it must never delay `tick()`'s own
     // confirmation/retry timing (**предложение**: reuses `publisher_tick`'s
-    // interval, no new config surface).
+    // interval, no new config surface). The same scan also feeds the fee-coin
+    // gauge in `GET /v1/oracle/status` (`feeCoinsFree`) and tells the fee-coin
+    // reserve (`fee_reserve.rs`) whether the wallet needs topping up.
     {
         let publisher = Arc::clone(&publisher);
         let tick = config.publisher_tick;
