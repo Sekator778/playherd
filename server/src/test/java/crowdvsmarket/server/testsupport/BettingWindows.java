@@ -3,6 +3,7 @@ package crowdvsmarket.server.testsupport;
 import static org.awaitility.Awaitility.await;
 
 import crowdvsmarket.engine.market.Interval;
+import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.domain.RoundProgress;
 import java.time.Duration;
@@ -19,26 +20,38 @@ import java.time.Duration;
  *       through every overdue round — a poll during that catch-up sees windows already in the
  *       past.</li>
  * </ul>
- * Both helpers therefore wait for a window that still has real time ahead of it.
+ * Both helpers therefore wait for a window that still has real time ahead of it. A series is a market
+ * plus an interval (docs/research/markets_architecture.md §4 п.1); the overloads without a market are
+ * BTC's.
  */
 public final class BettingWindows {
 
     private BettingWindows() {
     }
 
-    /** A window with at least min(half its length, 5 s) still ahead — the current one if it
+    /** A BTC window with at least min(half its length, 5 s) still ahead — the current one if it
      *  qualifies, so 180 s default rounds rarely wait. */
     public static RoundWindow fresh(RoundProgress roundProgress, Interval interval) {
-        return await().atMost(maxWait(roundProgress, interval)).pollInterval(Duration.ofMillis(50))
-                .until(() -> roundProgress.bettingWindow(interval), BettingWindows::hasMargin);
+        return fresh(roundProgress, MarketSpec.BTC_ID, interval);
     }
 
-    /** Like {@link #fresh} but never the window open at call time — for tests that need a round
+    /** {@link #fresh(RoundProgress, Interval)} for the series of {@code marketId}. */
+    public static RoundWindow fresh(RoundProgress roundProgress, String marketId, Interval interval) {
+        return await().atMost(maxWait(roundProgress, marketId, interval)).pollInterval(Duration.ofMillis(50))
+                .until(() -> roundProgress.bettingWindow(marketId, interval), BettingWindows::hasMargin);
+    }
+
+    /** Like {@link #fresh} but never the BTC window open at call time — for tests that need a round
      *  whose betting opened after something they just did (e.g. bots re-created by a rebuild). */
     public static RoundWindow next(RoundProgress roundProgress, Interval interval) {
-        String currentRoundId = roundProgress.bettingWindow(interval).roundId();
-        return await().atMost(maxWait(roundProgress, interval)).pollInterval(Duration.ofMillis(50))
-                .until(() -> roundProgress.bettingWindow(interval),
+        return next(roundProgress, MarketSpec.BTC_ID, interval);
+    }
+
+    /** {@link #next(RoundProgress, Interval)} for the series of {@code marketId}. */
+    public static RoundWindow next(RoundProgress roundProgress, String marketId, Interval interval) {
+        String currentRoundId = roundProgress.bettingWindow(marketId, interval).roundId();
+        return await().atMost(maxWait(roundProgress, marketId, interval)).pollInterval(Duration.ofMillis(50))
+                .until(() -> roundProgress.bettingWindow(marketId, interval),
                         window -> !window.roundId().equals(currentRoundId) && hasMargin(window));
     }
 
@@ -47,8 +60,8 @@ public final class BettingWindows {
         return window.startMs() - System.currentTimeMillis() >= Math.min(duration / 2, 5_000);
     }
 
-    private static Duration maxWait(RoundProgress roundProgress, Interval interval) {
-        RoundWindow window = roundProgress.bettingWindow(interval);
+    private static Duration maxWait(RoundProgress roundProgress, String marketId, Interval interval) {
+        RoundWindow window = roundProgress.bettingWindow(marketId, interval);
         return Duration.ofMillis(2 * (window.endMs() - window.startMs()) + 5_000);
     }
 }

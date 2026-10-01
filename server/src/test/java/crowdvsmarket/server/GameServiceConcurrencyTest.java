@@ -78,7 +78,7 @@ class GameServiceConcurrencyTest {
                         String wallet = "txch1conc" + threadIdx + "-" + j + "-"
                                 + UUID.randomUUID().toString().replace("-", "");
                         String playerId = gameService.registerOrTouchPlayer(wallet, now).player().playerId();
-                        RoundWindow bettingWindow = roundProgress.bettingWindow(Interval.HOURLY);
+                        RoundWindow bettingWindow = roundProgress.bettingWindow("BTC", Interval.HOURLY);
                         Betting.PlaceBetRequest req = new Betting.PlaceBetRequest(bettingWindow.roundId(),
                                 j % 2 == 0 ? Enums.Direction.UP : Enums.Direction.DOWN, 2, "100.000");
                         try {

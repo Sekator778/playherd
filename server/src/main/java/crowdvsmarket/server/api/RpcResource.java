@@ -97,11 +97,13 @@ public class RpcResource {
                 clearCookie = clearSessionCookie();
                 result = java.util.Map.of();
             }
-            case "rounds" -> result = gameService.roundsPair(Enums.Interval.valueOf(str(args, 0)), playerId);
+            // `marketId` is the optional second argument (omitted → BTC, docs/research/markets_architecture.md §8).
+            case "rounds" -> result = gameService.roundsPair(Enums.Interval.valueOf(str(args, 0)), str(args, 1), playerId);
             case "round" -> result = gameService.round(str(args, 0), playerId);
             // Р-62: public, no session required — same visibility as the round itself during BETTING.
             case "betFeed" -> result = gameService.betFeed(str(args, 0), longOrNull(args, 1));
             case "btcReferencePrice" -> result = gameService.btcReferencePrice();
+            case "referencePrice" -> result = gameService.referencePrice(requiredStr(args, 0, "marketId"));
             case "previewLiquidation" -> result = gameService.previewLiquidation(requiredObj(args, 0, Betting.LiquidationPreviewRequest.class));
             case "placeBet" -> {
                 requireSignedIn(playerId);
@@ -147,7 +149,7 @@ public class RpcResource {
                 requireSignedIn(playerId);
                 result = gameService.myDepositAddress(playerId);
             }
-            case "crowdAccount" -> result = gameService.crowdAccount();
+            case "crowdAccount" -> result = gameService.crowdAccount(str(args, 0));
             case "ratings" -> result = gameService.ratings(str(args, 0));
             case "publicProfile" -> result = gameService.publicProfile(str(args, 0));
             case "myProfile" -> {
@@ -251,6 +253,16 @@ public class RpcResource {
     private String str(JsonNode args, int i) {
         JsonNode n = at(args, i);
         return n.isNull() ? null : n.asText();
+    }
+
+    /** A string arg that must be there — a missing/{@code null} one is a client error, not a value
+     *  for the handler to interpret (same reasoning as {@link #requiredObj}). */
+    private String requiredStr(JsonNode args, int i, String name) {
+        String value = str(args, i);
+        if (value == null || value.isBlank()) {
+            throw ApiException.badRequest("missing " + name);
+        }
+        return value;
     }
 
     /** Optional numeric arg — {@code null} when omitted/JSON {@code null} (e.g. {@code betFeed}'s

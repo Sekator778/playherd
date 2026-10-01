@@ -87,6 +87,13 @@ public final class Enums {
          *  player's deposit address (never thrown once already cached — see {@code
          *  PlayerDepositAddressRepository}). 503, like {@code DEPOSIT_VERIFICATION_UNAVAILABLE}/
          *  {@code WITHDRAWAL_UNAVAILABLE} above — additive. */
-        CHAIN_SERVICE_UNAVAILABLE
+        CHAIN_SERVICE_UNAVAILABLE,
+        /** docs/research/markets_architecture.md §8 (Р-69): a market id, or a round id that names
+         *  one, that this server never listed. 404. */
+        MARKET_NOT_FOUND,
+        /** The market is {@code CLOSED} and takes no new bets. 409. */
+        MARKET_CLOSED,
+        /** No price for the market right now (nothing ticked yet / source down). 503. */
+        PRICE_UNAVAILABLE
     }
 }

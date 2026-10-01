@@ -73,10 +73,8 @@ public final class Rounds {
      *  capped at {@code BetFeed.PAGE_SIZE} per call. {@code hasMore=true} means more already-placed
      *  entries exist beyond this page — call again immediately with this page's last entry's
      *  {@code seq} rather than waiting for the next poll tick. */
-    public record BetFeedDto(String roundId, String asset, List<BetFeedEntryDto> entries, boolean hasMore) {
-        public BetFeedDto(String roundId, List<BetFeedEntryDto> entries, boolean hasMore) {
-            this(roundId, "BTC", entries, hasMore);
-        }
+    public record BetFeedDto(String roundId, String marketId, String asset, List<BetFeedEntryDto> entries,
+                               boolean hasMore) {
     }
 
     /** Additive (task item 1c, FIXED INTERFACE b/c): optional per-round anchor into chainsvc's own
@@ -104,40 +102,50 @@ public final class Rounds {
      *  calc (Р-14) as {@link CrowdRoundPositionDto}/{@code CrowdAccount}'s own majority-side
      *  computation, just previewed one phase earlier, before the round has actually opened a
      *  position. */
-    public record RoundBetting(String roundId, RoundWindowDto window, String asset, String phase,
+    public record RoundBetting(String roundId, RoundWindowDto window, String marketId, String asset, String phase,
                                  int participantCount, BetDto myBet, String upStake, String downStake, int upCount,
                                  int downCount, Enums.Direction majorityDirection, Integer majorityLeverage,
                                  List<LiveBetDto> recentBets) implements RoundDto {
-        public RoundBetting(String roundId, RoundWindowDto window, int participantCount, BetDto myBet,
-                             String upStake, String downStake, int upCount, int downCount,
-                             Enums.Direction majorityDirection, Integer majorityLeverage,
+        public RoundBetting(String roundId, RoundWindowDto window, String marketId, String asset,
+                             int participantCount, BetDto myBet, String upStake, String downStake, int upCount,
+                             int downCount, Enums.Direction majorityDirection, Integer majorityLeverage,
                              List<LiveBetDto> recentBets) {
-            this(roundId, window, "BTC", "BETTING", participantCount, myBet, upStake, downStake, upCount, downCount,
-                    majorityDirection, majorityLeverage, recentBets);
+            this(roundId, window, marketId, asset, Enums.RoundPhase.BETTING.name(), participantCount, myBet, upStake,
+                    downStake, upCount, downCount, majorityDirection, majorityLeverage, recentBets);
         }
     }
 
-    public record RoundRunning(String roundId, RoundWindowDto window, String asset, String phase, String openPrice,
-                                 List<PublicPositionDto> positions, CrowdRoundPositionDto crowd) implements RoundDto {
-        public RoundRunning(String roundId, RoundWindowDto window, String openPrice,
+    /** {@code openPrice} and every price in {@code positions}/{@code crowd} are raw strings of the
+     *  market (priceDecimals digits). Open price not known yet (the market just listed, or the tick
+     *  buffer is still empty after a restart): {@code openPrice} is the latest tick, or an
+     *  all-zero price when there is none, and {@code positions} is empty and {@code crowd} null —
+     *  nothing can be derived from an entry price that does not exist yet. */
+    public record RoundRunning(String roundId, RoundWindowDto window, String marketId, String asset, String phase,
+                                 String openPrice, List<PublicPositionDto> positions, CrowdRoundPositionDto crowd)
+            implements RoundDto {
+        public RoundRunning(String roundId, RoundWindowDto window, String marketId, String asset, String openPrice,
                              List<PublicPositionDto> positions, CrowdRoundPositionDto crowd) {
-            this(roundId, window, "BTC", "RUNNING", openPrice, positions, crowd);
+            this(roundId, window, marketId, asset, Enums.RoundPhase.RUNNING.name(), openPrice, positions, crowd);
         }
     }
 
-    public record RoundSettled(String roundId, RoundWindowDto window, String asset, String phase, String openPrice,
-                                 String closePrice, List<PublicPositionDto> positions, CrowdRoundResultDto crowd,
-                                 String resultsHash, OracleAnchorDto oracleAnchor) implements RoundDto {
-        public RoundSettled(String roundId, RoundWindowDto window, String openPrice, String closePrice,
-                             List<PublicPositionDto> positions, CrowdRoundResultDto crowd, String resultsHash) {
-            this(roundId, window, "BTC", "SETTLED", openPrice, closePrice, positions, crowd, resultsHash, null);
+    public record RoundSettled(String roundId, RoundWindowDto window, String marketId, String asset, String phase,
+                                 String openPrice, String closePrice, List<PublicPositionDto> positions,
+                                 CrowdRoundResultDto crowd, String resultsHash, OracleAnchorDto oracleAnchor)
+            implements RoundDto {
+        public RoundSettled(String roundId, RoundWindowDto window, String marketId, String asset, String openPrice,
+                             String closePrice, List<PublicPositionDto> positions, CrowdRoundResultDto crowd,
+                             String resultsHash) {
+            this(roundId, window, marketId, asset, Enums.RoundPhase.SETTLED.name(), openPrice, closePrice, positions,
+                    crowd, resultsHash, null);
         }
     }
 
-    public record RoundCancelled(String roundId, RoundWindowDto window, String asset, String phase,
+    public record RoundCancelled(String roundId, RoundWindowDto window, String marketId, String asset, String phase,
                                    CancellationDto cancellation, OracleAnchorDto oracleAnchor) implements RoundDto {
-        public RoundCancelled(String roundId, RoundWindowDto window, CancellationDto cancellation) {
-            this(roundId, window, "BTC", "CANCELLED", cancellation, null);
+        public RoundCancelled(String roundId, RoundWindowDto window, String marketId, String asset,
+                               CancellationDto cancellation) {
+            this(roundId, window, marketId, asset, Enums.RoundPhase.CANCELLED.name(), cancellation, null);
         }
     }
 

@@ -119,6 +119,25 @@ public final class ApiException extends RuntimeException {
                 "too many requests — please slow down and try again shortly");
     }
 
+    /** docs/research/markets_architecture.md §8: a market id (or a round id naming one) this server
+     *  has never listed. 404. */
+    public static ApiException marketNotFound(String marketId) {
+        return new ApiException(Enums.ApiErrorCode.MARKET_NOT_FOUND, 404, "unknown market " + marketId);
+    }
+
+    /** The market exists but is {@code CLOSED}: it opens no new rounds and takes no bets (§3.3,
+     *  Т-10). 409. */
+    public static ApiException marketClosed(String marketId) {
+        return new ApiException(Enums.ApiErrorCode.MARKET_CLOSED, 409,
+                "market " + marketId + " is closed — it takes no new bets");
+    }
+
+    /** No price for the market right now (nothing ticked yet, or the source is down): the caller
+     *  may retry. 503. */
+    public static ApiException priceUnavailable(String message) {
+        return new ApiException(Enums.ApiErrorCode.PRICE_UNAVAILABLE, 503, message);
+    }
+
     public Enums.ApiErrorCode code() {
         return code;
     }

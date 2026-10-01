@@ -2,6 +2,8 @@ package crowdvsmarket.server.persistence;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.Optional;
 
 /**
@@ -42,15 +44,22 @@ public class ServerMetaRepository {
     /** Reserves the next {@code n} oracle sequence numbers atomically and returns the first one —
      *  {@code seq} in FIXED INTERFACE (3)'s {@code /v1/oracle/records}, monotonic across restarts. */
     public long reserveOracleSeqRange(int n) {
-        return db.tx(c -> {
-            db.update(c, "INSERT INTO server_meta (key, value) VALUES (?, '0') ON CONFLICT (key) DO NOTHING",
-                    ORACLE_SEQ_KEY);
-            long current = Long.parseLong(db.queryOne(c, "SELECT value FROM server_meta WHERE key = ? FOR UPDATE",
-                    rs -> rs.getString("value"), ORACLE_SEQ_KEY));
-            long first = current + 1;
-            db.update(c, "UPDATE server_meta SET value = ? WHERE key = ?", Long.toString(current + n), ORACLE_SEQ_KEY);
-            return first;
-        });
+        return db.tx(c -> reserveOracleSeqRange(c, n));
+    }
+
+    /** {@link #reserveOracleSeqRange(int)} inside the caller's transaction: round settlement
+     *  (docs/research/markets_architecture.md §4 п.3) reserves the seq in the very transaction that
+     *  appends the {@code RoundResolved} event and inserts the oracle record, so a rolled-back
+     *  settlement leaves no hole in the sequence. The row stays locked until that transaction
+     *  ends. */
+    public long reserveOracleSeqRange(Connection c, int n) throws SQLException {
+        db.update(c, "INSERT INTO server_meta (key, value) VALUES (?, '0') ON CONFLICT (key) DO NOTHING",
+                ORACLE_SEQ_KEY);
+        long current = Long.parseLong(db.queryOne(c, "SELECT value FROM server_meta WHERE key = ? FOR UPDATE",
+                rs -> rs.getString("value"), ORACLE_SEQ_KEY));
+        long first = current + 1;
+        db.update(c, "UPDATE server_meta SET value = ? WHERE key = ?", Long.toString(current + n), ORACLE_SEQ_KEY);
+        return first;
     }
 
     /** Р-53: the next stable {@code playerIndex} a brand-new player row draws (chainsvc CAT

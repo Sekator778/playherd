@@ -12,7 +12,6 @@ import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.RoundPrices;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.domain.BetFeed;
-import crowdvsmarket.server.domain.ComparisonAccounts;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.dto.Enums;
@@ -24,20 +23,22 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The single code path that mutates {@link EngineHub} (+ {@link ComparisonAccounts}) for a
- * {@link GameEvent} — used identically for live traffic (right after the event is persisted, see
- * {@code GameService}) and for the full replay at startup ({@code EngineRebuildService}). Keeping
- * exactly one such path is what makes "rebuilt from events on startup" trustworthy: there is no
- * second, hand-written reconstruction that could drift from what live traffic actually does.
+ * The single code path that mutates {@link EngineHub} (its ledger, and per market the crowd account,
+ * engines and comparison lines) for a {@link GameEvent} — used identically for live traffic (right
+ * after the event is persisted, see {@code GameService}) and for the full replay at startup
+ * ({@code EngineRebuildService}). Keeping exactly one such path is what makes "rebuilt from events
+ * on startup" trustworthy: there is no second, hand-written reconstruction that could drift from
+ * what live traffic actually does.
+ *
+ * <p>The four round events are routed by their {@code market}; an event that names a market the hub
+ * has no engines for is an {@link IllegalStateException} naming the event — a rebuild must never
+ * silently skip a bet or a settlement (money), it must stop and say why.
  */
 @ApplicationScoped
 public final class EventApplier {
 
     @Inject
     EngineHub hub;
-
-    @Inject
-    ComparisonAccounts comparisonAccounts;
 
     @Inject
     BetFeed betFeed;
@@ -59,28 +60,32 @@ public final class EventApplier {
                 yield null;
             }
             case GameEvent.BetPlaced e -> {
-                RoundWindow window = new RoundWindow(e.interval(), e.windowStart(), e.windowEnd());
-                hub.engine(e.interval()).placeBet(e.playerId(), window, e.direction(),
+                EngineHub.MarketEngines market = marketOf(e, e.market());
+                RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
+                market.engine(e.interval()).placeBet(e.playerId(), window, e.direction(),
                         new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()), Instant.ofEpochMilli(e.atMs()));
                 recordBetFeedEntry(window.roundId(), e);
                 yield null;
             }
             case GameEvent.BetCancelled e -> {
-                RoundWindow window = new RoundWindow(e.interval(), e.windowStart(), e.windowEnd());
-                hub.engine(e.interval()).cancelBet(e.playerId(), window, Instant.ofEpochMilli(e.atMs()));
+                EngineHub.MarketEngines market = marketOf(e, e.market());
+                RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
+                market.engine(e.interval()).cancelBet(e.playerId(), window, Instant.ofEpochMilli(e.atMs()));
                 yield null;
             }
             case GameEvent.RoundResolved e -> {
-                RoundWindow window = new RoundWindow(e.interval(), e.windowStart(), e.windowEnd());
+                EngineHub.MarketEngines market = marketOf(e, e.market());
+                RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
                 List<Candle> path = toCandles(e.path());
                 RoundPrices prices = new StoredRoundPrices(new BigDecimal(e.openPrice()), new BigDecimal(e.closePrice()), path);
-                RoundReport report = hub.engine(e.interval()).runRound(window, prices);
-                comparisonAccounts.onRoundResolved(report, path);
+                RoundReport report = market.engine(e.interval()).runRound(window, prices);
+                market.comparison().onRoundResolved(report, path);
                 yield report;
             }
             case GameEvent.RoundCancelled e -> {
-                RoundWindow window = new RoundWindow(e.interval(), e.windowStart(), e.windowEnd());
-                refundAndClear(hub.engine(e.interval()), window, Instant.ofEpochMilli(e.atMs()));
+                EngineHub.MarketEngines market = marketOf(e, e.market());
+                RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
+                refundAndClear(market.engine(e.interval()), window, Instant.ofEpochMilli(e.atMs()));
                 yield null;
             }
             case GameEvent.WithdrawalRequested e -> {
@@ -129,6 +134,14 @@ public final class EventApplier {
                 yield null;
             }
         };
+    }
+
+    /** The engines of the market {@code event} names — {@link IllegalStateException} naming the
+     *  event when there are none (see the class javadoc). */
+    private EngineHub.MarketEngines marketOf(GameEvent event, String marketId) {
+        return hub.findMarket(marketId).orElseThrow(() -> new IllegalStateException(
+                event.getClass().getSimpleName() + " refers to market '" + marketId + "' that has no engines "
+                        + "(is it in the markets table?) — refusing to skip a money event: " + event));
     }
 
     /** Refunds every bet still pending on {@code window} and clears it — the operator/automatic

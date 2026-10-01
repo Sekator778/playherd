@@ -1,6 +1,7 @@
 package crowdvsmarket.server.util;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import crowdvsmarket.engine.market.MarketSpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -30,6 +31,13 @@ import java.util.TreeMap;
  * same shape to a cancelled round is this server's own choice, so every round (never just settled
  * ones) has a {@code resultsHash} to publish and to serve at
  * {@code GET /api/rounds/{roundId}/results.json}.
+ *
+ * <p><b>Markets (Р-69, docs/research/markets_architecture.md §6):</b> for BTC the JSON is exactly
+ * what it was before markets existed — byte for byte, so every published hash stays verifiable
+ * (the BTC overload of {@link #build} is unchanged and pinned by {@code ResultsHasherTest}). For any
+ * other market a root key {@code "market"} (the market id) is added; the price fields are the
+ * market's ENGINE (lot) prices times 100, the unit {@code round_results} stores. A stored
+ * {@code canonical_json} is never recomputed.
  */
 public final class ResultsHasher {
 
@@ -48,9 +56,21 @@ public final class ResultsHasher {
     public record CanonicalResult(String json, String hash) {
     }
 
+    /** The BTC shape — no {@code "market"} key. */
     public static CanonicalResult build(String roundId, String series, String status, Long openPriceCents,
                                           Long closePriceCents, List<PositionEntry> positions, CrowdEntry crowd) {
+        return build(MarketSpec.BTC_ID, roundId, series, status, openPriceCents, closePriceCents, positions, crowd);
+    }
+
+    /** {@code market} {@code "BTC"} gives the BTC shape above; any other id adds the root key
+     *  {@code "market"}. */
+    public static CanonicalResult build(String market, String roundId, String series, String status,
+                                          Long openPriceCents, Long closePriceCents, List<PositionEntry> positions,
+                                          CrowdEntry crowd) {
         Map<String, Object> root = new TreeMap<>();
+        if (!MarketSpec.BTC_ID.equals(market)) {
+            root.put("market", market);
+        }
         root.put("roundId", roundId);
         root.put("series", series);
         root.put("status", status);

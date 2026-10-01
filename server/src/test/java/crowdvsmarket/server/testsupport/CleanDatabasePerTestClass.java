@@ -62,7 +62,14 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
 
     private static final String TRUNCATE_SQL = "TRUNCATE TABLE game_events, players, round_results, "
             + "player_round_history, withdrawal_requests, deposit_requests, auth_challenges, sessions, "
-            + "oracle_records, player_deposit_addresses, deposit_confirmations RESTART IDENTITY CASCADE";
+            + "oracle_records, player_deposit_addresses, deposit_confirmations, price_snapshots "
+            + "RESTART IDENTITY CASCADE";
+
+    /** V7's {@code markets} table: every market a test listed goes, but BTC's row (id 0, created by the
+     *  migration, always present) stays — back to ACTIVE in case a test closed it. */
+    private static final String DELETE_LISTED_MARKETS_SQL = "DELETE FROM markets WHERE id <> 'BTC'";
+    private static final String REOPEN_BTC_SQL = "UPDATE markets SET status = 'ACTIVE', closed_at_ms = NULL, "
+            + "close_reason = NULL WHERE id = 'BTC'";
 
     @Override
     public void beforeEach(QuarkusTestMethodContext context) {
@@ -74,10 +81,13 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
         Db db = Arc.container().instance(Db.class).get();
         db.tx(c -> {
             db.update(c, TRUNCATE_SQL);
+            db.update(c, DELETE_LISTED_MARKETS_SQL);
+            db.update(c, REOPEN_BTC_SQL);
             return null;
         });
-        // Same code path a real restart uses: resets every in-memory singleton (EngineHub,
-        // ComparisonAccounts, BetFeed, RoundProgress, PlayerDirectory) from the now-empty tables,
+        // Same code path a real restart uses: resets every in-memory singleton (EngineHub with its
+        // per-market ComparisonAccounts, BetFeed, RoundProgress, PlayerDirectory, the market
+        // registry) from the now-empty tables,
         // then BotService#ensureBotsExist creates exactly this class's own configured bot count —
         // necessary even when Quarkus itself did restart for this class (that restart's own
         // StartupEvent-triggered rebuild ran against whatever the PREVIOUS class had left in the

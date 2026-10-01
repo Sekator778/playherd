@@ -1,23 +1,22 @@
 package crowdvsmarket.server.price;
 
+import crowdvsmarket.engine.market.Candle;
 import crowdvsmarket.engine.round.RoundPrices;
 import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.config.GameMode;
 import crowdvsmarket.server.domain.RoundCalendar;
-import crowdvsmarket.server.live.HyperliquidClient;
-import crowdvsmarket.server.live.LivePriceSampler;
-import crowdvsmarket.server.live.LiveRoundPrices;
 import crowdvsmarket.server.replay.CandleLoader;
 import crowdvsmarket.server.replay.ReplayRoundPrices;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
-import org.eclipse.microprofile.rest.client.inject.RestClient;
+import java.util.List;
 
-/** Picks the {@link RoundPrices} implementation for the configured {@code herd.mode} (Р-46) and
- *  exposes a "reference price right now" for {@code btcReferencePrice()}/{@code
- *  previewLiquidation()}, which is not tied to any particular round window. */
+/** The price source of {@code herd.mode=replay} (Р-46): the accelerated replay of
+ *  {@code replay/btc_1m.csv}, BTC only, kept for tests and for working without a network
+ *  (docs/research/markets_architecture.md §3.2 п.7, Т-12). In {@code herd.mode=live} the prices come
+ *  from {@code crowdvsmarket.server.prices.MarketPrices} (Р-70) and this class is not used. */
 @ApplicationScoped
 public class PriceService {
 
@@ -27,13 +26,7 @@ public class PriceService {
     @Inject
     RoundCalendar roundCalendar;
 
-    @Inject
-    LivePriceSampler livePriceSampler;
-
-    @RestClient
-    HyperliquidClient hyperliquid;
-
-    private volatile java.util.List<crowdvsmarket.engine.market.Candle> replayCandles;
+    private volatile List<Candle> replayCandles;
 
     @PostConstruct
     void init() {
@@ -42,32 +35,27 @@ public class PriceService {
         }
     }
 
-    public RoundPrices roundPrices() {
-        return switch (config.mode()) {
-            case REPLAY -> new ReplayRoundPrices(replayCandles, config.replaySpeedup(), roundCalendar.originMs());
-            case LIVE -> new LiveRoundPrices(livePriceSampler, hyperliquid);
-        };
+    /** The replay series of BTC, laid out on the server's round calendar.
+     *  @throws IllegalStateException outside {@code mode=replay} */
+    public RoundPrices replayPrices() {
+        return new ReplayRoundPrices(candles(), config.replaySpeedup(), roundCalendar.originMs());
     }
 
     public record Reference(BigDecimal price, long asOfMs) {
     }
 
-    public Reference currentReference(long nowMs) {
-        if (config.mode() == GameMode.REPLAY) {
-            ReplayRoundPrices prices = new ReplayRoundPrices(replayCandles, config.replaySpeedup(), roundCalendar.originMs());
-            return new Reference(prices.priceAt(nowMs), nowMs);
+    /** The replay BTC reference price "right now" — the open of the source candle the virtual clock is
+     *  at. */
+    public Reference replayReference(long nowMs) {
+        ReplayRoundPrices prices = new ReplayRoundPrices(candles(), config.replaySpeedup(), roundCalendar.originMs());
+        return new Reference(prices.priceAt(nowMs), nowMs);
+    }
+
+    private List<Candle> candles() {
+        List<Candle> candles = replayCandles;
+        if (candles == null) {
+            throw new IllegalStateException("replay prices exist only in herd.mode=replay");
         }
-        var ticks = livePriceSampler.ticksIn(nowMs - 10_000L, nowMs + 1);
-        if (!ticks.isEmpty()) {
-            var last = ticks.get(ticks.size() - 1);
-            return new Reference(last.price(), last.atMs());
-        }
-        // No recent tick buffered (e.g. server just started) — do one synchronous live read.
-        BigDecimal markPx = LivePriceSampler.extractBtcMarkPx(hyperliquid.info(
-                com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode().put("type", "metaAndAssetCtxs")));
-        if (markPx == null) {
-            throw new IllegalStateException("no live BTC price available");
-        }
-        return new Reference(markPx, nowMs);
+        return candles;
     }
 }

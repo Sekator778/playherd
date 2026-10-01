@@ -1,6 +1,7 @@
 package crowdvsmarket.server.events;
 
 import crowdvsmarket.engine.market.Interval;
+import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.Direction;
 import java.util.List;
 
@@ -14,8 +15,22 @@ import java.util.List;
  * <p>Read-model tables ({@code round_results}, {@code players}, …) are NOT rebuilt from this log
  * — they are written directly, once, when first produced, and read as-is; only the in-memory
  * engine needs replaying.
+ *
+ * <p><b>Markets (Р-69, docs/research/markets_architecture.md §6, Т-13):</b> the four round events
+ * ({@link BetPlaced}, {@link BetCancelled}, {@link RoundResolved}, {@link RoundCancelled}) carry an
+ * optional trailing {@code market} (a {@code MarketSpec} id). A row written before markets existed
+ * has no such key, Jackson hands the component {@code null}, and the compact constructor turns it
+ * into {@code "BTC"} — so every pre-markets row replays exactly as before, with no schema bump
+ * ({@code EventStore.CURRENT_SCHEMA_VERSION} stays 1). Each of the four also keeps its pre-markets
+ * constructor (BTC) for callers and fixtures that predate the field; production code names the
+ * market explicitly.
  */
 public sealed interface GameEvent {
+
+    /** A missing market means BTC (Т-13) — the one place that rule lives. */
+    private static String marketOrBtc(String market) {
+        return market == null ? MarketSpec.BTC_ID : market;
+    }
 
     /** Grants a first-activity-in-season starter pack immediately at sign-in (Р-2), rather than
      *  waiting for the player's first bet — {@code LedgerBook.ensureSeasonPack} is idempotent
@@ -30,11 +45,30 @@ public sealed interface GameEvent {
     }
 
     record BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
-                       int leverage, long stakeMojos, long atMs) implements GameEvent {
+                       int leverage, long stakeMojos, long atMs, String market) implements GameEvent {
+
+        public BetPlaced {
+            market = marketOrBtc(market);
+        }
+
+        /** Pre-markets shape: a bet on BTC. */
+        public BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
+                           int leverage, long stakeMojos, long atMs) {
+            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, null);
+        }
     }
 
-    record BetCancelled(String playerId, Interval interval, long windowStart, long windowEnd, long atMs)
-            implements GameEvent {
+    record BetCancelled(String playerId, Interval interval, long windowStart, long windowEnd, long atMs,
+                          String market) implements GameEvent {
+
+        public BetCancelled {
+            market = marketOrBtc(market);
+        }
+
+        /** Pre-markets shape: a bet on BTC. */
+        public BetCancelled(String playerId, Interval interval, long windowStart, long windowEnd, long atMs) {
+            this(playerId, interval, windowStart, windowEnd, atMs, null);
+        }
     }
 
     /** One OHLCV candle, decimal fields as exact strings (no float round-trip) — mirrors
@@ -47,13 +81,32 @@ public sealed interface GameEvent {
      *  independent of the (possibly wall-clock-driven, e.g. live-mode) price source that produced
      *  it originally. */
     record RoundResolved(Interval interval, long windowStart, long windowEnd, String openPrice, String closePrice,
-                           List<CandleData> path, long atMs) implements GameEvent {
+                           List<CandleData> path, long atMs, String market) implements GameEvent {
+
+        public RoundResolved {
+            market = marketOrBtc(market);
+        }
+
+        /** Pre-markets shape: a BTC round. */
+        public RoundResolved(Interval interval, long windowStart, long windowEnd, String openPrice,
+                               String closePrice, List<CandleData> path, long atMs) {
+            this(interval, windowStart, windowEnd, openPrice, closePrice, path, atMs, null);
+        }
     }
 
     /** Operator/automatic cancellation (Р-23, Р-32): refunds every bet still pending for the
      *  round. */
-    record RoundCancelled(Interval interval, long windowStart, long windowEnd, String reason, long atMs)
-            implements GameEvent {
+    record RoundCancelled(Interval interval, long windowStart, long windowEnd, String reason, long atMs,
+                            String market) implements GameEvent {
+
+        public RoundCancelled {
+            market = marketOrBtc(market);
+        }
+
+        /** Pre-markets shape: a BTC round. */
+        public RoundCancelled(Interval interval, long windowStart, long windowEnd, String reason, long atMs) {
+            this(interval, windowStart, windowEnd, reason, atMs, null);
+        }
     }
 
     /** No {@code requestId} field on purpose: {@code LedgerBook.requestWithdrawal} assigns its own

@@ -11,22 +11,24 @@ import crowdvsmarket.engine.ledger.SeasonRecord;
 import crowdvsmarket.engine.ledger.WithdrawalRequest;
 import crowdvsmarket.engine.ledger.WithdrawalState;
 import crowdvsmarket.engine.margin.Leverage;
-import crowdvsmarket.engine.margin.LiquidationCalculator;
 import crowdvsmarket.engine.market.Candle;
+import crowdvsmarket.engine.market.Interval;
+import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.player.PlayerIdentity;
 import crowdvsmarket.engine.rating.RatingBook;
 import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.Position;
 import crowdvsmarket.engine.round.PositionSimulator;
-import crowdvsmarket.engine.round.PositionSizing;
+import crowdvsmarket.engine.round.RoundClock;
 import crowdvsmarket.engine.round.RoundPrices;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.engine.season.Season;
 import crowdvsmarket.server.chain.ChainSvcClient;
 import crowdvsmarket.server.config.GameConfig;
-import crowdvsmarket.server.domain.ComparisonAccounts;
+import crowdvsmarket.server.config.GameMode;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.PlayerDirectory;
+import crowdvsmarket.server.domain.RoundCalendar;
 import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Betting;
@@ -43,17 +45,29 @@ import crowdvsmarket.server.dto.ServerInfo;
 import crowdvsmarket.server.events.EventApplier;
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
+import crowdvsmarket.server.markets.Market;
+import crowdvsmarket.server.markets.MarketListener;
+import crowdvsmarket.server.markets.MarketRegistry;
 import crowdvsmarket.server.persistence.Db;
 import crowdvsmarket.server.persistence.OracleRecordRepository;
 import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.persistence.WithdrawalDepositRepository;
 import crowdvsmarket.server.price.PriceService;
+import crowdvsmarket.server.prices.MarketPrices;
+import crowdvsmarket.server.prices.PriceQuote;
+import crowdvsmarket.server.prices.PriceUnavailableException;
+import crowdvsmarket.server.prices.RoundPriceData;
+import crowdvsmarket.server.scheduler.EngineRebuildService;
+import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -88,9 +102,25 @@ import java.util.UUID;
  * from scratch — takes the SAME write lock via {@link #runExclusively}, for the same reason a
  * rebuild used to run inside {@code synchronized(gameService)}: it must never interleave with any
  * other read or write here either.
+ *
+ * <p><b>Markets (Р-69, docs/research/markets_architecture.md):</b> every round id names its market
+ * ({@code RoundWindow.parseRoundId}) and every path below works for any market; BTC is the default
+ * wherever an argument is optional. Prices leave the server as the market's RAW price strings
+ * ({@link Market#rawString}); the engine, {@code round_results} and the oracle record keep ENGINE
+ * (lot) prices (Т-3). {@code mode=replay} plays BTC only, from {@link PriceService}; {@code
+ * mode=live} plays every active market, from {@link MarketPrices}. This service is also the
+ * registry's {@link MarketListener}: a listed market gets its engines and series, a closed one has
+ * its open rounds cancelled with a refund.
+ *
+ * <p><b>Settlement is atomic (§4 п.3):</b> {@link #resolveRound} fetches prices BEFORE taking the
+ * lock (the source may be asked over the network), then, under the write lock, runs ONE database
+ * transaction — the {@code RoundResolved} event, the result and history rows, the oracle record —
+ * and applies the event to the engine inside it. If anything throws, the transaction rolls back and
+ * the in-memory state is rebuilt from the event log before the exception propagates, so memory and
+ * database can never disagree about a round. {@link #cancelRound} works the same way.
  */
 @ApplicationScoped
-public class GameService {
+public class GameService implements MarketListener {
 
     @Inject
     GameConfig config;
@@ -98,8 +128,6 @@ public class GameService {
     Db db;
     @Inject
     EngineHub hub;
-    @Inject
-    ComparisonAccounts comparisonAccounts;
     @Inject
     EventStore eventStore;
     @Inject
@@ -109,7 +137,13 @@ public class GameService {
     @Inject
     RoundProgress roundProgress;
     @Inject
+    RoundCalendar roundCalendar;
+    @Inject
     PriceService priceService;
+    @Inject
+    MarketRegistry marketRegistry;
+    @Inject
+    MarketPrices marketPrices;
     @Inject
     RoundResultRepository roundResults;
     @Inject
@@ -128,6 +162,8 @@ public class GameService {
     crowdvsmarket.server.persistence.DepositConfirmationRepository depositConfirmations;
     @Inject
     crowdvsmarket.server.domain.BetFeed betFeedStore;
+    @Inject
+    EngineRebuildService rebuildService;
 
     private static final BigDecimal ZERO_MONEY = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final Logger LOG = Logger.getLogger(GameService.class);
@@ -155,45 +191,40 @@ public class GameService {
         }
     }
 
+    /** Registers this service with the registry at startup, so a market listed or closed from now
+     *  on reaches {@link #onListed}/{@link #onClosed}. A market that was listed before this runs is
+     *  not lost: every rebuild creates the engines of every market in the registry, and the
+     *  scheduler seeds any running market that still has no series ({@link #ensureSeries}). */
+    void onStart(@Observes StartupEvent ev) {
+        marketRegistry.setListener(this);
+    }
+
     // ---------------------------------------------------------------------------------------
     // Round id helpers
     // ---------------------------------------------------------------------------------------
 
-    private record RoundIdParts(crowdvsmarket.engine.market.Interval interval, long startMs) {
-    }
-
-    private RoundIdParts parseRoundId(String roundId) {
-        int dash = roundId.indexOf('-');
-        if (dash < 0) {
-            throw ApiException.badRequest("malformed roundId: " + roundId);
-        }
-        String code = roundId.substring(0, dash);
-        crowdvsmarket.engine.market.Interval interval = switch (code) {
-            case "1h" -> crowdvsmarket.engine.market.Interval.HOURLY;
-            case "1d" -> crowdvsmarket.engine.market.Interval.DAILY;
-            default -> throw ApiException.badRequest("malformed roundId: " + roundId);
-        };
-        long startMs;
+    /** {@code RoundWindow.parseRoundId} with the failure mapped to a 400: BTC ids stay
+     *  {@code "<code>-<startMs>"}, any other market's are {@code "<market>-<code>-<startMs>"}. */
+    private static RoundWindow.RoundRef parseRoundId(String roundId) {
         try {
-            startMs = Long.parseLong(roundId.substring(dash + 1));
-        } catch (NumberFormatException e) {
+            return RoundWindow.parseRoundId(roundId);
+        } catch (IllegalArgumentException e) {
             throw ApiException.badRequest("malformed roundId: " + roundId);
         }
-        return new RoundIdParts(interval, startMs);
     }
 
     private RoundWindow windowFor(String roundId) {
-        RoundIdParts parts = parseRoundId(roundId);
-        long durationMs = config.roundDurations().forInterval(parts.interval());
-        return new RoundWindow(parts.interval(), parts.startMs(), parts.startMs() + durationMs);
+        RoundWindow.RoundRef ref = parseRoundId(roundId);
+        long durationMs = config.roundDurations().forInterval(ref.interval());
+        return new RoundWindow(ref.market(), ref.interval(), ref.startMs(), ref.startMs() + durationMs);
     }
 
-    private static Enums.Interval toDto(crowdvsmarket.engine.market.Interval interval) {
+    private static Enums.Interval toDto(Interval interval) {
         return Enums.Interval.valueOf(interval.name());
     }
 
-    private static crowdvsmarket.engine.market.Interval toEngine(Enums.Interval interval) {
-        return crowdvsmarket.engine.market.Interval.valueOf(interval.name());
+    private static Interval toEngine(Enums.Interval interval) {
+        return Interval.valueOf(interval.name());
     }
 
     private static Enums.Direction toDto(crowdvsmarket.engine.round.Direction d) {
@@ -328,14 +359,175 @@ public class GameService {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Markets: lookup and series lifecycle (Р-69, docs/research/markets_architecture.md §3.1, §4)
+    // ---------------------------------------------------------------------------------------
+
+    /** The market named by an optional market argument; absent means BTC (contract.ts). */
+    private Market requireMarket(String marketIdOrNull) {
+        return marketRegistry.require(marketIdOrNull == null ? Market.BTC_ID : marketIdOrNull);
+    }
+
+    /** Whether the market's rounds are played on this server at all: every market in {@code
+     *  mode=live}, only BTC in {@code mode=replay}, whatever the registry holds — the replay series
+     *  is BTC's (§3.2 п.7, Т-12). */
+    private boolean runs(Market market) {
+        return config.mode() == GameMode.LIVE || Market.BTC_ID.equals(market.id());
+    }
+
+    /** The markets whose rounds are played right now: active and {@link #runs}. What the scheduler
+     *  and the bots iterate. */
+    public List<Market> runningMarkets() {
+        return marketRegistry.active().stream().filter(this::runs).toList();
+    }
+
+    /** Gives {@code market} its engines and, when its rounds are played, a series per interval
+     *  seeded at the window containing "now" (§4 п.2) — never at the calendar's first window, which
+     *  would make the scheduler walk every window since the origin. Idempotent: a series that already
+     *  has a cursor keeps it. Called for a newly listed market, and by the scheduler for a running
+     *  market that has no series (a listing notification that arrived before this service was
+     *  registered as the registry's listener, or lost). */
+    public void ensureSeries(Market market) {
+        engineLock.writeLock().lock();
+        try {
+            ensureSeriesLocked(market, System.currentTimeMillis());
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
+    private void ensureSeriesLocked(Market market, long nowMs) {
+        hub.ensureMarket(market);
+        // The registry's current word, not the caller's snapshot: the scheduler may hand over a market
+        // that was closed (and its series stopped by onClosed) a moment ago.
+        Market current = marketRegistry.byId(market.id()).orElse(market);
+        if (!current.isActive() || !runs(current)) {
+            return;
+        }
+        for (Interval interval : Interval.values()) {
+            if (!roundProgress.isSeeded(market.id(), interval)) {
+                roundProgress.seed(market.id(), interval,
+                        roundCalendar.windowContaining(market.id(), interval, nowMs));
+            }
+        }
+    }
+
+    /** {@link MarketListener}: a market was listed — create its engines and seed its series. Called
+     *  outside the registry's lock, so taking the engine lock here cannot deadlock against a thread
+     *  that holds the engine lock and reads the registry. */
+    @Override
+    public void onListed(Market market) {
+        ensureSeries(market);
+    }
+
+    /** {@link MarketListener}: a market was closed — cancel its betting round and its running round
+     *  with a refund (reason {@code "market closed: <reason>"}, listed publicly like every
+     *  cancellation) and stop its series. Both windows are cancelled even when empty, so a round a
+     *  player still has open in the app resolves to a cancelled round, not to "unknown". */
+    @Override
+    public void onClosed(Market market, String reason) {
+        long nowMs = System.currentTimeMillis();
+        String why = "market closed: " + reason;
+        engineLock.writeLock().lock();
+        try {
+            hub.ensureMarket(market);
+            for (Interval interval : Interval.values()) {
+                Optional<RoundWindow> running = roundProgress.findNext(market.id(), interval);
+                if (running.isPresent()) {
+                    for (RoundWindow window : List.of(running.get(), RoundClock.next(running.get()))) {
+                        if (!roundResults.exists(window.roundId())) {
+                            cancelWindowLocked(market, window, why, nowMs, true);
+                        }
+                    }
+                }
+                roundProgress.remove(market.id(), interval);
+            }
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
+    /** Restart safety net — the caller (the rebuild) holds the write lock: a market was closed in
+     *  the database but the process stopped before {@link #onClosed} cancelled its open rounds, so
+     *  the replayed bet book still holds bets whose stake is debited and that nobody would ever
+     *  settle. Looks at the windows that were running or open for betting when the market closed
+     *  (the cursor may have lagged a step behind the clock) and cancels, with a refund, those that
+     *  still hold bets. */
+    public void cancelStrandedRoundsLocked(long nowMs) {
+        for (Market market : marketRegistry.all()) {
+            if (market.isActive() || market.closedAtMs() == null) {
+                continue;
+            }
+            hub.ensureMarket(market);
+            for (Interval interval : Interval.values()) {
+                RoundWindow containing = roundCalendar.windowContaining(market.id(), interval, market.closedAtMs());
+                RoundWindow previous = new RoundWindow(market.id(), interval,
+                        containing.startMs() - (containing.endMs() - containing.startMs()), containing.startMs());
+                for (RoundWindow window : List.of(previous, containing, RoundClock.next(containing))) {
+                    if (hasBetsLocked(window) && !roundResults.exists(window.roundId())) {
+                        LOG.warnf("market %s closed while round %s still held bets — cancelling it with a refund",
+                                market.id(), window.roundId());
+                        cancelWindowLocked(market, window, "market closed: " + market.closeReason(), nowMs, false);
+                    }
+                }
+            }
+        }
+    }
+
+    /** Whether any bet waits in {@code window}'s round. */
+    public boolean hasPendingBets(RoundWindow window) {
+        engineLock.readLock().lock();
+        try {
+            return hasBetsLocked(window);
+        } finally {
+            engineLock.readLock().unlock();
+        }
+    }
+
+    private boolean hasBetsLocked(RoundWindow window) {
+        return hub.findMarket(window.market())
+                .map(m -> !m.engine(window.interval()).betBook().betsFor(window.roundId()).isEmpty())
+                .orElse(false);
+    }
+
+    /**
+     * The catch-up rule of docs/research/markets_architecture.md §4 п.5, for the scheduler: the first
+     * window at or after {@code from} that must still be resolved or cancelled. A window with bets
+     * always is. An EMPTY window that is overdue by more than one step (its betting round is over too)
+     * is not worth resolving — no event, no result, no oracle record — so the walk goes on to the next
+     * one; the result is {@code from} itself in the normal case of a round that has just ended.
+     */
+    public RoundWindow firstWindowToResolve(RoundWindow from, long nowMs) {
+        long stepMs = from.endMs() - from.startMs();
+        engineLock.readLock().lock();
+        try {
+            RoundWindow window = from;
+            while (nowMs - window.endMs() > stepMs && !hasBetsLocked(window)) {
+                window = RoundClock.next(window);
+            }
+            return window;
+        } finally {
+            engineLock.readLock().unlock();
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Betting (Р-8, Р-13, Р-19, Р-22)
     // ---------------------------------------------------------------------------------------
 
     public Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
-        RoundIdParts parts = parseRoundId(req.roundId());
+        RoundWindow.RoundRef ref = parseRoundId(req.roundId());
+        marketRegistry.require(ref.market()); // MARKET_NOT_FOUND without waiting for the lock
         engineLock.writeLock().lock();
         try {
-            RoundWindow bettingWindow = roundProgress.bettingWindow(parts.interval());
+            // Read again under the lock: a close announced while this call waited for it wins.
+            Market market = marketRegistry.require(ref.market());
+            if (!market.isActive()) {
+                throw ApiException.marketClosed(market.id());
+            }
+            hub.ensureMarket(market);
+            RoundWindow bettingWindow = roundProgress.findNext(market.id(), ref.interval())
+                    .map(RoundClock::next)
+                    .orElseThrow(() -> ApiException.roundNotOpenForBetting(req.roundId()));
             // Bug fix (wave-2 MINOR finding): reject strictly by wall-clock time against the
             // window's own startMs, not only by roundId equality against RoundProgress's cursor.
             // RoundProgress only advances when RoundSchedulerService's tick (every
@@ -344,7 +536,13 @@ public class GameService {
             // the cursor could still name this same roundId as "open for betting" and let a late bet
             // slip in. Comparing nowMs (the request's own arrival time, not a re-read of
             // System.currentTimeMillis() here) closes that gap regardless of scheduler timing.
-            if (!bettingWindow.roundId().equals(req.roundId()) || nowMs >= bettingWindow.startMs()) {
+            if (!bettingWindow.roundId().equals(ref.roundId()) || nowMs >= bettingWindow.startMs()) {
+                throw ApiException.roundNotOpenForBetting(req.roundId());
+            }
+            // §4 п.6: a round that already has a result row was cancelled by the operator before it
+            // started — the cancellation refunded and cleared its bets, so a bet accepted now would
+            // sit in the bet book with its stake debited and never be settled or refunded.
+            if (roundResults.exists(bettingWindow.roundId())) {
                 throw ApiException.roundNotOpenForBetting(req.roundId());
             }
             // Only registered players bet. A bot tick that started before the player directory was
@@ -356,7 +554,7 @@ public class GameService {
             }
             Leverage leverage;
             try {
-                leverage = new Leverage(req.leverage());
+                leverage = market.spec().leverage(req.leverage()); // 2..the market's cap (Т-4)
             } catch (IllegalArgumentException e) {
                 throw ApiException.invalidLeverage(e.getMessage());
             }
@@ -380,37 +578,42 @@ public class GameService {
             if (stake.compareTo(LedgerBook.MIN_STAKE) < 0) {
                 throw ApiException.stakeBelowMinimum("stake " + stake + " is below the minimum " + LedgerBook.MIN_STAKE);
             }
-            GameEngine engine = hub.engine(parts.interval());
+            GameEngine engine = hub.engine(market.id(), ref.interval());
             PlayAmount currentBalance = ledger.balance(playerId);
-            Optional<Bet> existing = engine.betBook().betsFor(req.roundId()).stream()
+            Optional<Bet> existing = engine.betBook().betsFor(bettingWindow.roundId()).stream()
                     .filter(b -> b.playerId().equals(playerId)).findFirst();
             PlayAmount effectiveBalance = existing.map(b -> currentBalance.plus(b.stake())).orElse(currentBalance);
             if (stake.compareTo(effectiveBalance) > 0) {
                 throw ApiException.insufficientBalance("stake " + stake + " exceeds balance " + effectiveBalance);
             }
 
-            GameEvent.BetPlaced event = new GameEvent.BetPlaced(playerId, parts.interval(), bettingWindow.startMs(),
-                    bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs);
+            GameEvent.BetPlaced event = new GameEvent.BetPlaced(playerId, ref.interval(), bettingWindow.startMs(),
+                    bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs,
+                    market.id());
             persist(event, nowMs);
             eventApplier.apply(event);
-            return new Rounds.BetDto(playerId, req.roundId(), req.direction(), req.leverage(), stake.toMoney().toPlainString());
+            return new Rounds.BetDto(playerId, bettingWindow.roundId(), req.direction(), req.leverage(),
+                    stake.toMoney().toPlainString());
         } finally {
             engineLock.writeLock().unlock();
         }
     }
 
     public void cancelBet(String playerId, String roundId, long nowMs) {
-        RoundIdParts parts = parseRoundId(roundId);
+        RoundWindow.RoundRef ref = parseRoundId(roundId);
+        marketRegistry.require(ref.market());
         engineLock.writeLock().lock();
         try {
-            RoundWindow bettingWindow = roundProgress.bettingWindow(parts.interval());
+            RoundWindow bettingWindow = roundProgress.findNext(ref.market(), ref.interval())
+                    .map(RoundClock::next)
+                    .orElseThrow(() -> ApiException.roundNotOpenForBetting(roundId));
             // Same wave-2 exact-boundary fix as placeBet above — a bet must not be cancellable (and
             // its stake refunded) once its round has, by wall-clock time, already started.
-            if (!bettingWindow.roundId().equals(roundId) || nowMs >= bettingWindow.startMs()) {
+            if (!bettingWindow.roundId().equals(ref.roundId()) || nowMs >= bettingWindow.startMs()) {
                 throw ApiException.roundNotOpenForBetting(roundId);
             }
-            GameEvent.BetCancelled event = new GameEvent.BetCancelled(playerId, parts.interval(), bettingWindow.startMs(),
-                    bettingWindow.endMs(), nowMs);
+            GameEvent.BetCancelled event = new GameEvent.BetCancelled(playerId, ref.interval(),
+                    bettingWindow.startMs(), bettingWindow.endMs(), nowMs, ref.market());
             persist(event, nowMs);
             eventApplier.apply(event);
         } finally {
@@ -422,52 +625,123 @@ public class GameService {
     // Round resolution — called only by RoundSchedulerService (and the admin cancel path below)
     // ---------------------------------------------------------------------------------------
 
-    /** Resolves {@code window} now: fetches its price path from {@code priceService}, runs the
-     *  engine, hashes and stores the result. Idempotent guard ({@code round_results.exists}) is
-     *  the caller's job (RoundSchedulerService), so this always actually resolves. */
-    public RoundReport resolveRound(RoundWindow window, long nowMs) {
+    /**
+     * Resolves {@code window} (of any market) now: two phases, §4 п.3.
+     * <ol>
+     *   <li>Without any lock, asks the price source for the window's open, close and path — in
+     *       {@code mode=live} that may go to the network, so it must never run under the engine
+     *       lock. {@link PriceUnavailableException} propagates: the scheduler retries, and cancels the
+     *       round one hour after its end (Р-23).
+     *   <li>Under the write lock: looks at {@code round_results} again (the round may have been
+     *       resolved or cancelled while prices were fetched — then nothing happens and {@code null} is
+     *       returned), then runs ONE database transaction that appends the {@code RoundResolved} event,
+     *       inserts the result and history rows and the oracle record, and applies the event to the
+     *       engine inside it. Any failure rolls the transaction back and rebuilds the in-memory state
+     *       from the event log before it propagates.
+     * </ol>
+     * A round nobody bet on stores a single open→close candle as its path (§4 п.7); one with bets
+     * stores the source's path (at most 30 candles in live mode).
+     *
+     * @return the engine's report, or {@code null} when the round was already resolved or cancelled
+     */
+    public RoundReport resolveRound(RoundWindow window, long nowMs) throws PriceUnavailableException {
+        Market market = marketRegistry.require(window.market());
+        RoundPriceData data = resolvePrices(market, window); // phase 1 — no lock
+        BigDecimal open = data.open().setScale(2, RoundingMode.HALF_UP);
+        BigDecimal close = data.close().setScale(2, RoundingMode.HALF_UP);
+
         engineLock.writeLock().lock();
         try {
-            RoundPrices prices = priceService.roundPrices();
-            BigDecimal openPrice = prices.openPrice(window);
-            BigDecimal closePrice = prices.closePrice(window);
-            List<Candle> path = prices.path(window);
-
+            if (roundResults.exists(window.roundId())) {
+                return null;
+            }
+            hub.ensureMarket(market);
+            boolean hasBets = hasBetsLocked(window);
+            List<Candle> path = hasBets && !data.path().isEmpty() ? data.path()
+                    : List.of(singleCandle(window, open, close));
             GameEvent.RoundResolved event = new GameEvent.RoundResolved(window.interval(), window.startMs(),
-                    window.endMs(), openPrice.toPlainString(), closePrice.toPlainString(),
-                    EventApplier.fromCandles(path), nowMs);
-            persist(event, nowMs);
-            RoundReport report = (RoundReport) eventApplier.apply(event);
-
-            long sourceTsMs = path.get(path.size() - 1).openTimeMs();
-            storeSettledResult(window, report, sourceTsMs);
-            return report;
+                    window.endMs(), open.toPlainString(), close.toPlainString(), EventApplier.fromCandles(path),
+                    nowMs, market.id());
+            try {
+                return db.tx(c -> {
+                    eventStore.append(c, event, nowMs);
+                    RoundReport report = (RoundReport) eventApplier.apply(event);
+                    storeSettledResult(c, market, window, report, data.sourceTsMs());
+                    return report;
+                });
+            } catch (RuntimeException | Error e) {
+                recoverEngineState(e);
+                throw e;
+            }
         } finally {
             engineLock.writeLock().unlock();
         }
     }
 
-    private void storeSettledResult(RoundWindow window, RoundReport report, long sourceTsMs) {
+    /** Phase 1 of {@link #resolveRound}: the settlement data of a finished window, in engine (lot)
+     *  prices. */
+    private RoundPriceData resolvePrices(Market market, RoundWindow window) {
+        if (config.mode() == GameMode.LIVE) {
+            return marketPrices.resolve(market, window);
+        }
+        if (!Market.BTC_ID.equals(market.id())) {
+            throw new IllegalStateException("mode=replay plays BTC only, cannot resolve " + window.roundId());
+        }
+        RoundPrices prices = priceService.replayPrices();
+        List<Candle> path = prices.path(window);
+        Candle last = path.get(path.size() - 1);
+        return new RoundPriceData(prices.openPrice(window), last.close(), path, last.openTimeMs());
+    }
+
+    /** One candle from {@code open} to {@code close}: the whole path of a round nobody bet on. */
+    private static Candle singleCandle(RoundWindow window, BigDecimal open, BigDecimal close) {
+        return new Candle(window.startMs(), window.endMs() - 1, open, open.max(close), open.min(close), close,
+                BigDecimal.ZERO, 0);
+    }
+
+    /** After a failed round operation the in-memory engine may be ahead of the database (the event
+     *  was applied inside a transaction that then rolled back): rebuild it from the log so memory and
+     *  database agree again. The caller holds the write lock, which the rebuild needs. */
+    private void recoverEngineState(Throwable cause) {
+        LOG.errorf(cause, "a round operation failed after the engine may have been changed — rebuilding the "
+                + "engine from the event log");
+        try {
+            rebuildService.rebuildStateLocked();
+        } catch (RuntimeException | Error rebuildFailure) {
+            cause.addSuppressed(rebuildFailure);
+            LOG.error("the engine rebuild after a failed round operation failed as well — the in-memory state "
+                    + "is undefined until the next restart", rebuildFailure);
+        }
+    }
+
+    /** Inside {@link #resolveRound}'s transaction: the settled result, the per-player history rows
+     *  and the oracle record. All prices in the DTOs are the market's raw strings; the price columns
+     *  and the oracle record keep engine (lot) prices times 100 (§6). */
+    private void storeSettledResult(Connection c, Market market, RoundWindow window, RoundReport report,
+                                    long sourceTsMs) throws SQLException {
+        MarketSpec spec = market.spec();
         Map<String, PlayerIdentity> identities = players.identitiesById();
         List<Rounds.PublicPositionDto> positionDtos = new ArrayList<>();
         List<crowdvsmarket.server.util.ResultsHasher.PositionEntry> hashEntries = new ArrayList<>();
         List<RoundResultRepository.PlayerHistoryRow> historyRows = new ArrayList<>();
 
+        BigDecimal entryPrice = report.openPrice();
+        String entryRaw = market.rawString(entryPrice);
         for (PlayerRoundOutcome outcome : report.playerOutcomes()) {
             PlayerIdentity identity = identities.get(outcome.playerId());
             Identity.PlayerSummaryDto playerSummary = identity == null
                     ? new Identity.PlayerSummaryDto(outcome.playerId(), outcome.playerId(), "", outcome.playerId(), null)
                     : summary(outcome.playerId());
-            BigDecimal entryPrice = report.openPrice();
-            BigDecimal size = PositionSizing.sizeForMargin(outcome.stake().toMoney(), new Leverage(outcome.leverage()), entryPrice);
-            BigDecimal liquidationPrice = LiquidationCalculator.liquidationPrice(size, entryPrice,
-                    new Leverage(outcome.leverage()), toEngine(toDto(outcome.direction())).toSide());
+            Position position = Position.openFromMargin(outcome.playerId(), window.roundId(),
+                    toEngine(toDto(outcome.direction())), new Leverage(outcome.leverage()),
+                    outcome.stake().toMoney(), entryPrice, spec);
             BigDecimal pnl = outcome.payout().subtract(outcome.stake().toMoney());
             Boolean directionCorrect = directionCorrect(outcome.direction(), report.openPrice(), report.closePrice());
 
             positionDtos.add(new Rounds.PublicPositionDto(outcome.playerId(), window.roundId(), toDto(outcome.direction()),
-                    outcome.leverage(), size.toPlainString(), entryPrice.toPlainString(), liquidationPrice.toPlainString(),
-                    pnl.toPlainString(), outcome.stake().toMoney().toPlainString(), playerSummary, outcome.liquidated(),
+                    outcome.leverage(), position.size().toPlainString(), entryRaw,
+                    market.rawString(position.liquidationPrice()), pnl.toPlainString(),
+                    outcome.stake().toMoney().toPlainString(), playerSummary, outcome.liquidated(),
                     PlayAmount.fromMoney(outcome.payout()).toMoney().toPlainString(), directionCorrect));
 
             hashEntries.add(new crowdvsmarket.server.util.ResultsHasher.PositionEntry(outcome.playerId(),
@@ -483,7 +757,7 @@ public class GameService {
         Rounds.CrowdRoundResultDto crowdDto = new Rounds.CrowdRoundResultDto(window.roundId(), crowd.traded(),
                 crowd.direction() == null ? null : toDto(crowd.direction()), crowd.leverage(),
                 crowd.margin() == null ? null : crowd.margin().toPlainString(),
-                crowd.entryPrice() == null ? null : crowd.entryPrice().toPlainString(), crowd.liquidated(),
+                crowd.entryPrice() == null ? null : market.rawString(crowd.entryPrice()), crowd.liquidated(),
                 crowd.capitalBefore().toPlainString(), crowd.capitalAfter().toPlainString());
 
         crowdvsmarket.server.util.ResultsHasher.CrowdEntry crowdHashEntry = !crowd.traded() ? null
@@ -493,18 +767,14 @@ public class GameService {
 
         long openCents = report.openPrice().movePointRight(2).longValueExact();
         long closeCents = report.closePrice().movePointRight(2).longValueExact();
-        var canonical = crowdvsmarket.server.util.ResultsHasher.build(window.roundId(), window.interval().name(),
-                "SETTLED", openCents, closeCents, hashEntries, crowdHashEntry);
+        var canonical = crowdvsmarket.server.util.ResultsHasher.build(market.id(), window.roundId(),
+                window.interval().name(), "SETTLED", openCents, closeCents, hashEntries, crowdHashEntry);
 
         long settledAtMs = window.endMs() - 1;
-        db.tx(c -> {
-            roundResults.insertSettled(c, window.roundId(), window.interval(), window.startMs(), window.endMs(),
-                    openCents, closeCents, positionDtos, crowdDto, canonical.hash(), canonical.json(), settledAtMs,
-                    historyRows);
-            return null;
-        });
-
-        enqueueOracleRecord(window.roundId(), settledAtMs, sourceTsMs, closeCents, canonical.hash());
+        roundResults.insertSettled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
+                window.endMs(), openCents, closeCents, positionDtos, crowdDto, canonical.hash(), canonical.json(),
+                settledAtMs, historyRows);
+        enqueueOracleRecord(c, market, window.roundId(), settledAtMs, sourceTsMs, closeCents, canonical.hash());
     }
 
     private static Boolean directionCorrect(crowdvsmarket.engine.round.Direction direction, BigDecimal openPrice,
@@ -517,26 +787,26 @@ public class GameService {
         return (direction == crowdvsmarket.engine.round.Direction.UP) == actualUp;
     }
 
-    /** Р-40/41/47: queues one oracle record for this round's boundary, tagged with the game's
-     *  own mode as the record's {@code source} (replay test-mode publishes for real too, Р-47).
-     *  Never throws to the caller — {@code OraclePublisherService} does the actual best-effort
-     *  chainsvc POST on its own schedule, so a slow/unavailable chainsvc never blocks round
-     *  resolution (the row just sits with {@code chainsvc_queued=false} until it succeeds).
+    /** Р-40/41/47, Т-9: queues one oracle record for this round's boundary — one per round of every
+     *  market, one shared {@code seq} — tagged with the game's own mode as the record's {@code source}
+     *  (replay test-mode publishes for real too, Р-47) and with the market and its registry index.
+     *  Part of the settlement transaction: the seq is reserved and the row inserted together with the
+     *  event and the result, so a rolled-back settlement leaves no hole in the sequence.
+     *  {@code OraclePublisherService} does the actual best-effort chainsvc POST on its own schedule, so
+     *  a slow/unavailable chainsvc never blocks round resolution (the row just sits with
+     *  {@code chainsvc_queued=false} until it succeeds).
      *
      *  @param ts        wall-clock publish time (round settlement instant), ms
      *  @param sourceTsMs the underlying price reading's own timestamp — the real historical
      *                     instant in replay mode (Р-47: "в announcement помечено, что цена из
-     *                     повтора истории"), equal to {@code ts} in live mode */
-    private void enqueueOracleRecord(String roundId, long ts, long sourceTsMs, long priceCents, String resultsHash) {
-        try {
-            long seq = serverMeta.reserveOracleSeqRange(1);
-            String source = config.mode() == crowdvsmarket.server.config.GameMode.REPLAY ? "replay" : "live";
-            oracleRecords.insert(roundId, seq, ts / 1000, priceCents, resultsHash, source, sourceTsMs / 1000,
-                    System.currentTimeMillis());
-        } catch (Exception e) {
-            org.jboss.logging.Logger.getLogger(GameService.class)
-                    .warnf(e, "failed to enqueue oracle record for round %s (never blocks the game)", roundId);
-        }
+     *                     повтора истории"), the tick the close price was read from in live mode
+     *  @param priceCents engine (lot) close price times 100 */
+    private void enqueueOracleRecord(Connection c, Market market, String roundId, long ts, long sourceTsMs,
+                                     long priceCents, String resultsHash) throws SQLException {
+        long seq = serverMeta.reserveOracleSeqRange(c, 1);
+        String source = config.mode() == GameMode.REPLAY ? "replay" : "live";
+        oracleRecords.insert(c, new OracleRecordRepository.NewRecord(market.id(), market.oracleIndex(), roundId, seq,
+                ts / 1000, priceCents, resultsHash, source, sourceTsMs / 1000, System.currentTimeMillis()));
     }
 
     /** {@code AdminResource}'s entry point: parses {@code roundId} and delegates to
@@ -550,51 +820,83 @@ public class GameService {
     /** Operator/automatic cancellation (Р-23, Р-32). {@code window} must be the currently running
      *  or currently open-for-betting round of its series; already-resolved rounds are rejected. */
     public Rounds.CancellationDto cancelRound(RoundWindow window, String reason, long nowMs) {
+        Market market = marketRegistry.require(window.market());
         engineLock.writeLock().lock();
         try {
             if (roundResults.exists(window.roundId())) {
                 throw ApiException.badRequest("round " + window.roundId() + " is already resolved");
             }
-            RoundWindow running = roundProgress.next(window.interval());
-            RoundWindow betting = roundProgress.bettingWindow(window.interval());
-            if (!window.equals(running) && !window.equals(betting)) {
-                throw ApiException.badRequest("not the current running or betting round for " + window.interval());
+            Optional<RoundWindow> running = roundProgress.findNext(market.id(), window.interval());
+            if (running.isEmpty()
+                    || (!window.equals(running.get()) && !window.equals(RoundClock.next(running.get())))) {
+                throw ApiException.badRequest("not the current running or betting round for " + market.id() + "/"
+                        + window.interval());
             }
-
-            int refundedBetCount = hub.engine(window.interval()).betBook().betsFor(window.roundId()).size();
-
-            GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
-                    window.endMs(), reason, nowMs);
-            persist(event, nowMs);
-            eventApplier.apply(event); // refunds every pending bet and clears the round's BetBook entry
-
-            var canonical = crowdvsmarket.server.util.ResultsHasher.build(window.roundId(), window.interval().name(),
-                    "CANCELLED", null, null, List.of(), null);
-            db.tx(c -> {
-                roundResults.insertCancelled(c, window.roundId(), window.interval(), window.startMs(), window.endMs(),
-                        reason, nowMs, refundedBetCount, canonical.hash(), canonical.json());
-                return null;
-            });
-            return new Rounds.CancellationDto(window.roundId(), reason, nowMs, refundedBetCount);
+            hub.ensureMarket(market);
+            return cancelWindowLocked(market, window, reason, nowMs, true);
         } finally {
             engineLock.writeLock().unlock();
         }
+    }
+
+    /** Cancels {@code window} with a refund of every pending bet, in ONE transaction like the
+     *  settlement: the {@code RoundCancelled} event, its application to the engine (refunds, bet book
+     *  cleared) and the cancelled result row. Never touches {@code RoundProgress} — the scheduler
+     *  steps over the round when it sees the row. The caller holds the write lock.
+     *
+     *  @param rebuildOnFailure rebuild the engine from the log when the transaction fails (every
+     *                          caller but the rebuild itself) */
+    private Rounds.CancellationDto cancelWindowLocked(Market market, RoundWindow window, String reason, long nowMs,
+                                                      boolean rebuildOnFailure) {
+        int refundedBetCount = hub.engine(market.id(), window.interval()).betBook().betsFor(window.roundId()).size();
+        GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
+                window.endMs(), reason, nowMs, market.id());
+        var canonical = crowdvsmarket.server.util.ResultsHasher.build(market.id(), window.roundId(),
+                window.interval().name(), "CANCELLED", null, null, List.of(), null);
+        try {
+            db.tx(c -> {
+                eventStore.append(c, event, nowMs);
+                eventApplier.apply(event); // refunds every pending bet and clears the round's BetBook entry
+                roundResults.insertCancelled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
+                        window.endMs(), reason, nowMs, refundedBetCount, canonical.hash(), canonical.json());
+                return null;
+            });
+        } catch (RuntimeException | Error e) {
+            if (rebuildOnFailure) {
+                recoverEngineState(e);
+            }
+            throw e;
+        }
+        return new Rounds.CancellationDto(window.roundId(), reason, nowMs, refundedBetCount);
     }
 
     // ---------------------------------------------------------------------------------------
     // Reads: rounds / round (Р-19, Р-22)
     // ---------------------------------------------------------------------------------------
 
-    public Rounds.RoundsPairDto roundsPair(Enums.Interval intervalDto, String viewerPlayerIdOrNull) {
-        crowdvsmarket.engine.market.Interval interval = toEngine(intervalDto);
+    /** The series' running window — {@code RoundProgress}'s cursor — or a 4xx saying why there is
+     *  none: the market is closed, or its rounds are not played here (mode=replay plays BTC only) or
+     *  not yet (just listed). */
+    private RoundWindow runningWindowOf(Market market, Interval interval) {
+        return roundProgress.findNext(market.id(), interval).orElseThrow(() -> market.isActive()
+                ? ApiException.notFound("market " + market.id() + " has no running " + interval + " series")
+                : ApiException.marketClosed(market.id()));
+    }
+
+    /** The running and betting round of {@code marketIdOrNull}'s series ({@code null}: BTC). */
+    public Rounds.RoundsPairDto roundsPair(Enums.Interval intervalDto, String marketIdOrNull,
+                                           String viewerPlayerIdOrNull) {
+        Market market = requireMarket(marketIdOrNull);
+        Interval interval = toEngine(intervalDto);
         engineLock.readLock().lock();
         try {
-            RoundWindow runningWindow = roundProgress.next(interval);
-            RoundWindow bettingWindow = roundProgress.bettingWindow(interval);
+            hub.ensureMarket(market);
+            RoundWindow runningWindow = runningWindowOf(market, interval);
+            RoundWindow bettingWindow = RoundClock.next(runningWindow);
             Rounds.RoundDto running = roundResults.findRoundDto(runningWindow.roundId())
-                    .orElseGet(() -> buildRunningDto(runningWindow, System.currentTimeMillis()));
+                    .orElseGet(() -> buildRunningDto(market, runningWindow, System.currentTimeMillis()));
             Rounds.RoundDto betting = roundResults.findRoundDto(bettingWindow.roundId())
-                    .orElseGet(() -> buildBettingDto(bettingWindow, viewerPlayerIdOrNull));
+                    .orElseGet(() -> buildBettingDto(market, bettingWindow, viewerPlayerIdOrNull));
             return new Rounds.RoundsPairDto(intervalDto, running, betting);
         } finally {
             engineLock.readLock().unlock();
@@ -607,15 +909,18 @@ public class GameService {
             return settledOrCancelled.get();
         }
         RoundWindow window = windowFor(roundId);
+        Market market = marketRegistry.require(window.market());
         engineLock.readLock().lock();
         try {
-            RoundWindow running = roundProgress.next(window.interval());
-            RoundWindow betting = roundProgress.bettingWindow(window.interval());
-            if (window.equals(running)) {
-                return buildRunningDto(window, System.currentTimeMillis());
-            }
-            if (window.equals(betting)) {
-                return buildBettingDto(window, viewerPlayerIdOrNull);
+            hub.ensureMarket(market);
+            Optional<RoundWindow> running = roundProgress.findNext(market.id(), window.interval());
+            if (running.isPresent()) {
+                if (window.equals(running.get())) {
+                    return buildRunningDto(market, window, System.currentTimeMillis());
+                }
+                if (window.equals(RoundClock.next(running.get()))) {
+                    return buildBettingDto(market, window, viewerPlayerIdOrNull);
+                }
             }
             throw ApiException.notFound("unknown or not-yet-open round " + roundId);
         } finally {
@@ -629,8 +934,8 @@ public class GameService {
      *  call's page size ({@code BetFeed.PAGE_SIZE}). */
     private static final int RECENT_BETS_LIMIT = 14;
 
-    private Rounds.RoundDto buildBettingDto(RoundWindow window, String viewerPlayerIdOrNull) {
-        GameEngine engine = hub.engine(window.interval());
+    private Rounds.RoundDto buildBettingDto(Market market, RoundWindow window, String viewerPlayerIdOrNull) {
+        GameEngine engine = hub.engine(market.id(), window.interval());
         List<Bet> bets = new ArrayList<>(engine.betBook().betsFor(window.roundId()));
         Rounds.BetDto myBet = viewerPlayerIdOrNull == null ? null : bets.stream()
                 .filter(b -> b.playerId().equals(viewerPlayerIdOrNull))
@@ -638,14 +943,15 @@ public class GameService {
                 .map(b -> new Rounds.BetDto(b.playerId(), window.roundId(), toDto(b.direction()), b.leverage().value(),
                         b.stake().toMoney().toPlainString()))
                 .orElse(null);
-        LiveSplit split = buildLiveSplit(bets);
+        LiveSplit split = buildLiveSplit(bets, market.spec());
         List<Rounds.LiveBetDto> recentBets = betFeedStore.latest(window.roundId(), RECENT_BETS_LIMIT).stream()
                 .map(e -> new Rounds.LiveBetDto(summaryOrFallback(e.playerId()), e.direction(), e.leverage(),
                         e.stake(), e.atMs()))
                 .toList();
         return new Rounds.RoundBetting(window.roundId(), new Rounds.RoundWindowDto(toDto(window.interval()),
-                window.startMs(), window.endMs()), bets.size(), myBet, split.upStake(), split.downStake(),
-                split.upCount(), split.downCount(), split.majorityDirection(), split.majorityLeverage(), recentBets);
+                window.startMs(), window.endMs()), market.id(), market.symbol(), bets.size(), myBet,
+                split.upStake(), split.downStake(), split.upCount(), split.downCount(), split.majorityDirection(),
+                split.majorityLeverage(), recentBets);
     }
 
     /** Defensive fallback for a {@code playerId} the {@link PlayerDirectory} cache has no row for
@@ -666,7 +972,7 @@ public class GameService {
      *  actual settlement), just computed one phase earlier, straight from the bets still pending in
      *  {@code BetBook} (no entry price exists yet, so no margin/liquidation preview here — only the
      *  split and the majority side's direction/leverage). */
-    private LiveSplit buildLiveSplit(List<Bet> bets) {
+    private LiveSplit buildLiveSplit(List<Bet> bets, MarketSpec spec) {
         BigDecimal upStake = PlayAmount.ZERO.toMoney();
         BigDecimal downStake = PlayAmount.ZERO.toMoney();
         int upCount = 0;
@@ -691,30 +997,41 @@ public class GameService {
         if (cmp != 0) {
             List<Bet> majorityBets = cmp > 0 ? upBets : downBets;
             majorityDirection = cmp > 0 ? Enums.Direction.UP : Enums.Direction.DOWN;
-            majorityLeverage = weightedLeverage(majorityBets);
+            majorityLeverage = weightedLeverage(majorityBets, spec);
         }
         return new LiveSplit(upStake.toPlainString(), downStake.toPlainString(), upCount, downCount,
                 majorityDirection, majorityLeverage);
     }
 
-    /** Predложение: a live preview of the currently-running round — revealed positions/crowd entry
+    /** Предложение: a live preview of the currently-running round — revealed positions/crowd entry
      *  (Р-22) computed from the bets still sitting in the engine's {@code BetBook} plus the price
      *  path so far, WITHOUT mutating {@code LedgerBook}/{@code CrowdAccount} (those only actually
      *  change at real settlement, via {@link #resolveRound}). See
      *  docs/research/round_engine_design.md's own note that "RUNNING" is not a stored engine
-     *  state. */
-    private Rounds.RoundDto buildRunningDto(RoundWindow window, long nowMs) {
-        RoundPrices prices = priceService.roundPrices();
-        BigDecimal openPrice = prices.openPrice(window);
-        long pathEndMs = Math.min(nowMs, window.endMs());
-        List<Candle> pathSoFar = pathEndMs <= window.startMs() ? List.of()
-                : prices.path(new RoundWindow(window.interval(), window.startMs(), pathEndMs));
-        if (pathSoFar.isEmpty()) {
-            pathSoFar = List.of(prices.path(window).get(0));
+     *  state.
+     *
+     *  <p>Prices come from {@link #soFar} — memory only, so this is safe under the read lock. When
+     *  the window's open price is not known yet (the market was listed during this window, or the tick
+     *  buffer is still empty after a restart) there is nothing to derive an entry price from: the DTO
+     *  then carries the latest tick as {@code openPrice} (or an all-zero price when there is none), no
+     *  positions and no crowd position — "pending" — instead of failing the whole {@code rounds}
+     *  call. */
+    private Rounds.RoundDto buildRunningDto(Market market, RoundWindow window, long nowMs) {
+        Rounds.RoundWindowDto windowDto = new Rounds.RoundWindowDto(toDto(window.interval()), window.startMs(),
+                window.endMs());
+        Optional<RoundPriceData> soFar = soFar(market, window, nowMs);
+        if (soFar.isEmpty()) {
+            return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(),
+                    pendingOpenPrice(market), List.of(), null);
         }
+        MarketSpec spec = market.spec();
+        BigDecimal openPrice = soFar.get().open();
+        List<Candle> pathSoFar = soFar.get().path().isEmpty()
+                ? List.of(singleCandle(window, openPrice, openPrice)) : soFar.get().path();
+        String openRaw = market.rawString(openPrice);
 
         Map<String, PlayerIdentity> identities = players.identitiesById();
-        GameEngine engine = hub.engine(window.interval());
+        GameEngine engine = hub.engine(market.id(), window.interval());
         List<Bet> bets = new ArrayList<>(engine.betBook().betsFor(window.roundId()));
         List<Rounds.PublicPositionDto> positions = new ArrayList<>();
         BigDecimal upStake = ZERO_MONEY;
@@ -723,7 +1040,7 @@ public class GameService {
         List<Bet> downBets = new ArrayList<>();
         for (Bet bet : bets) {
             Position position = Position.openFromMargin(bet.playerId(), window.roundId(), bet.direction(),
-                    bet.leverage(), bet.stake().toMoney(), openPrice);
+                    bet.leverage(), bet.stake().toMoney(), openPrice, spec);
             PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, pathSoFar);
             boolean liquidatedSoFar = outcome instanceof PositionSimulator.Outcome.Liquidated;
             BigDecimal pnl = liquidatedSoFar ? null
@@ -733,8 +1050,8 @@ public class GameService {
                     ? new Identity.PlayerSummaryDto(bet.playerId(), bet.playerId(), "", bet.playerId(), null)
                     : summary(bet.playerId());
             positions.add(new Rounds.PublicPositionDto(bet.playerId(), window.roundId(), toDto(bet.direction()),
-                    bet.leverage().value(), position.size().toPlainString(), openPrice.toPlainString(),
-                    position.liquidationPrice().toPlainString(), pnl == null ? null : pnl.toPlainString(),
+                    bet.leverage().value(), position.size().toPlainString(), openRaw,
+                    market.rawString(position.liquidationPrice()), pnl == null ? null : pnl.toPlainString(),
                     bet.stake().toMoney().toPlainString(), playerSummary, liquidatedSoFar, null, null));
             BigDecimal stake = bet.stake().toMoney();
             if (bet.direction() == crowdvsmarket.engine.round.Direction.UP) {
@@ -752,22 +1069,54 @@ public class GameService {
             crowdvsmarket.engine.round.Direction majorityDirection = cmp > 0
                     ? crowdvsmarket.engine.round.Direction.UP : crowdvsmarket.engine.round.Direction.DOWN;
             List<Bet> majorityBets = cmp > 0 ? upBets : downBets;
-            int leverage = weightedLeverage(majorityBets);
-            BigDecimal margin = hub.crowdAccount().capital()
+            int leverage = weightedLeverage(majorityBets, spec);
+            BigDecimal margin = hub.crowdAccount(market.id()).capital()
                     .multiply(CrowdAccount.MARGIN_SHARE_OF_CAPITAL, MathContext.DECIMAL128)
                     .setScale(2, RoundingMode.HALF_UP);
-            BigDecimal liqPrice = LiquidationCalculator.liquidationPrice(
-                    PositionSizing.sizeForMargin(margin, new Leverage(leverage), openPrice), openPrice,
-                    new Leverage(leverage), majorityDirection.toSide());
+            Position crowdPosition = Position.openFromMargin("crowd", window.roundId(), majorityDirection,
+                    new Leverage(leverage), margin, openPrice, spec);
             crowdPreview = new Rounds.CrowdRoundPositionDto(window.roundId(), toDto(majorityDirection), leverage,
-                    margin.toPlainString(), openPrice.toPlainString(), liqPrice.toPlainString());
+                    margin.toPlainString(), openRaw, market.rawString(crowdPosition.liquidationPrice()));
         }
 
-        return new Rounds.RoundRunning(window.roundId(), new Rounds.RoundWindowDto(toDto(window.interval()),
-                window.startMs(), window.endMs()), openPrice.toPlainString(), positions, crowdPreview);
+        return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(), openRaw, positions,
+                crowdPreview);
     }
 
-    private static int weightedLeverage(List<Bet> sideBets) {
+    /** Open price and path so far of a running window, in engine (lot) prices; empty when the open
+     *  price is not known yet. {@code mode=live}: {@link MarketPrices#soFar} (memory only, no
+     *  network). {@code mode=replay}: the replay series, BTC only. */
+    private Optional<RoundPriceData> soFar(Market market, RoundWindow window, long nowMs) {
+        if (config.mode() == GameMode.LIVE) {
+            return marketPrices.soFar(market, window, nowMs);
+        }
+        if (!Market.BTC_ID.equals(market.id())) {
+            return Optional.empty();
+        }
+        RoundPrices prices = priceService.replayPrices();
+        BigDecimal open = prices.openPrice(window);
+        long pathEndMs = Math.min(nowMs, window.endMs());
+        List<Candle> path = pathEndMs <= window.startMs() ? List.of()
+                : prices.path(new RoundWindow(market.id(), window.interval(), window.startMs(), pathEndMs));
+        if (path.isEmpty()) {
+            path = List.of(prices.path(window).get(0));
+        }
+        Candle last = path.get(path.size() - 1);
+        return Optional.of(new RoundPriceData(open, last.close(), path, last.openTimeMs()));
+    }
+
+    /** What {@code RoundRunning.openPrice} carries while the open price is unknown: the latest tick
+     *  when there is one, otherwise an all-zero price with the market's decimals. */
+    private String pendingOpenPrice(Market market) {
+        Optional<PriceQuote> latest = config.mode() == GameMode.LIVE
+                ? marketPrices.latest(market.id()) : Optional.empty();
+        BigDecimal raw = latest.map(PriceQuote::raw).orElse(BigDecimal.ZERO);
+        return raw.setScale(market.priceDecimals(), RoundingMode.HALF_UP).toPlainString();
+    }
+
+    /** Stake-weighted average leverage of one side's bets, HALF_UP, clamped to 2..the market's cap
+     *  — the crowd account's own rule (Р-14). */
+    private static int weightedLeverage(List<Bet> sideBets, MarketSpec spec) {
         BigDecimal weightedSum = BigDecimal.ZERO;
         BigDecimal totalStake = BigDecimal.ZERO;
         for (Bet bet : sideBets) {
@@ -777,7 +1126,7 @@ public class GameService {
         }
         BigDecimal average = weightedSum.divide(totalStake, MathContext.DECIMAL128);
         int rounded = average.setScale(0, RoundingMode.HALF_UP).intValueExact();
-        return Math.max(Leverage.MIN, Math.min(Leverage.MAX, rounded));
+        return spec.clampLeverage(rounded);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -792,6 +1141,7 @@ public class GameService {
      *  read mid-rebuild. */
     public Rounds.BetFeedDto betFeed(String roundId, Long sinceSeqOrNull) {
         long sinceSeq = sinceSeqOrNull == null ? 0L : sinceSeqOrNull;
+        Market market = marketRegistry.require(parseRoundId(roundId).market());
         engineLock.readLock().lock();
         try {
             crowdvsmarket.server.domain.BetFeed.Result result = betFeedStore.since(roundId, sinceSeq);
@@ -799,7 +1149,7 @@ public class GameService {
                     .map(e -> new Rounds.BetFeedEntryDto(e.seq(), e.atMs(), e.playerDisplayName(), e.isBot(),
                             e.direction(), e.stake(), e.leverage()))
                     .toList();
-            return new Rounds.BetFeedDto(roundId, entries, result.hasMore());
+            return new Rounds.BetFeedDto(roundId, market.id(), market.symbol(), entries, result.hasMore());
         } finally {
             engineLock.readLock().unlock();
         }
@@ -809,15 +1159,42 @@ public class GameService {
     // Liquidation preview / reference price (Р-7, Р-33)
     // ---------------------------------------------------------------------------------------
 
+    /** The market's current raw price and when it was read: the replay series in {@code
+     *  mode=replay} (BTC only), the latest tick in {@code mode=live}.
+     *
+     *  @throws ApiException {@code PRICE_UNAVAILABLE} when there is none */
+    private PriceQuote currentPrice(Market market) {
+        if (config.mode() == GameMode.LIVE) {
+            return marketPrices.latest(market.id()).orElseThrow(
+                    () -> ApiException.priceUnavailable("no price for market " + market.id() + " yet"));
+        }
+        if (!Market.BTC_ID.equals(market.id())) {
+            throw ApiException.priceUnavailable("market " + market.id() + " has no price in replay mode");
+        }
+        PriceService.Reference ref = priceService.replayReference(System.currentTimeMillis());
+        return new PriceQuote(ref.price(), ref.asOfMs(), null, false);
+    }
+
+    /** {@code referencePrice(marketId)} (§8): the market's current price as a raw string with its
+     *  {@code priceDecimals}. */
+    public Betting.MarketReferenceDto referencePrice(String marketId) {
+        Market market = marketRegistry.require(marketId);
+        PriceQuote quote = currentPrice(market);
+        return new Betting.MarketReferenceDto(
+                quote.raw().setScale(market.priceDecimals(), RoundingMode.HALF_UP).toPlainString(),
+                quote.asOfMs());
+    }
+
+    /** The BTC alias of {@link #referencePrice}, kept for callers that predate markets. */
     public Betting.MarketReferenceDto btcReferencePrice() {
-        PriceService.Reference ref = priceService.currentReference(System.currentTimeMillis());
-        return new Betting.MarketReferenceDto(ref.price().setScale(2, RoundingMode.HALF_UP).toPlainString(), ref.asOfMs());
+        return referencePrice(Market.BTC_ID);
     }
 
     public Betting.LiquidationPreviewDto previewLiquidation(Betting.LiquidationPreviewRequest req) {
+        Market market = requireMarket(req.marketId());
         Leverage leverage;
         try {
-            leverage = new Leverage(req.leverage());
+            leverage = market.spec().leverage(req.leverage());
         } catch (IllegalArgumentException e) {
             throw ApiException.invalidLeverage(e.getMessage());
         }
@@ -827,14 +1204,26 @@ public class GameService {
         } catch (Exception e) {
             throw ApiException.badRequest("invalid stake: " + req.stake());
         }
-        BigDecimal entryPrice = req.referencePrice() != null ? new BigDecimal(req.referencePrice())
-                : priceService.currentReference(System.currentTimeMillis()).price();
-        entryPrice = entryPrice.setScale(2, RoundingMode.HALF_UP);
-        BigDecimal size = PositionSizing.sizeForMargin(stakeMoney, leverage, entryPrice);
-        BigDecimal liqPrice = LiquidationCalculator.liquidationPrice(size, entryPrice, leverage, toEngine(req.direction()).toSide());
+        BigDecimal rawEntry;
+        if (req.referencePrice() != null) {
+            try {
+                rawEntry = new BigDecimal(req.referencePrice());
+            } catch (NumberFormatException e) {
+                throw ApiException.badRequest("invalid referencePrice: " + req.referencePrice());
+            }
+        } else {
+            rawEntry = currentPrice(market).raw();
+        }
+        BigDecimal entryPrice = market.toEngine(rawEntry);
+        if (entryPrice.signum() <= 0) {
+            throw ApiException.badRequest("referencePrice must be positive: " + req.referencePrice());
+        }
+        Position position = Position.openFromMargin("preview", "preview", toEngine(req.direction()), leverage,
+                stakeMoney, entryPrice, market.spec());
+        BigDecimal liqPrice = position.liquidationPrice();
         double pct = liqPrice.subtract(entryPrice).abs()
                 .divide(entryPrice, MathContext.DECIMAL128).doubleValue();
-        return new Betting.LiquidationPreviewDto(entryPrice.toPlainString(), liqPrice.toPlainString(), pct);
+        return new Betting.LiquidationPreviewDto(market.rawString(entryPrice), market.rawString(liqPrice), pct);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -866,15 +1255,21 @@ public class GameService {
         }
     }
 
-    /** Bug fix: sum of {@code playerId}'s stakes across every not-yet-settled round of both
-     *  series — the BETTING round (bet placed, round not started) and the RUNNING one (position
-     *  opened, not yet resolved) each contribute at most one bet (Р-13). */
+    /** Bug fix: sum of {@code playerId}'s stakes across every not-yet-settled round of every
+     *  running series (every market, both intervals) — the BETTING round (bet placed, round not
+     *  started) and the RUNNING one (position opened, not yet resolved) each contribute at most one
+     *  bet per series (Р-13; Т-5: one position per player per round of a market). */
     private PlayAmount inPlayStake(String playerId) {
         PlayAmount total = PlayAmount.ZERO;
-        for (crowdvsmarket.engine.market.Interval interval : crowdvsmarket.engine.market.Interval.values()) {
-            GameEngine engine = hub.engine(interval);
-            total = total.plus(stakeInRound(engine, roundProgress.next(interval).roundId(), playerId));
-            total = total.plus(stakeInRound(engine, roundProgress.bettingWindow(interval).roundId(), playerId));
+        for (RoundProgress.SeriesKey series : roundProgress.seededSeries()) {
+            Optional<EngineHub.MarketEngines> market = hub.findMarket(series.marketId());
+            Optional<RoundWindow> running = roundProgress.findNext(series.marketId(), series.interval());
+            if (market.isEmpty() || running.isEmpty()) {
+                continue;
+            }
+            GameEngine engine = market.get().engine(series.interval());
+            total = total.plus(stakeInRound(engine, running.get().roundId(), playerId));
+            total = total.plus(stakeInRound(engine, RoundClock.next(running.get()).roundId(), playerId));
         }
         return total;
     }
@@ -1342,12 +1737,16 @@ public class GameService {
     // Crowd account (Р-5, Р-14, Р-17, Р-25, Р-26)
     // ---------------------------------------------------------------------------------------
 
-    public Crowd.CrowdAccountDto crowdAccount() {
+    /** One market's crowd account (Т-6): its own capital, its own chart, its own "hold the asset" and
+     *  "anti-crowd" lines. {@code null}: BTC. */
+    public Crowd.CrowdAccountDto crowdAccount(String marketIdOrNull) {
+        Market market = requireMarket(marketIdOrNull);
         engineLock.readLock().lock();
         try {
-            List<CrowdAccount.RoundResult> history = hub.crowdAccount().history();
-            List<BigDecimal> btcHold = comparisonAccounts.btcHoldHistory();
-            List<BigDecimal> antiCrowd = comparisonAccounts.antiCrowdHistory();
+            EngineHub.MarketEngines engines = hub.ensureMarket(market);
+            List<CrowdAccount.RoundResult> history = engines.crowd().history();
+            List<BigDecimal> hold = engines.comparison().holdHistory();
+            List<BigDecimal> antiCrowd = engines.comparison().antiCrowdHistory();
             List<Crowd.CrowdHistoryPointDto> points = new ArrayList<>();
             String previousSeason = null;
             for (int i = 0; i < history.size(); i++) {
@@ -1358,10 +1757,11 @@ public class GameService {
                 String boundary = (i > 0 && !thisSeason.equals(previousSeason)) ? thisSeason : null;
                 previousSeason = thisSeason;
                 points.add(new Crowd.CrowdHistoryPointDto(r.roundId(), atMs, boundary, r.capitalAfter().toPlainString(),
-                        btcHold.get(i).toPlainString(), antiCrowd.get(i).toPlainString()));
+                        hold.get(i).toPlainString(), antiCrowd.get(i).toPlainString()));
             }
             List<Crowd.SeasonReturnDto> seasonReturns = seasonReturns(points);
-            return new Crowd.CrowdAccountDto(hub.crowdAccount().capital().toPlainString(), points, seasonReturns);
+            return new Crowd.CrowdAccountDto(market.id(), market.symbol(), engines.crowd().capital().toPlainString(),
+                    points, seasonReturns);
         } finally {
             engineLock.readLock().unlock();
         }
@@ -1489,15 +1889,17 @@ public class GameService {
 
     private static final int HOME_TOP_N = 5; // предложение — not fixed by contract.ts
 
+    /** {@code home} keeps describing BTC (docs/research/markets_architecture.md §8): its pairs, its crowd
+     *  account; the other markets have their own calls. */
     public Home.HomeSummaryDto home(String viewerPlayerIdOrNull) {
         // Held for the whole aggregate (each call below re-acquires this SAME read lock, which is
         // reentrant) so home() sees one consistent snapshot across rounds/crowd/ratings, not four
         // independent ones a concurrent write could interleave between.
         engineLock.readLock().lock();
         try {
-            Rounds.RoundsPairDto hourly = roundsPair(Enums.Interval.HOURLY, viewerPlayerIdOrNull);
-            Rounds.RoundsPairDto daily = roundsPair(Enums.Interval.DAILY, viewerPlayerIdOrNull);
-            Crowd.CrowdAccountDto crowd = crowdAccount();
+            Rounds.RoundsPairDto hourly = roundsPair(Enums.Interval.HOURLY, Market.BTC_ID, viewerPlayerIdOrNull);
+            Rounds.RoundsPairDto daily = roundsPair(Enums.Interval.DAILY, Market.BTC_ID, viewerPlayerIdOrNull);
+            Crowd.CrowdAccountDto crowd = crowdAccount(Market.BTC_ID);
             Ratings.RatingsDto ratings = ratings(null);
             List<Ratings.RichEntryDto> topRich = ratings.rich().stream().limit(HOME_TOP_N).toList();
             List<Ratings.ProphetEntryDto> topProphets = ratings.prophets().stream().limit(HOME_TOP_N).toList();
@@ -1549,3 +1951,4 @@ public class GameService {
         }
     }
 }
+

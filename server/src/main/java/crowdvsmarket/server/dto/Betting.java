@@ -8,7 +8,9 @@ public final class Betting {
     public record MarketReferenceDto(String price, long asOfMs) {
     }
 
-    public record LiquidationPreviewRequest(Enums.Direction direction, int leverage, String stake,
+    /** {@code marketId} omitted/null: BTC (contract.ts). {@code referencePrice} is a raw price of that
+     *  market. */
+    public record LiquidationPreviewRequest(String marketId, Enums.Direction direction, int leverage, String stake,
                                               String referencePrice) {
     }
 

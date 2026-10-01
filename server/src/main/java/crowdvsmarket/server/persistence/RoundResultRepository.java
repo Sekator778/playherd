@@ -6,6 +6,8 @@ import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Identity;
 import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.Rounds;
+import crowdvsmarket.server.markets.Market;
+import crowdvsmarket.server.markets.MarketRegistry;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.sql.Connection;
@@ -14,8 +16,14 @@ import java.util.List;
 import java.util.Optional;
 
 /** Read model for settled/cancelled rounds — see {@code V1__init.sql}'s comment on {@code
- *  round_results}/{@code player_round_history}. Never replayed; written once, in the same
- *  transaction as the {@code RoundResolved}/{@code RoundCancelled} event, by {@code GameService}. */
+ *  round_results}/{@code player_round_history} and {@code V7__markets.sql} for the {@code market}
+ *  column. Never replayed; written once, in the same transaction as the {@code RoundResolved}/
+ *  {@code RoundCancelled} event (docs/research/markets_architecture.md §4 п.3), by {@code
+ *  GameService}.
+ *
+ *  <p>{@code open_price_cents}/{@code close_price_cents} are the market's ENGINE (lot) price times
+ *  100 (§6); every DTO built here converts them back to the market's raw price string
+ *  ({@link Market#rawString}). */
 @ApplicationScoped
 public class RoundResultRepository {
 
@@ -23,13 +31,15 @@ public class RoundResultRepository {
     Db db;
     @Inject
     OracleRecordRepository oracleRecords;
+    @Inject
+    MarketRegistry markets;
 
-    /** Latest {@code window_end_ms} ever resolved for {@code interval} — the seed for
+    /** Latest {@code window_end_ms} ever resolved or cancelled for the series — the seed for
      *  {@code RoundProgress} at startup (its next-to-resolve window starts exactly there). */
-    public Optional<Long> latestWindowEnd(Interval interval) {
+    public Optional<Long> latestWindowEnd(String marketId, Interval interval) {
         return Optional.ofNullable(db.read(c -> db.queryOne(c,
-                "SELECT MAX(window_end_ms) AS m FROM round_results WHERE interval = ?",
-                rs -> (Long) rs.getObject("m"), interval.name())));
+                "SELECT MAX(window_end_ms) AS m FROM round_results WHERE market = ? AND interval = ?",
+                rs -> (Long) rs.getObject("m"), marketId, interval.name())));
     }
 
     public boolean exists(String roundId) {
@@ -37,26 +47,27 @@ public class RoundResultRepository {
                 rs -> Boolean.TRUE, roundId)) != null;
     }
 
-    public void insertSettled(Connection c, String roundId, Interval interval, long windowStart, long windowEnd,
-                                long openPriceCents, long closePriceCents, List<Rounds.PublicPositionDto> positions,
-                                Rounds.CrowdRoundResultDto crowd, String resultsHash, String canonicalJson,
-                                long settledAtMs, List<PlayerHistoryRow> perPlayerHistory) throws SQLException {
+    public void insertSettled(Connection c, String marketId, String roundId, Interval interval, long windowStart,
+                                long windowEnd, long openPriceCents, long closePriceCents,
+                                List<Rounds.PublicPositionDto> positions, Rounds.CrowdRoundResultDto crowd,
+                                String resultsHash, String canonicalJson, long settledAtMs,
+                                List<PlayerHistoryRow> perPlayerHistory) throws SQLException {
         db.update(c, """
-                INSERT INTO round_results (round_id, interval, window_start_ms, window_end_ms, status,
+                INSERT INTO round_results (round_id, market, interval, window_start_ms, window_end_ms, status,
                     open_price_cents, close_price_cents, positions_json, crowd_json, results_hash,
                     canonical_json, settled_at_ms, created_at_ms)
-                VALUES (?, ?, ?, ?, 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                roundId, interval.name(), windowStart, windowEnd, openPriceCents, closePriceCents,
+                roundId, marketId, interval.name(), windowStart, windowEnd, openPriceCents, closePriceCents,
                 Db.jsonb(positions), Db.jsonb(crowd), resultsHash, canonicalJson, settledAtMs, settledAtMs);
         for (PlayerHistoryRow row : perPlayerHistory) {
             db.update(c, """
-                    INSERT INTO player_round_history (round_id, player_id, interval, settled_at_ms, direction,
-                        leverage, stake_mojos, liquidated, direction_correct, payout_mojos)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO player_round_history (round_id, player_id, market, interval, settled_at_ms,
+                        direction, leverage, stake_mojos, liquidated, direction_correct, payout_mojos)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    roundId, row.playerId(), interval.name(), settledAtMs, row.direction().name(), row.leverage(),
-                    row.stakeMojos(), row.liquidated(), row.directionCorrect(), row.payoutMojos());
+                    roundId, row.playerId(), marketId, interval.name(), settledAtMs, row.direction().name(),
+                    row.leverage(), row.stakeMojos(), row.liquidated(), row.directionCorrect(), row.payoutMojos());
         }
     }
 
@@ -64,16 +75,16 @@ public class RoundResultRepository {
                                      boolean liquidated, Boolean directionCorrect, long payoutMojos) {
     }
 
-    public void insertCancelled(Connection c, String roundId, Interval interval, long windowStart, long windowEnd,
-                                  String reason, long cancelledAtMs, int refundedBetCount, String resultsHash,
-                                  String canonicalJson) throws SQLException {
+    public void insertCancelled(Connection c, String marketId, String roundId, Interval interval, long windowStart,
+                                  long windowEnd, String reason, long cancelledAtMs, int refundedBetCount,
+                                  String resultsHash, String canonicalJson) throws SQLException {
         db.update(c, """
-                INSERT INTO round_results (round_id, interval, window_start_ms, window_end_ms, status,
+                INSERT INTO round_results (round_id, market, interval, window_start_ms, window_end_ms, status,
                     cancelled_at_ms, cancellation_reason, refunded_bet_count, results_hash, canonical_json,
                     created_at_ms)
-                VALUES (?, ?, ?, ?, 'CANCELLED', ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'CANCELLED', ?, ?, ?, ?, ?, ?)
                 """,
-                roundId, interval.name(), windowStart, windowEnd, cancelledAtMs, reason, refundedBetCount,
+                roundId, marketId, interval.name(), windowStart, windowEnd, cancelledAtMs, reason, refundedBetCount,
                 resultsHash, canonicalJson, cancelledAtMs);
     }
 
@@ -94,23 +105,24 @@ public class RoundResultRepository {
             return dto;
         }
         return switch (dto) {
-            case Rounds.RoundSettled s -> new Rounds.RoundSettled(s.roundId(), s.window(), s.asset(), s.phase(),
-                    s.openPrice(), s.closePrice(), s.positions(), s.crowd(), s.resultsHash(), anchor);
-            case Rounds.RoundCancelled c -> new Rounds.RoundCancelled(c.roundId(), c.window(), c.asset(), c.phase(),
-                    c.cancellation(), anchor);
+            case Rounds.RoundSettled s -> new Rounds.RoundSettled(s.roundId(), s.window(), s.marketId(), s.asset(),
+                    s.phase(), s.openPrice(), s.closePrice(), s.positions(), s.crowd(), s.resultsHash(), anchor);
+            case Rounds.RoundCancelled c -> new Rounds.RoundCancelled(c.roundId(), c.window(), c.marketId(),
+                    c.asset(), c.phase(), c.cancellation(), anchor);
             default -> dto; // toRoundDto never returns RoundBetting/RoundRunning
         };
     }
 
-    /** The previous settled round's crowd-majority direction for {@code interval} — used by the
-     *  {@code CONTRARIAN}/{@code FOLLOW_MAJORITY} bot strategies (Р-46). Empty if no settled round
-     *  exists yet, or the most recent one was a tie/no-bets (crowd did not trade). */
-    public Optional<Enums.Direction> lastMajorityDirection(Interval interval) {
+    /** The previous settled round's crowd-majority direction for the series — used by the
+     *  {@code CONTRARIAN}/{@code FOLLOW_MAJORITY} bot strategies (Р-46), per market (Т-8). Empty if
+     *  no settled round exists yet, or the most recent one was a tie/no-bets (crowd did not
+     *  trade). */
+    public Optional<Enums.Direction> lastMajorityDirection(String marketId, Interval interval) {
         Rounds.CrowdRoundResultDto crowd = db.read(c -> db.queryOne(c, """
-                SELECT crowd_json FROM round_results WHERE interval = ? AND status = 'SETTLED'
+                SELECT crowd_json FROM round_results WHERE market = ? AND interval = ? AND status = 'SETTLED'
                 ORDER BY settled_at_ms DESC LIMIT 1
                 """,
-                rs -> db.readJson(rs, "crowd_json", Rounds.CrowdRoundResultDto.class), interval.name()));
+                rs -> db.readJson(rs, "crowd_json", Rounds.CrowdRoundResultDto.class), marketId, interval.name()));
         return crowd != null && crowd.traded() ? Optional.of(crowd.direction()) : Optional.empty();
     }
 
@@ -145,18 +157,12 @@ public class RoundResultRepository {
      *  first, since fewer are left) on the next call, never lost. */
     public List<Identity.ProfileRoundEntryDto> unseenResults(String playerId, int limit) {
         return db.read(c -> db.queryList(c, """
-                SELECT round_id, interval, settled_at_ms, direction, leverage, stake_mojos, liquidated,
+                SELECT round_id, market, interval, settled_at_ms, direction, leverage, stake_mojos, liquidated,
                        direction_correct, payout_mojos
                 FROM player_round_history WHERE player_id = ? AND acked_at_ms IS NULL
                 ORDER BY settled_at_ms DESC LIMIT ?
                 """,
-                rs -> new Identity.ProfileRoundEntryDto(rs.getString("round_id"),
-                        Enums.Interval.valueOf(rs.getString("interval")), rs.getLong("settled_at_ms"),
-                        Enums.Direction.valueOf(rs.getString("direction")), rs.getInt("leverage"),
-                        java.math.BigDecimal.valueOf(rs.getLong("stake_mojos"), 3).toPlainString(),
-                        rs.getBoolean("liquidated"), (Boolean) rs.getObject("direction_correct"),
-                        java.math.BigDecimal.valueOf(rs.getLong("payout_mojos"), 3).toPlainString()),
-                playerId, limit));
+                this::toHistoryEntry, playerId, limit));
     }
 
     /** Marks each of {@code roundIds} acknowledged for {@code playerId} (idempotent: a round already
@@ -182,21 +188,33 @@ public class RoundResultRepository {
 
     public List<Identity.ProfileRoundEntryDto> playerHistory(String playerId, int limit) {
         return db.read(c -> db.queryList(c, """
-                SELECT round_id, interval, settled_at_ms, direction, leverage, stake_mojos, liquidated,
+                SELECT round_id, market, interval, settled_at_ms, direction, leverage, stake_mojos, liquidated,
                        direction_correct, payout_mojos
                 FROM player_round_history WHERE player_id = ? ORDER BY settled_at_ms DESC LIMIT ?
                 """,
-                rs -> new Identity.ProfileRoundEntryDto(rs.getString("round_id"),
-                        Enums.Interval.valueOf(rs.getString("interval")), rs.getLong("settled_at_ms"),
-                        Enums.Direction.valueOf(rs.getString("direction")), rs.getInt("leverage"),
-                        java.math.BigDecimal.valueOf(rs.getLong("stake_mojos"), 3).toPlainString(),
-                        rs.getBoolean("liquidated"), (Boolean) rs.getObject("direction_correct"),
-                        java.math.BigDecimal.valueOf(rs.getLong("payout_mojos"), 3).toPlainString()),
-                playerId, limit));
+                this::toHistoryEntry, playerId, limit));
+    }
+
+    private Identity.ProfileRoundEntryDto toHistoryEntry(java.sql.ResultSet rs) throws SQLException {
+        String marketId = rs.getString("market");
+        return new Identity.ProfileRoundEntryDto(rs.getString("round_id"),
+                Enums.Interval.valueOf(rs.getString("interval")), marketId, market(marketId).symbol(),
+                rs.getLong("settled_at_ms"), Enums.Direction.valueOf(rs.getString("direction")),
+                rs.getInt("leverage"), java.math.BigDecimal.valueOf(rs.getLong("stake_mojos"), 3).toPlainString(),
+                rs.getBoolean("liquidated"), (Boolean) rs.getObject("direction_correct"),
+                java.math.BigDecimal.valueOf(rs.getLong("payout_mojos"), 3).toPlainString());
+    }
+
+    /** Markets are never deleted, so a row's market is always in the registry; its absence means
+     *  the registry and the read model disagree, which must not be papered over. */
+    private Market market(String marketId) {
+        return markets.byId(marketId).orElseThrow(() -> new IllegalStateException(
+                "round_results/player_round_history names market " + marketId + " that the registry does not know"));
     }
 
     private Rounds.RoundDto toRoundDto(java.sql.ResultSet rs) throws SQLException {
         String roundId = rs.getString("round_id");
+        Market market = market(rs.getString("market"));
         Enums.Interval interval = Enums.Interval.valueOf(rs.getString("interval"));
         Rounds.RoundWindowDto window = new Rounds.RoundWindowDto(interval, rs.getLong("window_start_ms"),
                 rs.getLong("window_end_ms"));
@@ -204,15 +222,15 @@ public class RoundResultRepository {
         if ("CANCELLED".equals(status)) {
             Rounds.CancellationDto cancellation = new Rounds.CancellationDto(roundId,
                     rs.getString("cancellation_reason"), rs.getLong("cancelled_at_ms"), rs.getInt("refunded_bet_count"));
-            return new Rounds.RoundCancelled(roundId, window, cancellation);
+            return new Rounds.RoundCancelled(roundId, window, market.id(), market.symbol(), cancellation);
         }
         List<Rounds.PublicPositionDto> positions = db.readJson(rs, "positions_json",
                 new TypeReference<List<Rounds.PublicPositionDto>>() {
                 });
         Rounds.CrowdRoundResultDto crowd = db.readJson(rs, "crowd_json", Rounds.CrowdRoundResultDto.class);
-        String openPrice = java.math.BigDecimal.valueOf(rs.getLong("open_price_cents"), 2).toPlainString();
-        String closePrice = java.math.BigDecimal.valueOf(rs.getLong("close_price_cents"), 2).toPlainString();
-        return new Rounds.RoundSettled(roundId, window, openPrice, closePrice, positions, crowd,
-                rs.getString("results_hash"));
+        String openPrice = market.rawString(java.math.BigDecimal.valueOf(rs.getLong("open_price_cents"), 2));
+        String closePrice = market.rawString(java.math.BigDecimal.valueOf(rs.getLong("close_price_cents"), 2));
+        return new Rounds.RoundSettled(roundId, window, market.id(), market.symbol(), openPrice, closePrice,
+                positions, crowd, rs.getString("results_hash"));
     }
 }

@@ -24,6 +24,11 @@ public class GameConfig {
     @ConfigProperty(name = "herd.bots.count")
     int botsCount;
 
+    /** Т-8 (docs/research/markets_architecture.md §2, §10): how many distinct random active markets
+     *  each bot bets on in every round of a series; capped by the number of active markets. */
+    @ConfigProperty(name = "herd.bots.markets-per-round", defaultValue = "3")
+    int botsMarketsPerRound;
+
     @ConfigProperty(name = "herd.scheduler.tick-ms")
     long tickMs;
 
@@ -118,6 +123,10 @@ public class GameConfig {
 
     public int botsCount() {
         return botsCount;
+    }
+
+    public int botsMarketsPerRound() {
+        return botsMarketsPerRound;
     }
 
     public long tickMs() {

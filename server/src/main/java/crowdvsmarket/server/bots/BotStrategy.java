@@ -9,7 +9,8 @@ import java.util.Random;
 /**
  * Р-46's "20 ботов с разными стратегиями" — five strategies, 4 bots each
  * ({@code BotService#ensureBotsExist}). All bots obey the same rules as any player (minimum
- * stake, one bet per round, leverage 2..40); only how they pick direction/leverage/stake differs.
+ * stake, one bet per round per market, leverage 2..the market's cap); only how they pick
+ * direction/leverage/stake differs.
  * Предложение: the exact five named here and their parameters are this server's own choice — the
  * decision only names the five kinds by description, not exact numbers.
  */
@@ -44,11 +45,19 @@ public enum BotStrategy {
         };
     }
 
+    /** BTC's range, 2..40 — the pre-markets shape. */
     public int chooseLeverage(Random random) {
+        return chooseLeverage(random, Leverage.MAX);
+    }
+
+    /** Leverage within {@code [Leverage.MIN, maxLeverage]}, the market's cap (Т-4, Т-8): "always
+     *  maximum" bets the cap itself, the cautious bot stays within 2..5 (or the cap if lower). */
+    public int chooseLeverage(Random random, int maxLeverage) {
+        int cap = Math.max(Leverage.MIN, Math.min(Leverage.MAX, maxLeverage));
         return switch (this) {
-            case ALWAYS_MAX_LEVERAGE -> Leverage.MAX;
-            case CAUTIOUS_LOW_LEVERAGE -> 2 + random.nextInt(4); // 2..5
-            default -> Leverage.MIN + random.nextInt(Leverage.MAX - Leverage.MIN + 1);
+            case ALWAYS_MAX_LEVERAGE -> cap;
+            case CAUTIOUS_LOW_LEVERAGE -> Math.min(cap, 2 + random.nextInt(4)); // 2..5
+            default -> Leverage.MIN + random.nextInt(cap - Leverage.MIN + 1);
         };
     }
 
