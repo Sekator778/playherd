@@ -30,10 +30,26 @@ WEB_URL ?= http://localhost:8480
 # Oracle singleton launched for the testnet11 demo (docker-compose.yml, chainsvc service).
 ORACLE_LAUNCHER ?= c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20
 
+# Android APK: where the WebView loads the game from (web/capacitor.config.ts, read by `cap sync`).
+# Empty = the emulator's address of the Mac stand, http://10.0.2.2:8480.
+HERD_APP_URL ?=
+
+# verify-oracle needs one non-stdlib package (chia_rs, tools/verify-oracle/requirements.txt). It is
+# installed into a venv created on first use; the venv gets its own `*` .gitignore, so git never
+# sees it. PYTHON picks the interpreter that creates it (3.9+; Debian/Ubuntu need python3-venv).
+PYTHON ?= python3
+ORACLE_VENV ?= tools/verify-oracle/.venv
+ORACLE_STAMP := $(ORACLE_VENV)/.requirements-installed
+
+# Public snapshot (Р-54): see tools/public-snapshot.sh and docs/ops/branching.md §7.
+SNAPSHOT_DIR ?= build/public-snapshot
+SNAPSHOT_ARGS ?= --rev HEAD
+
 .PHONY: help check build test \
         test-java build-java test-chain lint-chain build-chain \
         web-deps test-web build-web apk \
-        stand-up stand-down stand-status stand-logs tunnel tunnel-up tunnel-url tunnel-down e2e verify-oracle
+        stand-up stand-down stand-status stand-logs tunnel tunnel-up tunnel-url tunnel-down e2e verify-oracle \
+        snapshot
 
 help: ## list targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -74,15 +90,15 @@ test-web: web-deps ## typecheck, lint, vitest
 build-web: web-deps ## production web bundle
 	cd web && npm run build
 
-apk: web-deps ## Android debug APK (Capacitor)
-	cd web && npm run build:capacitor && npx cap sync android && cd android && ./gradlew assembleDebug
+apk: web-deps ## Android debug APK (Capacitor); HERD_APP_URL=https://host points it at a real server (default: emulator, http://10.0.2.2:8480)
+	cd web && export HERD_APP_URL='$(HERD_APP_URL)' && npm run build:capacitor && npx cap sync android && cd android && ./gradlew assembleDebug
 
 # --- local stand (docker compose project "herd", via tools/stand.sh) and e2e ---
 
 stand-up: ## start the local stand on :8480
 	tools/stand.sh up
 
-stand-down: ## remove stand containers (keeps the herd_pg volume)
+stand-down: ## remove stand containers (keeps the herd_pg_live volume)
 	tools/stand.sh down
 
 stand-status: ## show stand containers and health
@@ -117,5 +133,17 @@ tunnel-down: ## stop the detached tunnel
 e2e: web-deps ## 4-player end-to-end run against WEB_URL (default the local stand)
 	node --experimental-wasm-modules tools/e2e/run.mjs $(WEB_URL)
 
-verify-oracle: ## public oracle verifier (testnet11), cross-checked against WEB_URL
-	python3 tools/verify-oracle/verify_oracle.py $(ORACLE_LAUNCHER) --stand-url $(WEB_URL)
+$(ORACLE_STAMP): tools/verify-oracle/requirements.txt
+	$(PYTHON) -m venv $(ORACLE_VENV)
+	printf '*\n' > $(ORACLE_VENV)/.gitignore
+	$(ORACLE_VENV)/bin/python -m pip install --quiet --upgrade pip
+	$(ORACLE_VENV)/bin/python -m pip install --quiet -r tools/verify-oracle/requirements.txt
+	touch $@
+
+verify-oracle: $(ORACLE_STAMP) ## public oracle verifier (testnet11) in its own venv, cross-checked against WEB_URL (WEB_URL= for chain only)
+	$(ORACLE_VENV)/bin/python tools/verify-oracle/verify_oracle.py $(ORACLE_LAUNCHER) $(if $(WEB_URL),--stand-url $(WEB_URL),)
+
+# --- public repository snapshot (Р-54) ---
+
+snapshot: ## cleaned copy of the tracked tree in SNAPSHOT_DIR + leak gate (SNAPSHOT_ARGS="--worktree" for uncommitted state)
+	tools/public-snapshot.sh $(SNAPSHOT_ARGS) --out $(SNAPSHOT_DIR)

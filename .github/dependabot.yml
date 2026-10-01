@@ -52,6 +52,14 @@ updates:
       prefix: "chore"
       include: "scope"
     groups:
+      # The chia-*/clvm* crates (chia-wallet-sdk, chia-sdk-*, chia-protocol, chia-puzzles, clvmr,
+      # clvm-traits, ...) are pinned with `=x.y.z` to one mutually compatible set in
+      # chain/c2-cli/Cargo.toml: a bump of one of them without the others does not build, so
+      # they are proposed together — majors included (no update-types = all of them; before this
+      # group existed they arrived as separate PRs, #8–#10 of 2026-09-26). A dependency goes to the
+      # first group it matches, so this one must stay above chain-minor-patch.
+      chia-stack:
+        patterns: ["chia-*", "clvm*"]
       chain-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]

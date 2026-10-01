@@ -9,7 +9,12 @@
 # Central for this project (no internal/employer repositories involved here).
 
 # --- Stage 1: build engine + server with Maven ---
-FROM maven:3.9.9-eclipse-temurin-21 AS build
+# `--platform=$BUILDPLATFORM`: the build always runs natively on the machine doing the build — the
+# Java output (jars, the Quarkus fast-jar layout) does not depend on the CPU architecture, so a
+# multi-platform build (release.yml: linux/amd64 + linux/arm64 on an amd64 runner) compiles once
+# instead of running Maven for the other architecture under QEMU emulation. Only the runtime stage
+# below is per target platform.
+FROM --platform=$BUILDPLATFORM maven:3.9.9-eclipse-temurin-21 AS build
 
 WORKDIR /build
 

@@ -14,12 +14,27 @@
 # `networks:`, so it cannot also carry the "chainsvc" DNS name on `herd_default` — `server`
 # instead reaches it via `herd_default`'s own gateway IP, fixed below at 172.28.77.1 precisely so
 # that address is known at compose-file-write time (see HERD_CHAINSVC_URL on `server`).
+#
+# Live prices (Р-70, docs/research/markets_architecture.md §10): `server` follows the real
+# Hyperliquid / Polymarket prices by default, so it needs outbound internet too — see the
+# `herd_default` network below. Every HERD_* of `server` can be overridden from `.env`.
 
 name: herd
 
 networks:
   default:
     name: herd_default
+    # `server` fetches live prices from api.hyperliquid.xyz and Polymarket (HERD_PRICES_SOURCE=live,
+    # the default below). This Mac's Docker daemon turns IP masquerading off for every bridge
+    # network (`ip-masq: false` in ~/.orbstack/config/docker.json — see the chainsvc fix note
+    # below), which leaves containers on a bridge with no route to the internet. Re-enabling it for
+    # this one network gives `server` egress without touching the daemon-wide setting; it is the
+    # Docker default anywhere else (CI runners, other machines), so there it changes nothing.
+    # NOT verified from here: first `tools/stand.sh up` prints whether `server` really reaches the
+    # price source. No egress wanted/possible: HERD_PRICES_SOURCE=synthetic in .env (no external
+    # source at all), or HERD_MODE=replay (the old accelerated BTC history, offline).
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "true"
     ipam:
       config:
         - subnet: 172.28.77.0/24
@@ -34,13 +49,14 @@ services:
       # HERD_OPERATOR_TOKEN/HERD_CHAINSVC_TOKEN below — was hardcoded "herd"/"herd" (a trivial,
       # public-repo-visible password), harmless only because `db` has no `ports:` mapping today.
       # Postgres only applies POSTGRES_PASSWORD while initializing an EMPTY data directory — an
-      # existing herd_pg volume keeps whatever password it was created with; see
+      # existing volume keeps whatever password it was created with; see
       # docs/research/server_design.md "Postgres password" for the ALTER USER step a volume
       # created before this change needs once, so it isn't silently locked out of its own data.
+      # (herd_pg_live below is new, so it takes the password from .env.)
       POSTGRES_PASSWORD: ${HERD_DB_PASSWORD:?set in .env — run tools/stand.sh up, which generates one}
       POSTGRES_DB: herd
     volumes:
-      - herd_pg:/var/lib/postgresql/data
+      - herd_pg_live:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U herd -d herd"]
       interval: 5s
@@ -101,9 +117,11 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # FIXED INTERFACE (1)/(2): the Quarkus game server. mode=replay (Р-46 test mode) is the
-  # image/application.properties default; every HERD_* below is explicit anyway so the stand's
-  # actual configuration is visible here rather than implied by a default someone could change.
+  # FIXED INTERFACE (1)/(2): the Quarkus game server. The stand plays on live prices (Р-70,
+  # docs/research/markets_architecture.md §10) with Р-46's short test rounds. Every HERD_* below is
+  # explicit anyway so the stand's actual configuration is visible here rather than implied by a
+  # default someone could change; the market/price ones take their value from `.env` when it sets
+  # one (the defaults here are §10's table).
   server:
     build:
       context: .
@@ -113,11 +131,33 @@ services:
       # sandbox); this machine has the identical restriction outside any sandbox.
       network: host
     environment:
-      HERD_MODE: replay
-      HERD_ROUND_HOURLY_SEC: "180" # Р-46: test-mode "hourly" round = 3 min
-      HERD_ROUND_DAILY_SEC: "900" # Р-46: test-mode "daily" round = 15 min
-      HERD_REPLAY_SPEEDUP: "20"
-      HERD_BOTS_COUNT: "20" # Р-46: 20 labelled bots
+      # live = markets and prices from the sources; replay = the old accelerated BTC-only history,
+      # for tests and offline use (HERD_MODE=replay in .env).
+      HERD_MODE: ${HERD_MODE:-live}
+      # live = Hyperliquid + Polymarket; synthetic = deterministic random walk, no network (what
+      # docker-compose.ci.yml uses). Ignored when HERD_MODE=replay.
+      HERD_PRICES_SOURCE: ${HERD_PRICES_SOURCE:-live}
+      HERD_ROUND_HOURLY_SEC: ${HERD_ROUND_HOURLY_SEC:-180} # Р-46: test-mode "hourly" round = 3 min
+      HERD_ROUND_DAILY_SEC: ${HERD_ROUND_DAILY_SEC:-900} # Р-46: test-mode "daily" round = 15 min
+      HERD_REPLAY_SPEEDUP: ${HERD_REPLAY_SPEEDUP:-20} # HERD_MODE=replay only
+      HERD_BOTS_COUNT: ${HERD_BOTS_COUNT:-20} # Р-46: 20 labelled bots
+      HERD_BOTS_MARKETS_PER_ROUND: ${HERD_BOTS_MARKETS_PER_ROUND:-3} # Т-8: pairs each bot plays per round
+      # Market lists by category (Т-1/Т-10, §10); names are the source's own (`xyz:` = Hyperliquid's
+      # xyz dex). Polymarket politics/sports markets are picked from the live catalog.
+      HERD_MARKETS_CRYPTO: "${HERD_MARKETS_CRYPTO:-BTC,ETH,SOL,XRP,DOGE,HYPE}"
+      HERD_MARKETS_STOCKS: "${HERD_MARKETS_STOCKS:-xyz:NVDA,xyz:TSLA}"
+      HERD_MARKETS_INDICES: "${HERD_MARKETS_INDICES:-xyz:SP500,xyz:XYZ100}"
+      HERD_MARKETS_COMMODITIES: "${HERD_MARKETS_COMMODITIES:-xyz:GOLD,xyz:BRENTOIL}"
+      HERD_MARKETS_POLYMARKET_ENABLED: ${HERD_MARKETS_POLYMARKET_ENABLED:-true}
+      HERD_MARKETS_POLITICS_COUNT: ${HERD_MARKETS_POLITICS_COUNT:-3}
+      HERD_MARKETS_SPORTS_COUNT: ${HERD_MARKETS_SPORTS_COUNT:-3}
+      HERD_MARKETS_ODDS_MAX_LEVERAGE: ${HERD_MARKETS_ODDS_MAX_LEVERAGE:-10}
+      # Т-9: a fresh DB starts its oracle `seq` at 1 while the testnet11 singleton is already far
+      # ahead — with this on, the scheduler settles no round until chainsvc has reported the highest
+      # `seq` it knows (§7 п. 4).
+      HERD_ORACLE_REQUIRE_SEQ_FLOOR: ${HERD_ORACLE_REQUIRE_SEQ_FLOOR:-true}
+      # The domain in the text a player signs at sign-in (was hard-coded herd.local).
+      HERD_PUBLIC_DOMAIN: ${HERD_PUBLIC_DOMAIN:-herd.local}
       HERD_DB_USER: herd
       # Task item 3: same value as `db`'s own POSTGRES_PASSWORD above (tools/stand.sh generates
       # it into .env once, reused by both, same "one shared secret, two env var names" pattern as
@@ -184,5 +224,11 @@ services:
     restart: unless-stopped
 
 volumes:
-  herd_pg:
-    name: herd_pg
+  # Live-price epoch database (Р-70/Р-71): a NEW volume on purpose. The replay-epoch volume `herd_pg`
+  # (BTC only, accelerated history, rounds anchored to the first server start) is no longer
+  # declared here — it stays on the machine untouched as an archive of that game. A new database
+  # also gets the round calendar of markets_architecture.md Т-11 (boundaries on multiples of the
+  # round length). `tools/stand.sh reset` removes this volume only, by name; `docker compose down
+  # -v` can only reach volumes declared in this file.
+  herd_pg_live:
+    name: herd_pg_live

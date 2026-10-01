@@ -3,19 +3,32 @@
 #
 #   docker compose -p herd -f docker-compose.yml -f docker-compose.ci.yml up -d
 #
-# Everything else about docker-compose.yml (ports, healthchecks, HERD_MODE=replay test-mode
-# round lengths, the herd_default network/gateway-IP wiring chainsvc's network_mode: host needs)
-# is already CI-friendly exactly as authored for the local stand (tools/stand.sh) — a GitHub-hosted
+# Everything else about docker-compose.yml (ports, healthchecks, the 180 s / 900 s test-mode
+# rounds, the herd_default network/gateway-IP wiring chainsvc's network_mode: host needs) is
+# already CI-friendly exactly as authored for the local stand (tools/stand.sh) — a GitHub-hosted
 # runner's default Docker networking has normal outbound internet access, unlike the host-specific
 # bridge-network egress bug documented inline in docker-compose.yml, so no network changes are
 # needed here either.
 #
-# The one change a CI runner needs: chainsvc must never attempt a real testnet11 broadcast. The
-# smoke job generates a throwaway operator key with `c2 keygen` (no funds, never used outside this
-# job) and mounts it at the same ${HOME}/.c2/testnet11 path docker-compose.yml already bind-mounts
-# — C2_PUSH=0 (dry-run, same flag documented in chain/c2-svc/src/config.rs) makes chainsvc build
-# and sign oracle/withdrawal spends without ever calling push_tx.
+# Two things differ from the local stand:
+#
+# 1. chainsvc must never attempt a real testnet11 broadcast. The smoke job generates a throwaway
+#    operator key with `c2 keygen` (no funds, never used outside this job) and mounts it at the same
+#    ${HOME}/.c2/testnet11 path docker-compose.yml already bind-mounts — C2_PUSH=0 (dry-run, same
+#    flag documented in chain/c2-svc/src/config.rs) makes chainsvc build and sign oracle/withdrawal
+#    spends without ever calling push_tx.
+# 2. CI must not depend on any external service. The local stand plays on live Hyperliquid/
+#    Polymarket prices (Р-70); here `server` runs on the synthetic price source (a deterministic
+#    random walk, docs/research/markets_architecture.md §2 Т-12) with Polymarket off. The oracle
+#    seq floor is off too: it asks chainsvc for the highest seq of the on-chain singleton, and this
+#    job has no singleton (no `oracle-launch`) and a throwaway database, so there is nothing to
+#    stay above.
 services:
   chainsvc:
     environment:
       C2_PUSH: "0"
+  server:
+    environment:
+      HERD_PRICES_SOURCE: synthetic
+      HERD_MARKETS_POLYMARKET_ENABLED: "false"
+      HERD_ORACLE_REQUIRE_SEQ_FLOOR: "false"

@@ -13,6 +13,15 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT=herd
 COMPOSE=(docker compose -p "${PROJECT}" -f "${ROOT_DIR}/docker-compose.yml")
 DEFAULT_WEB_PORT=8480
+# The stand's own Postgres volume (live-price epoch, Р-70/Р-71) — must match
+# volumes.herd_pg_live.name in docker-compose.yml. `reset` removes exactly this one, by name. The
+# replay-epoch volume `herd_pg` (an archive of the BTC-only accelerated-history game) is no longer
+# declared in the compose file and is never touched by this script.
+DB_VOLUME=herd_pg_live
+ARCHIVE_DB_VOLUME=herd_pg
+# Where the server fetches live prices (the default of quarkus.rest-client.hyperliquid.url in
+# server/src/main/resources/application.properties) — used only for the reachability check after `up`.
+PRICE_SOURCE_URL=https://api.hyperliquid.xyz/info
 
 cd "${ROOT_DIR}"
 
@@ -81,10 +90,10 @@ ensure_env_file() {
 
   # Task item 3 (security minor): Postgres password, generated the same way as the tokens above
   # — was hardcoded "herd"/"herd" in docker-compose.yml. NOTE: this only takes effect for a BRAND
-  # NEW herd_pg volume (Postgres applies POSTGRES_PASSWORD only while initializing an empty data
-  # directory); an existing volume keeps its old password until an operator runs `ALTER USER herd
-  # WITH PASSWORD '...'` inside the running db container — see docs/research/server_design.md
-  # "Postgres password" for the one-time command.
+  # NEW volume such as herd_pg_live on its first start (Postgres applies POSTGRES_PASSWORD only
+  # while initializing an empty data directory); an existing volume keeps its old password until an
+  # operator runs `ALTER USER herd WITH PASSWORD '...'` inside the running db container — see
+  # docs/research/server_design.md "Postgres password" for the one-time command.
   if ! grep -q '^HERD_DB_PASSWORD=' "${ROOT_DIR}/.env"; then
     log "generating HERD_DB_PASSWORD"
     echo "HERD_DB_PASSWORD=$(openssl rand -hex 24)" >>"${ROOT_DIR}/.env"
@@ -138,6 +147,36 @@ wait_healthy() {
   done
 }
 
+# A HERD_* setting the way docker-compose.yml sees it: process environment first, then `.env`, then
+# the default given here (the compose file's own `${VAR:-default}`).
+setting() {
+  local name="$1" default="$2" value="${!1:-}"
+  if [[ -z "${value}" && -f "${ROOT_DIR}/.env" ]]; then
+    value=$(grep -m1 "^${name}=" "${ROOT_DIR}/.env" | cut -d= -f2- || true)
+    value="${value%\"}"
+    value="${value#\"}"
+  fi
+  echo "${value:-${default}}"
+}
+
+# The stand plays on live prices by default, so the `server` container must reach the price source —
+# on this Mac a bridge network has no internet unless masquerading is on for it (see
+# docker-compose.yml, network herd_default; that fix was not verified without a running stand).
+# Reported once the stand is up, never fatal.
+check_price_source() {
+  [[ "$(setting HERD_MODE live)" == "live" && "$(setting HERD_PRICES_SOURCE live)" == "live" ]] || return 0
+  local code
+  if code=$("${COMPOSE[@]}" exec -T server curl -sS -m 10 -o /dev/null -w '%{http_code}' \
+      -X POST -H 'Content-Type: application/json' -d '{"type":"meta"}' "${PRICE_SOURCE_URL}" 2>&1) \
+      && [[ "${code}" == "200" ]]; then
+    log "live prices: the server container reaches ${PRICE_SOURCE_URL} (HTTP 200)"
+  else
+    log "WARNING live prices: the server container cannot reach ${PRICE_SOURCE_URL} (${code:-no answer})"
+    log "  The stand would have no live prices. Check outbound access of the container (docker-compose.yml,"
+    log "  network herd_default), or set HERD_PRICES_SOURCE=synthetic in .env to run without external sources."
+  fi
+}
+
 cmd_up() {
   require_docker
   check_no_foreign_herd_containers
@@ -145,8 +184,12 @@ cmd_up() {
   export HERD_WEB_PORT
   HERD_WEB_PORT="$(pick_web_port)"
   log "using host port ${HERD_WEB_PORT} for web"
+  if docker volume inspect "${ARCHIVE_DB_VOLUME}" >/dev/null 2>&1; then
+    log "volume ${ARCHIVE_DB_VOLUME} (replay-epoch archive) exists — kept as is, not used; the stand's database is ${DB_VOLUME}"
+  fi
   "${COMPOSE[@]}" up -d --build
   wait_healthy
+  check_price_source
   print_urls
 }
 
@@ -157,8 +200,21 @@ cmd_down() {
 
 cmd_reset() {
   require_docker
-  log "dropping herd volumes only (herd_pg) — ~/.c2/testnet11 (bind mount, not a named volume) is untouched"
-  "${COMPOSE[@]}" down -v
+  # Script and compose file must agree on which volume is the stand's: drop only a volume the compose
+  # file declares, and never the archive one.
+  grep -qE "^[[:space:]]+name: ${DB_VOLUME}[[:space:]]*$" "${ROOT_DIR}/docker-compose.yml" \
+    || die "docker-compose.yml does not declare volume ${DB_VOLUME} — refusing to reset"
+  if grep -qE "^[[:space:]]+name: ${ARCHIVE_DB_VOLUME}[[:space:]]*$" "${ROOT_DIR}/docker-compose.yml"; then
+    die "docker-compose.yml declares the archive volume ${ARCHIVE_DB_VOLUME} again — refusing to reset"
+  fi
+  log "removing the stand's containers and its DB volume ${DB_VOLUME} only — the archive volume ${ARCHIVE_DB_VOLUME} and ~/.c2/testnet11 are untouched"
+  "${COMPOSE[@]}" down
+  if docker volume inspect "${DB_VOLUME}" >/dev/null 2>&1; then
+    docker volume rm "${DB_VOLUME}" >/dev/null
+    log "removed volume ${DB_VOLUME} — the next up starts an empty database"
+  else
+    log "volume ${DB_VOLUME} does not exist — nothing to remove"
+  fi
 }
 
 cmd_logs() {
@@ -198,11 +254,13 @@ case "${1:-}" in
     cat >&2 <<EOF
 Usage: $(basename "$0") up|down|logs [service]|status|reset
 
-  up      build (if needed) and start db+chainsvc+server+web, wait until healthy, print URLs
-  down    stop and remove containers (keeps herd_pg volume and ~/.c2/testnet11)
+  up      build (if needed) and start db+chainsvc+server+web, wait until healthy, check that the
+          server reaches the live price source, print URLs
+  down    stop and remove containers (keeps the herd_pg_live volume and ~/.c2/testnet11)
   logs    follow logs (optionally for one service: "logs server")
   status  show container health + live GET of serverInfo
-  reset   like down, but also drops the herd_pg volume (fresh DB on next up)
+  reset   like down, but also removes the herd_pg_live volume (fresh DB on next up); the old
+          replay-epoch volume herd_pg is never touched
 EOF
     exit 1
     ;;

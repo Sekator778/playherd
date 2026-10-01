@@ -10,8 +10,11 @@ name: CI
 #   gitleaks -> always runs (a secret can land in any file)
 #   ci-ok    -> the one job branch protection should require: succeeds iff every job above either
 #     passed or was skipped by the path filter (see its own comment for why this pattern exists)
-#   publish-develop -> after ci-ok, on push to develop only: ghcr.io images tagged :develop and
-#     :sha-<short> (release tags are release.yml's job, on `vX.Y.Z` pushes)
+#   publish-develop -> after ci-ok, ghcr.io images tagged :sha-<short> (+ :develop when run on
+#     develop). Off by default (Р-67: Actions minutes are limited, nothing builds images on every
+#     push): runs on a push to develop only when the repository variable HERD_PUBLISH_DEVELOP is
+#     'true', or on demand through a manual run with publish=true (release tags are release.yml's
+#     job). Setup: docs/ops/ci.md §2 and §7.
 #
 # Branch model (docs/ops/ci.md): feature branches -> PR into develop; develop -> PR into main;
 # a `vX.Y.Z` tag on main is what release.yml turns into a versioned release.
@@ -23,7 +26,12 @@ on:
       - develop
       - main
       - "ci/**"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "After ci-ok is green, publish the ghcr.io images (:sha-<short>, plus :develop when run on develop)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -475,10 +483,19 @@ jobs:
           done
           exit "${status}"
 
+  # Why `!cancelled() && needs.ci-ok.result == 'success'` and not the implicit success(): the
+  # implicit check also looks at ci-ok's own ancestors, and a single one skipped by the path
+  # filter made GitHub skip this job too — the images stayed at cc035e2
+  # (docs/reviews/2026-10-01-goals-vs-state.md §3.4 п.1). ci-ok already fails on any real failure,
+  # so its result is the only gate needed. Publishing is opt-in (see the header): the variable for
+  # pushes to develop, the `publish` input for a manual run on any ref.
   publish-develop:
     name: publish :develop images to ghcr.io
     needs: ci-ok
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    if: >-
+      !cancelled() && needs.ci-ok.result == 'success' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/develop' && vars.HERD_PUBLISH_DEVELOP == 'true') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -517,8 +534,10 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/sekator778/${{ matrix.image }}
+          # The floating :develop tag (what the staging deploy pulls) only ever moves from develop —
+          # an on-demand run of another ref publishes just its :sha-<short>.
           tags: |
-            type=raw,value=develop
+            type=raw,value=develop,enable=${{ github.ref == 'refs/heads/develop' }}
             type=sha,format=short,prefix=sha-
 
       - name: Build and push

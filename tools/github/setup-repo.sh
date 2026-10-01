@@ -375,14 +375,14 @@ if [[ "$CREATE_ENVIRONMENTS" -eq 1 ]]; then
     PROD_BODY='{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
   fi
   call_api PUT "/environments/production" "$PROD_BODY"
-  # Deployment-branch policy for "production". Two entries, both needed:
-  #   - tag v* so a human/manual run against a release tag is allowed;
-  #   - branch main because .github/workflows/deploy.yml's production job is triggered by
-  #     `workflow_run` (after release.yml finishes) — a workflow_run-triggered run's own
-  #     `github.ref` is always the repo's default branch (main), never the tag that triggered
-  #     the upstream run. Without the `main` entry here, GitHub rejects the job from using this
-  #     environment before deploy.yml's own tag-derivation/guard logic ever runs. See deploy.yml's
-  #     "production" job comment and docs/ops/deploy.md "Как это устроено".
+  # Deployment-branch policy for "production". Two entries, both needed — GitHub checks the run's
+  # own ref against them before the job may use the environment:
+  #   - tag v*: release.yml's last job dispatches deploy.yml with `--ref vX.Y.Z`;
+  #   - branch main: the manual path, `gh workflow run deploy.yml --ref main -f environment=production
+  #     -f image_tag=X.Y.Z`.
+  # A `workflow_run`-triggered run carries the repo's default branch (develop) and would be rejected
+  # by both — deploy.yml's production job therefore no longer listens to one. See deploy.yml's
+  # "production" job comment and docs/ops/deploy.md §0.
   call_api POST "/environments/production/deployment-branch-policies" "{\"name\":\"v*\",\"type\":\"tag\"}"
   call_api POST "/environments/production/deployment-branch-policies" "{\"name\":\"main\",\"type\":\"branch\"}"
 else
@@ -397,6 +397,14 @@ cat <<'EOF'
   Repository variable (NOT secret — Р-58, docs/product/decisions.md: this projectId is public,
   it ships in the web bundle regardless):
     - VITE_WALLETCONNECT_PROJECT_ID = 680e4897ed8a55aa0b10263cc74159dd
+
+  Repository variable, optional (Р-67: Actions minutes are limited, so image publishing is OFF
+  until this is set):
+    - HERD_PUBLISH_DEVELOP = true   — ci.yml pushes the :develop and :sha-<short> images to ghcr.io
+                                       after every green push to develop (the staging deploy pulls
+                                       :develop). Leave unset for a one-off publish instead:
+                                       gh workflow run ci.yml --ref develop -f publish=true
+                                       (docs/ops/ci.md §2, §7)
 
   No secret is needed to push images to GHCR: use the workflow-scoped GITHUB_TOKEN with
   `permissions: { packages: write }` in release.yml.

@@ -44,3 +44,7 @@ deploy/backups/
 
 # Claude Code agent worktrees (workflow isolation) — local scratch, never committed.
 .claude/worktrees/
+
+# Python
+__pycache__/
+*.pyc
