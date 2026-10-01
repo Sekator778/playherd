@@ -58,7 +58,7 @@
 | Топ **событий** тега | `GET /events/keyset?tag_id=2&closed=false&order=volume24hr&ascending=false&limit=5` | `{"events":[…],"next_cursor":"…"}`; событие несёт **все** свои рынки (32–128 шт.), 5 событий = **1,31 МБ** | 200 (`events_politics_top.json`) |
 | Только moneyline в спорте | `GET /markets/keyset?tag_id=1&closed=false&order=volume24hr&ascending=false&limit=10&sports_market_types=moneyline` | как выше | 200 (`markets_sports_moneyline_top.json`) |
 | Идущие игры | `GET /events/keyset?tag_id=1&live=true&closed=false&order=volume24hr&ascending=false&limit=6` | 6 событий, у всех `live:true` (432 КБ) | 200 (`events_sports_live.json`) |
-| Рынки по токенам | `GET /markets/keyset?clob_token_ids=<t1>&clob_token_ids=<t2>…&limit=20` | 10 рынков по 10 токенам | 200, `cf-cache-status: MISS` (`fresh_gamma_by_tokens.json`) |
+| Рынки по токенам | `GET /markets/keyset?clob_token_ids=<t1>&clob_token_ids=<t2>…&limit=20` | 10 рынков по 10 токенам | 200, `cf-cache-status: MISS` (`fresh_gamma_by_tokens.json`). 2026-10-02: без `closed` (и с `closed=false`) закрытые рынки в ответ не попадают, нужен `closed=true` — §13.1 |
 | Недавно закрытые | `GET /markets/keyset?closed=true&tag_id=1&order=closedTime&ascending=false&limit=6&sports_market_types=moneyline` | закрытые за последние минуты | 200 (`markets_closed_recent.json`) |
 | По slug | `GET /events/slug/<slug>`; доки: `/markets/slug/<slug>`, `/markets/<id>`, `/events/<id>` | событие/рынок | `events/slug` 200; остальные **[док]** |
 | Поиск | `GET /public-search?q=Bitcoin%20Up%20or%20Down&limit_per_type=5&events_status=active` | `{"events":[…],"pagination":{"hasMore":true,"totalResults":788}}` | 200 (`search_btc_updown.json`) |
@@ -287,7 +287,7 @@
 - **Рынок игры:** `gameStartTime` (`"2026-10-01 18:45:00+00"`, не-ISO), `sportsMarketType` (`moneyline`, `totals`, … — 286 значений в `/sports/market-types`), `line` (`3.5` у тоталов), `gameId` (у части рынков), `secondsDelay` (**1** у живого футбольного рынка), `clearBookOnStart:true`, `feesEnabled:true`, `feeType:"sports_fees_v3"`, `feeSchedule{exponent 1, rate 0.05, takerOnly true, rebateRate 0.15}`, `oneHourPriceChange`, `oneDayPriceChange`, `marketMetadata` (Optic Odds) (`sample_gamma_event_sports_live.json`, рынок `unl-den-prt-2026-10-01-prt`).
 - **Шаблон slug:** `<лига>-<команда1>-<команда2>-<YYYY-MM-DD>[-<исход>]`: `unl-den-prt-2026-10-01-prt`, `cs2-faze-nemi1-2026-10-01`, `nfl-pit-cle-2026-10-02`, `mlb-phi-atl-2026-10-01`; доп. события игры: суффиксы `-more-markets`, `-halftime-result`, `-player-props`, … (доки; живьём `unl-ger-ser-2026-10-01-more-markets` — 60 рынков).
 - **Фильтр живых игр:** `events/keyset?tag_id=1&live=true&closed=false` вернул 6 идущих игр (19:42, у 5 из них `period:"HT"`) **[живьём]**.
-- **Начало игры.** Доки (`concepts/markets-events.md`): «outstanding limit orders are **automatically cancelled** once the game begins, clearing the order book at the official start time. However, game start times can shift — if a game starts earlier than scheduled, orders may not be cleared in time.» — в данных `clearBookOnStart:true`. Как выглядит `/midpoints` в момент очистки книги, не наблюдал (все игры в выборке уже шли) **UNVERIFIED**.
+- **Начало игры.** Доки (`concepts/markets-events.md`): «outstanding limit orders are **automatically cancelled** once the game begins, clearing the order book at the official start time. However, game start times can shift — if a game starts earlier than scheduled, orders may not be cleared in time.» — в данных `clearBookOnStart:true`. Как выглядит `/midpoints` в момент очистки книги, 2026-10-01 не наблюдал (все игры в выборке уже шли) **UNVERIFIED**; 2026-10-02 одну игру наблюдали до и после начала: книга прорежена на ~1.5 минуты, не очищена, `/midpoints` отвечал всё время — §13.3.
 - **Push-канал по счёту:** `wss://sports-api.polymarket.com/ws` (кадры: `gameId, leagueAbbreviation, homeTeam, awayTeam, status, live, ended, score, period, elapsed…`), «Sports data … may be delayed» (§6.2) — к каналу не подключался **[док]**.
 - Волатильность шансов внутри игры не оценивалась (по условиям среза); из полей по ней есть `oneHourPriceChange`/`oneDayPriceChange` у рынка и минутная история (§4).
 
@@ -298,7 +298,7 @@
 - Поведение при превышении лимитов: ни 429, ни замедления не видел; предел 500 токенов на batch проверял только до 20 элементов; `limit > 100` на keyset не пробовал.
 - Верхние категории приложения кроме трёх (finance, tech, culture, geopolitics…) и их id — не перечислены; эндпойнта «меню категорий» не нашёл.
 - Поведение `/midpoints` и Gamma при спреде > 0,10 (правило сайта «показать последнюю сделку») — рынка с таким спредом в выборке не было.
-- Момент начала игры и очистка книги — не наблюдал; динамику цены в игре (матчи были в перерыве) — не измерял.
+- Момент начала игры и очистка книги — 2026-10-01 не наблюдал; динамику цены в игре (матчи были в перерыве) — не измерял. 2026-10-02: одна игра (бразильская Серия B) — §13.3; другие игры и лиги не измерены.
 - Устойчивость 2-минутного шага `updatedAt` Gamma (3 наблюдения) и 5-минутного лага минутных бакетов v2 (3 наблюдения, один рынок) — не проверялась на других рынках и в другое время.
 - Всё измерено в один будний вечер 19:32–19:47 UTC; ночью, в выходные, в пики спортивных событий не смотрел.
 - Что именно в терминальном тике v2 (мидпоинт или сделка) и причина расхождения `last_trade_price` в `/books` у neg-risk токенов — не выяснял.
@@ -375,3 +375,56 @@ curl "https://data-api.polymarket.com/v2/resolutions?condition=<conditionId>"
 | `requests.log`, `SAMPLES.txt`, `tokens10.tsv` | журнал, индекс, набор токенов |
 
 Источники (доки, 2026-10-01): `https://docs.polymarket.com/` — `market-data/discover-markets`, `market-data/market-details`, `market-data/prices-order-books`, `market-data/realtime-data`, `concepts/markets-events`, `concepts/prices-orderbook`, `concepts/resolution`, `getting-started/api`, `api-reference/rate-limits`, `api-reference/geoblock`, `api-reference/markets/{get-prices-history,get-a-tokens-price-history,get-batch-prices-history,get-resolution-state,list-markets-keyset-pagination}`, `api-reference/events/list-events-keyset-pagination`, `api-reference/tags/list-tags`, `changelog/predictions` (всё с суффиксом `.md`).
+
+## 13. Измерения 2026-10-02 (срез «фиксы пайплайна»)
+
+Метод: `curl`, только чтение, без ключей, с той же машины, что и выше; запросы 2026-10-01 23:04–23:42 UTC (= 2026-10-02 01:04–01:42 по месту; дата проекта — 2026-10-02), по одному за 2 с и реже (кроме опроса игры в §13.3 — раз в 30 с), всего 99 запросов, из них 82 — опрос игры. Закрывают три пометки **UNVERIFIED**: поведение рынка около начала игры (§8, §9), смысл `oneDayPriceChange` (комментарий `PolymarketLiveState` первого прохода) и то, возвращает ли поиск по токенам уже закрытые рынки без параметра `closed` (отчёт первого прохода). Сырые ответы — в рабочем каталоге агента (`g5_*.json`, `g5_kickoff/`), вне репозитория.
+
+### 13.1 Поиск по токенам не отдаёт закрытые рынки, пока не попросишь `closed=true`
+
+| Запрос (23:04:43–23:05:09 UTC) | Ответ |
+|---|---|
+| `GET /markets/keyset?closed=true&tag_id=1&order=closedTime&ascending=false&limit=5&sports_market_types=moneyline` | 200, 5 рынков, `closed:true`, `closedTime` 22:56:15–23:01:17 (id `5167967`, `4657273`, `4657275`, `4657271`, `4657263`) |
+| `GET /markets/keyset?clob_token_ids=<токен 0 рынка 4657273>&clob_token_ids=<токен 0 рынка 4657275>&limit=5` (без `closed`) | 200, **`{"markets":[]}`** (99 Б) |
+| то же + `&closed=false` | 200, пусто |
+| то же + `&closed=true` | 200, **2 рынка**, оба `closed:true`, `outcomePrices ["1","0"]` и `["0","1"]` |
+
+Вывод: у поиска по `clob_token_ids` умолчание — `closed=false`, закрытый рынок виден только с `closed=true`. Код до измерения спрашивал без `closed`, то есть признак «закрыт у источника» через Gamma не сработал бы никогда (оставалось правило «токен пропал из `/midpoints` на 60 с», §5). Теперь `PolymarketCatalog.refreshActive` делает на пачку токенов два запроса: `closed=false` (открытые — их `oneDayPriceChange`) и `closed=true` (закрытые — закрыть рынок).
+
+### 13.2 `oneDayPriceChange` — абсолютное изменение вероятности, не относительное
+
+Цена «сейчас» — `outcomePrices[0]` из Gamma (а в скобках `POST /midpoints` в те же секунды), цена «24 часа назад» — `GET /v2/prices-history?token_id=…&start=<now−24ч−5 мин>&end=<now−24ч+5 мин>&bucket_seconds=60` (бакеты, §4):
+
+| Рынок (id) | Сейчас | 24 ч назад | `oneDayPriceChange` Gamma | сейчас − 24 ч назад | относительное `сейчас/было − 1` |
+|---|---|---|---|---|---|
+| Lula, `601819` | 0.395 (mid 0.395) | 0.385 | **0.01** | +0.010 (точно) | 0.026 |
+| Kane, `608547` | 0.3455 (mid 0.346) | 0.423 | **−0.0775** | 0.3455 − 0.423 = −0.0775 (точно) | −0.183 |
+| Yamal, `608545` | 0.575 (mid 0.574) | 0.424–0.4255 в окне ±5 мин | **0.1415** | 0.575 − 0.4245 = 0.1505 (расхождение 0.009) | 0.355 |
+| `uwcl-mci-rma-2026-10-01-draw`, `4657273` (закрыт, итог `1`) | 1 | 0.215 | **0.7845** | 1 − 0.215 = 0.785 (в пределах шага 0.0005) | 3.65 |
+
+- Расхождение у Yamal объяснено широкой выборкой того же токена (один запрос: `bucket_seconds=300`, окно −26…−22 ч): цена стояла 0.424–0.426 до отметки −24.3 ч и 0.4335 с −23.98 ч (потом 0.4385, 0.4535). `0.575 − 0.4335 = 0.1415` — **точно** значение Gamma: точка отсчёта «24 часа назад» у Gamma лежит на несколько минут позже ровно −24 ч, а не ровно на нём.
+- Итог: `oneDayPriceChange` = `P(сейчас) − P(24 ч назад)` в единицах вероятности (`0.01` — один пункт), знак — как у разности. Код читает его так (`PolymarketLiveState`), `PriceQuote.change24h` остаётся относительным (`Δ / (сейчас − Δ)`), веб возвращает пункты формулой `price − price / (1 + change24h)` — на значениях таблицы туда-обратно совпадает до 1e-12 (`PolymarketPriceSourceTest`).
+- Поле присутствует не у всех рынков (у `665374` Iran его нет), как в §2.3.
+
+### 13.3 Игра около начала: стакан и `/midpoints`
+
+Игра: `bra2-ath-rec-2026-10-01` (Athletic Club — SC Recife, бразильская Серия B), событие `1044221`, `startTime 2026-10-01T23:30:00Z`; три рынка moneyline (победа Athletic `4705009`, ничья `4705011`, победа Recife `4705013`), у всех `gameStartTime "2026-10-01 23:30:00+00"`, `clearBookOnStart: true`, `secondsDelay: 1`, `acceptingOrders: true`. Найдена запросом `GET /events/keyset?tag_id=1&closed=false&order=startTime&ascending=true&start_time_min=<now>&start_time_max=<now+3ч>&limit=15` (200, 591 КБ; параметры `start_time_min/max` — из §2.2, работают).
+
+Опрос: 41 замер каждые ~30 с с 23:22:02 до 23:41:33 UTC — `POST /midpoints` по трём токенам исхода 0 и `POST /books` по тем же трём (82 запроса), все ответы 200 за 0.07–0.37 с. Начало игры по Gamma: событие в 23:40 UTC (кэш `age: 200`, `updatedAt 23:36:20`) показывает `live:true`, `period:"1H"`, `elapsed:"6"`, `score:"0-0"` — то есть матч начался около 23:30:20, на 20 с позже `startTime`.
+
+| | до 23:30:00 (17 замеров) | 23:30:21, 23:30:50, 23:31:19 (3 замера) | после 23:31:30 (21 замер) |
+|---|---|---|---|
+| уровней цены в книге, bid (по трём токенам) | 13–22 | 9–13 | 16–24 |
+| уровней цены в книге, ask | 17–28 | 12–20 | 14–30 |
+| спред лучших bid/ask | 0.01 (у ничьей до 0.02) | 0.01–0.03 | 0.01–0.06 |
+| сдвигов `/midpoints` между соседними замерами (из 16 / 23 шагов на токен) | 1 из 16 | — | 10–17 из 23 |
+
+- **Книга в момент начала не очищена.** Самые тонкие замеры — первые три после 23:30:20 (всего уровней bid + ask на токен): ничья 23, 24, 25 против 30–38 до начала; Recife 29, 29, 33 против 41–47; Athletic 33, 31, 32 против 43–48 — на 17–29 % меньше минимума «до». К 23:31:49 книги снова 32–46 уровней, к 23:32:18 — 39–51, то есть не меньше, чем до начала. Пустой стороны не было ни в одном из 123 снимков книги (41 замер × 3 токена). Заявки пропали частично, хотя у рынков `clearBookOnStart: true` и доки (§8) обещают отмену заявок при старте: наблюдалось прореживание на ~1.5 минуты, не очистка **[вывод: отмена затронула не все заявки; или часть участников выставила их заново за секунды]**.
+- **`/midpoints` не пропадал и не ломался.** Все 41 ответ — 200 и все три токена в каждом (`midpoints answers with fewer than 3 tokens`: ни одного); значения оставались вероятностями 0.285–0.385, кратными 0.005. Правило «токен пропал из `/midpoints` на 60 с» (§5) около начала игры не срабатывает.
+- **После начала цена живая, до начала — почти плоская.** До 23:30:00 `/midpoints` менялся один раз за 16 получасовых шагов у каждого токена, после — 10–17 раз за 23 шага (ничья 10, Athletic 15, Recife 17). Для раундов в 3 минуты по такому рынку это значит: до начала игры раунды почти все плоские, во время игры — нет (одна игра, один вечер; частоту плоских раундов по другим рынкам и лигам это не заменяет, `markets_architecture.md` §11).
+- Что не измерено: переходы `/midpoints` и книги при начале **других** игр (футбол другой лиги, теннис, киберспорт), поведение при настоящем сбросе книги, расхождение `startTime` и фактического начала в других матчах.
+
+### 13.4 Остальное, замеченное по дороге
+
+- **Признак `live` у события Gamma отстаёт от начала игры на минуты.** `GET /events/slug/bra2-ath-rec-2026-10-01`: в 23:33:10 UTC (после начала на ~3 минуты; `cache-control: public, max-age=300`, `age: 65`, `updatedAt 23:31:32`) — `live`, `ended`, `period`, `elapsed`, `score` равны `null`; в 23:40:26 (`age: 200`, `updatedAt 23:36:20`) — `live:true`, `ended:false`, `period:"1H"`, `elapsed:"6"`, `score:"0-0"`. Книга и `/midpoints` отреагировали на начало в пределах одного 30-секундного замера (§13.3) — раньше, чем событие стало «живым». Каталог (`PolymarketCatalog`) берёт «идёт» из `events/keyset?live=true`, поэтому игра попадает в выборку «идущих» с таким же запаздыванием **[вывод]**; рынки игры при этом торгуются и дают цену до этого.
+- До начала игры у события и у рынков `startTime` / `gameStartTime` заданы (`2026-10-01T23:30:00Z` / `2026-10-01 23:30:00+00`), а `endDate` рынка совпадает с началом, как в §2.3 и в отчёте первого прохода.

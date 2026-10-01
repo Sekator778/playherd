@@ -134,6 +134,7 @@ class PolymarketCatalogTest {
         assertThat(meta.get("eventTitle").asText()).isEqualTo("Will the U.S. invade Iran before 2027?");
         assertThat(meta.get("tickSize").asText()).isEqualTo("0.01");
         assertThat(meta.has("gameStartTime")).isFalse(); // not a game
+        assertThat(meta.has("gameStartMs")).isFalse();
 
         Market flavio = market("PM601826");
         assertThat(flavio.symbol()).isEqualTo("FLÁVIO");
@@ -242,7 +243,7 @@ class PolymarketCatalogTest {
     void whenAMarketClosesTheCategoryIsToppedUpAtTheNextRefresh() {
         PolymarketCatalog catalog = catalog(config(3, 0, true));
         catalog.refresh(NOW);
-        registry.close("PM601826", "closed at the source", NOW + 1_000); // Flavio: the Brazilian event is free again
+        registry.close("PM601826", PolymarketCatalog.REASON_CLOSED, NOW + 1_000); // Flavio: the Brazilian event is free again
 
         catalog.refresh(NOW + 300_000);
 
@@ -343,6 +344,10 @@ class PolymarketCatalogTest {
         assertThat(portugal.category()).isEqualTo(Category.SPORTS);
         JsonNode meta = Fixtures.parse(portugal.sourceMeta());
         assertThat(meta.get("gameStartTime").asText()).isEqualTo("2026-10-01 18:45:00+00");
+        // G3: the kick-off as a NUMBER too (epoch ms) — the API reads this key for MarketDto.eventStartsAtMs
+        assertThat(meta.get("gameStartMs").isNumber()).isTrue();
+        assertThat(meta.get("gameStartMs").asLong()).isEqualTo(ms("2026-10-01T18:45:00Z"));
+        assertThat(meta.get("gameStartMs").asLong()).isEqualTo(1_790_880_300_000L);
         assertThat(meta.get("sportsMarketType").asText()).isEqualTo("moneyline");
         assertThat(meta.get("gameId").asText()).isEqualTo("90108425");
         assertThat(meta.get("eventKey").asText()).isEqualTo("game:90108425");
@@ -426,10 +431,10 @@ class PolymarketCatalogTest {
 
         state.reportMissing("PM1", NOW);
         assertThat(catalog.closeReason(m, NOW + 59_999)).isNull();
-        assertThat(catalog.closeReason(m, NOW + 60_000)).isEqualTo("token absent from midpoints for 60 s");
+        assertThat(catalog.closeReason(m, NOW + 60_000)).isEqualTo(PolymarketCatalog.REASON_ABSENT);
         assertThat(catalog.watch(NOW + 60_000)).isEqualTo(1);
 
-        assertThat(registry.closeReasons).containsEntry("PM1", "token absent from midpoints for 60 s");
+        assertThat(registry.closeReasons).containsEntry("PM1", PolymarketCatalog.REASON_ABSENT);
         assertThat(m.isActive()).isTrue(); // the local copy is a value; the registry holds the closed one
         assertThat(registry.byId("PM1").orElseThrow().status()).isEqualTo(MarketStatus.CLOSED);
         assertThat(state.missingSince("PM1")).isEmpty(); // forgotten with the market
@@ -450,13 +455,13 @@ class PolymarketCatalogTest {
         PolymarketCatalog catalog = catalog();
 
         store.append("polymarket", NOW, Map.of("PM1", bd("0.0299")));
-        assertThat(catalog.closeReason(m, NOW + 1_000)).isEqualTo("midpoint outside [0.03, 0.97]");
+        assertThat(catalog.closeReason(m, NOW + 1_000)).isEqualTo(PolymarketCatalog.REASON_PRICE);
         store.append("polymarket", NOW + 3_000, Map.of("PM1", bd("0.03")));
         assertThat(catalog.closeReason(m, NOW + 4_000)).isNull(); // the limits themselves are inside
         store.append("polymarket", NOW + 6_000, Map.of("PM1", bd("0.97")));
         assertThat(catalog.closeReason(m, NOW + 7_000)).isNull();
         store.append("polymarket", NOW + 9_000, Map.of("PM1", bd("0.9701")));
-        assertThat(catalog.closeReason(m, NOW + 10_000)).isEqualTo("midpoint outside [0.03, 0.97]");
+        assertThat(catalog.closeReason(m, NOW + 10_000)).isEqualTo(PolymarketCatalog.REASON_PRICE);
     }
 
     @Test
@@ -474,7 +479,7 @@ class PolymarketCatalogTest {
         PolymarketCatalog catalog = catalog();
 
         assertThat(catalog.closeReason(ending, NOW)).isNull(); // exactly 5 minutes
-        assertThat(catalog.closeReason(ending, NOW + 1)).isEqualTo("less than 5 minutes to the end");
+        assertThat(catalog.closeReason(ending, NOW + 1)).isEqualTo(PolymarketCatalog.REASON_ENDING);
         assertThat(catalog.closeReason(open, NOW + 1_000_000_000L)).isNull();
     }
 
@@ -508,6 +513,52 @@ class PolymarketCatalogTest {
         assertThat(gamma.byTokens.requests).isNotEmpty(); // the first step of every refresh ran again
     }
 
+    @Test
+    void everyCloseReasonIsAPlainSentenceTheWayItIsShownToThePlayers() {
+        // G2: MarketDto.closeReason is shown as it stands, and GameService puts "market closed: " in front of it
+        // when it refunds the bets of the market's rounds
+        assertThat(PolymarketCatalog.REASON_CLOSED).isEqualTo("The source market ended");
+        assertThat(PolymarketCatalog.REASON_ABSENT).isEqualTo("The source market stopped trading");
+        assertThat(PolymarketCatalog.REASON_PRICE).isEqualTo("Price left the 3%–97% range");
+        assertThat(PolymarketCatalog.REASON_ENDING).isEqualTo("The source market ends in less than 5 minutes");
+        assertThat(List.of(PolymarketCatalog.REASON_CLOSED, PolymarketCatalog.REASON_ABSENT,
+                PolymarketCatalog.REASON_PRICE, PolymarketCatalog.REASON_ENDING)).allSatisfy(reason -> {
+                    assertThat(reason).matches("[A-Z][^\\[\\]()<>{}_=]*[^.]"); // a sentence: capital first, no code, no full stop
+                    assertThat(reason).doesNotContain("token", "midpoint", "Gamma", "CLOB", "marketId");
+                });
+    }
+
+    // ------------------------------------------------------------------ the first minutes of a market (G1)
+
+    @Test
+    void everyMarketItListsIsHandedToTheSeederForItsRecentBuckets() {
+        FakeApis.Data data = new FakeApis.Data();
+        // 60-second buckets over whatever range is asked: 0.5 flat
+        data.history.handler = call -> {
+            StringBuilder sb = new StringBuilder("{\"data\":[");
+            for (long s = call.start() / 60 * 60; s <= call.end(); s += 60) {
+                sb.append(s == call.start() / 60 * 60 ? "" : ",").append("{\"timestamp\":").append(s)
+                        .append(",\"price\":0.5,\"resolution_seconds\":60}");
+            }
+            return Fixtures.parse(sb.append("]}").toString());
+        };
+        crowdvsmarket.server.prices.HistorySeeder seeder = crowdvsmarket.server.prices.PipelineTestSupport.seeder(
+                List.of(crowdvsmarket.server.prices.PipelineTestSupport.polymarket(clob, data, state, now::get)), store,
+                now::get);
+
+        new PolymarketCatalog(registry, config(2, 0, true), PricesConfig.defaults(), () -> gamma, () -> clob, state,
+                store, seeder, now::get).refresh(NOW);
+
+        assertThat(activeIds(Category.POLITICS)).hasSize(2);
+        assertThat(data.history.requests).extracting(FakeApis.Data.Call::tokenId)
+                .containsExactlyInAnyOrderElementsOf(activeIds(Category.POLITICS).stream().map(id -> market(id).sourceRef())
+                        .toList());
+        for (String id : activeIds(Category.POLITICS)) {
+            assertThat(store.size(id)).as(id).isPositive();
+            assertThat(store.last(id).orElseThrow().atMs()).as(id).isLessThanOrEqualTo(NOW);
+        }
+    }
+
     // ---------------------------------------------------------------------- closed at the source
 
     @Test
@@ -517,15 +568,62 @@ class PolymarketCatalogTest {
         String closedToken = token(byTokens.get("markets"), "5140154");
         registry.add(activePm("PM4678642", openToken, Category.SPORTS, null, null));
         registry.add(activePm("PM5140154", closedToken, Category.SPORTS, null, null));
-        gamma.byTokens.handler = call -> byTokens;
+        gamma.byTokens.handler = call -> lookupByTokens(byTokens, call);
 
         catalog(config(0, 2, true)).refreshActive(NOW);
 
         assertThat(registry.closeReasons).containsOnlyKeys("PM5140154");
-        assertThat(registry.closeReasons.get("PM5140154")).isEqualTo("closed at the source");
+        assertThat(registry.closeReasons.get("PM5140154")).isEqualTo(PolymarketCatalog.REASON_CLOSED);
         assertThat(state.oneDayChange("PM4678642")).isEqualTo(0.24);
-        assertThat(gamma.byTokens.requests).hasSize(1);
-        assertThat(gamma.byTokens.requests.get(0).tokenIds()).containsExactlyInAnyOrder(openToken, closedToken);
+        // two lookups: the markets that are not closed (their day change), then the closed ones
+        assertThat(gamma.byTokens.requests).extracting(FakeApis.Gamma.TokensCall::closed).containsExactly(false, true);
+        assertThat(gamma.byTokens.requests).allSatisfy(
+                call -> assertThat(call.tokenIds()).containsExactlyInAnyOrder(openToken, closedToken));
+    }
+
+    @Test
+    void aMarketThatClosedAtTheSourceIsFoundByTheLookupThatAsksForClosedOnes() {
+        // measured 2026-10-02: GET /markets/keyset?clob_token_ids=… without closed (or with closed=false) leaves
+        // closed markets out — a catalog that never asked closed=true would never see a market close
+        JsonNode byTokens = Fixtures.json("polymarket/gamma_markets_by_tokens.json");
+        registry.add(activePm("PM5140154", token(byTokens.get("markets"), "5140154"), Category.SPORTS, null, null));
+        gamma.byTokens.handler = call -> call.closed() ? lookupByTokens(byTokens, call)
+                : Fixtures.parse("{\"markets\":[]}");
+
+        catalog(config(0, 2, true)).refreshActive(NOW);
+
+        assertThat(registry.closeReasons).containsOnlyKeys("PM5140154");
+        assertThat(gamma.byTokens.requests).extracting(FakeApis.Gamma.TokensCall::closed).contains(true);
+    }
+
+    @Test
+    void aMarketGammaStillHasOpenIsNotClosedByTheLookups() {
+        JsonNode byTokens = Fixtures.json("polymarket/gamma_markets_by_tokens.json");
+        registry.add(activePm("PM4678642", token(byTokens.get("markets"), "4678642"), Category.SPORTS, null, null));
+        gamma.byTokens.handler = call -> lookupByTokens(byTokens, call);
+
+        catalog(config(0, 2, true)).refreshActive(NOW);
+
+        assertThat(registry.closeReasons).isEmpty();
+        assertThat(registry.byId("PM4678642").orElseThrow().isActive()).isTrue();
+    }
+
+    /**
+     * What Gamma answers a lookup by token, per the 2026-10-02 measurement: the markets of the fixture
+     * among the asked tokens, those that are closed only when {@code closed=true} is asked, the open
+     * ones only when it is not.
+     */
+    private static JsonNode lookupByTokens(JsonNode fixture, FakeApis.Gamma.TokensCall call) {
+        ArrayNode markets = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+        for (JsonNode m : fixture.get("markets")) {
+            String token = Fixtures.parse(m.get("clobTokenIds").asText()).get(0).asText();
+            if (call.tokenIds().contains(token) && m.path("closed").asBoolean(false) == call.closed()) {
+                markets.add(m);
+            }
+        }
+        ObjectNode answer = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        answer.set("markets", markets);
+        return answer;
     }
 
     @Test

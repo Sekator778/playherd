@@ -70,6 +70,35 @@ class PolymarketPriceSourceTest {
     }
 
     @Test
+    void theRelativeChangeGivesGammasAbsoluteChangeBackThroughTheWebsFormulaToDoublePrecision() {
+        // contract.ts: for ODDS the web shows `price - price / (1 + change24h)` percentage points; measured
+        // 2026-10-02 (polymarket_data_api.md §13): oneDayPriceChange is the absolute change of the probability
+        record Case(String now, double absoluteChange) {
+        }
+        for (Case c : List.of(new Case("0.395", 0.01), new Case("0.3455", -0.0775), new Case("0.575", 0.1415),
+                new Case("0.065", -0.4), new Case("0.9995", 0.9), new Case("0.0005", 0.0004), new Case("0.5", 0.0),
+                new Case("0.8", 0.7845))) {
+            BigDecimal now = new BigDecimal(c.now());
+
+            Double relative = PolymarketPriceSource.relativeChange(now, c.absoluteChange());
+
+            double price = now.doubleValue();
+            assertThat(price - price / (1 + relative)).as(c.now() + " " + c.absoluteChange())
+                    .isCloseTo(c.absoluteChange(), org.assertj.core.data.Offset.offset(1e-12));
+        }
+    }
+
+    @Test
+    void theRelativeChangeIsTheChangeAsAShareOfThePriceADayAgoNotOfThePriceNow() {
+        // 0.395 now, 0.385 a day ago: +2.597 % relative, +1 point absolute
+        assertThat(PolymarketPriceSource.relativeChange(new BigDecimal("0.395"), 0.01))
+                .isCloseTo(0.01 / 0.385, org.assertj.core.data.Offset.offset(1e-15));
+        assertThat(PolymarketPriceSource.relativeChange(new BigDecimal("0.3455"), -0.0775))
+                .isCloseTo(-0.0775 / 0.423, org.assertj.core.data.Offset.offset(1e-15));
+        assertThat(PolymarketPriceSource.relativeChange(new BigDecimal("0.5"), 0.0)).isEqualTo(0.0);
+    }
+
+    @Test
     void aChangeThatWouldMeanANonPositivePriceADayAgoGivesNone() {
         assertThat(PolymarketPriceSource.relativeChange(new BigDecimal("0.065"), -0.4)).isEqualTo(-0.4 / 0.465,
                 org.assertj.core.data.Offset.offset(1e-7));
@@ -165,14 +194,99 @@ class PolymarketPriceSourceTest {
         long first = answer.get("data").get(0).get("timestamp").asLong() * 1000;
         long last = answer.get("data").get(answer.get("data").size() - 1).get("timestamp").asLong() * 1000;
 
-        List<PricePoint> points = PolymarketPriceSource.historyPoints(answer, 0, Long.MAX_VALUE);
+        List<PricePoint> points = PolymarketPriceSource.bucketPoints(answer, 0, Long.MAX_VALUE);
 
         assertThat(points).hasSize(answer.get("data").size());
         assertThat(points.get(0).atMs()).isEqualTo(first);
         assertThat(points.get(points.size() - 1).atMs()).isEqualTo(last); // the terminal tick, resolution_seconds 0
         assertThat(points).extracting(p -> p.raw().toPlainString())
                 .containsExactly("0.725", "0.695", "0.715", "0.705", "0.715", "0.715", "0.715", "0.715");
-        assertThat(PolymarketPriceSource.historyPoints(answer, first + 1, last - 1)).hasSize(points.size() - 2);
+        assertThat(PolymarketPriceSource.bucketPoints(answer, first + 1, last - 1)).hasSize(points.size() - 2);
+    }
+
+    // ------------------------------------------------------- the bucket grid is not gapless (R1)
+
+    private static final long T = 1_790_883_000_000L; // 19:30:00 UTC, on the bucket grid
+
+    /** {@code {"data":[{"timestamp":<s>,"price":<p>,"resolution_seconds":60},…]}} from (seconds after T, price) pairs. */
+    private static JsonNode answer(Object... secondsAndPrice) {
+        StringBuilder sb = new StringBuilder("{\"data\":[");
+        for (int i = 0; i < secondsAndPrice.length; i += 2) {
+            sb.append(i == 0 ? "" : ",").append("{\"timestamp\":")
+                    .append(T / 1000 + ((Number) secondsAndPrice[i]).longValue())
+                    .append(",\"price\":").append(secondsAndPrice[i + 1]).append(",\"resolution_seconds\":60}");
+        }
+        return Fixtures.parse(sb.append("]}").toString());
+    }
+
+    private static List<String> timesAndPrices(List<PricePoint> points) {
+        return points.stream().map(p -> (p.atMs() - T) / 1000 + "s=" + p.raw().toPlainString()).toList();
+    }
+
+    @Test
+    void aMissingBucketIsBridgedByCarryingTheEarlierPriceForwardEveryThirtySeconds() {
+        // the 120 s step of real series (polymarket_data_api.md §4.2): the bucket at +120 s is not there
+        JsonNode answer = answer(0, 0.5, 60, 0.6, 180, 0.7);
+
+        List<PricePoint> points = PolymarketPriceSource.historyPoints(answer, T, T + 180_000L);
+
+        assertThat(timesAndPrices(points)).containsExactly("0s=0.5", "30s=0.5", "60s=0.6", "90s=0.6", "120s=0.6",
+                "150s=0.6", "180s=0.7");
+        for (int i = 1; i < points.size(); i++) {
+            assertThat(points.get(i).atMs() - points.get(i - 1).atMs()).isLessThanOrEqualTo(30_000L);
+        }
+    }
+
+    @Test
+    void anOrdinaryGridGetsOnePointEveryThirtySecondsToo() {
+        List<PricePoint> points = PolymarketPriceSource.historyPoints(answer(0, 0.5, 60, 0.6), T, T + 60_000L);
+
+        assertThat(timesAndPrices(points)).containsExactly("0s=0.5", "30s=0.5", "60s=0.6");
+    }
+
+    @Test
+    void aGapOfTenMinutesIsBridgedAndOneSecondMoreIsNot() {
+        assertThat(PolymarketPriceSource.historyPoints(answer(0, 0.5, 600, 0.6), T, T + 600_000L)).hasSize(21); // 19 carried
+        assertThat(PolymarketPriceSource.MAX_CARRY_MS).isEqualTo(600_000L);
+
+        List<PricePoint> longer = PolymarketPriceSource.historyPoints(answer(0, 0.5, 601, 0.6), T, T + 601_000L);
+
+        assertThat(timesAndPrices(longer)).containsExactly("0s=0.5", "601s=0.6"); // the hole stays a hole
+    }
+
+    @Test
+    void theLastBucketIsCarriedToTheEndOfTheRangeOnlyWhenItIsWithinOneBucketWidthOfIt() {
+        JsonNode answer = answer(0, 0.5, 60, 0.6);
+
+        assertThat(timesAndPrices(PolymarketPriceSource.historyPoints(answer, T, T + 120_000L)))
+                .containsExactly("0s=0.5", "30s=0.5", "60s=0.6", "90s=0.6", "120s=0.6"); // the bucket at the end is missing
+        assertThat(timesAndPrices(PolymarketPriceSource.historyPoints(answer, T, T + 119_999L)))
+                .containsExactly("0s=0.5", "30s=0.5", "60s=0.6", "90s=0.6");
+        assertThat(timesAndPrices(PolymarketPriceSource.historyPoints(answer, T, T + 120_001L)))
+                .containsExactly("0s=0.5", "30s=0.5", "60s=0.6"); // 60.001 s away: the newest buckets are simply late
+        assertThat(timesAndPrices(PolymarketPriceSource.historyPoints(answer, T, T + 60_000L)))
+                .containsExactly("0s=0.5", "30s=0.5", "60s=0.6"); // a bucket exactly at the end: nothing to add
+    }
+
+    @Test
+    void nothingIsCarriedBackwardsOrOutOfNothing() {
+        assertThat(timesAndPrices(PolymarketPriceSource.historyPoints(answer(60, 0.6), T, T + 60_000L)))
+                .containsExactly("60s=0.6");
+        assertThat(PolymarketPriceSource.historyPoints(Fixtures.parse("{\"data\":[]}"), T, T + 600_000L)).isEmpty();
+        assertThat(PolymarketPriceSource.historyPoints(null, T, T + 600_000L)).isEmpty();
+    }
+
+    @Test
+    void theRealSamplesTerminalTickIsReachedByTheCarryFromTheLastBucket() {
+        JsonNode answer = Fixtures.json("polymarket/data_prices_history.json");
+        // the sample's buckets run to 1790883300 s, its terminal tick is at 1790883611 s (311 s later)
+
+        List<PricePoint> points = PolymarketPriceSource.historyPoints(answer, 0, Long.MAX_VALUE);
+
+        for (int i = 1; i < points.size(); i++) {
+            assertThat(points.get(i).atMs() - points.get(i - 1).atMs()).isLessThanOrEqualTo(30_000L);
+        }
+        assertThat(points.get(points.size() - 1).atMs()).isEqualTo(1_790_883_611_000L);
     }
 
     @Test
@@ -202,8 +316,25 @@ class PolymarketPriceSourceTest {
 
         List<PricePoint> points = source.history(M_PORTUGAL, 1_790_883_000_000L, 1_790_884_000_000L);
 
-        assertThat(points).extracting(PricePoint::atMs).containsExactly(1_790_883_300_000L, 1_790_883_360_000L);
+        // one bucket from each page, and the first one's price carried half way to the second (R1)
+        assertThat(points).extracting(PricePoint::atMs)
+                .containsExactly(1_790_883_300_000L, 1_790_883_330_000L, 1_790_883_360_000L);
         assertThat(data.history.requests).extracting(FakeApis.Data.Call::cursor).containsExactly(null, "c1");
+    }
+
+    @Test
+    void thePagesAreCarriedForwardOnceOverAllOfThemNotEachOnItsOwn() throws Exception {
+        data.history.handler = call -> call.cursor() == null
+                ? Fixtures.parse("{\"data\":[{\"timestamp\":1790883300,\"price\":0.5,\"resolution_seconds\":60}],"
+                + "\"pagination\":{\"has_more\":true,\"next_cursor\":\"c1\"}}")
+                : Fixtures.parse("{\"data\":[{\"timestamp\":1790883420,\"price\":0.6,\"resolution_seconds\":60}],"
+                + "\"pagination\":{\"has_more\":false,\"next_cursor\":null}}");
+
+        List<PricePoint> points = source.history(M_PORTUGAL, 1_790_883_300_000L, 1_790_883_420_000L);
+
+        // 0.5 carried over the 120 s up to the next bucket, and nothing after the last one: it is at the end
+        assertThat(points).extracting(p -> (p.atMs() - 1_790_883_300_000L) / 1000 + "s=" + p.raw().toPlainString())
+                .containsExactly("0s=0.5", "30s=0.5", "60s=0.5", "90s=0.5", "120s=0.6");
     }
 
     @Test

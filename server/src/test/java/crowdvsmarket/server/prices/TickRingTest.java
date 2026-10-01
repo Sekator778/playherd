@@ -25,6 +25,26 @@ class TickRingTest {
     }
 
     @Test
+    void afterIsTheFirstTickStrictlyLaterAndFirstIsTheOldest() {
+        TickRing ring = new TickRing();
+        assertThat(ring.first()).isNull();
+        assertThat(ring.after(0)).isNull();
+
+        ring.append(1_000, 10);
+        ring.append(4_000, 40);
+        ring.append(7_000, 70);
+
+        assertThat(ring.first()).containsExactly(1_000, 10);
+        assertThat(ring.after(0)).containsExactly(1_000, 10);
+        assertThat(ring.after(1_000)).containsExactly(4_000, 40); // strictly later: not the tick at t itself
+        assertThat(ring.after(6_999)).containsExactly(7_000, 70);
+        assertThat(ring.after(7_000)).isNull();
+
+        ring.trimBefore(4_000);
+        assertThat(ring.first()).containsExactly(4_000, 40);
+    }
+
+    @Test
     void windowIsOpenAtTheStartAndClosedAtTheEndAndCarriesTheFloorTick() {
         TickRing ring = new TickRing();
         for (int i = 1; i <= 5; i++) {

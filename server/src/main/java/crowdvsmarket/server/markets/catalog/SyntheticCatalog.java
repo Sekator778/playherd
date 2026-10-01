@@ -6,6 +6,7 @@ import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.markets.MarketRegistry;
 import crowdvsmarket.server.markets.NewMarket;
+import crowdvsmarket.server.prices.HistorySeeder;
 import crowdvsmarket.server.prices.SyntheticParams;
 import crowdvsmarket.server.prices.SyntheticPriceSource;
 import io.quarkus.arc.Unremovable;
@@ -43,16 +44,22 @@ public class SyntheticCatalog {
 
     private final MarketRegistry registry;
     private final CatalogConfig config;
+    private final HistorySeeder seeder;
     private final LongSupplier clock;
 
     @Inject
-    public SyntheticCatalog(MarketRegistry registry, CatalogConfig config) {
-        this(registry, config, System::currentTimeMillis);
+    public SyntheticCatalog(MarketRegistry registry, CatalogConfig config, HistorySeeder seeder) {
+        this(registry, config, seeder, System::currentTimeMillis);
     }
 
     SyntheticCatalog(MarketRegistry registry, CatalogConfig config, LongSupplier clock) {
+        this(registry, config, HistorySeeder.disabled(), clock);
+    }
+
+    SyntheticCatalog(MarketRegistry registry, CatalogConfig config, HistorySeeder seeder, LongSupplier clock) {
         this.registry = registry;
         this.config = config;
+        this.seeder = seeder;
         this.clock = clock;
     }
 
@@ -103,15 +110,21 @@ public class SyntheticCatalog {
         return added;
     }
 
-    /** One listing; a registry that refuses it costs that market this pass, the next run tries again. */
+    /**
+     * One listing; a registry that refuses it costs that market this pass, the next run tries again.
+     * Called without any lock held: the registry's listener takes the game engine's write lock on this
+     * thread, while the game service reads prices under its read lock.
+     */
     private boolean list(NewMarket market, long nowMs) {
+        Market listed;
         try {
-            registry.list(market, nowMs);
-            return true;
+            listed = registry.list(market, nowMs);
         } catch (RuntimeException e) {
             LOG.warnf("could not list synthetic market %s, will try again: %s", market.id(), e.toString());
             return false;
         }
+        seeder.seed(listed); // the walk of its last minutes, so that its first round has an opening price
+        return true;
     }
 
     private static String startMeta(BigDecimal start) {

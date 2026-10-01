@@ -181,10 +181,47 @@ public class TickStore {
         return added;
     }
 
+    /**
+     * Seeds a market's ring with history older than every tick it already holds (the live ticks are
+     * authoritative: nothing is merged at or after the oldest of them), and remembers which feed
+     * prices the market until a live tick says so itself. Like {@link #mergeHistory} it never
+     * overwrites a tick and writes no snapshot row. Returns how many points were added.
+     */
+    int seedHistory(String marketId, String feedId, List<PricePoint> points) {
+        TickRing ring = ring(marketId);
+        long[] oldest = ring.first();
+        long before = oldest == null ? Long.MAX_VALUE : oldest[0];
+        int added = 0;
+        for (PricePoint p : points) {
+            if (p.atMs() < before && Px.isStorable(p.raw()) && ring.insertIfAbsent(p.atMs(), Px.encode(p.raw()))) {
+                added++;
+            }
+        }
+        if (added > 0) {
+            feedOf.putIfAbsent(marketId, feedId);
+        }
+        return added;
+    }
+
+    /**
+     * Makes {@code px} (a {@link Px} price) the tick at exactly {@code atMs} unless a tick is already
+     * there: the boundary price of a settled round, fixed (see {@link LiveMarketPrices#resolve}). Like a
+     * merge it writes no snapshot row and never replaces a tick.
+     */
+    void pinBoundary(String marketId, long atMs, long px) {
+        ring(marketId).insertIfAbsent(atMs, px);
+    }
+
     /** The ticks of a round window, see {@link TickRing#window}; empty when the market has no ring. */
     TickRing.Window window(String marketId, long fromExclusive, long toInclusive) {
         TickRing ring = rings.get(marketId);
         return ring == null ? TickRing.Window.EMPTY : ring.window(fromExclusive, toInclusive);
+    }
+
+    /** The first tick after {@code atMs} as {@code {atMs, px}} ({@link Px} units), or {@code null}. */
+    long[] tickAfter(String marketId, long atMs) {
+        TickRing ring = rings.get(marketId);
+        return ring == null ? null : ring.after(atMs);
     }
 
     private TickRing ring(String marketId) {

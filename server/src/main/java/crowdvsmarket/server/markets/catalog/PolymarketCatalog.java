@@ -11,6 +11,7 @@ import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.markets.MarketRegistry;
 import crowdvsmarket.server.markets.NewMarket;
 import crowdvsmarket.server.prices.Dec;
+import crowdvsmarket.server.prices.HistorySeeder;
 import crowdvsmarket.server.prices.PolymarketClobApi;
 import crowdvsmarket.server.prices.PolymarketGammaApi;
 import crowdvsmarket.server.prices.PolymarketLiveState;
@@ -57,10 +58,20 @@ import org.jboss.logging.Logger;
  * books are therefore never listed.
  *
  * <p><b>Closing</b> ({@code registry.close(id, reason, now)}): closed at the source (Gamma
- * {@code closed}, looked up by token at every refresh); the token absent from {@code /midpoints} for
- * 60 s ({@link PolymarketLiveState}, reported by the price source); the midpoint outside
- * [0.03, 0.97]; less than 5 minutes to the end. The last three need no request, they are checked
- * every 5 s from memory by {@link #watch}; a close asks for an early top-up.
+ * {@code closed}, looked up by token at every refresh — with {@code closed=true}: a lookup by token
+ * leaves closed markets out unless asked for them, measured 2026-10-02, polymarket_data_api.md §13);
+ * the token absent from {@code /midpoints} for 60 s ({@link PolymarketLiveState}, reported by the
+ * price source); the midpoint outside [0.03, 0.97]; less than 5 minutes to the end. The last three
+ * need no request, they are checked every 5 s from memory by {@link #watch}; a close asks for an
+ * early top-up. The reason is shown to the players as it stands, so each is a plain sentence
+ * ({@link #REASON_CLOSED} and its siblings).
+ *
+ * <p><b>Locks.</b> {@code registry.list} and {@code registry.close} are called without any lock or
+ * monitor held, from the scheduler's threads: the registry's listener (the game service) takes the
+ * engine's WRITE lock on the calling thread, while the game service reads {@code latest} /
+ * {@code soFar} / {@code series} under the engine's READ lock — so nothing those readers take
+ * (the tick rings' monitors) may be held here. This class only reads the store through
+ * {@code TickStore.last}, which copies one tick out and releases the ring at once.
  *
  * <p><b>Deviation for games in play</b> (found in the 2026-10-01 samples, not in the brief): for
  * a game the Gamma {@code endDate} is typically the <i>kick-off</i> — {@code unl-den-prt-…} has
@@ -105,10 +116,12 @@ public class PolymarketCatalog {
     static final BigDecimal CLOSE_ABOVE = new BigDecimal("0.97");
     static final long CLOSE_BEFORE_END_MS = 5 * 60_000L;
 
-    static final String REASON_CLOSED = "closed at the source";
-    static final String REASON_ABSENT = "token absent from midpoints for 60 s";
-    static final String REASON_PRICE = "midpoint outside [0.03, 0.97]";
-    static final String REASON_ENDING = "less than 5 minutes to the end";
+    // What the players read as a market's close reason (MarketDto.closeReason) and, after
+    // "market closed: ", as the reason their bets were refunded: plain sentences, no jargon.
+    static final String REASON_CLOSED = "The source market ended";
+    static final String REASON_ABSENT = "The source market stopped trading";
+    static final String REASON_PRICE = "Price left the 3%–97% range";
+    static final String REASON_ENDING = "The source market ends in less than 5 minutes";
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -119,19 +132,28 @@ public class PolymarketCatalog {
     private final Supplier<PolymarketClobApi> clob;
     private final PolymarketLiveState state;
     private final TickStore store;
+    private final HistorySeeder seeder;
     private final LongSupplier clock;
     private volatile long lastRefreshMs = Long.MIN_VALUE;
     private volatile boolean refreshWanted;
 
     @Inject
     public PolymarketCatalog(MarketRegistry registry, CatalogConfig config, PricesConfig prices,
-                             PriceHttpClients clients, PolymarketLiveState state, TickStore store) {
-        this(registry, config, prices, clients.gamma(), clients.clob(), state, store, System::currentTimeMillis);
+                             PriceHttpClients clients, PolymarketLiveState state, TickStore store,
+                             HistorySeeder seeder) {
+        this(registry, config, prices, clients.gamma(), clients.clob(), state, store, seeder,
+                System::currentTimeMillis);
     }
 
     PolymarketCatalog(MarketRegistry registry, CatalogConfig config, PricesConfig prices,
                       Supplier<PolymarketGammaApi> gamma, Supplier<PolymarketClobApi> clob, PolymarketLiveState state,
                       TickStore store, LongSupplier clock) {
+        this(registry, config, prices, gamma, clob, state, store, HistorySeeder.disabled(), clock);
+    }
+
+    PolymarketCatalog(MarketRegistry registry, CatalogConfig config, PricesConfig prices,
+                      Supplier<PolymarketGammaApi> gamma, Supplier<PolymarketClobApi> clob, PolymarketLiveState state,
+                      TickStore store, HistorySeeder seeder, LongSupplier clock) {
         this.registry = registry;
         this.config = config;
         this.prices = prices;
@@ -139,6 +161,7 @@ public class PolymarketCatalog {
         this.clob = clob;
         this.state = state;
         this.store = store;
+        this.seeder = seeder;
         this.clock = clock;
     }
 
@@ -200,13 +223,21 @@ public class PolymarketCatalog {
         return ok;
     }
 
-    /** Closes the listed markets Gamma reports as closed and refreshes their one-day change. */
+    /**
+     * Closes the listed markets Gamma reports as closed and refreshes the one-day change of the
+     * others. Two lookups by token per batch: Gamma answers a lookup by {@code clob_token_ids}
+     * without {@code closed} (and with {@code closed=false}) only with markets that are not closed
+     * yet — measured 2026-10-02, polymarket_data_api.md §13 — so the markets that closed at the
+     * source come only from {@code closed=true}. The open ones are read first (their change), then
+     * the closed.
+     */
     void refreshActive(long nowMs) {
         List<Market> active = activeMarkets();
         for (int from = 0; from < active.size(); from += LOOKUP_BATCH) {
             List<Market> batch = active.subList(from, Math.min(active.size(), from + LOOKUP_BATCH));
-            JsonNode answer = gamma.get().marketsByTokens(batch.stream().map(Market::sourceRef).toList(), batch.size());
-            for (GammaMarket g : GammaMarket.parseAll(answer == null ? null : answer.path("markets"), null)) {
+            List<String> tokens = batch.stream().map(Market::sourceRef).toList();
+            JsonNode open = gamma.get().marketsByTokens(tokens, false, batch.size());
+            for (GammaMarket g : GammaMarket.parseAll(open == null ? null : open.path("markets"), null)) {
                 for (Market ours : batch) {
                     if (!g.tokenIds().contains(ours.sourceRef())) {
                         continue;
@@ -215,6 +246,17 @@ public class PolymarketCatalog {
                         close(ours, REASON_CLOSED, nowMs);
                     } else {
                         state.setOneDayChange(ours.id(), g.oneDayChange());
+                    }
+                }
+            }
+            JsonNode closed = gamma.get().marketsByTokens(tokens, true, batch.size());
+            for (GammaMarket g : GammaMarket.parseAll(closed == null ? null : closed.path("markets"), null)) {
+                if (!g.closed()) {
+                    continue;
+                }
+                for (Market ours : batch) {
+                    if (g.tokenIds().contains(ours.sourceRef())) {
+                        close(ours, REASON_CLOSED, nowMs);
                     }
                 }
             }
@@ -337,15 +379,18 @@ public class PolymarketCatalog {
 
     private boolean list(GammaMarket g, String category, long nowMs) {
         NewMarket market = toNewMarket(g, category);
+        Market listed;
         try {
-            Market listed = registry.list(market, nowMs);
-            state.setOneDayChange(listed.id(), g.oneDayChange());
-            LOG.infof("listed %s (%s, %s): %s", listed.id(), category, listed.symbol(), listed.title());
-            return true;
+            // no lock is held: the registry's listener takes the engine's write lock (class comment: Locks)
+            listed = registry.list(market, nowMs);
         } catch (RuntimeException e) {
             LOG.warnf("could not list Polymarket market %s: %s", g.id(), e.toString());
             return false;
         }
+        state.setOneDayChange(listed.id(), g.oneDayChange());
+        LOG.infof("listed %s (%s, %s): %s", listed.id(), category, listed.symbol(), listed.title());
+        seeder.seed(listed); // its last minutes of history, fetched in the background
+        return true;
     }
 
     /** The registry entry of a Gamma market: id {@code PM<gamma id>}, outcome 0, its token as the price reference. */
@@ -360,6 +405,11 @@ public class PolymarketCatalog {
         put(meta, "eventKey", g.eventKey());
         put(meta, "gameId", g.event() == null ? null : g.event().gameId());
         put(meta, "gameStartTime", g.gameStartTime());
+        // the kick-off as a number as well (the API's MarketDto.eventStartsAtMs reads this key)
+        Long gameStartMs = GammaJson.millis(g.gameStartTime());
+        if (gameStartMs != null) {
+            meta.put("gameStartMs", gameStartMs.longValue());
+        }
         put(meta, "sportsMarketType", g.sportsMarketType());
         put(meta, "tickSize", g.tickSize() == null ? null : g.tickSize().toPlainString());
         String eventTitle = g.event() == null ? null : g.event().title();
@@ -415,6 +465,7 @@ public class PolymarketCatalog {
 
     private void close(Market market, String reason, long nowMs) {
         LOG.infof("closing %s (%s): %s", market.id(), market.symbol(), reason);
+        // no lock is held: the registry's listener takes the engine's write lock (class comment: Locks)
         registry.close(market.id(), reason, nowMs);
         state.forget(market.id());
         refreshWanted = true; // a category is one short now: top it up at the next 30 s tick

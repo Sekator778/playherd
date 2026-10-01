@@ -12,11 +12,12 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>the poll reports a token that was <b>missing</b> from {@code /midpoints} (a closed market's
  *       token silently drops out of the batch answer, polymarket_data_api.md §5) and the time since
  *       when it has been missing — the catalog closes the market when that is 60 s;</li>
- *   <li>the catalog reports the market's {@code oneDayPriceChange} from Gamma, read as an
- *       <i>absolute</i> change in probability ({@code -0.04} = four points down) — UNVERIFIED as a
- *       definition: Gamma's docs were not read for it, the samples of 2026-10-01 read most naturally
- *       that way (Liechtenstein at 0.0005 with {@code -0.0375}, Netherlands at 0.065 with
- *       {@code -0.4} after going 2-0 down) — and the poll turns it into the relative
+ *   <li>the catalog reports the market's {@code oneDayPriceChange} from Gamma, an <i>absolute</i>
+ *       change in probability ({@code -0.04} = four points down) — measured 2026-10-02: for three open
+ *       markets it equals the CLOB's price now minus the price about 24 hours earlier from the data
+ *       API's history (Kane {@code -0.0775} = 0.3455 − 0.423, Lula {@code 0.01} = 0.395 − 0.385,
+ *       Yamal {@code 0.1415} = 0.575 − 0.4335), a relative change would have been 0.026 / −0.18 /
+ *       0.33 (docs/research/polymarket_data_api.md §13.2) — and the poll turns it into the relative
  *       {@code change24h} of the quote.</li>
  * </ul>
  */

@@ -83,7 +83,7 @@ public final class FakeApis {
                                  int limit) {
         }
 
-        public record TokensCall(List<String> tokenIds, int limit) {
+        public record TokensCall(List<String> tokenIds, boolean closed, int limit) {
         }
 
         public final Script<MarketsCall, JsonNode> markets = new Script<>();
@@ -96,8 +96,8 @@ public final class FakeApis {
         }
 
         @Override
-        public JsonNode marketsByTokens(List<String> tokenIds, int limit) {
-            return byTokens.call(new TokensCall(List.copyOf(tokenIds), limit));
+        public JsonNode marketsByTokens(List<String> tokenIds, boolean closed, int limit) {
+            return byTokens.call(new TokensCall(List.copyOf(tokenIds), closed, limit));
         }
 
         @Override

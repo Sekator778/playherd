@@ -35,6 +35,10 @@ class PricePipelineWiringTest {
     Scheduler scheduler;
     @Inject
     PriceHttpClients clients;
+    @Inject
+    HistorySeeder seeder;
+    @Inject
+    HyperliquidLiveState delisting;
 
     @Test
     void theLiveImplementationReplacesTheFallback() {
@@ -90,7 +94,8 @@ class PricePipelineWiringTest {
     @Test
     void everyJobIsScheduledUnderItsIdentity() {
         for (String job : List.of("price-feed-hyperliquid", "price-feed-hyperliquid-xyz", "price-feed-polymarket",
-                "price-feed-synthetic", "price-feed-prune", "catalog-hyperliquid", "catalog-polymarket",
+                "price-feed-synthetic", "price-feed-prune", "catalog-hyperliquid", "catalog-hyperliquid-watch",
+                "catalog-polymarket",
                 "catalog-polymarket-watch", "catalog-synthetic")) {
             assertThat(scheduler.getScheduledJob(job)).as(job).isNotNull();
         }
@@ -112,6 +117,17 @@ class PricePipelineWiringTest {
         Trigger prune = scheduler.getScheduledJob("price-feed-prune");
         long minutesToNext = Duration.between(java.time.Instant.now(), prune.getNextFireTime()).toMinutes();
         assertThat(minutesToNext).isBetween(0L, 10L); // every 10 minutes
+    }
+
+    @Test
+    void theSeederAndTheDelistingStateAreBeansAndAskNobodyOutsideLiveMode() {
+        assertThat(seeder).isNotNull();
+        assertThat(delisting).isNotNull();
+
+        seeder.seed(TestMarkets.btc()); // herd.mode=replay: returns at once, queues nothing, builds no client
+        assertThat(seeder.seedEmpty(List.of(TestMarkets.btc()))).isZero();
+
+        assertThat(clients.builtCount()).isZero();
     }
 
     @Test

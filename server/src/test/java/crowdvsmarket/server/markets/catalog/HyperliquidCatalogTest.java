@@ -8,6 +8,10 @@ import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.prices.FakeApis;
 import crowdvsmarket.server.prices.Fixtures;
+import crowdvsmarket.server.prices.HistorySeeder;
+import crowdvsmarket.server.prices.HyperliquidLiveState;
+import crowdvsmarket.server.prices.PipelineTestSupport;
+import crowdvsmarket.server.prices.TickStore;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -204,6 +208,23 @@ class HyperliquidCatalogTest {
     }
 
     @Test
+    void aMetaAnswerWhoseListsDoNotLineUpListsNothingAndIsTriedAgain() {
+        // universe[i] and ctxs[i] are the same asset only while the lists have the same length: here SOL would be
+        // priced with the markPx of whatever stands at its position, so the answer is refused like the poll refuses it
+        JsonNode skewed = Fixtures.parse("[{\"universe\":[{\"name\":\"ETH\",\"szDecimals\":4,\"maxLeverage\":25},"
+                + "{\"name\":\"SOL\",\"szDecimals\":2,\"maxLeverage\":20}]},[{\"markPx\":\"2697.0\"}]]");
+        api.info.handler = body -> skewed;
+        HyperliquidCatalog catalog = catalog(config(List.of("ETH", "SOL"), List.of(), List.of(), List.of()));
+
+        assertThat(catalog.sync(NOW)).isEqualTo(2); // both wait for the next run
+        assertThat(registry.log).isEmpty();
+
+        api.info.handler = body -> main;
+        assertThat(catalog.sync(NOW + 60_000)).isZero();
+        assertThat(registry.log).containsExactlyInAnyOrder("listed ETH", "listed SOL");
+    }
+
+    @Test
     void anAssetWithoutAUsablePriceYetIsRetriedNotMarkedBad() {
         JsonNode noPrice = Fixtures.parse("[{\"universe\":[{\"name\":\"ETH\",\"szDecimals\":4,\"maxLeverage\":25,"
                 + "\"marginTableId\":55}]},[{\"markPx\":null}]]");
@@ -252,5 +273,187 @@ class HyperliquidCatalogTest {
         catalog(config(List.of("ETH"), List.of(), List.of(), List.of())).run();
 
         assertThat(registry.log).containsExactly("listed ETH");
+    }
+
+    // ------------------------------------------------------------- a delisted asset closes its market (G2)
+
+    private HyperliquidCatalog catalog(HyperliquidLiveState state) {
+        return new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state, HistorySeeder.disabled(),
+                () -> NOW);
+    }
+
+    private Market listedEth() {
+        catalog(CatalogConfig.defaults()).sync(NOW);
+        return market("ETH");
+    }
+
+    @Test
+    void anAssetTheDexHasReportedDelistedForTenSecondsClosesItsMarketInPlainWords() {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        listedEth();
+        HyperliquidCatalog catalog = catalog(state);
+        state.reportDelisted("ETH", NOW);
+
+        assertThat(catalog.watch(NOW + 9_999)).isZero(); // one odd answer must not close a market
+        assertThat(market("ETH").isActive()).isTrue();
+        assertThat(catalog.watch(NOW + 10_000)).isEqualTo(1);
+
+        assertThat(market("ETH").isActive()).isFalse();
+        assertThat(registry.closeReasons).containsOnlyKeys("ETH");
+        // shown to the players as it stands, and after "market closed: " in the refund of their bets
+        assertThat(registry.closeReasons.get("ETH")).isEqualTo("The asset was delisted at the source");
+        assertThat(registry.closeReasons.get("ETH")).isEqualTo(HyperliquidCatalog.REASON_DELISTED);
+        assertThat(state.delistedSince("ETH")).isEmpty(); // forgotten with the market
+        assertThat(api.info.requests).hasSize(2); // listing only: the watch asks nobody
+    }
+
+    @Test
+    void anAnswerThatListsTheAssetAgainRestartsTheClock() {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        listedEth();
+        HyperliquidCatalog catalog = catalog(state);
+        state.reportDelisted("ETH", NOW);
+        state.reportListed("ETH");
+        state.reportDelisted("ETH", NOW + 8_000);
+
+        assertThat(catalog.watch(NOW + 12_000)).isZero();
+        assertThat(catalog.watch(NOW + 18_000)).isEqualTo(1);
+    }
+
+    @Test
+    void bitcoinIsNeverClosedAndOnlyHyperliquidMarketsAreWatched() {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        registry.add(new Market("PM1", MarketKind.ODDS, Category.POLITICS, "PM", "Will it?", "Yes", null, "polymarket",
+                "tok", null, 10, 4, 7, crowdvsmarket.server.markets.MarketStatus.ACTIVE, 0L, null, null, null));
+        state.reportDelisted("BTC", NOW - 3_600_000L);
+        state.reportDelisted("PM1", NOW - 3_600_000L);
+
+        assertThat(catalog(state).watch(NOW)).isZero();
+
+        assertThat(registry.closeReasons).isEmpty();
+        assertThat(market("BTC").isActive()).isTrue();
+        assertThat(market("PM1").isActive()).isTrue();
+    }
+
+    @Test
+    void aRegistryThatCannotCloseIsRetriedAtTheNextWatch() {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        int[] failures = {1};
+        registry = new FakeMarketRegistry() {
+            @Override
+            public void close(String marketId, String reason, long nowMs) {
+                if (failures[0]-- > 0) {
+                    throw new IllegalStateException("database is down");
+                }
+                super.close(marketId, reason, nowMs);
+            }
+        };
+        listedEth();
+        HyperliquidCatalog catalog = catalog(state);
+        state.reportDelisted("ETH", NOW - 60_000L);
+
+        assertThat(catalog.watch(NOW)).isZero();
+        assertThat(market("ETH").isActive()).isTrue();
+        assertThat(state.delistedSince("ETH")).isPresent(); // still reported: the next watch tries again
+
+        assertThat(catalog.watch(NOW + 5_000)).isEqualTo(1);
+        assertThat(market("ETH").isActive()).isFalse();
+    }
+
+    @Test
+    void aPollThatSeesTheAssetDelistedAndTheWatchTogetherCloseTheMarket() throws Exception {
+        // MATIC is isDelisted in the main-dex sample (markPx frozen); its market was listed before that happened
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        Market matic = registry.add(new Market("MATIC", MarketKind.PERP, Category.CRYPTO, "MATIC", "Polygon", null, null,
+                "hyperliquid", "MATIC", null, 20, 3, 8, crowdvsmarket.server.markets.MarketStatus.ACTIVE, 0L, null, null,
+                null));
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(NOW);
+        crowdvsmarket.server.prices.HyperliquidPriceSource source = crowdvsmarket.server.prices.PipelineTestSupport
+                .hyperliquid(api, clock::get, state);
+        crowdvsmarket.server.prices.PriceSource.Feed feed = source.feeds().get(0);
+        HyperliquidCatalog catalog = new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state,
+                HistorySeeder.disabled(), clock::get);
+
+        for (int i = 0; i < 4; i++) { // the polls of 0, 3, 6 and 9 s, each answered with MATIC delisted
+            assertThat(source.poll(feed, List.of(matic))).isEmpty(); // a delisted asset has no price to take
+            clock.addAndGet(3_000);
+        }
+
+        assertThat(state.delistedSince("MATIC")).hasValue(NOW); // since the first answer that said so
+        assertThat(catalog.watch(NOW + 9_000)).isZero();
+        assertThat(catalog.watch(clock.get())).isEqualTo(1); // 12 s
+        assertThat(market("MATIC").isActive()).isFalse();
+        assertThat(registry.closeReasons).containsEntry("MATIC", HyperliquidCatalog.REASON_DELISTED);
+    }
+
+    @Test
+    void theWatchJobDoesNothingOutsideLiveMode() {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        listedEth();
+        state.reportDelisted("ETH", NOW - 60_000L);
+        CatalogConfig replay = new CatalogConfig(false, false, CatalogConfig.parseNames(CatalogConfig.DEFAULT_CRYPTO),
+                List.of(), List.of(), List.of(), true, 3, 3, 10, true);
+
+        new HyperliquidCatalog(registry, replay, () -> api, state, HistorySeeder.disabled(), () -> NOW).watchJob();
+        assertThat(market("ETH").isActive()).isTrue();
+
+        new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state, HistorySeeder.disabled(),
+                () -> NOW).watchJob();
+        assertThat(market("ETH").isActive()).isFalse();
+    }
+
+    // ---------------------------------------------------------------- the first minutes of a new market (G1)
+
+    @Test
+    void everyMarketItListsIsHandedToTheSeederForItsRecentHistory() {
+        FakeApis.Hyperliquid history = new FakeApis.Hyperliquid();
+        history.info.handler = body -> candlesPerMinute(body.get("req").get("startTime").asLong(),
+                body.get("req").get("endTime").asLong());
+        TickStore store = Fixtures.tickStore(() -> NOW);
+        HistorySeeder seeder = PipelineTestSupport.seeder(
+                List.of(PipelineTestSupport.hyperliquid(history, () -> NOW)), store, () -> NOW);
+        HyperliquidCatalog catalog = new HyperliquidCatalog(registry, config(List.of("BTC", "ETH", "SOL"),
+                List.of("xyz:NVDA"), List.of(), List.of()), () -> api, new HyperliquidLiveState(), seeder, () -> NOW);
+
+        catalog.sync(NOW);
+
+        // listed: ETH, SOL, xyz_NVDA (BTC was there); each of the three, and only those, asked for its candles
+        assertThat(history.requestsOfType("candleSnapshot")).extracting(r -> r.get("req").get("coin").asText())
+                .containsExactlyInAnyOrder("ETH", "SOL", "xyz:NVDA");
+        for (String id : List.of("ETH", "SOL", "xyz_NVDA")) {
+            assertThat(store.size(id)).as(id).isPositive();
+            assertThat(store.last(id).orElseThrow().atMs()).as(id).isLessThanOrEqualTo(NOW);
+        }
+        assertThat(store.size("BTC")).isZero();
+    }
+
+    @Test
+    void aListingTheRegistryRefusesIsNotSeeded() {
+        FakeApis.Hyperliquid history = new FakeApis.Hyperliquid();
+        TickStore store = Fixtures.tickStore(() -> NOW);
+        HistorySeeder seeder = PipelineTestSupport.seeder(
+                List.of(PipelineTestSupport.hyperliquid(history, () -> NOW)), store, () -> NOW);
+        registry = new FakeMarketRegistry() {
+            @Override
+            public Market list(crowdvsmarket.server.markets.NewMarket spec, long nowMs) {
+                throw new IllegalStateException("constraint violated");
+            }
+        };
+
+        new HyperliquidCatalog(registry, config(List.of("ETH"), List.of(), List.of(), List.of()), () -> api,
+                new HyperliquidLiveState(), seeder, () -> NOW).sync(NOW);
+
+        assertThat(history.info.requests).isEmpty();
+    }
+
+    /** One candle per minute from the one containing {@code startMs} to the one containing {@code endMs}. */
+    private static JsonNode candlesPerMinute(long startMs, long endMs) {
+        com.fasterxml.jackson.databind.node.ArrayNode rows = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                .arrayNode();
+        for (long t = Math.floorDiv(startMs, 60_000L) * 60_000L; t <= endMs; t += 60_000L) {
+            rows.addObject().put("t", t).put("T", t + 59_999).put("o", "100").put("h", "101").put("l", "99")
+                    .put("c", "100").put("n", 5);
+        }
+        return rows;
     }
 }

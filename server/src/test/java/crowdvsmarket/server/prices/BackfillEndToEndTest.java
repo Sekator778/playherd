@@ -2,6 +2,7 @@ package crowdvsmarket.server.prices;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import crowdvsmarket.engine.market.Candle;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundWindow;
@@ -33,17 +34,19 @@ class BackfillEndToEndTest {
 
         RoundPriceData data = prices.resolve(btc, new RoundWindow("BTC", Interval.HOURLY, start, end));
 
-        // one request, for the hole: from 75 s before the window (and 30 minutes of lookback) to its end, BTC, 1m
+        // one request, for the hole: from 75 s before the window (and 30 minutes of lookback) to 1 ms before its end,
+        // BTC, 1m: the candle that starts at the end holds trades after the round (R3)
         assertThat(api.info.requests).hasSize(1);
         assertThat(api.info.requests.get(0).get("req").get("coin").asText()).isEqualTo("BTC");
         assertThat(api.info.requests.get(0).get("req").get("interval").asText()).isEqualTo("1m");
         assertThat(api.info.requests.get(0).get("req").get("startTime").asLong()).isEqualTo(start - 75_000 - 30 * 60_000L);
-        assertThat(api.info.requests.get(0).get("req").get("endTime").asLong()).isEqualTo(end);
+        assertThat(api.info.requests.get(0).get("req").get("endTime").asLong()).isEqualTo(end - 1);
 
-        // P(start) is the 17:59 candle's close (1 ms before) = the 18:00 open; P(end) the 18:01 candle's open
+        // P(start) is the 17:59 candle's close (1 ms before the start); P(end) is the 18:00 candle's close, the last
+        // trade of the round's minute (84776), NOT the open of the 18:01 candle that starts at the end (84777)
         assertThat(data.open()).isEqualByComparingTo("84871.00");
-        assertThat(data.close()).isEqualByComparingTo("84777.00");
-        assertThat(data.sourceTsMs()).isEqualTo(end);
+        assertThat(data.close()).isEqualByComparingTo("84776.00");
+        assertThat(data.sourceTsMs()).isEqualTo(end - 1);
         List<Candle> path = data.path();
         assertThat(path).hasSize(30);
         // the 18:00 candle had high 84883 and low 84743: both are in the path
@@ -101,6 +104,67 @@ class BackfillEndToEndTest {
             assertThat(c.high()).isEqualByComparingTo("84792.00");
             assertThat(c.low()).isEqualByComparingTo("84792.00");
         }
+    }
+
+    /** The round [19:30:00, 19:34:00] of 2026-10-01: {@code {"data":[…]}} with the buckets at the given seconds after its start. */
+    private static JsonNode buckets(Object... secondsAndPrice) {
+        StringBuilder sb = new StringBuilder("{\"data\":[");
+        for (int i = 0; i < secondsAndPrice.length; i += 2) {
+            sb.append(i == 0 ? "" : ",").append("{\"timestamp\":")
+                    .append(1_790_883_000L + ((Number) secondsAndPrice[i]).longValue()).append(",\"price\":")
+                    .append(secondsAndPrice[i + 1]).append(",\"resolution_seconds\":60}");
+        }
+        return Fixtures.parse(sb.append("]}").toString());
+    }
+
+    private RoundPriceData settlePolymarketRound(JsonNode history) {
+        long start = 1_790_883_000_000L;
+        long end = start + 240_000L;
+        FakeApis.Data data = new FakeApis.Data();
+        data.history.handler = call -> history;
+        PolymarketPriceSource source = new PolymarketPriceSource(() -> new FakeApis.Clob(), () -> data,
+                new PolymarketLiveState(), PricesConfig.defaults(), () -> end);
+        AtomicLong now = new AtomicLong(end + 5_000);
+        LiveMarketPrices prices = new LiveMarketPrices(Fixtures.tickStore(now::get), new PriceSources(List.of(source)),
+                PricesConfig.defaults(), now::get);
+        return prices.resolve(TestMarkets.odds("PM4678642", "tok"), new RoundWindow("PM4678642", Interval.HOURLY, start, end));
+    }
+
+    @Test
+    void aPolymarketRoundSettlesAcrossAMissingMinuteBucket() {
+        // 120 s between two buckets happens in real series (55 of 1 436 in one day, polymarket_data_api.md §4.2):
+        // the bucket at +120 s is missing, the 90 s gap limit of the feed would make the round wait for its refund
+        RoundPriceData data = settlePolymarketRound(buckets(0, 0.695, 60, 0.715, 180, 0.705, 240, 0.725));
+
+        assertThat(data.open()).isEqualByComparingTo("6950.00");
+        assertThat(data.close()).isEqualByComparingTo("7250.00");
+        assertThat(data.path()).hasSize(30);
+        // 0.715 holds from +60 s to +180 s: the path has candles flat at that price, and no price that was never seen
+        assertThat(data.path().stream().anyMatch(c -> c.low().compareTo(new BigDecimal("7150.00")) == 0
+                && c.high().compareTo(new BigDecimal("7150.00")) == 0)).isTrue();
+        assertThat(data.path().stream().map(Candle::low).min(BigDecimal::compareTo).orElseThrow())
+                .isEqualByComparingTo("6950.00");
+        assertThat(data.path().stream().map(Candle::high).max(BigDecimal::compareTo).orElseThrow())
+                .isEqualByComparingTo("7250.00");
+    }
+
+    @Test
+    void aPolymarketRoundSettlesWhenTheBucketAtTheRoundEndIsMissing() {
+        // the bucket stamped exactly at the end is not there: the one before it is 60 s old, the feed's limit is 30 s
+        RoundPriceData data = settlePolymarketRound(buckets(0, 0.695, 60, 0.715, 120, 0.705, 180, 0.715));
+
+        assertThat(data.open()).isEqualByComparingTo("6950.00");
+        assertThat(data.close()).isEqualByComparingTo("7150.00"); // the +180 s price, carried to the end
+        assertThat(data.sourceTsMs()).isEqualTo(1_790_883_240_000L);
+    }
+
+    @Test
+    void aPolymarketRoundStillWaitsWhenTheNewestBucketsAreMoreThanAMinuteLate() {
+        // the data API's closed buckets trail by minutes: with the last one 90 s before the end there is no
+        // price at the end yet — the scheduler retries, the buckets arrive
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> settlePolymarketRound(buckets(0, 0.695, 60, 0.715, 120, 0.705, 150, 0.7)))
+                .isInstanceOf(PriceUnavailableException.class);
     }
 
     @Test

@@ -27,8 +27,11 @@ class PriceFeedServiceTest {
     private static final class ScriptedSource implements PriceSource {
 
         final List<String> polled = new ArrayList<>(); // "<feed>: <market ids>"
+        final List<String> historyAsked = new ArrayList<>(); // market ids
         Map<String, Quote> answer = new LinkedHashMap<>();
         IOException failure;
+        IOException historyFailure;
+        List<PricePoint> historyPoints = List.of();
 
         @Override
         public String name() {
@@ -51,8 +54,12 @@ class PriceFeedServiceTest {
         }
 
         @Override
-        public List<PricePoint> history(Market market, long fromMs, long toMs) {
-            return List.of();
+        public List<PricePoint> history(Market market, long fromMs, long toMs) throws IOException {
+            historyAsked.add(market.id());
+            if (historyFailure != null) {
+                throw historyFailure;
+            }
+            return historyPoints;
         }
     }
 
@@ -159,6 +166,71 @@ class PriceFeedServiceTest {
         service.pollFeed("hyperliquid:xyz");
 
         assertThat(source.polled).isEmpty();
+    }
+
+    // ------------------------------------------------------------- the first poll seeds an empty ring (G1)
+
+    private PriceFeedService serviceWithSeeder() {
+        return new PriceFeedService(new PriceSources(List.of(source)), store, registry, PricesConfig.defaults(),
+                PipelineTestSupport.seeder(List.of(source), store, now::get), now::get);
+    }
+
+    @Test
+    void theFirstPollOfAFeedSeedsTheMarketWhoseRingIsEmptyAndItsTickLandsOnTopOfTheHistory() {
+        source.historyPoints = List.of(new PricePoint(T0 - 600_000L, new BigDecimal("84000")),
+                new PricePoint(T0 - 300_000L, new BigDecimal("84010")),
+                new PricePoint(T0 - 10_000L, new BigDecimal("84020")));
+        source.answer.put("BTC", new PriceSource.Quote(new BigDecimal("84629.0"), null));
+        PriceFeedService seeding = serviceWithSeeder();
+
+        seeding.pollFeed("hyperliquid");
+        now.addAndGet(3_000L);
+        seeding.pollFeed("hyperliquid");
+
+        assertThat(source.historyAsked).containsExactly("BTC"); // once: the second poll finds a ring that is not empty
+        assertThat(store.series("BTC", 0, Long.MAX_VALUE)).extracting(PricePoint::atMs)
+                .containsExactly(T0 - 600_000L, T0 - 300_000L, T0 - 10_000L, T0, T0 + 3_000L);
+        assertThat(store.last("BTC").orElseThrow().raw()).isEqualByComparingTo("84629.0");
+    }
+
+    @Test
+    void aSourceThatCannotGiveHistoryNeverStopsTheLivePoll() {
+        source.historyFailure = new IOException("connection reset");
+        source.answer.put("BTC", new PriceSource.Quote(new BigDecimal("84629.0"), null));
+        PriceFeedService seeding = serviceWithSeeder();
+
+        seeding.pollFeed("hyperliquid");
+
+        assertThat(store.last("BTC")).isPresent(); // the tick is there whatever the seed did
+        assertThat(source.historyAsked).hasSize(1);
+
+        // the ring is not empty now (the live tick): the seed is not retried, the market goes on from live ticks
+        now.addAndGet(61_000L);
+        seeding.pollFeed("hyperliquid");
+        assertThat(source.historyAsked).hasSize(1);
+    }
+
+    @Test
+    void aFeedWhosePollsKeepFailingAsksForTheHistoryOnceAMinuteNotOnceAPoll() {
+        source.failure = new IOException("connection refused"); // the ring stays empty
+        PriceFeedService seeding = serviceWithSeeder();
+
+        for (int i = 0; i < 25; i++) { // 75 s of polls every 3 s
+            seeding.pollFeed("hyperliquid");
+            now.addAndGet(3_000L);
+        }
+
+        assertThat(source.historyAsked).hasSize(2); // at 0 s and at 60 s
+    }
+
+    @Test
+    void thePollsOfAFeedDoNotSeedTheMarketsOfAnotherFeed() {
+        source.answer.put("xyz_NVDA", new PriceSource.Quote(new BigDecimal("231.7"), null));
+        PriceFeedService seeding = serviceWithSeeder();
+
+        seeding.pollFeed("hyperliquid:xyz");
+
+        assertThat(source.historyAsked).containsExactly("xyz_NVDA"); // BTC belongs to the other feed
     }
 
     // -------------------------------------------------------------------------- the mode switches

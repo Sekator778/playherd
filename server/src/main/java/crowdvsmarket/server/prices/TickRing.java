@@ -76,6 +76,17 @@ final class TickRing {
         return i >= from ? new long[] {at[i], px[i]} : null;
     }
 
+    /** The first tick with {@code at > t} as {@code {atMs, px}}, or {@code null} when there is none. */
+    synchronized long[] after(long t) {
+        int i = upperBound(t);
+        return i < to ? new long[] {at[i], px[i]} : null;
+    }
+
+    /** The oldest tick as {@code {atMs, px}}, or {@code null} when the ring is empty. */
+    synchronized long[] first() {
+        return to > from ? new long[] {at[from], px[from]} : null;
+    }
+
     /** The last tick at or before {@code fromExclusive}, and the ticks in {@code (fromExclusive, toInclusive]}. */
     synchronized Window window(long fromExclusive, long toInclusive) {
         int i0 = upperBound(fromExclusive);

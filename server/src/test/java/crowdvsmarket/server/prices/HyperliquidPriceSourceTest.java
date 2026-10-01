@@ -1,6 +1,7 @@
 package crowdvsmarket.server.prices;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import crowdvsmarket.server.markets.Category;
@@ -85,16 +86,114 @@ class HyperliquidPriceSourceTest {
     }
 
     @Test
-    void badAnswersGiveNoQuotesNotExceptions() {
-        List<Market> markets = List.of(coin("BTC"));
+    void aMarkPxThatIsGarbageOrZeroCostsThatMarketItsTickOnly() {
+        JsonNode broken = Fixtures.parse("[{\"universe\":[{\"name\":\"BTC\"},{\"name\":\"ETH\"},{\"name\":\"SOL\"}]},"
+                + "[{\"markPx\":\"oops\"},{\"markPx\":\"0\"},{\"markPx\":\"117.84\"}]]");
 
-        assertThat(HyperliquidPriceSource.parse(null, markets)).isEmpty();
-        assertThat(HyperliquidPriceSource.parse(Fixtures.parse("{}"), markets)).isEmpty();
-        assertThat(HyperliquidPriceSource.parse(Fixtures.parse("[]"), markets)).isEmpty();
-        // a markPx that is garbage or zero costs that market its tick only
-        JsonNode broken = Fixtures.parse("[{\"universe\":[{\"name\":\"BTC\"},{\"name\":\"ETH\"}]},"
-                + "[{\"markPx\":\"oops\"},{\"markPx\":\"0\"}]]");
-        assertThat(HyperliquidPriceSource.parse(broken, List.of(coin("BTC"), coin("ETH")))).isEmpty();
+        Map<String, PriceSource.Quote> quotes = HyperliquidPriceSource.parse(broken,
+                List.of(coin("BTC"), coin("ETH"), coin("SOL")));
+
+        assertThat(quotes).containsOnlyKeys("SOL");
+    }
+
+    @Test
+    void anAnswerThatIsNotMetaAndCtxsFailsTheReadLoudly() {
+        // R4: HTTP 200 with an error object or a changed wrapper used to be an empty, "successful" poll
+        List<Market> markets = List.of(coin("BTC"));
+        for (String bad : List.of("{}", "[]", "[{\"universe\":[]}]", "{\"error\":\"rate limited\"}", "\"oops\"", "null",
+                "[{\"universe\":{}},[]]", "[{\"universe\":[{\"name\":\"BTC\"}]},{}]",
+                "[{\"universe\":[{\"name\":\"BTC\"},{\"name\":\"ETH\"}]},[{\"markPx\":\"1\"}]]")) {
+            assertThatThrownBy(() -> HyperliquidPriceSource.parse(Fixtures.parse(bad), markets)).as(bad)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("metaAndAssetCtxs");
+        }
+        assertThatThrownBy(() -> HyperliquidPriceSource.parse(null, markets)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void aMalformedAnswerFailsThePollSoTheFeedServiceCanReportIt() {
+        FakeApis.Hyperliquid api = new FakeApis.Hyperliquid();
+        HyperliquidPriceSource source = new HyperliquidPriceSource(() -> api, PricesConfig.defaults(), () -> NOW);
+        PriceSource.Feed mainFeed = source.feeds().get(0);
+
+        api.info.handler = body -> Fixtures.parse("{\"status\":\"err\",\"response\":\"Too many requests\"}");
+        assertThatThrownBy(() -> source.poll(mainFeed, List.of(coin("BTC")))).isInstanceOf(IllegalStateException.class);
+
+        api.info.handler = body -> main; // and a good answer afterwards polls normally
+        assertThat(source.poll(mainFeed, List.of(coin("BTC")))).containsOnlyKeys("BTC");
+    }
+
+    @Test
+    void aMalformedAnswerStoresNoTickAndTheFeedServiceSurvivesIt() {
+        FakeApis.Hyperliquid api = new FakeApis.Hyperliquid();
+        api.info.handler = body -> Fixtures.parse("{\"status\":\"err\"}");
+        java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(NOW);
+        TickStore store = Fixtures.tickStore(now::get);
+        PriceFeedService feeds = PipelineTestSupport.feedService(List.of(PipelineTestSupport.hyperliquid(api, now::get)),
+                store, new crowdvsmarket.server.markets.catalog.FakeMarketRegistry(), now::get);
+
+        PipelineTestSupport.poll(feeds, "hyperliquid"); // must not throw: it is a throttled warning of the feed service
+
+        assertThat(store.last("BTC")).isEmpty();
+        assertThat(api.info.requests).hasSize(1);
+    }
+
+    @Test
+    void aConfiguredCoinMissingFromAValidAnswerGetsAThrottledWarningOfItsOwn() throws Exception {
+        RecordingLogger log = new RecordingLogger();
+        java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(NOW);
+        FakeApis.Hyperliquid api = new FakeApis.Hyperliquid();
+        api.info.handler = body -> main;
+        HyperliquidPriceSource source = new HyperliquidPriceSource(() -> api, PricesConfig.defaults(),
+                new HyperliquidLiveState(), now::get, new ThrottledLog(log, now::get, 60_000L));
+        PriceSource.Feed mainFeed = source.feeds().get(0);
+        List<Market> markets = List.of(coin("BTC"), coin("RENAMED"));
+
+        Map<String, PriceSource.Quote> first = source.poll(mainFeed, markets);
+        now.addAndGet(3_000);
+        source.poll(mainFeed, markets); // 3 s later: the same warning is not repeated
+        now.addAndGet(3_000);
+        source.poll(mainFeed, markets);
+
+        assertThat(first).containsOnlyKeys("BTC"); // the other market only misses its tick
+        assertThat(log.warnings()).hasSize(1);
+        assertThat(log.warnings().get(0)).contains("RENAMED").contains("does not list");
+        assertThat(log.warnings().get(0)).doesNotContain("BTC");
+
+        now.addAndGet(60_000); // a minute later it is said again, with the count of the ones skipped
+        source.poll(mainFeed, markets);
+        assertThat(log.warnings()).hasSize(2);
+        assertThat(log.warnings().get(1)).contains("2 similar");
+
+        // once the coin is back the recovery is logged
+        api.info.handler = body -> Fixtures.parse(main.toString().replace("\"name\":\"SOL\"", "\"name\":\"RENAMED\""));
+        source.poll(mainFeed, markets);
+        assertThat(log.infos()).anyMatch(m -> m.contains("recovered") && m.contains("RENAMED"));
+    }
+
+    @Test
+    void aDelistedAssetIsReportedToTheLiveStateAndALiveOneClearsTheReport() throws Exception {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(NOW);
+        FakeApis.Hyperliquid api = new FakeApis.Hyperliquid();
+        api.info.handler = body -> main;
+        HyperliquidPriceSource source = new HyperliquidPriceSource(() -> api, PricesConfig.defaults(), state, now::get);
+        PriceSource.Feed mainFeed = source.feeds().get(0);
+        List<Market> markets = List.of(coin("BTC"), coin("MATIC"), coin("MKR"), coin("NOPE"));
+
+        source.poll(mainFeed, markets);
+        now.addAndGet(3_000);
+        source.poll(mainFeed, markets);
+
+        // MATIC and MKR are isDelisted in the answer: reported, with the time of the FIRST such answer
+        assertThat(state.delistedSince("MATIC")).hasValue(NOW);
+        assertThat(state.delistedSince("MKR")).hasValue(NOW);
+        assertThat(state.delistedSince("BTC")).isEmpty();
+        assertThat(state.delistedSince("NOPE")).isEmpty(); // not in the universe at all: missing, not delisted
+
+        // an answer that lists MATIC as a live asset stops the clock
+        api.info.handler = body -> Fixtures.parse(main.toString().replace("\"isDelisted\":true", "\"isDelisted\":false"));
+        source.poll(mainFeed, markets);
+        assertThat(state.delistedSince("MATIC")).isEmpty();
     }
 
     @Test
@@ -150,25 +249,64 @@ class HyperliquidPriceSourceTest {
     // -------------------------------------------------------------------------------------- history
 
     @Test
-    void eachCandleGivesFourPointsOpenAtTExtremesInsideCloseAtBigT() {
+    void aCandleGivesItsTwoExtremesInsideTheMinuteAndItsCloseAtBigTAndOnlyTheFirstRowItsOpen() {
         JsonNode rows = Fixtures.json("hyperliquid/candle_snapshot_btc_1m.json"); // t = 17:59, 18:00, 18:01
         long t1759 = 1_790_877_540_000L;
 
         List<PricePoint> points = HyperliquidPriceSource.candlePoints(rows, 0, Long.MAX_VALUE);
 
-        assertThat(points).hasSize(12);
+        assertThat(points).hasSize(10); // 4 for the first row, 3 for each of the two that have a predecessor
         // row 0: o 84780, h 84889, l 84779, c 84871 -> closed up: o, then low, then high, then c
         assertThat(points.subList(0, 4)).extracting(PricePoint::atMs)
                 .containsExactly(t1759, t1759 + 20_000, t1759 + 40_000, t1759 + 59_999);
         assertThat(points.subList(0, 4)).extracting(p -> p.raw().intValue())
                 .containsExactly(84780, 84779, 84889, 84871);
-        // row 1 (18:00) closed down: o 84871, h 84883, l 84743, c 84776 -> o, high, low, c
-        assertThat(points.subList(4, 8)).extracting(p -> p.raw().intValue())
-                .containsExactly(84871, 84883, 84743, 84776);
-        // no two points further apart than the 30 s maximum gap: every 20 s, and 19.999 s at the seams
+        // row 1 (18:00) closed down: o 84871, h 84883, l 84743, c 84776 -> high, low, c; its open IS the 17:59 close
+        assertThat(points.subList(4, 7)).extracting(p -> p.raw().intValue())
+                .containsExactly(84883, 84743, 84776);
+        // row 2 (18:01) closed up: o 84777, h 84792, l 84736, c 84792 -> low, high, c
+        assertThat(points.subList(7, 10)).extracting(p -> p.raw().intValue())
+                .containsExactly(84736, 84792, 84792);
+        // no two points further apart than the 30 s maximum gap: every 20 s, and 20.001 s at the seams
         for (int i = 1; i < points.size(); i++) {
             assertThat(points.get(i).atMs() - points.get(i - 1).atMs()).isLessThanOrEqualTo(30_000);
         }
+    }
+
+    @Test
+    void anOpenIsTheFirstTradeAfterTItIsNotThePriceAtTSoItNeverReplacesThePreviousCandlesClose() {
+        // R3: the price at t is the last trade at or before t. 18:00's open 84871 is the first trade of the
+        // minute; the price at 18:00:00 is the 17:59 candle's close, one millisecond earlier. The BTC sample
+        // has them equal, so a pair that differs is made up: the next minute opens 5 higher than this one closed.
+        JsonNode rows = Fixtures.parse("[{\"t\":60000,\"T\":119999,\"o\":\"100\",\"h\":\"101\",\"l\":\"99\",\"c\":\"100\"},"
+                + "{\"t\":120000,\"T\":179999,\"o\":\"105\",\"h\":\"106\",\"l\":\"104\",\"c\":\"105\"}]");
+
+        List<PricePoint> points = HyperliquidPriceSource.candlePoints(rows, 0, Long.MAX_VALUE);
+
+        // the last point at or before the boundary 120000 is the 100 that closed the first minute
+        PricePoint atBoundary = points.stream().filter(p -> p.atMs() <= 120_000).reduce((a, b) -> b).orElseThrow();
+        assertThat(atBoundary.atMs()).isEqualTo(119_999);
+        assertThat(atBoundary.raw()).isEqualByComparingTo("100");
+        assertThat(points).extracting(PricePoint::atMs).doesNotContain(120_000L);
+    }
+
+    @Test
+    void theCandleThatStartsAtTheEndOfTheRangeContributesNothing() {
+        JsonNode rows = Fixtures.json("hyperliquid/candle_snapshot_btc_1m.json"); // 17:59, 18:00, 18:01
+        long t1801 = 1_790_877_660_000L;
+
+        // the round ends at 18:01:00; an answer that still has the candle starting there is not used from
+        List<PricePoint> points = HyperliquidPriceSource.candlePoints(rows, 0, t1801);
+
+        assertThat(points.get(points.size() - 1).atMs()).isEqualTo(t1801 - 1);
+        assertThat(points.get(points.size() - 1).raw()).isEqualByComparingTo("84776"); // the 18:00 candle's close
+        assertThat(points).hasSize(7);
+
+        // even when it is the only row there is: its open is a trade at or after the end
+        List<PricePoint> alone = HyperliquidPriceSource.candlePoints(Fixtures.parse(
+                "[{\"t\":" + t1801 + ",\"T\":" + (t1801 + 59_999) + ",\"o\":\"84777\",\"h\":\"84792\",\"l\":\"84736\","
+                        + "\"c\":\"84792\"}]"), 0, t1801);
+        assertThat(alone).isEmpty();
     }
 
     @Test
@@ -179,9 +317,22 @@ class HyperliquidPriceSourceTest {
         // the window of the old bug: [at - 60 s, at + 60 s]; response.get(0) was the 17:59 candle
         List<PricePoint> points = HyperliquidPriceSource.candlePoints(rows, t1800, t1800 + 59_999);
 
-        assertThat(points).extracting(PricePoint::atMs).containsExactly(t1800, t1800 + 20_000, t1800 + 40_000,
-                t1800 + 59_999);
-        assertThat(points.get(0).raw()).isEqualByComparingTo("84871"); // the 18:00 candle's open, not the 17:59 one's 84780
+        assertThat(points).extracting(PricePoint::atMs).containsExactly(t1800 + 20_000, t1800 + 40_000, t1800 + 59_999);
+        // the 18:00 candle's own numbers (it closed down: high, low, close), not the 17:59 one's 84889 / 84779 / 84871
+        assertThat(points).extracting(p -> p.raw().intValue()).containsExactly(84883, 84743, 84776);
+    }
+
+    @Test
+    void rowsInAnyOrderGiveTheSameAsRowsInOrder() {
+        JsonNode rows = Fixtures.json("hyperliquid/candle_snapshot_btc_1m.json");
+        com.fasterxml.jackson.databind.node.ArrayNode reversed = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                .arrayNode();
+        for (int i = rows.size() - 1; i >= 0; i--) {
+            reversed.add(rows.get(i));
+        }
+
+        assertThat(HyperliquidPriceSource.candlePoints(reversed, 0, Long.MAX_VALUE))
+                .isEqualTo(HyperliquidPriceSource.candlePoints(rows, 0, Long.MAX_VALUE));
     }
 
     @Test
@@ -214,7 +365,7 @@ class HyperliquidPriceSourceTest {
         assertThat(carried.get(carried.size() - 1).atMs()).isEqualTo(to - 1); // aligned boundaries get a point 1 ms before
         assertThat(carried).allSatisfy(p -> assertThat(p.raw()).isEqualByComparingTo("84792"));
         for (int i = 1; i < points.size(); i++) { // no stretch longer than the 20 s of a candle's own points
-            assertThat(points.get(i).atMs() - points.get(i - 1).atMs()).isLessThanOrEqualTo(20_000);
+            assertThat(points.get(i).atMs() - points.get(i - 1).atMs()).isLessThanOrEqualTo(20_001);
         }
     }
 
@@ -223,8 +374,8 @@ class HyperliquidPriceSourceTest {
         JsonNode rows = Fixtures.json("hyperliquid/candle_snapshot_btc_1m.json");
         long to = T_1800 + 600_000L;
 
-        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, to, to + 119_999L)).hasSize(8); // candle points only
-        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, to, to + 120_000L).size()).isGreaterThan(8);
+        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, to, to + 119_999L)).hasSize(6); // candle points only
+        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, to, to + 120_000L).size()).isGreaterThan(6);
     }
 
     @Test
@@ -235,9 +386,9 @@ class HyperliquidPriceSourceTest {
         assertThat(HyperliquidPriceSource.historyPoints(Fixtures.parse("[]"), T_1800, to, to + 600_000L)).isEmpty();
         assertThat(HyperliquidPriceSource.historyPoints(null, T_1800, to, to + 600_000L)).isEmpty();
         // the last row reaches the end of the range: no tail
-        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, LAST_CLOSE_AT, LAST_CLOSE_AT + 600_000L)).hasSize(8);
+        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, LAST_CLOSE_AT, LAST_CLOSE_AT + 600_000L)).hasSize(6);
         assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, LAST_CLOSE_AT + 5_000L, LAST_CLOSE_AT + 600_000L))
-                .hasSize(8); // closes within 10 s of the end: not worth a point
+                .hasSize(6); // closes within 10 s of the end: not worth a point
     }
 
     @Test
@@ -274,14 +425,14 @@ class HyperliquidPriceSourceTest {
 
         List<PricePoint> points = source.history(tsla, 1_790_883_480_000L, 1_790_883_839_999L);
 
-        assertThat(points).hasSize(24); // six candles
+        assertThat(points).hasSize(19); // six candles: the first with its open, the five that follow without
         assertThat(api.info.requests).hasSize(1);
         JsonNode req = api.info.requests.get(0);
         assertThat(req.get("type").asText()).isEqualTo("candleSnapshot");
         assertThat(req.get("req").get("coin").asText()).isEqualTo("xyz:TSLA");
         assertThat(req.get("req").get("interval").asText()).isEqualTo("1m");
         assertThat(req.get("req").get("startTime").asLong()).isEqualTo(1_790_883_480_000L - 30 * 60_000L); // looks back 30 minutes
-        assertThat(req.get("req").get("endTime").asLong()).isEqualTo(1_790_883_839_999L);
+        assertThat(req.get("req").get("endTime").asLong()).isEqualTo(1_790_883_839_999L - 1); // the candle at the end is not asked for
         assertThat(points.get(0).raw()).isEqualByComparingTo(new BigDecimal("357.63"));
     }
 }

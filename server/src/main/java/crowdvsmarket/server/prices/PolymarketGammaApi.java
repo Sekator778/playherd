@@ -28,11 +28,18 @@ public interface PolymarketGammaApi {
                      @QueryParam("order") String order, @QueryParam("ascending") boolean ascending,
                      @QueryParam("limit") int limit);
 
-    /** {@code GET /markets/keyset?clob_token_ids=a&clob_token_ids=b&limit=…}: the markets of given CLOB tokens. */
+    /**
+     * {@code GET /markets/keyset?clob_token_ids=a&clob_token_ids=b&closed=…&limit=…}: the markets of
+     * given CLOB tokens. Measured 2026-10-02 (polymarket_data_api.md §13): without {@code closed} —
+     * and with {@code closed=false} — the answer holds only the markets that are not closed yet; a
+     * closed market comes back only for {@code closed=true}. Asking for both is how a listed market
+     * that closed at the source is found.
+     */
     @GET
     @Path("/markets/keyset")
     @Produces(MediaType.APPLICATION_JSON)
-    JsonNode marketsByTokens(@QueryParam("clob_token_ids") List<String> tokenIds, @QueryParam("limit") int limit);
+    JsonNode marketsByTokens(@QueryParam("clob_token_ids") List<String> tokenIds, @QueryParam("closed") boolean closed,
+                             @QueryParam("limit") int limit);
 
     /** {@code GET /events/keyset?tag_id=…&live=…&closed=…&order=…&ascending=…&limit=…} → {@code {"events":[…],…}}; an event carries all its markets. */
     @GET

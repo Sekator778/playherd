@@ -9,7 +9,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
+import java.math.MathContext;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,8 +33,16 @@ import org.jboss.logging.Logger;
  * <p><b>History</b> is the data API's 60-second buckets, {@code GET /v2/prices-history} (series of
  * order-book midpoints, §4.4); closed buckets there trail the present by about 5 minutes, but the
  * series ends with an exact tick, so a hole in a round that ended a minute ago may be filled only
- * minutes later — the scheduler's retry covers that. {@code change24h} is Gamma's absolute
- * {@code oneDayPriceChange} (from {@link PolymarketLiveState}) relative to the price a day ago.
+ * minutes later — the scheduler's retry covers that. The grid is not gapless: a real 24-hour series
+ * had 55 steps of 120 s and one of 329 s between its 1 436 points (polymarket_data_api.md §4.2), and
+ * the bucket stamped exactly at a round's end may be the one that is missing. A midpoint series says
+ * "the price is this until the next point", so {@link #historyPoints} carries each bucket's price
+ * forward in steps of at most {@link #CARRY_STEP_MS} — to the next bucket when it is at most
+ * {@link #MAX_CARRY_MS} away (a longer stretch stays a hole: ten minutes of silence is no flat line),
+ * and to the end of the requested range when the last bucket is within one bucket width of it. The
+ * carried points sit between two real ones with the older one's price, as a live tick would.
+ * {@code change24h} is Gamma's absolute {@code oneDayPriceChange} (from {@link PolymarketLiveState})
+ * turned into the change relative to the price a day ago ({@link #relativeChange}).
  */
 @ApplicationScoped
 @Unremovable
@@ -48,6 +56,11 @@ public class PolymarketPriceSource implements PriceSource {
     /** The data API serves an explicit window of at most 15 days. */
     static final long MAX_WINDOW_MS = 15L * 24 * 3_600_000L;
     static final int BUCKET_SECONDS = 60;
+    static final long BUCKET_MS = BUCKET_SECONDS * 1_000L;
+    /** The carried points of a history stretch sit at most this far apart (the feed's maximum gap is 90 s). */
+    static final long CARRY_STEP_MS = 30_000L;
+    /** Two buckets further apart than this (10 minutes; the longest gap seen in real series was 329 s) are not bridged. */
+    static final long MAX_CARRY_MS = 600_000L;
     private static final int MAX_PAGES = 5;
 
     private final Supplier<PolymarketClobApi> clob;
@@ -127,7 +140,14 @@ public class PolymarketPriceSource implements PriceSource {
         return out;
     }
 
-    /** {@code absoluteChange / (now − absoluteChange)}: the change as a share of the price a day ago. */
+    /**
+     * The change relative to the price a day ago, {@code (now − then) / then}, from Gamma's absolute
+     * one: {@code absoluteChange / (now − absoluteChange)}. This is exactly the number for which the
+     * web's percentage-points formula {@code price − price / (1 + change24h)} gives the absolute
+     * change back — {@code now − now·then/now = now − then} — to double precision (the division is
+     * not rounded to a fixed number of places), so an odds card shows Gamma's own figure. Null when
+     * the price a day ago would not be positive: no relative change exists then.
+     */
     static Double relativeChange(BigDecimal now, Double absoluteChange) {
         if (absoluteChange == null) {
             return null;
@@ -137,7 +157,7 @@ public class PolymarketPriceSource implements PriceSource {
         if (then.signum() <= 0) {
             return null;
         }
-        return delta.divide(then, 8, RoundingMode.HALF_UP).doubleValue();
+        return delta.divide(then, MathContext.DECIMAL128).doubleValue();
     }
 
     @Override
@@ -145,12 +165,12 @@ public class PolymarketPriceSource implements PriceSource {
         long start = Math.max(fromMs, toMs - MAX_WINDOW_MS);
         long startSeconds = Math.floorDiv(start, 1000L);
         long endSeconds = Math.floorDiv(toMs + 999L, 1000L);
-        List<PricePoint> out = new ArrayList<>();
+        List<PricePoint> buckets = new ArrayList<>();
         String cursor = null;
         for (int page = 0; page < MAX_PAGES; page++) {
             JsonNode answer = data.get().pricesHistory(market.sourceRef(), startSeconds, endSeconds, BUCKET_SECONDS,
                     cursor);
-            out.addAll(historyPoints(answer, fromMs, toMs));
+            buckets.addAll(bucketPoints(answer, fromMs, toMs));
             JsonNode pagination = answer == null ? null : answer.path("pagination");
             if (pagination == null || !pagination.path("has_more").asBoolean(false)
                     || pagination.path("next_cursor").asText("").isEmpty()) {
@@ -158,12 +178,21 @@ public class PolymarketPriceSource implements PriceSource {
             }
             cursor = pagination.path("next_cursor").asText();
         }
-        out.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
-        return out;
+        buckets.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
+        return carryForward(buckets, toMs); // once, over every page: "the last bucket" is the last of all of them
     }
 
-    /** {@code {"data":[{"timestamp":<s>,"price":0.525,…}]}} → points inside {@code [fromMs, toMs]}. */
+    /**
+     * {@code {"data":[{"timestamp":<s>,"price":0.525,…}]}} → the buckets inside {@code [fromMs, toMs]}
+     * with each price carried forward over the stretch to the next bucket (and to {@code toMs} from
+     * the last one), see the class comment.
+     */
     static List<PricePoint> historyPoints(JsonNode answer, long fromMs, long toMs) {
+        return carryForward(bucketPoints(answer, fromMs, toMs), toMs);
+    }
+
+    /** The rows of the answer as they are: one point per bucket (and the terminal tick), oldest first. */
+    static List<PricePoint> bucketPoints(JsonNode answer, long fromMs, long toMs) {
         List<PricePoint> out = new ArrayList<>();
         if (answer == null) {
             return out;
@@ -177,6 +206,30 @@ public class PolymarketPriceSource implements PriceSource {
             atMs *= 1000L;
             if (atMs >= fromMs && atMs <= toMs && price.signum() > 0) {
                 out.add(new PricePoint(atMs, price));
+            }
+        }
+        out.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
+        return out;
+    }
+
+    /**
+     * Adds, between every two neighbouring points at most {@link #MAX_CARRY_MS} apart, points
+     * {@link #CARRY_STEP_MS} apart that repeat the earlier one's price; and the same from the last
+     * point up to {@code toMs} when it is within one bucket width of it. Longer stretches get nothing.
+     */
+    static List<PricePoint> carryForward(List<PricePoint> points, long toMs) {
+        List<PricePoint> out = new ArrayList<>(points.size() * 2);
+        for (int i = 0; i < points.size(); i++) {
+            PricePoint p = points.get(i);
+            out.add(p);
+            boolean last = i == points.size() - 1;
+            long until = last ? toMs : points.get(i + 1).atMs();
+            long reach = last ? BUCKET_MS : MAX_CARRY_MS;
+            if (until - p.atMs() > reach) {
+                continue; // a stretch that stays a hole
+            }
+            for (long at = p.atMs() + CARRY_STEP_MS; last ? at <= until : at < until; at += CARRY_STEP_MS) {
+                out.add(new PricePoint(at, p.raw()));
             }
         }
         return out;

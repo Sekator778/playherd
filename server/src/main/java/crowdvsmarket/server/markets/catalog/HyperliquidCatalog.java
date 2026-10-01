@@ -8,7 +8,9 @@ import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.markets.MarketRegistry;
 import crowdvsmarket.server.markets.NewMarket;
 import crowdvsmarket.server.prices.Dec;
+import crowdvsmarket.server.prices.HistorySeeder;
 import crowdvsmarket.server.prices.HyperliquidInfoApi;
+import crowdvsmarket.server.prices.HyperliquidLiveState;
 import crowdvsmarket.server.prices.HyperliquidPriceSource;
 import crowdvsmarket.server.prices.PriceHttpClients;
 import io.quarkus.arc.Unremovable;
@@ -21,6 +23,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
@@ -44,8 +47,24 @@ import org.jboss.logging.Logger;
  * bad; after that a run costs nothing (no request). BTC is in the registry from the V7 migration
  * and is never listed again.
  *
+ * <p><b>Delisting.</b> The price poll sees {@code isDelisted} in every answer for free and reports it
+ * to {@link HyperliquidLiveState}; {@link #watch}, every few seconds and from memory, closes the
+ * market of an asset that has been reported delisted for {@link #DELISTED_CLOSE_AFTER_MS} (so one
+ * odd answer cannot close a market), through {@code MarketRegistry.close} with a reason in plain
+ * words — it is shown to the players as it stands. A delisted asset's {@code markPx} is frozen and
+ * the poll skips it, so without this its market would go stale and every round of it would wait an
+ * hour for its refund. BTC is never closed.
+ *
+ * <p><b>Locks.</b> Neither {@link #sync} nor {@link #watch} holds any lock or monitor while it calls
+ * {@code registry.list} / {@code registry.close}: the registry's listener (the game service) takes
+ * the engine's WRITE lock on the calling thread, while the game service reads
+ * {@code latest} / {@code soFar} / {@code series} under the engine's READ lock — so nothing that
+ * those readers take (the tick rings' monitors) may be held here. Both run on the scheduler's
+ * threads, one of each at a time ({@code SKIP}), and only ever touch concurrent collections.
+ *
  * <p>Runs only with {@code herd.mode=live} and {@code herd.prices.source=live}, on its own
- * {@code @Scheduled(concurrentExecution = SKIP)}.
+ * {@code @Scheduled(concurrentExecution = SKIP)}. Every market it lists is handed to the
+ * {@link HistorySeeder}, which fetches its last minutes of history in the background.
  */
 @ApplicationScoped
 @Unremovable
@@ -55,27 +74,43 @@ public class HyperliquidCatalog {
 
     static final String EVERY = "${herd.markets.hyperliquid.catalog-every:1m}";
     static final String JOB = "catalog-hyperliquid";
+    static final String WATCH_EVERY = "${herd.markets.hyperliquid.watch-every:5s}";
+    static final String JOB_WATCH = "catalog-hyperliquid-watch";
     /** Т-4: no market lets a player take more than 40x, whatever the perp allows. */
     static final int LEVERAGE_CAP = 40;
+    /** An asset must have been reported delisted by every answer for this long before its market is closed. */
+    static final long DELISTED_CLOSE_AFTER_MS = 10_000L;
+    /** Shown to the players as it stands. */
+    static final String REASON_DELISTED = "The asset was delisted at the source";
 
     private static final Pattern LEGAL_ID = Pattern.compile("[A-Za-z0-9_]{1,32}");
 
     private final MarketRegistry registry;
     private final CatalogConfig config;
     private final Supplier<HyperliquidInfoApi> api;
+    private final HyperliquidLiveState state;
+    private final HistorySeeder seeder;
     private final LongSupplier clock;
     private final Set<String> knownBad = ConcurrentHashMap.newKeySet();
 
     @Inject
-    public HyperliquidCatalog(MarketRegistry registry, CatalogConfig config, PriceHttpClients clients) {
-        this(registry, config, clients.hyperliquid(), System::currentTimeMillis);
+    public HyperliquidCatalog(MarketRegistry registry, CatalogConfig config, PriceHttpClients clients,
+                              HyperliquidLiveState state, HistorySeeder seeder) {
+        this(registry, config, clients.hyperliquid(), state, seeder, System::currentTimeMillis);
     }
 
     HyperliquidCatalog(MarketRegistry registry, CatalogConfig config, Supplier<HyperliquidInfoApi> api,
                        LongSupplier clock) {
+        this(registry, config, api, new HyperliquidLiveState(), HistorySeeder.disabled(), clock);
+    }
+
+    HyperliquidCatalog(MarketRegistry registry, CatalogConfig config, Supplier<HyperliquidInfoApi> api,
+                       HyperliquidLiveState state, HistorySeeder seeder, LongSupplier clock) {
         this.registry = registry;
         this.config = config;
         this.api = api;
+        this.state = state;
+        this.seeder = seeder;
         this.clock = clock;
     }
 
@@ -85,6 +120,42 @@ public class HyperliquidCatalog {
         if (config.liveSources()) {
             sync(clock.getAsLong());
         }
+    }
+
+    /** Every few seconds: closes the markets of assets the price poll has seen delisted. */
+    @Scheduled(every = WATCH_EVERY, delayed = "15s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
+            identity = JOB_WATCH)
+    void watchJob() {
+        if (config.liveSources()) {
+            watch(clock.getAsLong());
+        }
+    }
+
+    /**
+     * Closes every active Hyperliquid market whose asset the price poll has reported delisted for at
+     * least {@link #DELISTED_CLOSE_AFTER_MS}; returns how many it closed. No request, no lock held.
+     */
+    int watch(long nowMs) {
+        int closed = 0;
+        for (Market market : registry.active()) {
+            if (!HyperliquidPriceSource.NAME.equals(market.source()) || Market.BTC_ID.equals(market.id())) {
+                continue;
+            }
+            OptionalLong since = state.delistedSince(market.id());
+            if (since.isEmpty() || nowMs - since.getAsLong() < DELISTED_CLOSE_AFTER_MS) {
+                continue;
+            }
+            LOG.infof("closing %s (%s): %s", market.id(), market.sourceRef(), REASON_DELISTED);
+            try {
+                // no lock is held: the registry's listener takes the engine's write lock (class comment: Locks)
+                registry.close(market.id(), REASON_DELISTED, nowMs);
+                state.forget(market.id());
+                closed++;
+            } catch (RuntimeException e) {
+                LOG.warnf("could not close the delisted market %s, will try again: %s", market.id(), e.toString());
+            }
+        }
+        return closed;
     }
 
     /** What the answer says about one asset. */
@@ -159,15 +230,18 @@ public class HyperliquidCatalog {
         NewMarket market = new NewMarket(id, MarketKind.PERP, wanted.category(), symbol, MarketNames.title(symbol),
                 null, null, HyperliquidPriceSource.NAME, name, meta.toString(),
                 Math.min(LEVERAGE_CAP, asset.maxLeverage()), Market.lotExpFor(asset.markPx()), null);
+        Market listed;
         try {
-            Market listed = registry.list(market, nowMs);
-            LOG.infof("listed %s (%s, %dx, lot exponent %d) at markPx %s", listed.id(), wanted.category(),
-                    listed.maxLeverage(), listed.lotExp(), asset.markPx().toPlainString());
-            return 0;
+            // no lock is held: the registry's listener takes the engine's write lock (class comment: Locks)
+            listed = registry.list(market, nowMs);
         } catch (RuntimeException e) {
             LOG.warnf("could not list %s, will try again: %s", name, e.toString());
             return 1;
         }
+        LOG.infof("listed %s (%s, %dx, lot exponent %d) at markPx %s", listed.id(), wanted.category(),
+                listed.maxLeverage(), listed.lotExp(), asset.markPx().toPlainString());
+        seeder.seed(listed); // its last minutes of history, fetched in the background
+        return 0;
     }
 
     private void markBad(String name, String why) {
@@ -176,7 +250,11 @@ public class HyperliquidCatalog {
         }
     }
 
-    /** {@code [meta, ctxs]} → asset by coin name (delisted ones included, flagged). */
+    /**
+     * {@code [meta, ctxs]} → asset by coin name (delisted ones included, flagged). The two lists line up
+     * by position, so an answer in which they do not (the price poll refuses it as well) would price
+     * an asset with another one's {@code markPx}: it is an error, not an answer.
+     */
     static Map<String, Asset> readAssets(JsonNode response) {
         Map<String, Asset> out = new HashMap<>();
         if (response == null || !response.isArray() || response.size() < 2) {
@@ -184,7 +262,11 @@ public class HyperliquidCatalog {
         }
         JsonNode universe = response.get(0).path("universe");
         JsonNode ctxs = response.get(1);
-        int n = Math.min(universe.size(), ctxs.size());
+        if (!universe.isArray() || !ctxs.isArray() || universe.size() != ctxs.size()) {
+            throw new IllegalStateException("unexpected answer to metaAndAssetCtxs: meta.universe and ctxs do not "
+                    + "line up (" + universe.size() + " and " + ctxs.size() + " entries)");
+        }
+        int n = universe.size();
         for (int i = 0; i < n; i++) {
             JsonNode u = universe.get(i);
             String name = u.path("name").asText("");

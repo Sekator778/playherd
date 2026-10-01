@@ -66,6 +66,61 @@ class TickStoreTest {
     }
 
     @Test
+    void seedHistoryAddsOnlyWhatIsOlderThanEveryTickAndNeverOverwritesAndWritesNoRow() {
+        store.append("hyperliquid", T0, prices("BTC", "90000"));
+        List<PricePoint> history = List.of(new PricePoint(T0 - 20_000, new BigDecimal("84000")),
+                new PricePoint(T0 - 10_000, new BigDecimal("84010")), new PricePoint(T0, new BigDecimal("1")),
+                new PricePoint(T0 + 10_000, new BigDecimal("2")), new PricePoint(T0 - 5_000, new BigDecimal("0")));
+
+        int added = store.seedHistory("BTC", "hyperliquid:late", history);
+
+        assertThat(added).isEqualTo(2); // the ones before the oldest tick; the zero price is no price
+        assertThat(store.series("BTC", 0, Long.MAX_VALUE)).extracting(PricePoint::atMs)
+                .containsExactly(T0 - 20_000, T0 - 10_000, T0);
+        assertThat(store.last("BTC").orElseThrow().raw()).isEqualByComparingTo("90000");
+        assertThat(store.feedOf("BTC")).contains("hyperliquid"); // the feed that delivered a live tick is kept
+        assertThat(snapshots.rows).hasSize(1); // only the poll wrote a row: a restart asks the source again
+    }
+
+    @Test
+    void seedHistoryIntoAnEmptyRingTakesEverythingAndNamesTheFeed() {
+        int added = store.seedHistory("ETH", "hyperliquid", List.of(new PricePoint(T0 - 10_000, new BigDecimal("2697")),
+                new PricePoint(T0, new BigDecimal("2698"))));
+
+        assertThat(added).isEqualTo(2);
+        assertThat(store.feedOf("ETH")).contains("hyperliquid");
+        assertThat(store.seedHistory("ETH", "hyperliquid", List.of())).isZero();
+        assertThat(store.seedHistory("SOL", "hyperliquid", List.of())).isZero();
+        assertThat(store.feedOf("SOL")).isEmpty(); // nothing seeded, nothing claimed
+    }
+
+    @Test
+    void pinBoundaryMakesATickAtExactlyTheTimeUnlessOneIsThereAndWritesNoRow() {
+        store.append("hyperliquid", T0, prices("BTC", "84000"));
+        int rows = snapshots.rows.size();
+
+        store.pinBoundary("BTC", T0 + 10_000, Px.encode(new BigDecimal("84000")));
+        store.pinBoundary("BTC", T0, Px.encode(new BigDecimal("1"))); // a tick is there: the pin yields to it
+        store.pinBoundary("ETH", T0, Px.encode(new BigDecimal("2697"))); // a market with no ring yet gets one
+
+        assertThat(store.series("BTC", 0, Long.MAX_VALUE)).extracting(PricePoint::atMs).containsExactly(T0, T0 + 10_000);
+        assertThat(store.series("BTC", T0, T0 + 1).get(0).raw()).isEqualByComparingTo("84000");
+        assertThat(store.last("ETH").orElseThrow().raw()).isEqualByComparingTo("2697");
+        assertThat(snapshots.rows).hasSize(rows); // memory only, like a history merge
+    }
+
+    @Test
+    void tickAfterIsTheFirstTickLaterThanTheTime() {
+        store.append("hyperliquid", T0, prices("BTC", "84000"));
+        store.append("hyperliquid", T0 + 3_000, prices("BTC", "84001"));
+
+        assertThat(store.tickAfter("BTC", T0)[0]).isEqualTo(T0 + 3_000);
+        assertThat(store.tickAfter("BTC", T0 - 1)[0]).isEqualTo(T0);
+        assertThat(store.tickAfter("BTC", T0 + 3_000)).isNull();
+        assertThat(store.tickAfter("NOPE", 0)).isNull();
+    }
+
+    @Test
     void aPollOfOnlyBadPricesWritesNoRow() {
         store.append("hyperliquid", T0, prices("ETH", "0"));
 

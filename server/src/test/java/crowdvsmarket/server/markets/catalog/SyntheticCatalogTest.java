@@ -6,6 +6,10 @@ import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.prices.Fixtures;
+import crowdvsmarket.server.prices.HistorySeeder;
+import crowdvsmarket.server.prices.PipelineTestSupport;
+import crowdvsmarket.server.prices.SyntheticPriceSource;
+import crowdvsmarket.server.prices.TickStore;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -148,5 +152,24 @@ class SyntheticCatalogTest {
 
         catalog(syntheticConfig(3, 3)).run();
         assertThat(registry.log).isNotEmpty();
+    }
+
+    @Test
+    void everyMarketItListsIsSeededWithTheLastFifteenMinutesOfItsWalk() {
+        TickStore store = Fixtures.tickStore(() -> NOW);
+        SyntheticPriceSource walk = PipelineTestSupport.synthetic(store, () -> NOW);
+        HistorySeeder seeder = PipelineTestSupport.seeder(List.of(walk), store, () -> NOW);
+
+        new SyntheticCatalog(registry, syntheticConfig(1, 1), seeder, () -> NOW).sync(NOW);
+
+        assertThat(registry.active()).hasSize(14); // BTC + 11 perps + 2 odds
+        for (Market market : registry.active()) {
+            if (market.id().equals("BTC")) {
+                assertThat(store.size("BTC")).isZero(); // BTC is not listed by a catalog: the start-up seeds it
+                continue;
+            }
+            assertThat(store.size(market.id())).as(market.id()).isEqualTo(901); // one point a second, both ends
+            assertThat(store.feedOf(market.id())).as(market.id()).contains("synthetic");
+        }
     }
 }

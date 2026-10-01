@@ -92,10 +92,10 @@ class PriceHttpClientsTest {
         List<PricePoint> history = source.history(tsla, 1_790_883_480_000L, 1_790_883_839_999L);
 
         assertThat(quotes.get("xyz_TSLA").raw()).isEqualByComparingTo("357.74");
-        assertThat(history).hasSize(24);
+        assertThat(history).hasSize(19); // six candles: the first with its open, five without (R3)
         assertThat(server.requests().get(0).body()).isEqualTo("{\"type\":\"metaAndAssetCtxs\",\"dex\":\"xyz\"}");
         assertThat(server.requests().get(1).body()).isEqualTo("{\"type\":\"candleSnapshot\",\"req\":{\"coin\":\"xyz:TSLA\","
-                + "\"interval\":\"1m\",\"startTime\":1790881680000,\"endTime\":1790883839999}}");
+                + "\"interval\":\"1m\",\"startTime\":1790881680000,\"endTime\":1790883839998}}"); // 1 ms before the range end (R3)
     }
 
     @Test
@@ -132,7 +132,8 @@ class PriceHttpClientsTest {
 
         gamma.markets("2", false, "volume24hr", false, 50);
         gamma.events("1", true, false, "volume24hr", false, 20);
-        gamma.marketsByTokens(List.of("tokA", "tokB"), 20);
+        gamma.marketsByTokens(List.of("tokA", "tokB"), false, 20);
+        gamma.marketsByTokens(List.of("tokA", "tokB"), true, 20);
 
         List<FakeHttpServer.Request> requests = server.requests();
         assertThat(requests).extracting(FakeHttpServer.Request::method).containsOnly("GET");
@@ -151,7 +152,11 @@ class PriceHttpClientsTest {
 
         assertThat(path(requests.get(2).pathAndQuery())).isEqualTo("/markets/keyset");
         assertThat(query(requests.get(2).pathAndQuery())).containsEntry("clob_token_ids", List.of("tokA", "tokB"))
-                .containsEntry("limit", List.of("20")).doesNotContainKey("tag_id");
+                .containsEntry("closed", List.of("false")).containsEntry("limit", List.of("20")).doesNotContainKey("tag_id");
+        // the same lookup for the markets that closed at the source: closed=true (2026-10-02: without it they are left out)
+        assertThat(path(requests.get(3).pathAndQuery())).isEqualTo("/markets/keyset");
+        assertThat(query(requests.get(3).pathAndQuery())).containsEntry("clob_token_ids", List.of("tokA", "tokB"))
+                .containsEntry("closed", List.of("true")).containsEntry("limit", List.of("20"));
     }
 
     @Test
@@ -162,7 +167,7 @@ class PriceHttpClientsTest {
 
         List<PricePoint> points = source.history(TestMarkets.odds("PM1", "tok1"), 1_790_882_900_000L, 1_790_883_700_000L);
 
-        assertThat(points).hasSize(8);
+        assertThat(points).hasSize(24); // 8 rows (7 buckets and the terminal tick), the gaps between them carried every 30 s (R1)
         FakeHttpServer.Request request = server.requests().get(0);
         assertThat(request.method()).isEqualTo("GET");
         assertThat(path(request.pathAndQuery())).isEqualTo("/v2/prices-history");

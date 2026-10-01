@@ -12,11 +12,14 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+import org.jboss.logging.Logger;
 
 /**
  * Hyperliquid perpetuals: the mark price of every listed PERP market from one {@code metaAndAssetCtxs}
@@ -31,16 +34,38 @@ import java.util.function.Supplier;
  * never by index — {@code universe[i]} and {@code ctxs[i]} line up by position, but a position is
  * only stable for as long as the dex lists no new asset in front of it. A delisted asset
  * ({@code isDelisted}) has a frozen {@code markPx} and is skipped, so its market goes stale rather
- * than trading on a dead price. {@code change24h} is {@code (markPx − prevDayPx) / prevDayPx}.
+ * than trading on a dead price; the poll tells {@link HyperliquidLiveState} about it, and the
+ * catalog closes the market. {@code change24h} is {@code (markPx − prevDayPx) / prevDayPx}.
+ *
+ * <p><b>A bad answer fails the poll.</b> An HTTP 200 whose body is not {@code [meta, ctxs]} (an error
+ * object, a changed wrapper, lists of different lengths) throws, so that the feed service reports the
+ * failed poll in its throttled warning instead of counting an empty answer as a success while every
+ * market of the dex quietly goes stale. A coin that is configured but absent from an otherwise valid
+ * answer (a rename, say) costs only its own market the tick, and gets a warning of its own, once a
+ * minute. A single garbage {@code markPx} costs only that market its tick, without a warning.
  *
  * <p><b>History</b> is the 1-minute {@code candleSnapshot}. The rows are read by their own time
  * {@code t} — not {@code response.get(0)}, which for the window {@code [at − 60 s, at + 60 s]} is the
  * candle of the minute <i>before</i> the one asked about (the bug of the old
- * {@code LiveRoundPrices}, hl_multi_asset_live.md §4.2). Each candle becomes four points: open at
- * {@code t}, its two extremes at {@code t + 20 s} and {@code t + 40 s} (the low first when the candle
- * closed up, the high first when it closed down), close at {@code T}; so a rebuilt hole has a point
- * every 20 s, inside the 30 s maximum gap. Candles are trade prices, not mark prices — good enough
- * to fill a hole, which is what they are for.
+ * {@code LiveRoundPrices}, hl_multi_asset_live.md §4.2). Candles are trade prices, not mark prices —
+ * good enough to fill a hole, which is what they are for.
+ *
+ * <p><b>Boundary convention of history: the price at time {@code t} is the last trade at or before
+ * {@code t}</b>, the same as for a live tick ({@link LiveMarketPrices}: {@code P(t)} is the last tick
+ * with {@code at <= t}). A candle {@code [t, T]} says: its close is the last trade up to {@code T}
+ * (a point at {@code T = t + 59 999 ms}); its low and high happened some time inside the minute (two
+ * shape points at {@code t + 20 s} and {@code t + 40 s}, the low first when the candle closed up, the
+ * high first when it closed down — the liquidation check needs the extremes, not their exact time);
+ * its open is the <i>first</i> trade at or after {@code t}, so it is <b>not</b> the price at
+ * {@code t}: that is the previous candle's close, one millisecond earlier. Hence a candle that has a
+ * predecessor contributes three points; only the first row of an answer, which has no predecessor to
+ * take the price at its start from, also contributes its open. So a round that ends at the minute
+ * {@code end} closes on the last trade of the minute before it, never on the first trade after it
+ * (measured 2026-10-02: {@code endTime = end} returns the candle that starts at {@code end} as its
+ * last row, {@code endTime = end − 1} stops at the minute before — hl_multi_asset_live.md §4.1);
+ * {@link #history} therefore asks with {@code endTime = toMs − 1}, and a point at or after {@code toMs}
+ * is never made from a candle's open. The same holds at {@code start}, where the open of the round
+ * is the previous minute's close.
  *
  * <p><b>Quiet assets.</b> An asset with no trades has no candle rows at the tail of an answer — a
  * missing last minute is the normal state of a quiet one (hl_multi_asset_live.md §4.3), and the
@@ -54,6 +79,8 @@ import java.util.function.Supplier;
 @ApplicationScoped
 @Unremovable
 public class HyperliquidPriceSource implements PriceSource {
+
+    private static final Logger LOG = Logger.getLogger(HyperliquidPriceSource.class);
 
     public static final String NAME = "hyperliquid";
     public static final String FEED_MAIN = "hyperliquid";
@@ -73,17 +100,31 @@ public class HyperliquidPriceSource implements PriceSource {
 
     private final Supplier<HyperliquidInfoApi> api;
     private final PricesConfig config;
+    private final HyperliquidLiveState state;
     private final LongSupplier clock;
+    private final ThrottledLog warnings;
 
     @Inject
-    public HyperliquidPriceSource(PriceHttpClients clients, PricesConfig config) {
-        this(clients.hyperliquid(), config, System::currentTimeMillis);
+    public HyperliquidPriceSource(PriceHttpClients clients, PricesConfig config, HyperliquidLiveState state) {
+        this(clients.hyperliquid(), config, state, System::currentTimeMillis);
     }
 
     HyperliquidPriceSource(Supplier<HyperliquidInfoApi> api, PricesConfig config, LongSupplier clock) {
+        this(api, config, new HyperliquidLiveState(), clock);
+    }
+
+    HyperliquidPriceSource(Supplier<HyperliquidInfoApi> api, PricesConfig config, HyperliquidLiveState state,
+                           LongSupplier clock) {
+        this(api, config, state, clock, new ThrottledLog(LOG, clock, 60_000L));
+    }
+
+    HyperliquidPriceSource(Supplier<HyperliquidInfoApi> api, PricesConfig config, HyperliquidLiveState state,
+                           LongSupplier clock, ThrottledLog warnings) {
         this.api = api;
         this.config = config;
+        this.state = state;
         this.clock = clock;
+        this.warnings = warnings;
     }
 
     @Override
@@ -100,15 +141,39 @@ public class HyperliquidPriceSource implements PriceSource {
                         m -> NAME.equals(m.source()) && "xyz".equals(dexOf(m.sourceRef()))));
     }
 
+    /**
+     * One poll of the dex of {@code feed}.
+     *
+     * @throws IllegalStateException when the answer is not {@code [meta, ctxs]} (see the class comment)
+     */
     @Override
     public Map<String, Quote> poll(Feed feed, List<Market> markets) {
         String dex = FEED_XYZ.equals(feed.id()) ? "xyz" : "";
-        return parse(api.get().info(metaAndAssetCtxsRequest(dex)), markets);
+        Answer answer = read(api.get().info(metaAndAssetCtxsRequest(dex)), markets);
+        long now = clock.getAsLong();
+        for (Market market : answer.delisted()) {
+            state.reportDelisted(market.id(), now);
+        }
+        for (Market market : answer.listed()) {
+            state.reportListed(market.id());
+        }
+        String dexLabel = dex.isEmpty() ? "default" : dex;
+        for (Market market : markets) {
+            String key = "missing " + market.id();
+            if (answer.absent().contains(market)) {
+                warnings.failure(key, "Hyperliquid's " + dexLabel + " dex does not list the configured coin "
+                        + market.sourceRef() + " (renamed? removed?): market " + market.id() + " gets no prices", null);
+            } else {
+                warnings.success(key, "coin " + market.sourceRef() + " in the answer of the " + dexLabel + " dex");
+            }
+        }
+        return answer.quotes();
     }
 
     @Override
     public List<PricePoint> history(Market market, long fromMs, long toMs) {
-        JsonNode rows = api.get().info(candleSnapshotRequest(market.sourceRef(), fromMs - LOOKBACK_MS, toMs));
+        // endTime = toMs - 1: the candle that starts at toMs holds trades after it (class comment: boundary convention)
+        JsonNode rows = api.get().info(candleSnapshotRequest(market.sourceRef(), fromMs - LOOKBACK_MS, toMs - 1));
         return historyPoints(rows, fromMs, toMs, clock.getAsLong());
     }
 
@@ -137,39 +202,81 @@ public class HyperliquidPriceSource implements PriceSource {
     }
 
     /**
+     * What one {@code [meta, ctxs]} answer says about the requested markets: the quotes of those with
+     * a usable {@code markPx}; which of them {@code isDelisted} (their price is frozen and skipped);
+     * which are live (listed and not delisted, whether or not the price was usable); and which coins
+     * the answer does not list at all.
+     */
+    record Answer(Map<String, Quote> quotes, List<Market> delisted, List<Market> listed, Set<Market> absent) {
+    }
+
+    /**
      * Reads {@code [meta, ctxs]}: {@code markPx} (and the 24-hour change) of each of {@code markets}
      * by its coin name. A market whose coin is not in the answer, is delisted, or has no usable
      * {@code markPx} is simply not in the result.
+     *
+     * @throws IllegalStateException when the answer is not {@code [meta, ctxs]} — an array of two,
+     *                               the first with a {@code universe} array, the second an array of the
+     *                               same length
      */
     public static Map<String, Quote> parse(JsonNode response, Collection<Market> markets) {
-        Map<String, Quote> out = new LinkedHashMap<>();
+        return read(response, markets).quotes();
+    }
+
+    static Answer read(JsonNode response, Collection<Market> markets) {
         if (response == null || !response.isArray() || response.size() < 2) {
-            return out;
+            throw new IllegalStateException("unexpected answer of metaAndAssetCtxs, not [meta, ctxs]: "
+                    + abbreviate(response));
         }
         JsonNode universe = response.get(0).path("universe");
         JsonNode ctxs = response.get(1);
+        if (!universe.isArray() || !ctxs.isArray() || universe.size() != ctxs.size()) {
+            throw new IllegalStateException("unexpected answer of metaAndAssetCtxs: meta.universe has "
+                    + (universe.isArray() ? universe.size() : "no") + " entries, ctxs " + (ctxs.isArray() ? ctxs.size()
+                    : "is no array"));
+        }
         Map<String, Integer> indexByName = new HashMap<>();
-        int n = Math.min(universe.size(), ctxs.size());
-        for (int i = 0; i < n; i++) {
+        Set<String> delistedNames = new HashSet<>();
+        for (int i = 0; i < universe.size(); i++) {
             JsonNode asset = universe.get(i);
             String name = asset.path("name").asText("");
-            if (!name.isEmpty() && !asset.path("isDelisted").asBoolean(false)) {
+            if (name.isEmpty()) {
+                continue;
+            }
+            if (asset.path("isDelisted").asBoolean(false)) {
+                delistedNames.add(name);
+            } else {
                 indexByName.putIfAbsent(name, i);
             }
         }
+        Map<String, Quote> quotes = new LinkedHashMap<>();
+        List<Market> delisted = new ArrayList<>();
+        List<Market> listed = new ArrayList<>();
+        Set<Market> absent = new HashSet<>();
         for (Market market : markets) {
             Integer i = indexByName.get(market.sourceRef());
             if (i == null) {
+                if (delistedNames.contains(market.sourceRef())) {
+                    delisted.add(market);
+                } else {
+                    absent.add(market);
+                }
                 continue;
             }
+            listed.add(market);
             JsonNode ctx = ctxs.get(i);
             BigDecimal mark = Dec.of(ctx.path("markPx"));
             if (mark == null || mark.signum() <= 0) {
                 continue;
             }
-            out.put(market.id(), new Quote(mark, relativeChange(mark, Dec.of(ctx.path("prevDayPx")))));
+            quotes.put(market.id(), new Quote(mark, relativeChange(mark, Dec.of(ctx.path("prevDayPx")))));
         }
-        return out;
+        return new Answer(quotes, delisted, listed, absent);
+    }
+
+    private static String abbreviate(JsonNode node) {
+        String text = String.valueOf(node);
+        return text.length() <= 200 ? text : text.substring(0, 200) + "...";
     }
 
     /** {@code (now − then) / then}, or null when there is no usable earlier price. */
@@ -181,32 +288,54 @@ public class HyperliquidPriceSource implements PriceSource {
     }
 
     /**
-     * The 1-minute candle rows as price points inside {@code [fromMs, toMs]}, oldest first (see the
-     * class comment for the four points of a candle). Rows are taken by their own {@code t}.
+     * The 1-minute candle rows as price points inside {@code [fromMs, toMs]}, oldest first, by the
+     * boundary convention of the class comment: the close at {@code T}, the two extremes inside the
+     * minute, and — for the first row only — the open. Rows are taken by their own {@code t} and
+     * sorted by it; a row that is not whole (a missing or garbage field) is skipped. The first row's
+     * open is not made into a point at or after {@code toMs}.
      */
     static List<PricePoint> candlePoints(JsonNode rows, long fromMs, long toMs) {
         List<PricePoint> out = new ArrayList<>();
         if (rows == null || !rows.isArray()) {
             return out;
         }
+        List<Candle> candles = new ArrayList<>();
         for (JsonNode row : rows) {
+            Candle candle = Candle.of(row);
+            if (candle != null) {
+                candles.add(candle);
+            }
+        }
+        candles.sort((a, b) -> Long.compare(a.t(), b.t()));
+        for (int i = 0; i < candles.size(); i++) {
+            Candle c = candles.get(i);
+            boolean up = c.close().compareTo(c.open()) >= 0;
+            if (i == 0 && c.t() < toMs) {
+                add(out, c.t(), c.open(), fromMs, toMs); // no earlier candle to take the price at t from
+            }
+            add(out, c.t() + FIRST_EXTREME_OFFSET_MS, up ? c.low() : c.high(), fromMs, toMs);
+            add(out, c.t() + SECOND_EXTREME_OFFSET_MS, up ? c.high() : c.low(), fromMs, toMs);
+            add(out, c.closeAt(), c.close(), fromMs, toMs);
+        }
+        out.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
+        return out;
+    }
+
+    /** One whole candle row. */
+    private record Candle(long t, long closeAt, BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close) {
+
+        /** The row, or null when its time or any of its four prices is missing or garbage. */
+        static Candle of(JsonNode row) {
             long t = row.path("t").asLong(Long.MIN_VALUE);
             BigDecimal open = Dec.of(row.path("o"));
             BigDecimal high = Dec.of(row.path("h"));
             BigDecimal low = Dec.of(row.path("l"));
             BigDecimal close = Dec.of(row.path("c"));
             if (t == Long.MIN_VALUE || open == null || high == null || low == null || close == null) {
-                continue;
+                return null;
             }
-            long closeAt = row.path("T").asLong(t + CANDLE_MS - 1);
-            boolean up = close.compareTo(open) >= 0;
-            add(out, t, open, fromMs, toMs);
-            add(out, t + FIRST_EXTREME_OFFSET_MS, up ? low : high, fromMs, toMs);
-            add(out, t + SECOND_EXTREME_OFFSET_MS, up ? high : low, fromMs, toMs);
-            add(out, closeAt, close, fromMs, toMs);
+            return new Candle(t, row.path("T").asLong(t + CANDLE_MS - 1), open, high, low, close);
         }
-        out.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
-        return out;
     }
 
     /**
@@ -224,14 +353,11 @@ public class HyperliquidPriceSource implements PriceSource {
         long closedAt = 0;
         BigDecimal lastClose = null;
         for (JsonNode row : rows) {
-            long t = row.path("t").asLong(Long.MIN_VALUE);
-            BigDecimal close = Dec.of(row.path("c"));
-            boolean whole = Dec.of(row.path("o")) != null && Dec.of(row.path("h")) != null
-                    && Dec.of(row.path("l")) != null;
-            if (t > newestT && whole && close != null && close.signum() > 0) {
-                newestT = t;
-                closedAt = row.path("T").asLong(t + CANDLE_MS - 1);
-                lastClose = close;
+            Candle c = Candle.of(row);
+            if (c != null && c.t() > newestT && c.close().signum() > 0) {
+                newestT = c.t();
+                closedAt = c.closeAt();
+                lastClose = c.close();
             }
         }
         if (lastClose == null || closedAt >= toMs - CARRY_STEP_MS) {

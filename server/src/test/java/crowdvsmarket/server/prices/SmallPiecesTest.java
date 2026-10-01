@@ -63,6 +63,26 @@ class SmallPiecesTest {
         assertThat(state.missingSince("PM3")).isEmpty();
     }
 
+    @Test
+    void theHyperliquidStateKeepsTheFirstDelistedTimeUntilAnAnswerListsTheAssetAgainOrTheMarketIsForgotten() {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+
+        assertThat(state.delistedSince("ETH")).isEmpty();
+        state.reportDelisted("ETH", 100);
+        state.reportDelisted("ETH", 160); // the first answer that said so stays
+        assertThat(state.delistedSince("ETH")).hasValue(100);
+
+        state.reportListed("ETH");
+        assertThat(state.delistedSince("ETH")).isEmpty();
+        state.reportDelisted("ETH", 500);
+        assertThat(state.delistedSince("ETH")).hasValue(500); // a new spell starts a new clock
+
+        state.reportDelisted("SOL", 5);
+        state.forget("SOL");
+        assertThat(state.delistedSince("SOL")).isEmpty();
+        assertThat(state.delistedSince("ETH")).hasValue(500); // markets do not share a clock
+    }
+
     /** A source with one feed that handles the markets whose id starts with a prefix. */
     private static PriceSource source(String name, String prefix) {
         return new PriceSource() {

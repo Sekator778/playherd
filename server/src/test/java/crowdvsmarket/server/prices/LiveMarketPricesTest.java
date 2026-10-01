@@ -220,7 +220,7 @@ class LiveMarketPricesTest {
     @Test
     void aGapOfOneMillisecondMoreThanTheMaximumIsAHole() {
         ticks(btc, "hyperliquid", START - 2_000, START + 58_000, 30_000, at -> 100);
-        ticks(btc, "hyperliquid", START + 88_001, END + 3_000, 30_000, at -> 100); // 30.001 s after START + 58 s
+        ticks(btc, "hyperliquid", START + 88_001, END + 3_000, 30_000, at -> 101); // 30.001 s after START + 58 s
 
         assertThatThrownBy(() -> prices.resolve(btc, window(btc))).isInstanceOf(PriceUnavailableException.class);
         assertThat(source.historyRequests).hasSize(1);
@@ -291,7 +291,7 @@ class LiveMarketPricesTest {
         ticks(xyz, "hyperliquid:xyz", START - 18_000, START - 18_000, 1, at -> 231.7);
         ticks(xyz, "hyperliquid:xyz", START + 3_000, END + 3_000, 6_000, at -> 231.7);
         ticks(btc, "hyperliquid", START - 18_000, START - 18_000, 1, at -> 84_000);
-        ticks(btc, "hyperliquid", START + 3_000, END + 3_000, 3_000, at -> 84_000);
+        ticks(btc, "hyperliquid", START + 3_000, END + 3_000, 3_000, at -> 84_001); // not the same price: no quiet carry
 
         RoundPriceData ok = prices.resolve(xyz, window(xyz));
 
@@ -316,6 +316,229 @@ class LiveMarketPricesTest {
         assertThatThrownBy(() -> prices.resolve(btc, window(btc)))
                 .isInstanceOf(PriceUnavailableException.class)
                 .hasMessageContaining("engine");
+    }
+
+    // ------------------------------------------------ boundary continuity: close(N) == open(N+1) (Р-40)
+
+    private RoundWindow nextWindow() {
+        return new RoundWindow(btc.id(), Interval.HOURLY, END, END + 180_000L);
+    }
+
+    @Test
+    void historyMergedIntoAHoleNeverReplacesTheBoundaryPriceAnEarlierRoundSettledOn() {
+        // the feed dies 12 s before END (a fresh tick at END: the 15 s limit) and is back 60 s after it
+        ticks(btc, "hyperliquid", START - 3_000, END - 12_000, 3_000, at -> 100);
+        ticks(btc, "hyperliquid", END + 60_000, END + 190_000, 3_000, at -> 105);
+        source.history = m -> List.of(point(END - 1, 105), point(END, 105), point(END + 20_000, 105),
+                point(END + 40_000, 105)); // what the source remembers: it has the price moving at the boundary
+
+        RoundPriceData first = prices.resolve(btc, window(btc)); // END + 1 s: the 12 s old tick is fresh, no hole
+        assertThat(source.historyRequests).isEmpty();
+        now.set(END + 200_000L);
+        RoundPriceData second = prices.resolve(btc, nextWindow()); // the 72 s after END are a hole of this round
+
+        assertThat(first.close()).isEqualByComparingTo("100.00");
+        assertThat(second.open()).isEqualByComparingTo(first.close());
+        // the hole is asked for from the boundary on: the tick before it already IS the price at the boundary
+        assertThat(source.historyRequests).hasSize(1);
+        assertThat(source.historyRequests.get(0)[0]).isEqualTo(END);
+        // nothing from the source landed at or before the boundary: the tick that was fresh there, and the pin of
+        // its price at exactly END that the first round left when it settled
+        assertThat(store.series("BTC", END - 12_000, END + 1)).extracting(PricePoint::atMs)
+                .containsExactly(END - 12_000L, END);
+        assertThat(store.series("BTC", END, END + 1).get(0).raw()).isEqualByComparingTo("100");
+        // and the first round still reads the very same price
+        assertThat(prices.resolve(btc, window(btc)).close()).isEqualByComparingTo("100.00");
+    }
+
+    @Test
+    void aFreshFloorTickIsTheBoundaryPriceEvenWhenTheWindowHasNoTickAtAll() {
+        ticks(btc, "hyperliquid", START - 3_000, END - 10_000, 3_000, at -> 100); // the feed dies 10 s before END ...
+        source.history = m -> {
+            List<PricePoint> out = new ArrayList<>(); // ... and the source's points start 5 s before the boundary
+            for (long at = END - 5_000; at <= END + 180_000; at += 20_000) {
+                out.add(point(at, 106));
+            }
+            out.add(point(END, 106));
+            return out;
+        };
+        now.set(END + 200_000L);
+
+        RoundPriceData data = prices.resolve(btc, nextWindow());
+
+        assertThat(data.open()).isEqualByComparingTo("100.00"); // not the 106 the source has at END - 5 s and END
+        assertThat(data.close()).isEqualByComparingTo("106.00");
+        assertThat(source.historyRequests.get(0)[0]).isEqualTo(END);
+    }
+
+    @Test
+    void aStaleFloorTickDoesNotPinTheBoundaryItsHoleMayStartBeforeIt() {
+        // the last tick is 16 s before END: not fresh at END, so the boundary price is still to be found
+        ticks(btc, "hyperliquid", START - 3_000, END - 16_000, 3_000, at -> 100);
+        ticks(btc, "hyperliquid", END + 60_000, END + 190_000, 3_000, at -> 105);
+        source.history = m -> List.of(point(END - 1, 104), point(END + 20_000, 105), point(END + 40_000, 105));
+        now.set(END + 200_000L);
+
+        RoundPriceData first = prices.resolve(btc, window(btc)); // closes at the history point 1 ms before END
+        now.addAndGet(61_000L); // the source is asked once a minute per market
+        RoundPriceData second = prices.resolve(btc, nextWindow());
+
+        assertThat(first.close()).isEqualByComparingTo("104.00");
+        assertThat(second.open()).isEqualByComparingTo(first.close());
+    }
+
+    /** The day (DAILY series) that ends where the next hour ends, three minutes long here: it spans END. */
+    private RoundWindow dayAroundTheBoundary() {
+        return new RoundWindow(btc.id(), Interval.DAILY, START - 180_000L, END + 180_000L);
+    }
+
+    /** The feed died 12 s before END and is back 60 s after it; the source remembers the minute in between. */
+    private void anOutageAroundTheSharedBoundary() {
+        ticks(btc, "hyperliquid", START - 183_000, END - 12_000, 3_000, at -> 100);
+        ticks(btc, "hyperliquid", END + 60_000, END + 190_000, 3_000, at -> 105);
+        source.history = m -> {
+            List<PricePoint> out = new ArrayList<>(List.of(point(END - 1, 105), point(END, 105)));
+            for (long at = END - 10_000; at <= END + 50_000; at += 10_000) {
+                out.add(point(at, 105));
+            }
+            return out;
+        };
+    }
+
+    @Test
+    void aLongerWindowOfTheOtherSeriesSettledBetweenTwoNeighboursCannotMoveTheirSharedBoundary() {
+        // the scheduler settles the DAILY series before the HOURLY one in every pass, and their boundaries
+        // coincide: the hour A closes on the tick that was fresh at END, then the day that ends with the next
+        // hour B fills its hole around END from history — with points before END — and only then B settles
+        anOutageAroundTheSharedBoundary();
+
+        RoundPriceData hourA = prices.resolve(btc, window(btc)); // END + 1 s: the 12 s old tick is fresh, no hole
+        now.set(END + 200_000L);
+        RoundPriceData day = prices.resolve(btc, dayAroundTheBoundary()); // hole (END − 12 s, END + 60 s) from history
+        RoundPriceData hourB = prices.resolve(btc, nextWindow());
+
+        assertThat(hourA.close()).isEqualByComparingTo("100.00");
+        assertThat(hourB.open()).isEqualByComparingTo(hourA.close()); // Р-40
+        assertThat(day.close()).isEqualByComparingTo(hourB.close()); // two windows that end together agree
+        assertThat(source.historyRequests).hasSize(1); // the day asked; neither hour needed to
+    }
+
+    @Test
+    void theSameInTheOtherOrderAndWithTheLongWindowFirst() {
+        anOutageAroundTheSharedBoundary();
+        now.set(END + 200_000L);
+
+        RoundPriceData hourB = prices.resolve(btc, nextWindow()); // B first (A was delayed): reads the fresh tick
+        RoundPriceData day = prices.resolve(btc, dayAroundTheBoundary());
+        RoundPriceData hourA = prices.resolve(btc, window(btc));
+
+        assertThat(hourB.open()).isEqualByComparingTo("100.00");
+        assertThat(hourA.close()).isEqualByComparingTo(hourB.open());
+        assertThat(day.close()).isEqualByComparingTo(hourB.close());
+    }
+
+    @Test
+    void aSettledRoundLeavesItsBoundaryPricesAsTicksAtExactlyTheBoundaryAndNeverOverwritesATick() {
+        ticks(btc, "hyperliquid", START - 3_000, END - 12_000, 3_000, at -> 100); // the last tick: 12 s before END
+        ticks(btc, "hyperliquid", END + 3_000, END + 6_000, 3_000, at -> 101);
+        store.append("hyperliquid", START, Map.of("BTC", new BigDecimal("99"))); // a live tick exactly at START
+
+        prices.resolve(btc, window(btc));
+
+        // START had a tick of its own (99): left alone; END had none: the closing price (100) is pinned there
+        assertThat(store.series("BTC", START, START + 1)).extracting(p -> p.raw().intValue()).containsExactly(99);
+        assertThat(store.series("BTC", END, END + 1)).extracting(p -> p.raw().intValue()).containsExactly(100);
+        assertThat(prices.resolve(btc, window(btc)).close()).isEqualByComparingTo("100.00"); // and the same again
+    }
+
+    // ------------------------------------------------------------------------------- a quiet asset
+
+    @Test
+    void aQuietAssetsHoleIsCarriedWhenTheSourceHasNothingAndThePriceAfterItIsTheSame() {
+        ticks(btc, "hyperliquid", START - 2_000, START + 58_000, 3_000, at -> 100); // the feed stops at START + 58 s ...
+        ticks(btc, "hyperliquid", START + 118_000, END + 3_000, 3_000, at -> 100); // ... and is back 60 s later, same price
+        // source.history answers with nothing: nothing traded
+
+        RoundPriceData data = prices.resolve(btc, window(btc));
+
+        assertThat(source.historyRequests).hasSize(1);
+        assertThat(data.open()).isEqualByComparingTo("100.00");
+        assertThat(data.close()).isEqualByComparingTo("100.00");
+        assertThat(store.series("BTC", START + 58_001, START + 118_000)).extracting(PricePoint::atMs)
+                .containsExactly(START + 68_000, START + 78_000, START + 88_000, START + 98_000, START + 108_000);
+        assertThat(store.series("BTC", START + 58_001, START + 118_000)).allSatisfy(p -> assertThat(p.raw()).isEqualByComparingTo("100"));
+    }
+
+    @Test
+    void aQuietAssetsHoleIsNotCarriedWhenThePriceAfterItDiffers() {
+        ticks(btc, "hyperliquid", START - 2_000, START + 58_000, 3_000, at -> 100);
+        ticks(btc, "hyperliquid", START + 118_000, END + 3_000, 3_000, at -> 101); // it moved, nobody knows when
+
+        assertThatThrownBy(() -> prices.resolve(btc, window(btc))).isInstanceOf(PriceUnavailableException.class);
+
+        assertThat(store.series("BTC", START + 58_001, START + 118_000)).isEmpty();
+    }
+
+    @Test
+    void nothingIsCarriedWhenTheSourceDidNotAnswer() {
+        ticks(btc, "hyperliquid", START - 2_000, START + 58_000, 3_000, at -> 100);
+        ticks(btc, "hyperliquid", START + 118_000, END + 3_000, 3_000, at -> 100);
+        source.failure = new IOException("connection refused"); // the next try may bring the real points
+
+        assertThatThrownBy(() -> prices.resolve(btc, window(btc))).isInstanceOf(PriceUnavailableException.class);
+
+        assertThat(store.series("BTC", START + 58_001, START + 118_000)).isEmpty();
+    }
+
+    @Test
+    void nothingIsCarriedIntoAHoleTheSourceHasAtLeastSomethingFor() {
+        ticks(btc, "hyperliquid", START - 2_000, START + 58_000, 3_000, at -> 100);
+        ticks(btc, "hyperliquid", START + 118_000, END + 3_000, 3_000, at -> 100);
+        source.history = m -> List.of(point(START + 70_000, 100)); // a real point that leaves 48 s to the live tick
+
+        assertThatThrownBy(() -> prices.resolve(btc, window(btc))).isInstanceOf(PriceUnavailableException.class);
+
+        assertThat(store.series("BTC", START + 58_001, START + 118_000)).extracting(PricePoint::atMs)
+                .containsExactly(START + 70_000);
+    }
+
+    @Test
+    void aQuietTailIsCarriedUpToTheEndWhenTheFirstTickAfterTheWindowHasTheSamePrice() {
+        // the server was down over the end of the round: ticks stop 140 s before END, the first one is back 60 s after
+        ticks(btc, "hyperliquid", START - 2_000, START + 40_000, 3_000, at -> 100);
+        ticks(btc, "hyperliquid", END + 60_000, END + 90_000, 3_000, at -> 100);
+        now.set(END + 100_000L);
+
+        RoundPriceData data = prices.resolve(btc, window(btc));
+
+        assertThat(data.close()).isEqualByComparingTo("100.00");
+        assertThat(data.sourceTsMs()).isEqualTo(END); // the carried points reach the end of the round ...
+        assertThat(store.series("BTC", END + 1, END + 60_000)).isEmpty(); // ... and not a millisecond further
+    }
+
+    @Test
+    void aQuietTailIsNotCarriedWhenThePriceAfterTheWindowDiffersOrThereIsNoTickAfterIt() {
+        ticks(btc, "hyperliquid", START - 2_000, START + 40_000, 3_000, at -> 100);
+        now.set(END + 100_000L);
+        assertThatThrownBy(() -> prices.resolve(btc, window(btc))).isInstanceOf(PriceUnavailableException.class); // no tick after
+
+        now.addAndGet(61_000L);
+        ticks(btc, "hyperliquid", END + 60_000, END + 90_000, 3_000, at -> 100.5); // it moved in the meantime
+        assertThatThrownBy(() -> prices.resolve(btc, window(btc))).isInstanceOf(PriceUnavailableException.class);
+
+        assertThat(store.series("BTC", START + 40_001, END + 60_000)).isEmpty();
+    }
+
+    @Test
+    void aStaleOpeningTickIsCarriedAcrossTheBoundaryWhenTheFirstTickInTheWindowHasTheSamePrice() {
+        ticks(btc, "hyperliquid", START - 20_000, START - 20_000, 1, at -> 100); // 20 s old at START: stale
+        ticks(btc, "hyperliquid", START + 25_000, END + 3_000, 3_000, at -> 100);
+
+        RoundPriceData data = prices.resolve(btc, window(btc));
+
+        assertThat(data.open()).isEqualByComparingTo("100.00");
+        assertThat(store.series("BTC", START - 19_999, START + 25_000)).extracting(PricePoint::atMs)
+                .containsExactly(START - 10_000, START, START + 10_000, START + 20_000);
     }
 
     // ------------------------------------------------------------------------------- running path
