@@ -20,7 +20,11 @@ import org.jboss.logging.Logger;
  * <p>This bean owns a single background refresh instead — its own {@code @Scheduled} tick, never
  * on a request thread, and always at most one {@code oracleStatus()} call in flight regardless of
  * how many concurrent {@code serverInfo()} callers there are (also sidesteps any REST-client
- * connection-pool contention that concurrent request-thread calls would otherwise cause).
+ * connection-pool contention that concurrent request-thread calls would otherwise cause). "At most
+ * one" includes the tick itself: it is {@code concurrentExecution = SKIP}, because Quarkus's default
+ * ({@code PROCEED}) would start a second refresh while a slow one — the several seconds above — is
+ * still waiting, which is exactly the overlap this bean exists to prevent.
+ *
  * {@link #get()} returns the last known-good status instantly. A failed refresh keeps serving the
  * previous value rather than flipping to {@code null} — matches {@link ChainSvcClient#oracleStatus()}'s
  * own "callers degrade gracefully" contract (see its javadoc); {@code null} only before the very
@@ -30,6 +34,13 @@ import org.jboss.logging.Logger;
  * (3)}), not {@link ChainSvcRestClient} directly — same pattern {@code OraclePublisherService}
  * already uses, so {@code @InjectMock ChainSvcClient} in tests fully controls what this cache
  * refreshes from, same as every other caller.
+ *
+ * <p>Record format 2 (docs/research/chain_service.md §16.3) adds fields to the status
+ * ({@code maxKnownSeq}, {@code recordFormat}, {@code feeCoinsFree}, {@code feeCoinsFreeMojos}); all
+ * are nullable and this cache stores the status as it came. It is a display copy for {@code
+ * serverInfo}: nothing that decides what is sent to the chain service reads it — {@link
+ * OracleAssetGuard} and {@link ChainOracleSeqGate} read the status themselves, because "the last good
+ * value" is the wrong answer to "what does the chain service say now".
  */
 @ApplicationScoped
 public class OracleStatusCache {
@@ -41,7 +52,7 @@ public class OracleStatusCache {
 
     private final AtomicReference<ChainSvcClient.OracleStatus> lastGood = new AtomicReference<>();
 
-    @Scheduled(every = "5s")
+    @Scheduled(every = "5s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void refresh() {
         try {
             ChainSvcClient.OracleStatus status = chainSvc.oracleStatus();

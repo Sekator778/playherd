@@ -40,7 +40,7 @@ public class ChainSvcClientImpl implements ChainSvcClient {
         try {
             List<ChainSvcRestClient.OracleRecordJson> json = records.stream()
                     .map(r -> new ChainSvcRestClient.OracleRecordJson(r.seq(), r.ts(), r.priceCents(),
-                            r.resultsHash(), r.source(), r.sourceTs()))
+                            r.resultsHash(), r.source(), r.sourceTs(), r.asset()))
                     .toList();
             ChainSvcRestClient.OracleRecordsResponse response =
                     rest.oracleRecords(bearerToken(), new ChainSvcRestClient.OracleRecordsRequest(json));
@@ -69,7 +69,8 @@ public class ChainSvcClientImpl implements ChainSvcClient {
             ChainSvcRestClient.OracleStatusResponse r = rest.oracleStatus(bearerToken());
             return new OracleStatus(r.launcherId(), r.network(), r.lastConfirmedSeq(), r.lastConfirmedHeight(),
                     r.pendingRecords(), r.inFlightBundleId(), r.operatorBalanceMojos(), r.stuckReason(),
-                    r.conflicts() == null ? List.of() : r.conflicts());
+                    r.conflicts() == null ? List.of() : r.conflicts(), r.maxKnownSeq(), r.recordFormat(),
+                    r.feeCoinsFree(), r.feeCoinsFreeMojos());
         } catch (Exception e) {
             LOG.debugf(e, "chainsvc /v1/oracle/status unreachable");
             return null;

@@ -13,29 +13,71 @@ public interface ChainSvcClient {
     record AuthVerifyResult(boolean valid, String reason) {
     }
 
-    /** One record of {@code POST /v1/oracle/records}'s {@code records} array. */
-    record OracleRecord(long seq, long ts, long priceCents, String resultsHash, String source, long sourceTs) {
+    /** One record of {@code POST /v1/oracle/records}'s {@code records} array.
+     *
+     *  <p>{@code asset} is the record's market in the public registry (record format 2,
+     *  docs/research/markets_architecture.md §7 п.1; chain/c2-svc {@code OracleRecordDto.asset}):
+     *  0 is BTC, the only market before format 2. A chain service older than format 2 drops the
+     *  unknown JSON key and would publish a non-zero asset as a BTC price — which is why
+     *  {@code OraclePublisherService} sends {@code asset > 0} only after
+     *  {@link OracleStatus#supportsAssets()}. */
+    record OracleRecord(long seq, long ts, long priceCents, String resultsHash, String source, long sourceTs,
+                          int asset) {
+
+        /** A BTC record (asset 0): the shape every record had before markets. */
+        public OracleRecord(long seq, long ts, long priceCents, String resultsHash, String source, long sourceTs) {
+            this(seq, ts, priceCents, resultsHash, source, sourceTs, 0);
+        }
     }
 
-    /** FIXED INTERFACE (b) response of {@code POST /v1/oracle/records}: {@code queued} is how
-     *  many of the request's records chainsvc now durably holds (freshly queued *or* already
-     *  known — a record already {@code confirmed}/{@code queued} is accepted idempotently, not an
-     *  error, so {@code queued} can equal the request size even when nothing new was queued);
-     *  {@code acceptedSeqs} is exactly which {@code seq}s that covers — the caller
-     *  ({@code OraclePublisherService}) marks only those {@code chainsvc_queued}, not "the whole
-     *  batch iff the count matches", so a partial accept (chainsvc down mid-batch, one bad record,
-     *  …) doesn't cause an already-accepted record to be resent forever nor an unaccepted one to
-     *  be marked done. */
+    /** FIXED INTERFACE (b) response of {@code POST /v1/oracle/records}: {@code acceptedSeqs} is
+     *  exactly the {@code seq}s chainsvc <b>newly</b> accepted by this call and {@code queued} their
+     *  count. A {@code seq} chainsvc already holds in any state (pending, in flight, confirmed,
+     *  conflicting) is an idempotent no-op and is simply left out — so {@code acceptedSeqs} can be
+     *  shorter than the request although nothing went wrong (chain/c2-svc
+     *  {@code QueueFile::enqueue}, docs/research/chain_service.md §10.7). The caller
+     *  ({@code OraclePublisherService}) marks {@code chainsvc_queued} for the seqs named here and asks
+     *  {@link #oracleRecordStatus(long)} about the rest, instead of treating "not accepted" as "not
+     *  held" (which resent a record chainsvc already had on every tick, forever). A chainsvc outage
+     *  also comes back as an empty result — never as an exception. */
     record OracleRecordsResult(int queued, List<Long> acceptedSeqs) {
     }
 
-    /** {@code stuckReason}/{@code conflicts} (task item 5, contract test Java<->Rust): present on
-     *  chainsvc's real {@code OracleStatusResponse} (chain/c2-svc/src/oracle/types.rs) since the
-     *  §11/§12 postmortem fixes but missing from this record until the contract-fixture test
-     *  caught the drift — additive, {@code null}/empty until a caller actually needs them. */
+    /** {@code GET /v1/oracle/status}. {@code stuckReason}/{@code conflicts} (task item 5, contract
+     *  test Java<->Rust): present on chainsvc's real {@code OracleStatusResponse}
+     *  (chain/c2-svc/src/oracle/types.rs) since the §11/§12 postmortem fixes but missing from this
+     *  record until the contract-fixture test caught the drift.
+     *
+     *  <p>Record format 2 (docs/research/chain_service.md §16.3) adds the last four fields, all
+     *  {@code null} when the chain service predates them: {@code maxKnownSeq} — the highest
+     *  {@code seq} it knows in any state (what the server raises its own counter to,
+     *  {@link OracleSeqGate}); {@code recordFormat} — 1 = records without {@code asset}, 2 = with
+     *  (<b>absent means 1</b>, see {@link #effectiveRecordFormat()}); {@code feeCoinsFree} /
+     *  {@code feeCoinsFreeMojos} — the operator wallet's spare fee coins ({@code null} also before
+     *  the first wallet scan), the mojos as a decimal string like {@code operatorBalanceMojos}. */
     record OracleStatus(String launcherId, String network, Long lastConfirmedSeq, Long lastConfirmedHeight,
                           int pendingRecords, String inFlightBundleId, String operatorBalanceMojos,
-                          String stuckReason, List<Long> conflicts) {
+                          String stuckReason, List<Long> conflicts, Long maxKnownSeq, Integer recordFormat,
+                          Integer feeCoinsFree, String feeCoinsFreeMojos) {
+
+        /** A status as chainsvc sent it before record format 2 (no format-2 fields). */
+        public OracleStatus(String launcherId, String network, Long lastConfirmedSeq, Long lastConfirmedHeight,
+                            int pendingRecords, String inFlightBundleId, String operatorBalanceMojos,
+                            String stuckReason, List<Long> conflicts) {
+            this(launcherId, network, lastConfirmedSeq, lastConfirmedHeight, pendingRecords, inFlightBundleId,
+                    operatorBalanceMojos, stuckReason, conflicts, null, null, null, null);
+        }
+
+        /** {@code recordFormat}, with a chain service that does not send it counted as format 1. */
+        public int effectiveRecordFormat() {
+            return recordFormat == null ? 1 : recordFormat;
+        }
+
+        /** True when records with {@code asset > 0} may be sent: the chain service says format 2 or
+         *  later. Format 1 — and a status that does not say — would publish them as BTC. */
+        public boolean supportsAssets() {
+            return effectiveRecordFormat() >= 2;
+        }
     }
 
     /** FIXED INTERFACE (b)'s new {@code GET /v1/oracle/records/{seq}} — one record's own

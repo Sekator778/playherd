@@ -36,7 +36,10 @@ public interface ChainSvcRestClient {
     @Produces(MediaType.APPLICATION_JSON)
     AuthVerifyResponse authVerify(@HeaderParam("Authorization") String authorization, AuthVerifyRequest request);
 
-    record OracleRecordJson(long seq, long ts, long priceCents, String resultsHash, String source, long sourceTs) {
+    /** {@code asset}: the record's registry index (record format 2), always sent — 0 for BTC. A chain
+     *  service older than format 2 ignores the key (its DTO has no {@code deny_unknown_fields}). */
+    record OracleRecordJson(long seq, long ts, long priceCents, String resultsHash, String source, long sourceTs,
+                              int asset) {
     }
 
     record OracleRecordsRequest(List<OracleRecordJson> records) {
@@ -68,10 +71,14 @@ public interface ChainSvcRestClient {
      *  real field-drift the new contract-fixture test caught: chainsvc's actual
      *  {@code OracleStatusResponse} (chain/c2-svc/src/oracle/types.rs) has carried these since its
      *  §11/§12 postmortem fixes, silently dropped on the Java side by Jackson's default
-     *  ignore-unknown-properties behavior until now. */
+     *  ignore-unknown-properties behavior until now. The last four fields are record format 2's
+     *  ({@code maxKnownSeq}, {@code recordFormat}, {@code feeCoinsFree}, {@code feeCoinsFreeMojos},
+     *  docs/research/chain_service.md §16.3): boxed, so a chainsvc that predates them reads as
+     *  {@code null}, not 0 — "absent" and "zero" mean different things for every one of them. */
     record OracleStatusResponse(String launcherId, String network, Long lastConfirmedSeq, Long lastConfirmedHeight,
                                   int pendingRecords, String inFlightBundleId, String operatorBalanceMojos,
-                                  String stuckReason, List<Long> conflicts) {
+                                  String stuckReason, List<Long> conflicts, Long maxKnownSeq, Integer recordFormat,
+                                  Integer feeCoinsFree, String feeCoinsFreeMojos) {
     }
 
     @GET

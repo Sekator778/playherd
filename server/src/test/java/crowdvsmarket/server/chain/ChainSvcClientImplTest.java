@@ -12,6 +12,7 @@ import crowdvsmarket.server.config.GameConfig;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Plain unit test (no {@code @QuarkusTest} needed — {@link ChainSvcRestClient} is a plain
@@ -57,6 +58,23 @@ class ChainSvcClientImplTest {
     }
 
     @Test
+    void oracleRecordsSendsEveryRecordsAssetAndABtcRecordIsAssetZero() {
+        when(rest.oracleRecords(any(), any()))
+                .thenReturn(new ChainSvcRestClient.OracleRecordsResponse(2, List.of(42L, 43L)));
+
+        impl.oracleRecords(List.of(
+                new ChainSvcClient.OracleRecord(42L, 1000L, 500000L, "0xhash", "live", 1000L, 3),
+                new ChainSvcClient.OracleRecord(43L, 1001L, 8561200L, "0xhash2", "live", 1001L)));
+
+        ArgumentCaptor<ChainSvcRestClient.OracleRecordsRequest> sent =
+                ArgumentCaptor.forClass(ChainSvcRestClient.OracleRecordsRequest.class);
+        verify(rest).oracleRecords(eq("Bearer " + TOKEN), sent.capture());
+        assertThat(sent.getValue().records()).containsExactly(
+                new ChainSvcRestClient.OracleRecordJson(42L, 1000L, 500000L, "0xhash", "live", 1000L, 3),
+                new ChainSvcRestClient.OracleRecordJson(43L, 1001L, 8561200L, "0xhash2", "live", 1001L, 0));
+    }
+
+    @Test
     void oracleRecordsDegradesGracefullyWhenChainsvcUnreachable() {
         when(rest.oracleRecords(any(), any())).thenThrow(new RuntimeException("connection refused"));
 
@@ -90,11 +108,60 @@ class ChainSvcClientImplTest {
     @Test
     void oracleStatusSendsBearerToken() {
         when(rest.oracleStatus(any())).thenReturn(new ChainSvcRestClient.OracleStatusResponse(
-                "launcher", "testnet11", 1L, 100L, 0, null, "0", null, java.util.List.of()));
+                "launcher", "testnet11", 1L, 100L, 0, null, "0", null, java.util.List.of(), null, null, null, null));
 
         impl.oracleStatus();
 
         verify(rest).oracleStatus(eq("Bearer " + TOKEN));
+    }
+
+    @Test
+    void oracleStatusCarriesTheRecordFormatTwoFields() {
+        when(rest.oracleStatus(any())).thenReturn(new ChainSvcRestClient.OracleStatusResponse(
+                "launcher", "testnet11", 205L, 4737632L, 4, null, "999999999", null, List.of(), 209L, 2, 4,
+                "800000000"));
+
+        ChainSvcClient.OracleStatus status = impl.oracleStatus();
+
+        assertThat(status.maxKnownSeq()).isEqualTo(209L);
+        assertThat(status.recordFormat()).isEqualTo(2);
+        assertThat(status.feeCoinsFree()).isEqualTo(4);
+        assertThat(status.feeCoinsFreeMojos()).isEqualTo("800000000");
+        assertThat(status.effectiveRecordFormat()).isEqualTo(2);
+        assertThat(status.supportsAssets()).isTrue();
+    }
+
+    @Test
+    void aChainServiceThatSendsNoRecordFormatCountsAsFormatOneAndTheNewFieldsStayNull() {
+        // what chainsvc answered before record format 2: none of the four fields (Jackson leaves them null)
+        when(rest.oracleStatus(any())).thenReturn(new ChainSvcRestClient.OracleStatusResponse(
+                "launcher", "testnet11", 1145L, 4735705L, 0, null, "10000000000", null, null, null, null, null, null));
+
+        ChainSvcClient.OracleStatus status = impl.oracleStatus();
+
+        assertThat(status.recordFormat()).isNull();
+        assertThat(status.maxKnownSeq()).isNull();
+        assertThat(status.feeCoinsFree()).isNull();
+        assertThat(status.feeCoinsFreeMojos()).isNull();
+        assertThat(status.effectiveRecordFormat()).isEqualTo(1);
+        assertThat(status.supportsAssets()).isFalse();
+        assertThat(status.conflicts()).isEmpty(); // null from the wire → empty, as before
+    }
+
+    @Test
+    void recordFormatsBelowTwoDoNotSupportAssets() {
+        ChainSvcClient.OracleStatus one = new ChainSvcClient.OracleStatus("l", "n", null, null, 0, null, null, null,
+                List.of(), 5L, 1, null, null);
+        ChainSvcClient.OracleStatus three = new ChainSvcClient.OracleStatus("l", "n", null, null, 0, null, null, null,
+                List.of(), 5L, 3, null, null);
+        // the nine-argument form is the status of a chainsvc that predates the format-2 fields
+        ChainSvcClient.OracleStatus legacy = new ChainSvcClient.OracleStatus("l", "n", null, null, 0, null, null, null,
+                List.of());
+
+        assertThat(one.supportsAssets()).isFalse();
+        assertThat(three.supportsAssets()).isTrue(); // a later format keeps the field
+        assertThat(legacy.supportsAssets()).isFalse();
+        assertThat(legacy.maxKnownSeq()).isNull();
     }
 
     // --- Р-53: real on-chain PLAY withdraw/deposit ---

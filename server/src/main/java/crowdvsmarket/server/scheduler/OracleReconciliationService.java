@@ -1,6 +1,8 @@
 package crowdvsmarket.server.scheduler;
 
 import crowdvsmarket.server.chain.ChainSvcClient;
+import crowdvsmarket.server.chain.LogThrottle;
+import crowdvsmarket.server.chain.OracleAssetGuard;
 import crowdvsmarket.server.persistence.OracleRecordRepository;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -24,6 +26,14 @@ import org.jboss.logging.Logger;
  * <p>Never blocks/throws to its {@code @Scheduled} caller — same "never block the game on chain
  * confirmation" contract {@code OraclePublisherService} already follows; a chainsvc outage just
  * means every row here stays exactly as it was until the next tick.
+ *
+ * <p><b>Every market.</b> The record's market does not change anything about the polling: chainsvc
+ * knows records by {@code seq} only. It does about the re-POST, which must carry the same
+ * {@code asset} the first one did — a record of a market other than BTC re-sent without it would be
+ * published as a BTC price — and must not go to a chain service that predates record format 2
+ * ({@link OracleAssetGuard}). The tick is {@code concurrentExecution = SKIP}: with many markets there
+ * are many unconfirmed rows after an outage, and a pass that outlasts the minute must not be joined
+ * by a second one polling the same rows.
  */
 @ApplicationScoped
 public class OracleReconciliationService {
@@ -38,8 +48,12 @@ public class OracleReconciliationService {
     OracleRecordRepository oracleRecords;
     @Inject
     ChainSvcClient chainSvc;
+    @Inject
+    OracleAssetGuard assetGuard;
 
-    @Scheduled(every = "60s")
+    private final LogThrottle warnings = new LogThrottle(60_000);
+
+    @Scheduled(every = "60s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void reconcile() {
         List<OracleRecordRepository.ReconciliationRow> rows;
         try {
@@ -71,8 +85,16 @@ public class OracleReconciliationService {
 
     private void backfill(OracleRecordRepository.ReconciliationRow row) {
         try {
+            if (row.assetIndex() > 0 && !assetGuard.assetsSupported()) {
+                if (warnings.ready("backfill-held")) {
+                    LOG.warnf("oracle record seq=%d (market %s, asset %d) is unknown to chainsvc but is not re-sent: "
+                            + "chainsvc does not say it understands record format 2", row.seq(), row.market(),
+                            row.assetIndex());
+                }
+                return;
+            }
             chainSvc.oracleRecords(List.of(new ChainSvcClient.OracleRecord(row.seq(), row.ts(), row.priceCents(),
-                    row.resultsHash(), row.source(), row.sourceTs())));
+                    row.resultsHash(), row.source(), row.sourceTs(), row.assetIndex())));
         } catch (Exception e) {
             LOG.debugf(e, "backfill re-POST failed for oracle record seq=%d — will retry next tick", row.seq());
         }
