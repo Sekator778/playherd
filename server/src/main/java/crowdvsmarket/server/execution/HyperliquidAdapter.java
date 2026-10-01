@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import crowdvsmarket.engine.execution.ExecutionAdapter;
 import crowdvsmarket.engine.margin.Leverage;
+import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.market.Candle;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.engine.round.Position;
@@ -88,12 +89,12 @@ public class HyperliquidAdapter implements ExecutionAdapter {
     }
 
     @Override
-    public Position openPosition(String userId, String roundId, Direction direction, Leverage leverage,
-            BigDecimal margin, BigDecimal entryPrice) {
+    public Position openPosition(MarketSpec spec, String userId, String roundId, Direction direction,
+            Leverage leverage, BigDecimal margin, BigDecimal entryPrice) {
         requireEnabledAndConfigured();
         // Liquidation price is a property of the position itself, independent of which venue
         // executes it (Р-7's Hyperliquid formula) — see ExecutionAdapter's javadoc.
-        Position position = Position.openFromMargin(userId, roundId, direction, leverage, margin, entryPrice);
+        Position position = Position.openFromMargin(userId, roundId, direction, leverage, margin, entryPrice, spec);
         HlOrderAction action = buildOrderAction(config.hyperliquidAssetIndex(), direction == Direction.UP, false,
                 entryPrice, position.size());
         long nonce = System.currentTimeMillis();

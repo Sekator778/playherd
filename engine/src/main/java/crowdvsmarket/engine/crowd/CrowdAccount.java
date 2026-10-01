@@ -4,6 +4,7 @@ import crowdvsmarket.engine.execution.ExecutionAdapter;
 import crowdvsmarket.engine.execution.PaperTradingAdapter;
 import crowdvsmarket.engine.margin.Leverage;
 import crowdvsmarket.engine.market.Candle;
+import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.engine.round.Position;
@@ -14,12 +15,17 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * The public "счёт толпы" (crowd account, Р-5, Р-14, Р-17): one paper-USD position per round,
  * opened on the majority side of that round's player bets and sized as 10% of the account's own
  * running capital — entirely independent of player balances (Р-5: "на балансы игроков не
  * влияет", it is a display/scoreboard account, not something players pay into or out of).
+ *
+ * <p>One account per market (Р-69): it trades its {@link MarketSpec}'s market, with that market's
+ * maintenance margin rate and leverage cap. The constructors without a spec are the BTC account,
+ * as before.
  *
  * <p>Not thread-safe (capital/history mutate per {@link #processRound}), matching the rest of this
  * engine's single-threaded, functional-core-mutable-shell style.
@@ -51,6 +57,7 @@ public final class CrowdAccount {
     private BigDecimal capital;
     private final List<RoundResult> history = new ArrayList<>();
     private final ExecutionAdapter executionAdapter;
+    private final MarketSpec spec;
 
     public CrowdAccount() {
         this(STARTING_CAPITAL);
@@ -69,8 +76,24 @@ public final class CrowdAccount {
      * default to paper trading, so every existing caller keeps its exact prior behavior.
      */
     public CrowdAccount(BigDecimal startingCapital, ExecutionAdapter executionAdapter) {
+        this(startingCapital, executionAdapter, MarketSpec.BTC);
+    }
+
+    /**
+     * The crowd account of {@code spec}'s market (Р-69): positions open through
+     * {@code executionAdapter.openPosition(spec, …)} and the stake-weighted leverage is clamped to
+     * the market's own cap, so a 25x market never produces a 40x crowd position. The shorter
+     * constructors are this one with {@link MarketSpec#BTC}.
+     */
+    public CrowdAccount(BigDecimal startingCapital, ExecutionAdapter executionAdapter, MarketSpec spec) {
         this.capital = startingCapital;
         this.executionAdapter = executionAdapter;
+        this.spec = Objects.requireNonNull(spec, "spec");
+    }
+
+    /** The market this account trades. */
+    public MarketSpec spec() {
+        return spec;
     }
 
     public BigDecimal capital() {
@@ -85,10 +108,10 @@ public final class CrowdAccount {
     /**
      * Computes and applies this round's crowd trade from the round's player bets: majority side
      * by SUM OF STAKES (Р-5), leverage = stake-weighted average of the majority side, rounded
-     * HALF_UP and clamped to [2,40] (Р-14), margin = 10% of current capital, entered at
-     * {@code openPrice} and monitored for liquidation across {@code path} exactly like a player
-     * position (Р-8, reusing {@code PositionSimulator}). A tie (including zero bets on both sides)
-     * makes no trade.
+     * HALF_UP and clamped to [2, the market's cap] — [2,40] for BTC (Р-14), margin = 10% of
+     * current capital, entered at {@code openPrice} and monitored for liquidation across
+     * {@code path} exactly like a player position (Р-8, reusing {@code PositionSimulator}). A tie
+     * (including zero bets on both sides) makes no trade.
      */
     public RoundResult processRound(String roundId, Collection<Bet> bets, BigDecimal openPrice, List<Candle> path) {
         BigDecimal capitalBefore = capital;
@@ -99,14 +122,14 @@ public final class CrowdAccount {
             return result;
         }
 
-        int leverage = weightedLeverage(majority.bets());
+        int leverage = weightedLeverage(majority.bets(), spec);
         BigDecimal margin = capital.multiply(MARGIN_SHARE_OF_CAPITAL, MathContext.DECIMAL128).setScale(2, RoundingMode.HALF_UP);
         // Task item 7: was `Position.openFromMargin(...)` + `PositionSimulator.simulate(...)`
         // called directly here — now the same two calls, behind ExecutionAdapter (see that
         // interface's javadoc); PaperTradingAdapter (the default, via the other constructors)
         // does exactly this and nothing else, so this is a byte-identical behavior change.
         Position position = executionAdapter.openPosition(
-                CROWD_USER_ID, roundId, majority.direction(), new Leverage(leverage), margin, openPrice);
+                spec, CROWD_USER_ID, roundId, majority.direction(), new Leverage(leverage), margin, openPrice);
         PositionSimulator.Outcome outcome = executionAdapter.closePosition(position, path);
 
         boolean liquidated = outcome instanceof PositionSimulator.Outcome.Liquidated;
@@ -146,8 +169,9 @@ public final class CrowdAccount {
         return cmp > 0 ? new Majority(Direction.UP, upBets) : new Majority(Direction.DOWN, downBets);
     }
 
-    /** Stake-weighted average leverage of the majority side, HALF_UP to the nearest integer, clamped [2,40] (Р-14). */
-    private static int weightedLeverage(List<Bet> sideBets) {
+    /** Stake-weighted average leverage of the majority side, HALF_UP to the nearest integer, clamped
+     * to [2, the market's cap] — [2,40] for BTC (Р-14). */
+    private static int weightedLeverage(List<Bet> sideBets, MarketSpec spec) {
         BigDecimal weightedSum = BigDecimal.ZERO;
         BigDecimal totalStake = BigDecimal.ZERO;
         for (Bet bet : sideBets) {
@@ -157,6 +181,6 @@ public final class CrowdAccount {
         }
         BigDecimal average = weightedSum.divide(totalStake, MathContext.DECIMAL128);
         int rounded = average.setScale(0, RoundingMode.HALF_UP).intValueExact();
-        return Math.max(Leverage.MIN, Math.min(Leverage.MAX, rounded));
+        return spec.clampLeverage(rounded);
     }
 }

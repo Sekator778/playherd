@@ -2,6 +2,7 @@ package crowdvsmarket.engine.execution;
 
 import crowdvsmarket.engine.margin.Leverage;
 import crowdvsmarket.engine.market.Candle;
+import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.engine.round.Position;
 import crowdvsmarket.engine.round.PositionSimulator;
@@ -34,12 +35,28 @@ import java.util.Optional;
  */
 public interface ExecutionAdapter {
 
-    /** Opens a new position at {@code entryPrice}, sized from {@code margin} (PLAY/paper-USD) —
-     *  mirrors {@link Position#openFromMargin} exactly, since every adapter derives
-     *  {@code liquidationPrice} the same way (Р-7's Hyperliquid-formula liquidation price is a
-     *  property of the position itself, not of which venue executes it). */
-    Position openPosition(String userId, String roundId, Direction direction, Leverage leverage,
+    /** Opens a new position in {@code spec}'s market at {@code entryPrice}, sized from
+     *  {@code margin} (PLAY/paper-USD) — mirrors {@link Position#openFromMargin} exactly, since
+     *  every adapter derives {@code liquidationPrice} the same way (Р-7's Hyperliquid-formula
+     *  liquidation price is a property of the position itself, not of which venue executes it);
+     *  the market only contributes its maintenance margin rate (Р-69). */
+    Position openPosition(MarketSpec spec, String userId, String roundId, Direction direction, Leverage leverage,
             BigDecimal margin, BigDecimal entryPrice);
+
+    /**
+     * {@link #openPosition(MarketSpec, String, String, Direction, Leverage, BigDecimal, BigDecimal)}
+     * for the BTC market — the shape this seam had before markets. Existing <i>callers</i> of this
+     * form keep working unchanged; <i>implementers</i> do not get the same courtesy: the market
+     * method above is the abstract one, so an adapter written against the old interface has to
+     * implement it. It is also the only one the engine calls — {@code CrowdAccount} opens its
+     * position through it, always with the market it trades — so a venue-specific override of this
+     * BTC overload is never reached by {@code CrowdAccount} or {@code GameEngine}; that logic
+     * belongs in the market method.
+     */
+    default Position openPosition(String userId, String roundId, Direction direction, Leverage leverage,
+            BigDecimal margin, BigDecimal entryPrice) {
+        return openPosition(MarketSpec.BTC, userId, roundId, direction, leverage, margin, entryPrice);
+    }
 
     /** Best-effort current status without closing the position — {@link Optional#empty()} when
      *  this adapter's venue does not expose an intra-round status independent of

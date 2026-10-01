@@ -52,6 +52,35 @@ public final class LedgerBook {
         return acc == null ? Optional.empty() : Optional.ofNullable(acc.seasons().get(season));
     }
 
+    /**
+     * The player's balance at the end of {@code season} — what the "богачи" archive of a past
+     * season (Р-10, Р-18) must be computed from, instead of the balance now. A {@link SeasonRecord}
+     * does not store its own end balance, but the next one does: {@link #ensureSeasonPack} records
+     * "the balance just before the new season's pack" as the new record's
+     * {@code baselineBalance}. So this is the {@code baselineBalance} of the player's earliest
+     * record of a season after {@code season} (months the player sat out have no record and are
+     * skipped over), or the current balance when there is no later record — the player has not
+     * rolled past {@code season} yet, so "now" is still inside it.
+     *
+     * <p>The answer does not depend on when a movement arrived: one that is dated in {@code season}
+     * but was only booked after the player rolled on (a late {@link #settleRound}, an operator
+     * {@link #reverseWithdrawalEffect}/{@link #reverseDepositEffect}) was restated into the later
+     * baselines when it was booked ({@link #restateLaterBaselines}), so it is already part of the
+     * value read here — as if it had been booked on time.
+     *
+     * @throws NoSuchElementException for an unknown player, like {@link #balance}
+     */
+    public PlayAmount seasonEndBalance(String playerId, Season season) {
+        PlayerAccount acc = account(playerId);
+        Season next = null;
+        for (Season candidate : acc.seasons().keySet()) {
+            if (candidate.compareTo(season) > 0 && (next == null || candidate.compareTo(next) < 0)) {
+                next = candidate;
+            }
+        }
+        return next == null ? acc.balance() : acc.seasons().get(next).baselineBalance();
+    }
+
     public Collection<String> playerIds() {
         return List.copyOf(accounts.keySet());
     }
@@ -143,11 +172,26 @@ public final class LedgerBook {
      * {@code directionCorrect} is present, toward the "пророки" ratio (Р-18); {@code
      * Optional.empty()} for a flat round (close == open price), excluded from that ratio's
      * denominator.
+     *
+     * <p>The round belongs to the season {@code Season.of(now)} ({@code now} is the round's own last
+     * millisecond, see {@code GameEngine#runRound}) — when the player has a record for it. Its
+     * counters go there, and so does its payout. A late settlement of a round that ended on the last
+     * day of a month, for a player who already signed in on the 1st, therefore still counts toward
+     * the month it was played in. The balance is credited as of the call, like every other
+     * movement, so for such a round the payout is also restated into the baseline of every later
+     * season ({@link #restateLaterBaselines}): the stake left the balance before the player rolled
+     * on and the payout arrives after, and without the restatement the old season's archive would
+     * show the loss and the new season's growth the win. With no record for that season the round
+     * counts toward the current one — counters and payout alike — as it always did.
      */
     public void settleRound(String playerId, String roundId, PlayAmount payout, Optional<Boolean> directionCorrect, Instant now) {
         ensureSeasonPack(playerId, now);
         credit(playerId, payout, LedgerEntryType.SETTLEMENT, roundId, now);
-        updateCurrentSeasonRecord(playerId, sr -> sr.withRoundPlayed(directionCorrect.orElse(null)));
+        PlayerAccount acc = account(playerId);
+        Season roundSeason = Season.of(now);
+        Season counted = acc.seasons().containsKey(roundSeason) ? roundSeason : acc.currentSeason();
+        updateSeasonRecord(playerId, counted, sr -> sr.withRoundPlayed(directionCorrect.orElse(null)));
+        restateLaterBaselines(playerId, counted, payout);
     }
 
     // --- withdraw / deposit (Р-6), behind OnChainWalletPort ---
@@ -236,6 +280,13 @@ public final class LedgerBook {
      * as above). Never allows the balance to go negative (same guard as every other primitive, via
      * {@link #applyDelta}).
      *
+     * <p>The correction is dated in {@code originalSeason}, not in the season it is issued in: when
+     * that is an earlier season than the player's current one, the {@code originalAmount} credit
+     * (which can only land in the live balance) is also restated into every later season's baseline
+     * ({@link #restateLaterBaselines}). So the reversal moves no season's growth, the past season's
+     * "богачи" archive included — the withdrawal's debit sat in {@code originalSeason}'s flow, and
+     * its reversal now does too, together with the {@code withdrawn} bookkeeping above.
+     *
      * @throws IllegalStateException    if {@code relatedWithdrawalRequestId} was already reversed
      * @throws IllegalArgumentException if {@code reason} is blank
      */
@@ -253,6 +304,7 @@ public final class LedgerBook {
         ensureSeasonPack(playerId, now);
         applyDelta(playerId, originalAmount, LedgerEntryType.OPERATOR_CORRECTION, null, now);
         adjustSeasonWithdrawn(playerId, originalSeason, originalAmount.negate());
+        restateLaterBaselines(playerId, originalSeason, originalAmount);
 
         String id = "c-" + (++correctionCounter);
         LedgerCorrection correction = new LedgerCorrection(id, playerId, originalAmount, reason,
@@ -283,6 +335,11 @@ public final class LedgerBook {
      * (wrongly) credited PLAY was already spent or withdrawn, this throws
      * {@link IllegalStateException} and the operator must resolve the account by hand.
      *
+     * <p>Like {@link #reverseWithdrawalEffect}, the correction is dated in {@code originalSeason}:
+     * when that is earlier than the player's current season, the debit is also restated into every
+     * later season's baseline ({@link #restateLaterBaselines}), so the reversal moves no season's
+     * growth.
+     *
      * @throws IllegalStateException    if {@code relatedDepositRequestId} was already reversed, or
      *                                   reversing it would take the balance negative
      * @throws IllegalArgumentException if {@code reason} is blank
@@ -302,12 +359,39 @@ public final class LedgerBook {
         PlayAmount debit = originalAmount.negate();
         applyDelta(playerId, debit, LedgerEntryType.OPERATOR_CORRECTION, null, now);
         adjustSeasonDeposited(playerId, originalSeason, debit);
+        restateLaterBaselines(playerId, originalSeason, debit);
 
         String id = "c-" + (++correctionCounter);
         LedgerCorrection correction = new LedgerCorrection(id, playerId, debit, reason,
                 relatedDepositRequestId, now.toEpochMilli());
         corrections.add(correction);
         return correction;
+    }
+
+    /**
+     * Restates a movement that was applied to the balance as of the call but is dated in
+     * {@code season}, an earlier season than the player's current one: {@code delta} (the amount
+     * the balance moved by) is added to the {@code baselineBalance} of every record after
+     * {@code season}. A record's baseline is the previous season's end balance
+     * ({@link #seasonEndBalance}), so this puts the movement into the end balance of the season it
+     * belongs to and — because it is then in both the live balance and the baseline — out of the
+     * growth of every later season (Р-18: balance at season end + withdrawn - deposited - baseline -
+     * starter pack), however late it was booked. Booking such a movement before or after the player
+     * rolls on therefore leaves the same records behind.
+     *
+     * <p>A no-op when there is nothing earlier to attribute it to: {@code season} is the current one
+     * (the movement is simply part of the live balance and no record follows it) or the player has no
+     * record of it (no archive entry to keep right — the case in which {@link #adjustSeasonWithdrawn}
+     * and {@link #adjustSeasonDeposited} do nothing either).
+     */
+    private void restateLaterBaselines(String playerId, Season season, PlayAmount delta) {
+        PlayerAccount acc = account(playerId);
+        if (delta.mojos() == 0 || season.compareTo(acc.currentSeason()) >= 0 || !acc.seasons().containsKey(season)) {
+            return;
+        }
+        Map<Season, SeasonRecord> seasons = new LinkedHashMap<>(acc.seasons());
+        seasons.replaceAll((later, record) -> later.compareTo(season) > 0 ? record.withBaselineDelta(delta) : record);
+        accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), acc.currentSeason(), seasons));
     }
 
     /** Adjusts {@code season}'s {@code withdrawn} bookkeeping directly (unlike
@@ -414,10 +498,14 @@ public final class LedgerBook {
     }
 
     private void updateCurrentSeasonRecord(String playerId, UnaryOperator<SeasonRecord> fn) {
+        updateSeasonRecord(playerId, account(playerId).currentSeason(), fn);
+    }
+
+    /** Replaces {@code season}'s record with {@code fn} applied to it; the record must exist. */
+    private void updateSeasonRecord(String playerId, Season season, UnaryOperator<SeasonRecord> fn) {
         PlayerAccount acc = account(playerId);
-        Season season = acc.currentSeason();
         Map<Season, SeasonRecord> seasons = new LinkedHashMap<>(acc.seasons());
         seasons.put(season, fn.apply(seasons.get(season)));
-        accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), season, seasons));
+        accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), acc.currentSeason(), seasons));
     }
 }

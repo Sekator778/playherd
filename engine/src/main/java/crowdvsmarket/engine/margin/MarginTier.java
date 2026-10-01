@@ -17,8 +17,8 @@ import java.math.BigDecimal;
  * <p>{@code maintenanceMarginRate} and {@code maintenanceDeduction} are carried here for data
  * fidelity to the spec (and so {@link MarginTable} can look up the correct max-leverage cap for a
  * given notional), but {@link LiquidationCalculator} deliberately does <b>not</b> use tier1's rate
- * or deduction: the engine implements BTC tier0 only, see the class-level note on
- * {@link LiquidationCalculator} and doc section 2.1.
+ * or deduction: the engine implements tier0 only (BTC by default, any other market through an
+ * explicit rate), see the class-level note on {@link LiquidationCalculator} and doc section 2.1.
  */
 public record MarginTier(
         int tierIndex,

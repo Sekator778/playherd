@@ -2,6 +2,7 @@ package crowdvsmarket.engine.execution;
 
 import crowdvsmarket.engine.margin.Leverage;
 import crowdvsmarket.engine.market.Candle;
+import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.engine.round.Position;
 import crowdvsmarket.engine.round.PositionSimulator;
@@ -21,9 +22,9 @@ import java.util.Optional;
 public final class PaperTradingAdapter implements ExecutionAdapter {
 
     @Override
-    public Position openPosition(String userId, String roundId, Direction direction, Leverage leverage,
-            BigDecimal margin, BigDecimal entryPrice) {
-        return Position.openFromMargin(userId, roundId, direction, leverage, margin, entryPrice);
+    public Position openPosition(MarketSpec spec, String userId, String roundId, Direction direction,
+            Leverage leverage, BigDecimal margin, BigDecimal entryPrice) {
+        return Position.openFromMargin(userId, roundId, direction, leverage, margin, entryPrice, spec);
     }
 
     /** Always {@link Optional#empty()}: paper trading has no independent live price feed to poll

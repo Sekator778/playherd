@@ -2,6 +2,7 @@ package crowdvsmarket.engine.round;
 
 import crowdvsmarket.engine.margin.Leverage;
 import crowdvsmarket.engine.margin.LiquidationCalculator;
+import crowdvsmarket.engine.market.MarketSpec;
 import java.math.BigDecimal;
 import java.util.Objects;
 
@@ -19,6 +20,10 @@ import java.util.Objects;
  * {@code pnl} here is the realized profit/loss in USD, i.e. {@code payout - initialMargin} (can be
  * negative) — {@link PositionSimulator} is what computes it, from the spec's payout formulas
  * (doc section 2.2).
+ *
+ * <p>The record's components do not depend on the market: only {@code liquidationPrice} does, and
+ * it is derived once, at open, from the market's maintenance margin rate ({@link MarketSpec}, Р-69).
+ * The factories without a {@code MarketSpec} open a BTC position, as before.
  */
 public record Position(
         String userId,
@@ -41,7 +46,7 @@ public record Position(
         // pnl is intentionally nullable: unknown until the position is settled/liquidated.
     }
 
-    /** Opens a new position, deriving {@code liquidationPrice} from the spec's formula. */
+    /** Opens a new BTC position, deriving {@code liquidationPrice} from the spec's formula. */
     public static Position open(
             String userId,
             String roundId,
@@ -49,13 +54,30 @@ public record Position(
             Leverage leverage,
             BigDecimal size,
             BigDecimal entryPrice) {
-        BigDecimal liquidationPrice =
-                LiquidationCalculator.liquidationPrice(size, entryPrice, leverage, direction.toSide());
+        return open(userId, roundId, direction, leverage, size, entryPrice, MarketSpec.BTC);
+    }
+
+    /**
+     * Opens a new position in {@code spec}'s market: the same formula, with that market's
+     * maintenance margin rate. Does not check {@code leverage} against {@code spec.maxLeverage()} —
+     * the cap is enforced where a bet is accepted ({@code GameEngine#placeBet}), so a position that
+     * was accepted once can always be reopened when a round is resolved or replayed.
+     */
+    public static Position open(
+            String userId,
+            String roundId,
+            Direction direction,
+            Leverage leverage,
+            BigDecimal size,
+            BigDecimal entryPrice,
+            MarketSpec spec) {
+        BigDecimal liquidationPrice = LiquidationCalculator.liquidationPrice(
+                size, entryPrice, leverage, direction.toSide(), spec.maintenanceMarginRate());
         return new Position(userId, roundId, direction, leverage, size, entryPrice, liquidationPrice, null);
     }
 
     /**
-     * Opens a position from a PLAY margin rather than a raw BTC size — {@code size} is derived via
+     * Opens a BTC position from a PLAY margin rather than a raw size — {@code size} is derived via
      * {@link PositionSizing} so that {@code margin} IS the position's initial margin exactly (see
      * that class's javadoc and docs/research/round_engine_design.md "Units"). This is the factory
      * the round engine ({@code Bet}/{@code GameEngine}) and the crowd account use; {@link #open} is
@@ -68,8 +90,20 @@ public record Position(
             Leverage leverage,
             BigDecimal margin,
             BigDecimal entryPrice) {
+        return openFromMargin(userId, roundId, direction, leverage, margin, entryPrice, MarketSpec.BTC);
+    }
+
+    /** {@link #openFromMargin(String, String, Direction, Leverage, BigDecimal, BigDecimal)} in {@code spec}'s market (Р-69). */
+    public static Position openFromMargin(
+            String userId,
+            String roundId,
+            Direction direction,
+            Leverage leverage,
+            BigDecimal margin,
+            BigDecimal entryPrice,
+            MarketSpec spec) {
         BigDecimal size = PositionSizing.sizeForMargin(margin, leverage, entryPrice);
-        return open(userId, roundId, direction, leverage, size, entryPrice);
+        return open(userId, roundId, direction, leverage, size, entryPrice, spec);
     }
 
     public boolean isSettled() {

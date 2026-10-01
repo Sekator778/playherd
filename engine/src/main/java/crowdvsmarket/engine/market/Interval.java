@@ -19,4 +19,14 @@ public enum Interval {
     public String code() {
         return code;
     }
+
+    /** Inverse of {@link #code()}: {@code "1h"} is {@link #HOURLY}, {@code "1d"} is {@link #DAILY}. */
+    public static Interval fromCode(String code) {
+        for (Interval interval : values()) {
+            if (interval.code.equals(code)) {
+                return interval;
+            }
+        }
+        throw new IllegalArgumentException("unknown interval code: " + code);
+    }
 }

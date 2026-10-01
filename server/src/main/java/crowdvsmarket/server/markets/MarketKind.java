@@ -1,0 +1,11 @@
+package crowdvsmarket.server.markets;
+
+/**
+ * What a market's price is (docs/research/markets_architecture.md Т-2). {@code PERP}: the mark
+ * price of a Hyperliquid perpetual, USD. {@code ODDS}: the probability (0..1) of one outcome of a
+ * Polymarket market. Round mechanics are the same for both.
+ */
+public enum MarketKind {
+    PERP,
+    ODDS
+}

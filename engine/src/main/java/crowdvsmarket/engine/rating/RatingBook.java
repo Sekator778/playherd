@@ -43,9 +43,15 @@ public final class RatingBook {
     }
 
     /**
-     * "богачи" (Р-18): {@code growth = (balance_now + withdrawn_in_season - deposited_in_season) -
-     * (balance_at_season_baseline + starter_pack)}, sorted descending. Players below the Р-9
-     * rounds-played threshold are excluded.
+     * "богачи" (Р-18): {@code growth = (balance_at_season_end + withdrawn_in_season -
+     * deposited_in_season) - (balance_at_season_baseline + starter_pack)}, sorted descending.
+     * Players below the Р-9 rounds-played threshold are excluded.
+     *
+     * <p>{@code balance_at_season_end} is {@link LedgerBook#seasonEndBalance}: the current balance
+     * for the season the player is still in (Р-18's "balance now"), but for an archived season
+     * (Р-10) the balance as it stood when the player rolled into the next one — otherwise the next
+     * season's starter pack, results, deposits and withdrawals would leak into the past season's
+     * growth for every player who has already moved on.
      */
     public List<RichEntry> richList(Season season, Map<String, PlayerIdentity> identities) {
         List<RichEntry> entries = new ArrayList<>();
@@ -55,8 +61,8 @@ public final class RatingBook {
                 continue;
             }
             SeasonRecord sr = maybe.get();
-            PlayAmount balanceNow = ledger.balance(playerId);
-            PlayAmount growth = balanceNow.plus(sr.withdrawn()).minus(sr.deposited())
+            PlayAmount balanceAtSeasonEnd = ledger.seasonEndBalance(playerId, season);
+            PlayAmount growth = balanceAtSeasonEnd.plus(sr.withdrawn()).minus(sr.deposited())
                     .minus(sr.baselineBalance().plus(LedgerBook.STARTER_PACK));
             entries.add(new RichEntry(playerId, displayName(playerId, identities), growth, sr.roundsPlayed()));
         }

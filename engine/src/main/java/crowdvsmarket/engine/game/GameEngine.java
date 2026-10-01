@@ -6,6 +6,7 @@ import crowdvsmarket.engine.ledger.PlayAmount;
 import crowdvsmarket.engine.margin.Leverage;
 import crowdvsmarket.engine.margin.LiquidationCalculator;
 import crowdvsmarket.engine.market.Candle;
+import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.BetBook;
 import crowdvsmarket.engine.round.Direction;
@@ -32,6 +33,12 @@ import java.util.Optional;
  * <p>This is the API the future Quarkus service (Р-20) wraps; this module owns none of the
  * clock/scheduling side (when to call {@link #runRound} for which {@link RoundWindow}) — that is
  * {@code RoundClock}'s job, driven by whatever polls real time or replays a fixture.
+ *
+ * <p><b>One engine per market and series (Р-69):</b> the market is the one of the
+ * {@link CrowdAccount} the engine is built with ({@link #spec()}). It accepts bets and resolves
+ * rounds only for windows of that market, and rejects a bet above that market's leverage cap;
+ * several engines — one per market — can share a single {@link LedgerBook}, so one player's PLAY
+ * balance backs bets on every market.
  */
 public final class GameEngine {
 
@@ -39,6 +46,7 @@ public final class GameEngine {
 
     private final LedgerBook ledger;
     private final CrowdAccount crowdAccount;
+    private final MarketSpec spec;
     private final BetBook betBook = new BetBook();
 
     public GameEngine() {
@@ -48,6 +56,12 @@ public final class GameEngine {
     public GameEngine(LedgerBook ledger, CrowdAccount crowdAccount) {
         this.ledger = ledger;
         this.crowdAccount = crowdAccount;
+        this.spec = crowdAccount.spec();
+    }
+
+    /** The market this engine runs — its crowd account's. */
+    public MarketSpec spec() {
+        return spec;
     }
 
     public LedgerBook ledger() {
@@ -66,9 +80,18 @@ public final class GameEngine {
      * Places (or replaces) {@code playerId}'s bet on {@code bettingWindow} (Р-13). Any earlier bet
      * by the same player on the same round is refunded first — refunding before reserving the new
      * stake, so growing a bet up to the full pre-modification balance never spuriously fails.
+     *
+     * @throws IllegalArgumentException if the window belongs to another market, or {@code leverage}
+     *                                  is above this market's cap — checked before anything is
+     *                                  refunded or reserved, so a rejected bet changes nothing
      */
     public Bet placeBet(
             String playerId, RoundWindow bettingWindow, Direction direction, Leverage leverage, PlayAmount stake, Instant now) {
+        requireOwnMarket(bettingWindow);
+        if (leverage.value() > spec.maxLeverage()) {
+            throw new IllegalArgumentException("leverage must be in [" + Leverage.MIN + ", " + spec.maxLeverage()
+                    + "] for " + spec.id() + ", got " + leverage.value());
+        }
         String roundId = bettingWindow.roundId();
         betBook.cancel(roundId, playerId)
                 .ifPresent(previous -> ledger.refundStake(playerId, roundId, previous.stake(), now));
@@ -93,8 +116,11 @@ public final class GameEngine {
      * {@code window.endMs()} itself is the half-open boundary shared with the next window (and,
      * for the last round of a month, is the next month's very first instant), so using it directly
      * would misfile the settlement into the wrong {@code Season} once every month.
+     *
+     * @throws IllegalArgumentException if the window belongs to another market
      */
     public RoundReport runRound(RoundWindow window, RoundPrices prices) {
+        requireOwnMarket(window);
         Instant settledAt = Instant.ofEpochMilli(window.endMs() - 1);
         String roundId = window.roundId();
         Collection<Bet> bets = betBook.betsFor(roundId);
@@ -105,7 +131,7 @@ public final class GameEngine {
         List<PlayerRoundOutcome> outcomes = new ArrayList<>();
         for (Bet bet : bets) {
             Position position = Position.openFromMargin(
-                    bet.playerId(), roundId, bet.direction(), bet.leverage(), bet.stake().toMoney(), openPrice);
+                    bet.playerId(), roundId, bet.direction(), bet.leverage(), bet.stake().toMoney(), openPrice, spec);
             PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, path);
             boolean liquidated = outcome instanceof PositionSimulator.Outcome.Liquidated;
 
@@ -127,6 +153,13 @@ public final class GameEngine {
         CrowdAccount.RoundResult crowdResult = crowdAccount.processRound(roundId, bets, openPrice, path);
 
         return new RoundReport(window, openPrice, closePrice, outcomes, crowdResult);
+    }
+
+    private void requireOwnMarket(RoundWindow window) {
+        if (!spec.id().equals(window.market())) {
+            throw new IllegalArgumentException("round " + window.roundId() + " belongs to market " + window.market()
+                    + ", this engine runs " + spec.id());
+        }
     }
 
     /** {@code Optional.empty()} for a flat round (close == open, excluded from the "пророки" ratio, Р-18). */

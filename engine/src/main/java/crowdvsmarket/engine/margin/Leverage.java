@@ -12,6 +12,10 @@ import java.math.BigDecimal;
  * notional realistic in this MVP (toy-money demo, far under the 150M USDC tier1 threshold) that
  * cap is the same 40, so the two checks coincide in practice, but {@code forNotional} is the one
  * that is actually tier-aware.
+ *
+ * <p>2..40 is the absolute range every market lives inside; a market with a lower cap (Р-69)
+ * validates against it with {@code MarketSpec#leverage(int)}, and {@code GameEngine} rejects a bet
+ * above its market's cap.
  */
 public record Leverage(int value) {
 

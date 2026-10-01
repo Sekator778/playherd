@@ -7,6 +7,12 @@ import crowdvsmarket.engine.season.Season;
  * season's starter pack was granted (Р-16), money moved on/off chain during the season, and the
  * round counters the two ratings (Р-18) are built from. Immutable — {@code LedgerBook} replaces it
  * wholesale on every update, like every other aggregate in this engine.
+ *
+ * <p>{@code baselineBalance} is, in other words, the player's balance at the end of the previous
+ * season she has a record of. It is that balance <i>as attributed</i>: a movement that belongs to an
+ * earlier season but was only booked after the player rolled into this one (a late settlement, an
+ * operator reversal) is added to it, see {@code LedgerBook#settleRound} — so it can differ from the
+ * balance the account actually had at the instant of the roll by exactly such movements.
  */
 public record SeasonRecord(
         Season season,
@@ -19,6 +25,17 @@ public record SeasonRecord(
 
     static SeasonRecord starting(Season season, PlayAmount baselineBalance) {
         return new SeasonRecord(season, baselineBalance, PlayAmount.ZERO, PlayAmount.ZERO, 0, 0, 0);
+    }
+
+    /**
+     * Restates the baseline by {@code delta} (negative to take a movement out): a movement dated in
+     * an earlier season, booked after this season began, belongs to the previous season's end
+     * balance, not to this season's flow — see {@code LedgerBook#settleRound}.
+     */
+    SeasonRecord withBaselineDelta(PlayAmount delta) {
+        return new SeasonRecord(
+                season, baselineBalance.plus(delta), deposited, withdrawn, roundsPlayed,
+                directionEligibleRounds, directionCorrectRounds);
     }
 
     SeasonRecord withDeposit(PlayAmount amount) {
