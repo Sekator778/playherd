@@ -1,0 +1,291 @@
+import type { CSSProperties } from "react";
+import { Link } from "react-router-dom";
+import type { EpochMs, MarketDto } from "../api/contract";
+import { symbolMeta } from "../api/marketMeta";
+import { formatChange24h, formatDuration, formatPercent, formatPrice } from "../format";
+import { Countdown, Skeleton } from "./Common";
+import { FlameIcon, LockIcon, StarIcon } from "./icons";
+import { MarketIcon } from "./MarketIcon";
+import { formatAgo, formatTimeLeft, trend, TREND_GLYPH } from "./marketFormat";
+import { crowdSplitOf, herdSideOf, isOpenMarket, leadSeries } from "./marketModel";
+import "./MarketCard.css";
+
+/** The live crowd split (Р-62) as a slim UP/DOWN bar with its percentages and the player count — the
+ *  lobby card's answer to "where is the herd going?" without opening the room. Stake-weighted, like the
+ *  arena; an empty round says so instead of showing an invented 50/50. */
+export function CrowdSplitBar({
+  upStake,
+  downStake,
+  symbol,
+  players,
+  invite = true,
+}: {
+  upStake: string;
+  downStake: string;
+  symbol: string;
+  /** Players in the round (`MarketSeriesDto.participantCount`), printed between the two percentages. */
+  players?: number;
+  /** An empty round invites the first bet — unless the market cannot take one right now (no price yet). */
+  invite?: boolean;
+}) {
+  const split = crowdSplitOf({ upStake, downStake });
+  if (!split) {
+    return (
+      <div className="mk-split mk-split--empty" role="img" aria-label={`${symbol}: no bets yet in the open round`}>
+        <div className="mk-split__bar" />
+        <p className="mk-split__empty">{invite ? "No bets yet — be the first to call it" : "No bets yet"}</p>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="mk-split"
+      role="img"
+      aria-label={`Crowd split by stake on ${symbol}: ${split.upPct}% up, ${split.downPct}% down${players !== undefined ? `, ${players} playing` : ""}`}
+    >
+      <div className="mk-split__labels mono" aria-hidden="true">
+        <span className="mk-split__label mk-split__label--up">▲ UP {split.upPct}%</span>
+        {players !== undefined && (
+          <span className="mk-split__players">
+            <span className="mk-live-dot" /> {players} playing
+          </span>
+        )}
+        <span className="mk-split__label mk-split__label--down">{split.downPct}% DOWN ▼</span>
+      </div>
+      <div className="mk-split__bar" aria-hidden="true">
+        <span className="mk-split__fill mk-split__fill--up" style={{ flexBasis: `${split.upPct}%` }} />
+        <span className="mk-split__fill mk-split__fill--down" style={{ flexBasis: `${split.downPct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/** The herd badge — the market's own crowd account (Р-5, Т-6) in one chip, signed and arrowed so the
+ *  colour is never the only signal. A market where the crowd has not traded yet says so instead of a "0.0%". */
+export function HerdBadge({ market }: { market: MarketDto }) {
+  const { roundsTraded, returnPct } = market.crowd;
+  const to = `/stats?m=${encodeURIComponent(market.id)}`;
+  if (roundsTraded === 0) {
+    return (
+      <Link to={to} className="mk-herd mk-herd--none" title="The crowd account has not traded here yet">
+        Herd — no trades yet
+      </Link>
+    );
+  }
+  const t = trend(returnPct);
+  const text = formatPercent(returnPct, { sign: true });
+  return (
+    <Link
+      to={to}
+      className={`mk-herd mk-herd--${t}`}
+      title="The crowd account's paper-money return on this market — open its stats"
+      aria-label={`Herd on ${market.symbol}: ${text} return over ${roundsTraded} traded rounds. Open crowd stats.`}
+    >
+      <span aria-hidden="true">{TREND_GLYPH[t]}</span> Herd <span className="mono">{text}</span>
+    </Link>
+  );
+}
+
+interface MarketCardProps {
+  market: MarketDto;
+  /** The server's "now" (`useServerNow`) — every countdown on the card reads against it. */
+  nowMs: EpochMs;
+  favorite: boolean;
+  onToggleFavorite: (marketId: string) => void;
+  /** Wears the HOT tag (the lobby's Hot sort puts it on the biggest pools). */
+  hot?: boolean;
+}
+
+/**
+ * A lobby market card (Р-69) — what the Polymarket-style list needs and then some (Р-71): icon, ticker,
+ * title (for `ODDS` the question and the outcome), the live price (`ODDS` as a percentage) with its 24 h
+ * change, the live UP/DOWN split with the player count, the countdown to the close of betting of the
+ * shortest series, the herd badge and a favourite star, plus two big buttons that open the room with a
+ * side preselected. The whole card is one link to the room (the title's stretched link); the buttons,
+ * star and badge sit above it.
+ *
+ * Designed states: stale price (kept, dimmed, with its age), no price yet (buttons off — such a round
+ * could not settle), closed market (no buttons, "Closed — open bets refunded").
+ */
+export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = false }: MarketCardProps) {
+  const meta = symbolMeta(market.symbol);
+  const series = leadSeries(market);
+  const open = isOpenMarket(market);
+  const price = market.price;
+  const stale = open && price?.stale === true;
+  const change = price ? price.change24h : null;
+  const changeTrend = trend(change);
+  const herdSide = series ? herdSideOf(series) : null;
+  const room = `/play/${encodeURIComponent(market.id)}`;
+  const canBet = open && price !== null;
+  const odds = market.kind === "ODDS";
+  const endsInMs = market.endsAtMs !== null ? market.endsAtMs - nowMs : null;
+  const titleId = `mk-${market.id}-title`;
+  const star = (
+    <button
+      type="button"
+      className="mk-star"
+      aria-pressed={favorite}
+      aria-label={favorite ? `Remove ${market.symbol} from favorites` : `Add ${market.symbol} to favorites`}
+      onClick={() => onToggleFavorite(market.id)}
+    >
+      <StarIcon filled={favorite} />
+    </button>
+  );
+  return (
+    <article
+      className={`mk-card ${open ? "" : "mk-card--closed"} ${stale ? "mk-card--stale" : ""} ${hot ? "mk-card--hot" : ""}`}
+      style={{ "--mk": meta.color } as CSSProperties}
+      aria-labelledby={titleId}
+      data-market-id={market.id}
+    >
+      <div className="mk-card__head">
+        <MarketIcon market={market} />
+        <div className="mk-card__id">
+          <div className="mk-card__namerow">
+            <h3 className="mk-card__symbol" id={titleId}>
+              <Link to={room} className="mk-card__link" aria-label={`${market.symbol} — ${market.title}${open ? "" : " (closed)"}`}>
+                {market.symbol}
+              </Link>
+            </h3>
+            {star}
+            {odds && (
+              <span className="mk-tag mk-tag--odds" title="A Polymarket odds market: the price is a probability">
+                ODDS
+              </span>
+            )}
+            {hot && (
+              <span className="mk-tag mk-tag--hot">
+                <FlameIcon className="mk-tag__icon" /> HOT
+              </span>
+            )}
+          </div>
+          <p className="mk-card__title">{odds ? (market.subtitle ?? market.title) : market.title}</p>
+        </div>
+        <div className="mk-card__price">
+          {price ? (
+            <>
+              <span className="mk-card__price-num mono">{formatPrice(price.price, market)}</span>
+              <span className={`mk-card__change mono mk-card__change--${changeTrend}`}>
+                <span aria-hidden="true">{TREND_GLYPH[changeTrend]}</span>{" "}
+                <span className="visually-hidden">24 hour change </span>
+                {formatChange24h(change)}
+                <span className="mk-card__change-unit"> 24h</span>
+              </span>
+              {stale && (
+                <span className="mk-card__stale" role="status">
+                  Stale · {formatAgo(nowMs - price.asOfMs)}
+                </span>
+              )}
+              {!open && <span className="mk-card__stale">Last price</span>}
+            </>
+          ) : (
+            <>
+              <span className="mk-card__price-num mk-card__price-num--none mono" aria-label="No price yet">
+                —
+              </span>
+              <span className="mk-card__stale">Waiting for a price</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {odds && <p className="mk-card__question">{market.title}</p>}
+
+      {open && series ? (
+        <>
+          <CrowdSplitBar upStake={series.upStake} downStake={series.downStake} symbol={market.symbol} players={series.participantCount} invite={canBet} />
+          <div className="mk-card__meta">
+            <span className="mk-card__meta-item">
+              <span className="mono">{formatDuration(series.durationSec)}</span>
+              <span aria-hidden="true"> · </span>
+              <Countdown nowMs={nowMs} targetMs={series.bettingClosesAtMs} prefix="closes in " calm />
+            </span>
+            {odds && endsInMs !== null && endsInMs > 0 && (
+              <span className="mk-card__meta-item mk-card__meta-item--faint" title="If the market closes first, open bets are refunded">
+                Event ends in <span className="mono">{formatTimeLeft(endsInMs)}</span>
+              </span>
+            )}
+            <HerdBadge market={market} />
+          </div>
+          <div className="mk-card__actions">
+            {canBet ? (
+              <>
+                <Link
+                  to={`${room}?side=up`}
+                  className={`mk-dir mk-dir--up ${herdSide === "UP" ? "mk-dir--herd" : ""}`}
+                  aria-label={`Bet UP on ${market.symbol}${herdSide === "UP" ? " — the herd's side" : ""}`}
+                >
+                  <span aria-hidden="true">▲</span> UP
+                  {herdSide === "UP" && <span className="mk-dir__herd">herd</span>}
+                </Link>
+                <Link
+                  to={`${room}?side=down`}
+                  className={`mk-dir mk-dir--down ${herdSide === "DOWN" ? "mk-dir--herd" : ""}`}
+                  aria-label={`Bet DOWN on ${market.symbol}${herdSide === "DOWN" ? " — the herd's side" : ""}`}
+                >
+                  <span aria-hidden="true">▼</span> DOWN
+                  {herdSide === "DOWN" && <span className="mk-dir__herd">herd</span>}
+                </Link>
+              </>
+            ) : (
+              <>
+                <button type="button" className="mk-dir mk-dir--up" disabled aria-label={`Bet UP on ${market.symbol} — waiting for a price`}>
+                  <span aria-hidden="true">▲</span> UP
+                </button>
+                <button type="button" className="mk-dir mk-dir--down" disabled aria-label={`Bet DOWN on ${market.symbol} — waiting for a price`}>
+                  <span aria-hidden="true">▼</span> DOWN
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      ) : open ? (
+        // An open market the server lists with no round series: nothing to bet on yet, and it is not closed.
+        <>
+          <p className="mk-card__none">No rounds are open on this market yet.</p>
+          <div className="mk-card__foot">
+            <HerdBadge market={market} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mk-closed" role="note">
+            <LockIcon className="mk-closed__icon" />
+            <p>
+              <strong>Closed</strong> — open bets refunded. This market takes no more bets.
+            </p>
+          </div>
+          <div className="mk-card__foot">
+            <HerdBadge market={market} />
+          </div>
+        </>
+      )}
+    </article>
+  );
+}
+
+/** Card-shaped placeholder while the first `markets()` response is on its way. */
+export function MarketCardSkeleton() {
+  return (
+    <div className="mk-card mk-card--skeleton" aria-hidden="true">
+      <div className="mk-card__head">
+        <Skeleton width={44} height={44} style={{ borderRadius: "50%" }} />
+        <div className="mk-card__id" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Skeleton width={90} height={18} />
+          <Skeleton width={130} height={12} />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+          <Skeleton width={100} height={20} />
+          <Skeleton width={64} height={12} />
+        </div>
+      </div>
+      <Skeleton height={8} style={{ marginTop: 18 }} />
+      <Skeleton width="60%" height={12} style={{ marginTop: 12 }} />
+      <div className="mk-card__actions" style={{ marginTop: 14 }}>
+        <Skeleton height={48} style={{ borderRadius: "var(--radius-md)" }} />
+        <Skeleton height={48} style={{ borderRadius: "var(--radius-md)" }} />
+      </div>
+    </div>
+  );
+}

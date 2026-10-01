@@ -35,7 +35,10 @@
 .result-overlay--toast {
   align-items: flex-start;
   justify-content: center;
-  padding-top: calc(var(--banner-height) + var(--header-height) + 12px);
+  /* Below the sticky header incl. the status-bar inset (`--header-offset`, index.css). It used to read
+     `--banner-height`, which Р-63 removed together with the DEMO banner: the undefined variable made
+     the whole declaration invalid and the toast stuck to the very top edge. */
+  padding-top: calc(var(--header-offset) + 12px);
   background: transparent;
   backdrop-filter: none;
 }

@@ -1,0 +1,93 @@
+/* "More in <category>" rail at the bottom of a room. */
+.mrail {
+  margin-top: 8px;
+}
+.mrail__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mrail__all {
+  font-size: 13px;
+  font-weight: 700;
+}
+.mrail__list {
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  padding: 2px 0 6px;
+  list-style: none;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+.mrail__list::-webkit-scrollbar {
+  display: none;
+}
+.mrail__list > li {
+  flex: none;
+  scroll-snap-align: start;
+}
+.mrail__card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "icon symbol"
+    "price price"
+    "change change";
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-width: 132px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  text-decoration: none;
+  transition:
+    transform var(--dur-instant) ease,
+    border-color var(--dur-fast) ease;
+}
+.mrail__card:hover {
+  border-color: var(--border-strong);
+}
+.mrail__card:active {
+  transform: scale(0.97);
+}
+.mrail__card .mk-icon {
+  grid-area: icon;
+}
+.mrail__symbol {
+  grid-area: symbol;
+  font-weight: 900;
+  font-size: 15px;
+}
+.mrail__price {
+  grid-area: price;
+  margin-top: 6px;
+  font-weight: 800;
+  font-size: 15px;
+  white-space: nowrap;
+}
+.mrail__change {
+  grid-area: change;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mrail__change--up {
+  color: var(--up);
+}
+.mrail__change--down {
+  color: var(--down);
+}
+.mrail__change--flat {
+  color: var(--text-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mrail__card {
+    transition: none;
+  }
+}

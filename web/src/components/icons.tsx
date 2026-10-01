@@ -260,3 +260,95 @@ export function CoinIcon({ className = "" }: { className?: string }) {
     </svg>
   );
 }
+
+/** Favourite star (lobby card, room header) — outline when off, filled gold when on. The pressed
+ *  state is also carried by `aria-pressed` on the button, never by the fill alone. */
+export function StarIcon({ filled = false, className = "" }: { filled?: boolean; className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path
+        d="M12 3.6l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9L12 17l-5.3 2.8 1.1-5.9L3.5 9.8l5.9-.8L12 3.6Z"
+        fill={filled ? "var(--gold)" : "none"}
+        stroke={filled ? "var(--gold-strong)" : "currentColor"}
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function SearchIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6" stroke="currentColor" strokeWidth="1.8" />
+      <path d="m15.2 15.2 4.6 4.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Flame — the "Hot" chip, the HOT tag and the win-streak badge. */
+export function FlameIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <path
+        d="M12.4 3.2c.4 2.6-.9 3.9-2.2 5.3C8.8 10 7.5 11.4 7.5 13.7a4.6 4.6 0 0 0 9.2.2c0-1.5-.7-2.6-1.4-3.4-.2 1-.7 1.7-1.5 2 .5-3.2-.3-6.4-1.4-9.3Z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function ClockIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.2" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M12 7.6V12l3 1.8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function ChevronIcon({ open = false, className = "" }: { open?: boolean; className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      aria-hidden="true"
+      style={{ transform: open ? "rotate(180deg)" : undefined, transition: "transform var(--dur-fast) ease" }}
+    >
+      <path d="m6.5 9.5 5.5 5.5 5.5-5.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function CloseIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+      <path d="m6.5 6.5 11 11m0-11-11 11" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Back arrow of the room header. */
+export function ArrowLeftIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+      <path d="M19 12H5.5m6-6.5L5.5 12l6 6.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** A chain link — "anchored on Chia" (round page). */
+export function AnchorIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+      <path d="M10.2 13.8a3.6 3.6 0 0 0 5.1 0l3-3a3.6 3.6 0 0 0-5.1-5.1l-1 1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M13.8 10.2a3.6 3.6 0 0 0-5.1 0l-3 3a3.6 3.6 0 0 0 5.1 5.1l1-1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}

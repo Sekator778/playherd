@@ -1,10 +1,11 @@
 /**
  * Result-moment event model and tier math (`docs/product/design/result-moment.md` §0/§1/§2).
  * Pure functions only (`implementation-plan.md` §2: "вынесены отдельно от React ради
- * unit-тестов") — `useSettlementWatcher.ts` is the only caller, and owns the dedup `Set` and the
- * previous-round `Map` this module treats as inputs, not state.
+ * unit-тестов") — `useSettlementWatcher.ts` and `unseenResults.ts` are the callers, and own the
+ * dedup `Set` and the previous-round `Map` this module treats as inputs, not state.
  */
-import type { Interval, ProfileRoundEntryDto, PublicPositionDto, RoundDto, RoundId } from "../api/contract";
+import type { Interval, MarketId, ProfileRoundEntryDto, PublicPositionDto, RoundDto, RoundId } from "../api/contract";
+import { BTC_MARKET_ID } from "../api/clock";
 import { netFromPayoutAndStake, positionStakeStr } from "../api/outcome";
 
 export type ResultKind = "WIN" | "LOSS" | "LIQUIDATION" | "EVEN";
@@ -15,6 +16,10 @@ export interface ResultEvent {
   id: string;
   kind: ResultKind;
   roundId: RoundId;
+  /** The market the round was played in (Р-69) — `symbol` is its card ticker ("BTC", "NVDA",
+   *  "GER") as the server reported it at settlement, for any text that names the market. */
+  marketId: MarketId;
+  symbol: string;
   interval: Interval;
   /** `payout - stake`, signed — the ONLY number the card's headline ever shows (§0, §5). */
   netPlay: number;
@@ -102,6 +107,8 @@ export function resultEventFromHistoryEntry(
   const base = {
     id,
     roundId: entry.roundId,
+    marketId: entry.marketId ?? BTC_MARKET_ID, // a server that predates markets sends no marketId: it is BTC's
+    symbol: entry.asset,
     interval: entry.interval,
     stakePlay: stake,
     leverage: entry.leverage,
@@ -177,6 +184,8 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       id,
       kind: "LIQUIDATION",
       roundId: curr.roundId,
+      marketId: curr.marketId ?? BTC_MARKET_ID, // see resultEventFromHistoryEntry
+      symbol: curr.asset,
       interval,
       netPlay: -stake,
       stakePlay: stake,
@@ -201,6 +210,8 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
     const base = {
       id,
       roundId: curr.roundId,
+      marketId: curr.marketId ?? BTC_MARKET_ID, // see resultEventFromHistoryEntry
+      symbol: curr.asset,
       interval,
       netPlay: net,
       stakePlay: stake,

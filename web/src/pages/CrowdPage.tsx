@@ -1,30 +1,128 @@
-import { useCallback, useEffect, useState } from "react";
+/**
+ * Stats → Crowd (`/stats`) — Р-5/Р-14/Р-17/Р-25/Р-26: the crowd account against the market, now one account PER
+ * MARKET (Т-6) and the whole herd at a glance (Р-71):
+ *
+ * - an overview of every market's crowd account (`crowdOverview()`): total herd capital and return, the
+ *   best and the worst market — the worst as visible as the best — and a ranked list that opens a market;
+ * - a market selector (default: `?m=`, else the market you came from, else BTC) driving `crowdAccount(id)`,
+ *   with its capital, returns and the chart crowd vs hold vs anti-crowd on a time axis that follows how much
+ *   history there is (`components/crowdModel.ts`).
+ */
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useApi } from "../api/ApiContext";
 import { useClock } from "../api/useClock";
-import type { CrowdAccountDto } from "../api/contract";
+import { useMarket, useMarkets } from "../api/useMarkets";
+import type { CrowdAccountDto, CrowdOverviewDto, MarketDto } from "../api/contract";
 import { CROWD_STARTING_CAPITAL_USD } from "../api/contract";
 import { ErrorState, OracleDisclosureLine, OracleStatusLine, Skeleton } from "../components/Common";
 import { LazyCrowdChart } from "../components/LazyCrowdChart";
+import { MarketIcon } from "../components/MarketIcon";
 import { LiveStatTile } from "../components/RoundParts";
+import { bestAndWorst, marketGroups, rankedByReturn, type OverviewRow } from "../components/crowdModel";
+import { lastMarket, rememberMarket } from "../components/lastMarket";
+import { trend, TREND_GLYPH } from "../components/marketFormat";
 import { formatPercent, formatUpdatedAtUtc, formatUsd } from "../format";
+import "./CrowdPage.css";
 
-export function CrowdPage() {
+/** The herd's return as a signed, arrowed figure — never colour alone. */
+function Return({ value }: { value: number }) {
+  const t = trend(value);
+  return (
+    <span className={`crowd-return crowd-return--${t} mono`}>
+      <span aria-hidden="true">{TREND_GLYPH[t]}</span> {formatPercent(value, { sign: true })}
+    </span>
+  );
+}
+
+/** One market's mini-card in the overview (best / worst): taps through to that market's account below. */
+function Extreme({ label, row, onPick }: { label: string; row: OverviewRow; onPick: (marketId: string) => void }) {
+  return (
+    <button type="button" className="crowd-extreme" onClick={() => onPick(row.marketId)} aria-label={`${label}: ${row.symbol}, ${formatPercent(row.returnPct, { sign: true })}. Show its account.`}>
+      <span className="crowd-extreme__label">{label}</span>
+      <span className="crowd-extreme__symbol">{row.symbol}</span>
+      <Return value={row.returnPct} />
+    </button>
+  );
+}
+
+function Overview({ overview, onPick }: { overview: CrowdOverviewDto; onPick: (marketId: string) => void }) {
+  const ranked = rankedByReturn(overview.markets);
+  const extremes = bestAndWorst(overview.markets);
+  const maxAbs = Math.max(0.0001, ...ranked.map((r) => Math.abs(r.returnPct)));
+  return (
+    <section className="card crowd-overview" aria-labelledby="crowd-overview-title">
+      <h2 id="crowd-overview-title" className="section-title">
+        The whole herd — {overview.markets.length} markets
+      </h2>
+      <div className="crowd-overview__totals">
+        <div>
+          <div className="stat-tile__label">Herd capital</div>
+          <div className="crowd-overview__big mono">{formatUsd(overview.totalCapital)}</div>
+          <div className="faint">of {formatUsd(overview.totalStartingCapital, { decimals: 0 })} paper money at the start</div>
+        </div>
+        <div>
+          <div className="stat-tile__label">Return</div>
+          <div className="crowd-overview__big">
+            <Return value={overview.returnPct} />
+          </div>
+        </div>
+      </div>
+      {extremes ? (
+        <div className="crowd-overview__extremes">
+          <Extreme label="Best market" row={extremes.best} onPick={onPick} />
+          {extremes.worst && <Extreme label="Worst market" row={extremes.worst} onPick={onPick} />}
+        </div>
+      ) : (
+        <p className="muted">The herd hasn't traded yet — its first position opens when a round settles.</p>
+      )}
+      {ranked.length > 2 && (
+        <details className="crowd-overview__all">
+          <summary>Every market, best to worst</summary>
+          <ul className="crowd-rank">
+            {ranked.map((r) => (
+              <li key={r.marketId}>
+                <button type="button" className="crowd-rank__row" onClick={() => onPick(r.marketId)} aria-label={`${r.symbol}: ${formatPercent(r.returnPct, { sign: true })}, won ${r.roundsWon} of ${r.roundsTraded} rounds. Show its account.`}>
+                  <span className="crowd-rank__symbol">{r.symbol}</span>
+                  <span className="crowd-rank__bar" aria-hidden="true">
+                    <span
+                      className={`crowd-rank__fill crowd-rank__fill--${trend(r.returnPct)}`}
+                      style={{ width: `${Math.max(2, (Math.abs(r.returnPct) / maxAbs) * 100)}%` }}
+                    />
+                  </span>
+                  <Return value={r.returnPct} />
+                  <span className="crowd-rank__won faint mono">
+                    {r.roundsWon}/{r.roundsTraded}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <p className="faint">The herd trades paper money — $100,000 per market — on the majority side of every round.</p>
+    </section>
+  );
+}
+
+function CrowdAccount({ market }: { market: MarketDto }) {
   const api = useApi();
   const tick = useClock(5000);
   const [crowd, setCrowd] = useState<CrowdAccountDto | null>(null);
   const [error, setError] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const marketId = market.id;
 
   const load = useCallback(() => {
     api
-      .crowdAccount()
+      .crowdAccount(marketId)
       .then((c) => {
         setCrowd(c);
         setError(false);
         setUpdatedAt(Date.now());
       })
       .catch(() => setError(true));
-  }, [api]);
+  }, [api, marketId]);
 
   useEffect(() => {
     load();
@@ -34,16 +132,11 @@ export function CrowdPage() {
   if (!crowd) {
     return (
       <div className="stack" style={{ gap: 16 }}>
-        <div className="grid-3">
-          <Skeleton height={90} />
-          <Skeleton height={90} />
-          <Skeleton height={90} />
-        </div>
+        <Skeleton height={90} />
         <Skeleton height={360} />
       </div>
     );
   }
-
   if (crowd.history.length === 0) {
     return (
       <div className="state-card">
@@ -57,8 +150,7 @@ export function CrowdPage() {
 
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <h1>Crowd account vs the market</h1>
-      <div className="grid-3">
+      <div className="crowd-tiles">
         <LiveStatTile label="Capital" value={Number(crowd.capital)} format={(n) => formatUsd(n)} />
         <LiveStatTile label="Return since day one" value={returnSinceDayOne} format={(n) => formatPercent(n, { sign: true })} />
         <LiveStatTile
@@ -67,9 +159,9 @@ export function CrowdPage() {
           format={(n) => formatPercent(n, { sign: true })}
         />
       </div>
-      <LazyCrowdChart history={crowd.history} variant="full" />
+      <LazyCrowdChart history={crowd.history} variant="full" symbol={market.symbol} />
       {updatedAt !== null && <p className="faint">{formatUpdatedAtUtc(updatedAt)}</p>}
-      <OracleDisclosureLine />
+      <OracleDisclosureLine source={market.source} />
       <OracleStatusLine />
       <h2>Season returns</h2>
       <table className="data-table data-table--responsive">
@@ -90,6 +182,89 @@ export function CrowdPage() {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+export function CrowdPage() {
+  const api = useApi();
+  const tick = useClock(5000);
+  const [params, setParams] = useSearchParams();
+  const { markets, categories, loading: marketsLoading, error: marketsError, refresh } = useMarkets();
+  const wanted = params.get("m") ?? lastMarket() ?? "BTC";
+  const requested = useMarket(wanted).market;
+  const btc = useMarket("BTC").market;
+  // The market asked for (the link, or the room it came from) — BTC when that is gone or never was.
+  const market = requested ?? btc ?? markets[0];
+
+  const [overview, setOverview] = useState<CrowdOverviewDto | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .crowdOverview()
+      .then((o) => {
+        if (!cancelled) setOverview(o);
+      })
+      .catch(() => {
+        // The overview is an extra: without it the market's own account still shows.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, tick]);
+
+  const groups = useMemo(() => marketGroups(markets, categories), [markets, categories]);
+
+  const pick = useCallback(
+    (marketId: string) => {
+      rememberMarket(marketId);
+      setParams({ m: marketId }, { replace: true });
+    },
+    [setParams],
+  );
+
+  if (marketsLoading && marketsError) return <ErrorState onRetry={refresh} />;
+  if (marketsLoading || !market) {
+    return (
+      <div className="stack" style={{ gap: 16 }}>
+        <Skeleton height={120} />
+        <Skeleton height={48} />
+        <Skeleton height={360} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack" style={{ gap: 20 }}>
+      <h1>Crowd account vs the market</h1>
+
+      {overview && <Overview overview={overview} onPick={pick} />}
+
+      <div className="crowd-selector">
+        <MarketIcon market={market} size={36} />
+        <div className="crowd-selector__field">
+          <label htmlFor="crowd-market" className="stat-tile__label">
+            Market
+          </label>
+          <select id="crowd-market" className="crowd-selector__select" value={market.id} onChange={(e) => pick(e.target.value)}>
+            {groups.map((g) => (
+              <optgroup key={g.id} label={g.title}>
+                {g.markets.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.symbol} · {m.kind === "ODDS" ? (m.subtitle ?? m.title) : m.title}
+                    {m.status === "CLOSED" ? " (closed)" : ""}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+        <Link to={`/play/${encodeURIComponent(market.id)}`} className="btn btn--secondary crowd-selector__play">
+          Play {market.symbol}
+        </Link>
+      </div>
+
+      <CrowdAccount key={market.id} market={market} />
     </div>
   );
 }

@@ -1,8 +1,8 @@
 /**
- * Small pieces shared by all three /lab/concepts/{a,b,c} prototypes — kept here instead of
- * duplicated three times, but each concept still writes its own lobby/room/stats layout and CSS
- * (`ConceptA.tsx`/`ConceptB.tsx`/`ConceptC.tsx` + their `.css` files) so the three stay "genuinely
- * different" per the task, not the same screen re-skinned.
+ * Small pieces of the /lab/concepts/a prototype (concept A, the one that became the product, Р-61). They
+ * were shared with prototypes B and C until those two were removed with the Р-69 screen rebuild
+ * (`docs/product/design/concepts.md`); concept A writes its own lobby/room/stats layout and CSS
+ * (`ConceptA.tsx` + `ConceptA.css`).
  */
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -59,6 +59,8 @@ export function useFireFromQuery(roundId: string): void {
         id: `concept-${code}-${fireSeq}`,
         kind: preset.kind,
         roundId,
+        marketId: "BTC",
+        symbol: "BTC",
         interval: "HOURLY",
         netPlay: preset.net,
         stakePlay: preset.stake,

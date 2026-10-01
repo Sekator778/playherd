@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
-import { nextWindow, roundIdFor } from "../api/clock";
+import { nextRoundId } from "../api/clock";
 import {
   ApiRequestError,
   LEVERAGE_MAX,
@@ -9,12 +9,26 @@ import {
   MIN_STAKE_PLAY,
   type Direction,
   type LiquidationPreviewDto,
+  type MarketDto,
+  type MarketId,
   type RoundBetting,
 } from "../api/contract";
-import { formatPlayAmount } from "../format";
+import { useMarket } from "../api/useMarkets";
+import { formatDuration, formatPlayAmount } from "../format";
 import { DirectionGlyph } from "./icons";
 import { LeverageDial } from "./LeverageDial";
 import { LiquidationBar } from "./LiquidationBar";
+import {
+  DEFAULT_LEVERAGE,
+  DEFAULT_STAKE_DISPLAY,
+  STAKE_CHIPS,
+  STAKE_STEP,
+  sanitizeStakeInput,
+  stakeDisplay,
+  stakeForFraction,
+  steppedStake,
+} from "./betSlipModel";
+import { herdSideOf } from "./marketModel";
 
 interface BetSlipProps {
   round: RoundBetting;
@@ -39,28 +53,35 @@ interface BetSlipProps {
   hideDirectionPicker?: boolean;
 }
 
-/** Plain-integer default for the stake field's *initial* value — never `MIN_STAKE_PLAY` itself
- *  (contract.ts: `"100.000"`, PLAY's own exact 3-decimal scale) bound straight into the input.
- *  Independent critique, 2026-09-26: a native `<input type="number">` rendered that raw string
- *  locale-dependently — on a comma-decimal system, `"100.000"` reads back as "100,000" (a
- *  thousand-fold misread) even though the interface language is fixed to English (Р-24). Below,
- *  the stake field is a plain text input we format/parse ourselves instead, so this constant only
- *  needs to be a clean starting number, not a value any browser could reformat. */
-const DEFAULT_STAKE_DISPLAY = String(Number(MIN_STAKE_PLAY));
-
-/** Only digits and at most one decimal point — typed directly into a plain text field, immune to
- *  the locale-reformatting a native number input applies to its own value. Returns `null` (do
- *  nothing) for a keystroke that isn't a partial number, e.g. a second "." or a stray letter, so
- *  the field can never show something Direction/Number(stake) would silently misparse. */
-function sanitizeStakeInput(raw: string): string | null {
-  return raw === "" || /^\d*\.?\d*$/.test(raw) ? raw : null;
-}
-
-/** Same reasoning as {@link DEFAULT_STAKE_DISPLAY} applied to an existing bet's stake when
- *  loading it back into the editable field — `existing.stake` is contract-precision (e.g.
- *  `"600.000"`); the field shows the plain number a player actually typed. */
-function stakeDisplay(amount: string): string {
-  return String(Number(amount));
+/** The liquidation preview of the bet being composed (Р-7, Р-33: shown BEFORE the bet) — debounced, and
+ *  an answer that arrives after a newer question was asked is dropped, not shown. */
+function useLiquidationPreview(marketId: MarketId, direction: Direction, leverage: number, stake: string): LiquidationPreviewDto | null {
+  const api = useApi();
+  const [preview, setPreview] = useState<LiquidationPreviewDto | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const stakeNum = Number(stake);
+    const validStake = stake !== "" && Number.isFinite(stakeNum) && stakeNum > 0;
+    const timer = window.setTimeout(() => {
+      if (!validStake) {
+        setPreview(null);
+        return;
+      }
+      api
+        .previewLiquidation({ marketId, direction, leverage, stake: stakeNum.toFixed(3) })
+        .then((p) => {
+          if (!cancelled) setPreview(p);
+        })
+        .catch(() => {
+          if (!cancelled) setPreview(null);
+        });
+    }, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [api, marketId, direction, leverage, stake]);
+  return preview;
 }
 
 /** Bet slip (`ux_spec.md` §11) — used embedded on Home and full-size on the Round page, always
@@ -75,14 +96,17 @@ export function BetSlip({
   hideDirectionPicker,
 }: BetSlipProps) {
   const { player, openConnectModal } = useSession();
+  // The market's own leverage cap (Т-4) bounds the dial; until the market list arrives the
+  // platform-wide cap stands, as it did before markets.
+  const { market } = useMarket(round.marketId);
+  const maxLeverage = market?.maxLeverage ?? LEVERAGE_MAX;
 
   const bettingClosed = nowMs >= round.window.startMs;
   if (bettingClosed) {
-    const nextRoundId = roundIdFor(nextWindow(round.window));
     return (
       <div className="card">
         <p>Betting just closed for this round.</p>
-        <Link className="btn btn--secondary" to={`/round/${nextRoundId}`}>
+        <Link className="btn btn--secondary" to={`/round/${nextRoundId(round)}`}>
           View next round
         </Link>
       </div>
@@ -92,6 +116,9 @@ export function BetSlip({
   if (!player) {
     return (
       <BetSlipPreview
+        round={round}
+        market={market}
+        maxLeverage={maxLeverage}
         noPlayerHint={noPlayerHint}
         onConnect={openConnectModal}
         direction={direction}
@@ -104,11 +131,200 @@ export function BetSlip({
   return (
     <BetSlipForm
       round={round}
+      market={market}
+      maxLeverage={maxLeverage}
       onChanged={onChanged}
       direction={direction}
       onDirectionChange={onDirectionChange}
       hideDirectionPicker={hideDirectionPicker}
     />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Parts the preview and the real form share
+// ---------------------------------------------------------------------------
+
+function DirectionPicker({
+  id,
+  direction,
+  onChange,
+}: {
+  id: string;
+  direction: Direction;
+  onChange: (direction: Direction) => void;
+}) {
+  return (
+    <div className="field">
+      <span id={id}>Direction</span>
+      <div className="direction-row" role="group" aria-labelledby={id}>
+        <button
+          type="button"
+          className={`direction-btn direction-btn--up ${direction === "UP" ? "direction-btn--selected" : ""}`}
+          aria-pressed={direction === "UP"}
+          onClick={() => onChange("UP")}
+        >
+          <DirectionGlyph direction="UP" />
+          UP
+        </button>
+        <button
+          type="button"
+          className={`direction-btn direction-btn--down ${direction === "DOWN" ? "direction-btn--selected" : ""}`}
+          aria-pressed={direction === "DOWN"}
+          onClick={() => onChange("DOWN")}
+        >
+          <DirectionGlyph direction="DOWN" />
+          DOWN
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * «With the herd» / «Against the herd» (Р-71, Herd's own): one tap sets the direction to the side with
+ * more PLAY on it right now, or to the opposite one. Both are always offered with equal weight and say
+ * which side they will pick — they are shortcuts, not advice (nothing here claims the herd is right or
+ * wrong). With no majority yet (an empty round, or an exact tie) both are off and a line says why.
+ */
+export function HerdPicker({
+  herd,
+  direction,
+  onPick,
+}: {
+  /** The side the herd is on, `null` when there is no majority. */
+  herd: Direction | null;
+  direction: Direction;
+  onPick: (direction: Direction) => void;
+}) {
+  const against: Direction | null = herd === null ? null : herd === "UP" ? "DOWN" : "UP";
+  const button = (kind: "with" | "against", side: Direction | null) => (
+    <button
+      type="button"
+      className={`herd-btn herd-btn--${kind}`}
+      disabled={side === null}
+      aria-pressed={side !== null && direction === side}
+      onClick={() => side && onPick(side)}
+    >
+      <span className="herd-btn__what">{kind === "with" ? "With the herd" : "Against the herd"}</span>
+      {side && (
+        <span className={`herd-btn__side herd-btn__side--${side.toLowerCase()}`}>
+          <DirectionGlyph direction={side} /> {side}
+        </span>
+      )}
+    </button>
+  );
+  return (
+    <div className="herd-picker" role="group" aria-label="Pick a side relative to the herd">
+      <div className="herd-picker__row">
+        {button("with", herd)}
+        {button("against", against)}
+      </div>
+      <p className="herd-picker__hint faint">
+        {herd === null
+          ? "No herd yet — the crowd is split evenly, or nobody has bet."
+          : "The herd is the side with more PLAY on it right now — players and test bots together."}
+      </p>
+    </div>
+  );
+}
+
+function StakeField({
+  inputId,
+  label,
+  value,
+  onChange,
+  balance,
+}: {
+  inputId: string;
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  /** The most the player could stake; `undefined` (a signed-out preview) hides the available line and the chips. */
+  balance?: number;
+}) {
+  const current = Number(value) || 0;
+  const step = (delta: number) => onChange(steppedStake(current, delta, balance));
+  return (
+    <div className="field stake-field">
+      <label htmlFor={inputId}>{label}</label>
+      <div className="stake-row">
+        <button type="button" className="stake-step" aria-label={`Decrease stake by ${STAKE_STEP} PLAY`} onClick={() => step(-STAKE_STEP)}>
+          <span aria-hidden="true">−</span>
+        </button>
+        <div className="stake-amount">
+          <input
+            id={inputId}
+            className="stake-input mono"
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={value}
+            onChange={(e) => {
+              const next = sanitizeStakeInput(e.target.value);
+              if (next !== null) onChange(next);
+            }}
+          />
+          <span className="stake-unit" aria-hidden="true">
+            PLAY
+          </span>
+        </div>
+        <button type="button" className="stake-step" aria-label={`Increase stake by ${STAKE_STEP} PLAY`} onClick={() => step(STAKE_STEP)}>
+          <span aria-hidden="true">+</span>
+        </button>
+      </div>
+      {balance !== undefined && (
+        <>
+          <p className="stake-available">
+            Available: <strong className="mono">{formatPlayAmount(balance)}</strong> PLAY
+          </p>
+          <div className="stake-chips">
+            {STAKE_CHIPS.map((chip) => {
+              const chipValue = stakeForFraction(balance, chip.fraction);
+              return (
+                <button
+                  key={chip.label}
+                  type="button"
+                  className={`stake-chip ${chip.fraction === 1 ? "stake-chip--max" : ""}`}
+                  aria-pressed={value === chipValue}
+                  aria-label={chip.fraction === 1 ? "MAX — your whole balance" : `${chip.label} of your balance`}
+                  onClick={() => onChange(chipValue)}
+                >
+                  {chip.label}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** One line that says what pressing the button will do — with eighteen markets and a leverage dial, a
+ *  player should be able to read "which market, which side, how much, how hot" once more before betting. */
+function BetSummary({
+  round,
+  market,
+  direction,
+  leverage,
+  stake,
+}: {
+  round: RoundBetting;
+  market: MarketDto | undefined;
+  direction: Direction;
+  leverage: number;
+  stake: number;
+}) {
+  const length = formatDuration((round.window.endMs - round.window.startMs) / 1000);
+  return (
+    <p className="bet-summary">
+      <strong className="mono">{formatPlayAmount(stake)} PLAY</strong> · <span className={`bet-summary__side bet-summary__side--${direction.toLowerCase()}`}>
+        <DirectionGlyph direction={direction} /> {direction}
+      </span>{" "}
+      · <strong className="mono">x{leverage}</strong> on {round.asset}
+      {market?.kind === "ODDS" ? " odds" : ""} · {length} round
+    </p>
   );
 }
 
@@ -125,104 +341,51 @@ export function BetSlip({
  * point in the app already uses.
  */
 function BetSlipPreview({
+  round,
+  market,
+  maxLeverage,
   noPlayerHint,
   onConnect,
   direction: controlledDirection,
   onDirectionChange,
   hideDirectionPicker,
 }: {
+  round: RoundBetting;
+  market: MarketDto | undefined;
+  maxLeverage: number;
   noPlayerHint?: string;
   onConnect: () => void;
   direction?: Direction;
   onDirectionChange?: (direction: Direction) => void;
   hideDirectionPicker?: boolean;
 }) {
-  const api = useApi();
   const [internalDirection, setInternalDirection] = useState<Direction>("UP");
   const direction = controlledDirection ?? internalDirection;
   const setDirection = onDirectionChange ?? setInternalDirection;
-  const [leverage, setLeverage] = useState<number>(10);
+  const [leverageChoice, setLeverage] = useState<number>(DEFAULT_LEVERAGE);
+  const leverage = Math.min(leverageChoice, maxLeverage);
   const [stake, setStake] = useState<string>(DEFAULT_STAKE_DISPLAY);
-  const [preview, setPreview] = useState<LiquidationPreviewDto | null>(null);
-  const debounceRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    window.clearTimeout(debounceRef.current);
-    const stakeNum = Number(stake);
-    const validStake = Boolean(stake) && !Number.isNaN(stakeNum) && stakeNum > 0;
-    debounceRef.current = window.setTimeout(() => {
-      if (!validStake) {
-        setPreview(null);
-        return;
-      }
-      api
-        .previewLiquidation({ direction, leverage, stake: stakeNum.toFixed(3) })
-        .then(setPreview)
-        .catch(() => setPreview(null));
-    }, 150);
-    return () => window.clearTimeout(debounceRef.current);
-  }, [api, direction, leverage, stake]);
+  const preview = useLiquidationPreview(round.marketId, direction, leverage, stake);
 
   return (
     <div className="card bet-slip">
       <p className="test-wallet-tag">PREVIEW — not signed in</p>
 
-      {!hideDirectionPicker && (
-        <div className="field">
-          <span id="preview-direction-label">Direction</span>
-          <div className="direction-row" role="group" aria-labelledby="preview-direction-label">
-            <button
-              type="button"
-              className={`direction-btn direction-btn--up ${direction === "UP" ? "direction-btn--selected" : ""}`}
-              aria-pressed={direction === "UP"}
-              onClick={() => setDirection("UP")}
-            >
-              <DirectionGlyph direction="UP" />
-              UP
-            </button>
-            <button
-              type="button"
-              className={`direction-btn direction-btn--down ${direction === "DOWN" ? "direction-btn--selected" : ""}`}
-              aria-pressed={direction === "DOWN"}
-              onClick={() => setDirection("DOWN")}
-            >
-              <DirectionGlyph direction="DOWN" />
-              DOWN
-            </button>
-          </div>
-        </div>
-      )}
+      {!hideDirectionPicker && <DirectionPicker id="preview-direction-label" direction={direction} onChange={setDirection} />}
+      <HerdPicker herd={herdSideOf(round)} direction={direction} onPick={setDirection} />
 
       <div className="field">
         <label htmlFor="preview-leverage-input" className="visually-hidden">
           Leverage
         </label>
-        <LeverageDial id="preview-leverage-input" value={leverage} min={LEVERAGE_MIN} max={LEVERAGE_MAX} onChange={setLeverage} />
+        <LeverageDial id="preview-leverage-input" value={leverage} min={LEVERAGE_MIN} max={maxLeverage} onChange={setLeverage} />
       </div>
 
-      <div className="field">
-        {/* Distinct accessible name from the signed-in slip's "Stake (PLAY)" (`BetSlipForm`
-         *  below) — real users only ever see one of the two, but the two components briefly
-         *  coexist in the accessibility tree while sign-in state settles, and this is the label
-         *  a screen reader (or `findByLabelText` in tests) would otherwise have to disambiguate
-         *  by timing alone. */}
-        <label htmlFor="preview-stake-input">Preview stake (PLAY)</label>
-        <div className="stake-hero num-lg mono" aria-hidden="true">
-          {formatPlayAmount(Number(stake) || 0)} PLAY
-        </div>
-        <input
-          id="preview-stake-input"
-          className="stake-input-secondary"
-          type="text"
-          inputMode="decimal"
-          autoComplete="off"
-          value={stake}
-          onChange={(e) => {
-            const next = sanitizeStakeInput(e.target.value);
-            if (next !== null) setStake(next);
-          }}
-        />
-      </div>
+      {/* Distinct accessible name from the signed-in slip's "Stake (PLAY)" (`BetSlipForm` below) —
+       *  real users only ever see one of the two, but the two components briefly coexist in the
+       *  accessibility tree while sign-in state settles, and this is the label a screen reader (or
+       *  `findByLabelText` in tests) would otherwise have to disambiguate by timing alone. */}
+      <StakeField inputId="preview-stake-input" label="Preview stake (PLAY)" value={stake} onChange={setStake} />
 
       {preview && (
         <div className="card card--tight liquidation-preview">
@@ -233,6 +396,7 @@ function BetSlipPreview({
             entryPrice={preview.entryPriceUsed}
             liquidationPrice={preview.liquidationPrice}
             percentToLiquidation={preview.percentToLiquidation}
+            market={market}
           />
         </div>
       )}
@@ -248,12 +412,16 @@ function BetSlipPreview({
 
 function BetSlipForm({
   round,
+  market,
+  maxLeverage,
   onChanged,
   direction: controlledDirection,
   onDirectionChange,
   hideDirectionPicker,
 }: {
   round: RoundBetting;
+  market: MarketDto | undefined;
+  maxLeverage: number;
   onChanged: () => void;
   direction?: Direction;
   onDirectionChange?: (direction: Direction) => void;
@@ -266,7 +434,9 @@ function BetSlipForm({
   const [internalDirection, setInternalDirection] = useState<Direction>(existing?.direction ?? "UP");
   const direction = controlledDirection ?? internalDirection;
   const setDirection = onDirectionChange ?? setInternalDirection;
-  const [leverage, setLeverage] = useState<number>(existing?.leverage ?? 10);
+  const [leverageChoice, setLeverage] = useState<number>(existing?.leverage ?? DEFAULT_LEVERAGE);
+  // Never above this market's own cap, even if the market list arrives after the player touched the dial.
+  const leverage = Math.min(leverageChoice, maxLeverage);
   const [stake, setStake] = useState<string>(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
 
   // Reset local form state when the round or the existence of an own bet changes — deliberately
@@ -281,16 +451,23 @@ function BetSlipForm({
     setLastResetKey(resetKey);
     setFormOpen(!hasBet);
     setShowCancelConfirm(false);
-    setDirection(existing?.direction ?? "UP");
-    setLeverage(existing?.leverage ?? 10);
+    setInternalDirection(existing?.direction ?? "UP");
+    setLeverage(existing?.leverage ?? DEFAULT_LEVERAGE);
     setStake(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
   }
+  // A controlled direction belongs to the parent (the room's arena): the slip may not set the parent's
+  // state while it renders (React: "cannot update a component while rendering a different one"), and a
+  // fresh round must not throw away a side the player already picked. The one thing it does tell the
+  // parent is the side of a bet that already exists, so the arena shows what the player is holding.
+  const existingDirection = existing?.direction;
+  useEffect(() => {
+    if (existingDirection && onDirectionChange) onDirectionChange(existingDirection);
+  }, [round.roundId, existingDirection, onDirectionChange]);
 
   const [balance, setBalance] = useState<number | null>(null);
-  const [preview, setPreview] = useState<LiquidationPreviewDto | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const debounceRef = useRef<number | undefined>(undefined);
+  const preview = useLiquidationPreview(round.marketId, direction, leverage, stake);
 
   useEffect(() => {
     let cancelled = false;
@@ -301,23 +478,6 @@ function BetSlipForm({
       cancelled = true;
     };
   }, [api, round.roundId]);
-
-  useEffect(() => {
-    window.clearTimeout(debounceRef.current);
-    const stakeNum = Number(stake);
-    const validStake = Boolean(stake) && !Number.isNaN(stakeNum) && stakeNum > 0;
-    debounceRef.current = window.setTimeout(() => {
-      if (!validStake) {
-        setPreview(null);
-        return;
-      }
-      api
-        .previewLiquidation({ direction, leverage, stake: stakeNum.toFixed(3) })
-        .then(setPreview)
-        .catch(() => setPreview(null));
-    }, 150);
-    return () => window.clearTimeout(debounceRef.current);
-  }, [api, direction, leverage, stake]);
 
   if (!formOpen && existing) {
     return (
@@ -367,18 +527,6 @@ function BetSlipForm({
   const overBalance = stakeNum > effectiveBalance;
   const disabled = submitting || !stake || belowMin || overBalance;
 
-  const setQuickStake = (fraction: number) => {
-    setStake(Math.floor(effectiveBalance * fraction).toFixed(0));
-  };
-
-  /** Stake chips (direction.md §4 "Chips, not bare inputs") — additive, like casino chips on a
-   *  table: +100/+500/+1000 add to whatever's already staked, clamped to the effective balance;
-   *  MAX (`setQuickStake(1)`) still goes all-in in one tap. */
-  const addStake = (amount: number) => {
-    const next = Math.min(effectiveBalance, (Number(stake) || 0) + amount);
-    setStake(next.toFixed(0));
-  };
-
   const submit = async () => {
     setSubmitting(true);
     setErrorMessage(null);
@@ -400,77 +548,23 @@ function BetSlipForm({
         void submit();
       }}
     >
-      {!hideDirectionPicker && (
-        <div className="field">
-          <span id="direction-label">Direction</span>
-          <div className="direction-row" role="group" aria-labelledby="direction-label">
-            <button
-              type="button"
-              className={`direction-btn direction-btn--up ${direction === "UP" ? "direction-btn--selected" : ""}`}
-              aria-pressed={direction === "UP"}
-              onClick={() => setDirection("UP")}
-            >
-              <DirectionGlyph direction="UP" />
-              UP
-            </button>
-            <button
-              type="button"
-              className={`direction-btn direction-btn--down ${direction === "DOWN" ? "direction-btn--selected" : ""}`}
-              aria-pressed={direction === "DOWN"}
-              onClick={() => setDirection("DOWN")}
-            >
-              <DirectionGlyph direction="DOWN" />
-              DOWN
-            </button>
-          </div>
-        </div>
-      )}
+      {!hideDirectionPicker && <DirectionPicker id="direction-label" direction={direction} onChange={setDirection} />}
+      <HerdPicker herd={herdSideOf(round)} direction={direction} onPick={setDirection} />
 
       <div className="field">
         <label htmlFor="leverage-input" className="visually-hidden">
           Leverage
         </label>
-        <LeverageDial id="leverage-input" value={leverage} min={LEVERAGE_MIN} max={LEVERAGE_MAX} onChange={setLeverage} />
+        <LeverageDial id="leverage-input" value={leverage} min={LEVERAGE_MIN} max={maxLeverage} onChange={setLeverage} />
       </div>
 
-      <div className="field">
-        <label htmlFor="stake-input">Stake (PLAY)</label>
-        <div className="stake-hero num-lg mono" aria-hidden="true">
-          {formatPlayAmount(stakeNum)} PLAY
-        </div>
-        <input
-          id="stake-input"
-          className="stake-input-secondary"
-          type="text"
-          inputMode="decimal"
-          autoComplete="off"
-          value={stake}
-          onChange={(e) => {
-            const next = sanitizeStakeInput(e.target.value);
-            if (next !== null) setStake(next);
-          }}
-        />
-        <div className="stake-chips">
-          <button type="button" className="stake-chip" onClick={() => addStake(100)}>
-            +100
-          </button>
-          <button type="button" className="stake-chip" onClick={() => addStake(500)}>
-            +500
-          </button>
-          <button type="button" className="stake-chip" onClick={() => addStake(1000)}>
-            +1000
-          </button>
-          <button type="button" className="stake-chip stake-chip--max" onClick={() => setQuickStake(1)}>
-            MAX
-          </button>
-        </div>
-        {belowMin && <p className="field-error">Minimum stake is 100 PLAY.</p>}
-        {!belowMin && overBalance && (
-          <p className="field-error">
-            Not enough PLAY — you have {formatPlayAmount(effectiveBalance)} PLAY, this bet needs {formatPlayAmount(stakeNum)} PLAY.
-          </p>
-        )}
-      </div>
+      <StakeField inputId="stake-input" label="Stake (PLAY)" value={stake} onChange={setStake} balance={balance === null ? undefined : effectiveBalance} />
+      {belowMin && <p className="field-error">Minimum stake is 100 PLAY.</p>}
+      {!belowMin && overBalance && (
+        <p className="field-error">
+          Not enough PLAY — you have {formatPlayAmount(effectiveBalance)} PLAY, this bet needs {formatPlayAmount(stakeNum)} PLAY.
+        </p>
+      )}
 
       {preview && (
         <div className="card card--tight liquidation-preview">
@@ -489,6 +583,7 @@ function BetSlipForm({
             entryPrice={preview.entryPriceUsed}
             liquidationPrice={preview.liquidationPrice}
             percentToLiquidation={preview.percentToLiquidation}
+            market={market}
           />
           <p className="faint">
             Estimated from the current price — your real entry price is set when the round starts.
@@ -498,6 +593,7 @@ function BetSlipForm({
 
       {errorMessage && <p className="field-error">{errorMessage}</p>}
 
+      <BetSummary round={round} market={market} direction={direction} leverage={leverage} stake={stakeNum} />
       <button type="submit" className="btn btn--primary btn--lg btn--block" disabled={disabled}>
         {existing ? "UPDATE BET" : "PLACE BET"}
       </button>

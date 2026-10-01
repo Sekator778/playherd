@@ -14,25 +14,27 @@ import {
 import type { DotItemDotProps } from "recharts/types/util/types";
 import type { CrowdHistoryPointDto } from "../api/contract";
 import { formatUsd } from "../format";
+import { crowdRanges, defaultCrowdRange, formatAxisTick, formatAxisTooltip } from "./crowdModel";
 
 const COLOR_CROWD = "#9147ff";
-const COLOR_BTC = "#8b93a8";
+const COLOR_HOLD = "#8b93a8";
 const COLOR_ANTI = "#f5b93d";
 
-const DAY_MS = 86_400_000;
-
-type RangeKey = "1M" | "3M" | "1Y" | "ALL";
-const RANGE_DAYS: Record<RangeKey, number | null> = { "1M": 30, "3M": 90, "1Y": 365, ALL: null };
-
-function formatAxisDate(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
-function TooltipContent({ active, payload, label }: { active?: boolean; payload?: { value: number; name: string; color: string }[]; label?: number }) {
+function TooltipContent({
+  active,
+  payload,
+  label,
+  spanMs,
+}: {
+  active?: boolean;
+  payload?: { value: number; name: string; color: string }[];
+  label?: number;
+  spanMs: number;
+}) {
   if (!active || !payload || !label) return null;
   return (
     <div className="chart-tooltip">
-      <div className="faint">{formatAxisDate(label)}</div>
+      <div className="faint">{formatAxisTooltip(label, spanMs)}</div>
       {payload.map((p) => (
         <div key={p.name} style={{ color: p.color }}>
           {p.name}: {formatUsd(p.value)}
@@ -44,24 +46,40 @@ function TooltipContent({ active, payload, label }: { active?: boolean; payload?
 
 interface CrowdChartProps {
   history: CrowdHistoryPointDto[];
-  /** compact = Home's inline preview (fixed 90d default + a "show all" toggle, no range tabs);
+  /** compact = Home's inline preview (fixed default range + a "show all" toggle, no range tabs);
    *  full = the dedicated Crowd page (range tabs, season-boundary markers). */
   variant?: "compact" | "full";
+  /** The market's ticker, for the "hold" line's legend ("Hold BTC", "Hold NVDA"): the line is a plain
+   *  buy-and-hold of THAT market (Р-26, per market — Т-6). */
+  symbol?: string;
 }
 
-export function CrowdChart({ history, variant = "full" }: CrowdChartProps) {
-  const [range, setRange] = useState<RangeKey>(variant === "compact" ? "3M" : "3M");
+/**
+ * Crowd account vs hold vs anti-crowd for one market (Р-17, Р-25, Р-26, Т-6). The horizontal axis is a real
+ * time axis, and follows how much history there is (`crowdModel.ts`): over a few hours (a stand with
+ * 3-minute rounds) it ticks with the time of day (UTC) and the range chips are 1H · 6H · 1D · All; over
+ * months it ticks with dates and keeps 1M · 3M · 1Y · All — the open critique item "the chart's x axis must
+ * show time of day when the data span is short".
+ */
+export function CrowdChart({ history, variant = "full", symbol = "BTC" }: CrowdChartProps) {
+  const [picked, setPicked] = useState<string | null>(null);
   const [compactShowAll, setCompactShowAll] = useState(false);
 
-  const effectiveRange: RangeKey = variant === "compact" && compactShowAll ? "ALL" : range;
-  const days = RANGE_DAYS[effectiveRange];
+  const newest = history.length > 0 ? history[history.length - 1].atMs : 0;
+  const spanMs = history.length > 1 ? newest - history[0].atMs : 0;
+  const ranges = useMemo(() => crowdRanges(spanMs), [spanMs]);
+  const chosen = ranges.find((r) => r.key === picked) ?? defaultCrowdRange(spanMs);
+  const effective = variant === "compact" && compactShowAll ? ranges[ranges.length - 1] : chosen;
 
   const visible = useMemo(() => {
-    if (days === null || history.length === 0) return history;
-    const cutoff = history[history.length - 1].atMs - days * DAY_MS;
+    if (effective.ms === null || history.length === 0) return history;
+    const cutoff = newest - effective.ms;
     return history.filter((p) => p.atMs >= cutoff);
-  }, [history, days]);
+  }, [history, effective, newest]);
 
+  // The axis format follows what is on screen, not the whole history: a "1H" view of a month-old account
+  // ticks with times.
+  const visibleSpanMs = visible.length > 1 ? visible[visible.length - 1].atMs - visible[0].atMs : 0;
   const boundaries = useMemo(() => visible.filter((p) => p.seasonBoundary !== null), [visible]);
 
   // live-round.md §5: the rightmost "crowd" point pops in (scale 0→1) when a new one arrives,
@@ -78,16 +96,18 @@ export function CrowdChart({ history, variant = "full" }: CrowdChartProps) {
   return (
     <div className="crowd-chart">
       {variant === "full" ? (
-        <div className="tabs" role="tablist" aria-label="Chart range">
-          {(Object.keys(RANGE_DAYS) as RangeKey[]).map((key) => (
-            <button key={key} type="button" role="tab" aria-selected={range === key} onClick={() => setRange(key)}>
-              {key === "ALL" ? "All" : key}
-            </button>
-          ))}
-        </div>
+        ranges.length > 1 && (
+          <div className="tabs" role="tablist" aria-label="Chart range">
+            {ranges.map((r) => (
+              <button key={r.key} type="button" role="tab" aria-selected={effective.key === r.key} onClick={() => setPicked(r.key)}>
+                {r.label}
+              </button>
+            ))}
+          </div>
+        )
       ) : (
         <button type="button" className="btn btn--secondary" onClick={() => setCompactShowAll((v) => !v)}>
-          {compactShowAll ? "Show last 3 months" : "Show full period"}
+          {compactShowAll ? "Show the default range" : "Show full period"}
         </button>
       )}
 
@@ -95,12 +115,21 @@ export function CrowdChart({ history, variant = "full" }: CrowdChartProps) {
         <ResponsiveContainer>
           <ComposedChart data={visible} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
             <CartesianGrid stroke="#2b3346" strokeDasharray="3 3" />
-            <XAxis dataKey="atMs" tickFormatter={formatAxisDate} stroke="#a7b0c4" minTickGap={40} tick={{ fontSize: 12 }} />
-            <YAxis stroke="#a7b0c4" tick={{ fontSize: 12 }} tickFormatter={(v: number) => `$${Math.round(v / 1000)}k`} width={56} />
-            <Tooltip content={<TooltipContent />} />
+            <XAxis
+              dataKey="atMs"
+              type="number"
+              scale="time"
+              domain={["dataMin", "dataMax"]}
+              tickFormatter={(ms: number) => formatAxisTick(ms, visibleSpanMs)}
+              stroke="#a7b0c4"
+              minTickGap={40}
+              tick={{ fontSize: 12 }}
+            />
+            <YAxis stroke="#a7b0c4" tick={{ fontSize: 12 }} tickFormatter={(v: number) => `$${Math.round(v / 1000)}k`} width={56} domain={["auto", "auto"]} />
+            <Tooltip content={<TooltipContent spanMs={visibleSpanMs} />} />
             <Legend
               formatter={(value: string) =>
-                value === "crowdCapital" ? "Crowd account" : value === "btcHoldCapital" ? "Hold BTC" : "Anti-crowd"
+                value === "crowdCapital" ? "Crowd account" : value === "holdCapital" ? `Hold ${symbol}` : "Anti-crowd"
               }
             />
             {boundaries.map((b) => (
@@ -122,11 +151,12 @@ export function CrowdChart({ history, variant = "full" }: CrowdChartProps) {
               isAnimationActive={false}
               className="crowd-chart__crowd-area"
             />
-            <Line type="monotone" dataKey="btcHoldCapital" name="btcHoldCapital" stroke={COLOR_BTC} dot={false} strokeWidth={1.5} strokeDasharray="5 3" isAnimationActive={false} />
+            <Line type="monotone" dataKey="holdCapital" name="holdCapital" stroke={COLOR_HOLD} dot={false} strokeWidth={1.5} strokeDasharray="5 3" isAnimationActive={false} />
             <Line type="monotone" dataKey="antiCrowdCapital" name="antiCrowdCapital" stroke={COLOR_ANTI} dot={false} strokeWidth={1.5} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+      {visibleSpanMs > 0 && variant === "full" && <p className="faint crowd-chart__axis-note">Dates and times are UTC.</p>}
     </div>
   );
 }

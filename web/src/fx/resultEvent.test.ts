@@ -36,6 +36,7 @@ function makeRunning(positions: PublicPositionDto[], roundId = "1h-0"): RoundRun
   return {
     roundId,
     window: WINDOW,
+    marketId: "BTC",
     asset: "BTC",
     phase: "RUNNING",
     openPrice: "83451.00",
@@ -48,6 +49,7 @@ function makeSettled(positions: PublicPositionDto[], roundId = "1h-0"): RoundSet
   return {
     roundId,
     window: WINDOW,
+    marketId: "BTC",
     asset: "BTC",
     phase: "SETTLED",
     openPrice: "83451.00",
@@ -58,7 +60,7 @@ function makeSettled(positions: PublicPositionDto[], roundId = "1h-0"): RoundSet
 }
 
 function makeBetting(myBet: RoundBetting["myBet"] = null, roundId = "1h-1"): RoundBetting {
-  return { roundId, window: WINDOW, asset: "BTC", phase: "BETTING", participantCount: 1, myBet };
+  return { roundId, window: WINDOW, marketId: "BTC", asset: "BTC", phase: "BETTING", participantCount: 1, myBet };
 }
 
 describe("winTier boundaries (result-moment.md §2)", () => {
@@ -302,6 +304,7 @@ function historyEntry(overrides: Partial<ProfileRoundEntryDto> = {}): ProfileRou
   return {
     roundId: "1h-0",
     interval: "HOURLY",
+    marketId: "BTC",
     asset: "BTC",
     settledAtMs: 1000,
     direction: "UP",
@@ -373,5 +376,63 @@ describe("roundHasPlayerStake", () => {
   });
   it("false for a RUNNING round without the player", () => {
     expect(roundHasPlayerStake(makeRunning([makePosition({ playerId: "other" })]), PLAYER_ID)).toBe(false);
+  });
+});
+
+describe("the event names its market (Р-69)", () => {
+  it("a live settlement carries the round's marketId and the market's symbol", () => {
+    const curr: RoundSettled = {
+      ...makeSettled([makePosition({ roundId: "xyz_NVDA-1h-0", payout: "130.000", directionCorrect: true })], "xyz_NVDA-1h-0"),
+      marketId: "xyz_NVDA",
+      asset: "NVDA",
+    };
+    const event = detectResultEvent({
+      prev: undefined,
+      curr,
+      playerId: PLAYER_ID,
+      interval: "HOURLY",
+      alreadyEmitted: false,
+      currentBalance: 10_030,
+      nowMs: 5,
+    });
+    expect(event).toMatchObject({ kind: "WIN", marketId: "xyz_NVDA", symbol: "NVDA", roundId: "xyz_NVDA-1h-0" });
+  });
+
+  it("a mid-round liquidation carries them too", () => {
+    const prev: RoundRunning = { ...makeRunning([makePosition({ leverage: 20 })], "ETH-1h-0"), marketId: "ETH", asset: "ETH" };
+    const curr: RoundRunning = { ...makeRunning([makePosition({ leverage: 20, liquidated: true })], "ETH-1h-0"), marketId: "ETH", asset: "ETH" };
+    const event = detectResultEvent({ prev, curr, playerId: PLAYER_ID, interval: "HOURLY", alreadyEmitted: false, currentBalance: 9_900, nowMs: 5 });
+    expect(event).toMatchObject({ kind: "LIQUIDATION", marketId: "ETH", symbol: "ETH" });
+  });
+
+  it("an event rebuilt from a history entry takes them from the entry (marketId and asset)", () => {
+    const event = resultEventFromHistoryEntry(
+      historyEntry({ roundId: "PM900104-1d-86400000", interval: "DAILY", marketId: "PM900104", asset: "GER" }),
+      PLAYER_ID,
+      { balanceBefore: 10_000, balanceAfter: 10_400 },
+    );
+    expect(event).toMatchObject({ marketId: "PM900104", symbol: "GER", interval: "DAILY", roundId: "PM900104-1d-86400000" });
+  });
+});
+
+describe("a server that predates markets (no marketId on its DTOs) means BTC", () => {
+  it("the history-entry path and the live path both default marketId to BTC", () => {
+    const legacyEntry: Partial<ProfileRoundEntryDto> = historyEntry();
+    delete legacyEntry.marketId;
+    const fromHistory = resultEventFromHistoryEntry(legacyEntry as ProfileRoundEntryDto, PLAYER_ID, { balanceBefore: 1, balanceAfter: 2 });
+    expect(fromHistory).toMatchObject({ marketId: "BTC", symbol: "BTC" });
+
+    const legacyRound: Partial<RoundSettled> = makeSettled([makePosition({ payout: "130.000" })]);
+    delete legacyRound.marketId;
+    const live = detectResultEvent({
+      prev: undefined,
+      curr: legacyRound as RoundSettled,
+      playerId: PLAYER_ID,
+      interval: "HOURLY",
+      alreadyEmitted: false,
+      currentBalance: 10_030,
+      nowMs: 5,
+    });
+    expect(live).toMatchObject({ marketId: "BTC", symbol: "BTC" });
   });
 });

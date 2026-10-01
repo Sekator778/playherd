@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useApi } from "../api/ApiContext";
-import type { RoundPhase, ServerInfoDto } from "../api/contract";
+import type { MarketDto, RoundPhase, ServerInfoDto } from "../api/contract";
 import { formatCountdown } from "../format";
 
 export function DemoBanner() {
@@ -75,6 +75,35 @@ export function ResultsHashLine({ roundId, resultsHash }: { roundId: string; res
   );
 }
 
+/** Honest labelling of the crowd (Р-46: "bots are labelled"): the player counts and the UP/DOWN split on the
+ *  lobby cards cannot tell a bot from a person, so where a server reports test bots (`ServerInfoDto.bots`) the
+ *  page says so. Renders nothing for a server that reports none and for the mock (no `serverInfo()` — there
+ *  is no server to ask, like the other lines of this family). */
+export function BotsNote() {
+  const api = useApi();
+  const [bots, setBots] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .serverInfo?.()
+      .then((i) => {
+        if (!cancelled) setBots(i.bots);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  if (bots <= 0) return null;
+  return (
+    <p className="faint" style={{ margin: 0 }}>
+      Player counts and the crowd split include {bots} labelled test bots (BOT in the live bets feed).
+    </p>
+  );
+}
+
 /** Task item 4: "oracle status line (last confirmed seq/height on testnet11)". */
 export function OracleStatusLine() {
   const api = useApi();
@@ -106,13 +135,17 @@ export function OracleStatusLine() {
   );
 }
 
-/** Р-33/§2 ("Про управляемый оракул"): shown wherever the outcome depends on the oracle. */
-export function OracleDisclosureLine() {
-  return (
-    <p className="disclaimer-line">
-      Price from Hyperliquid, published by our team's key — not a decentralized oracle.
-    </p>
-  );
+/** Р-33/§2 ("Про управляемый оракул"): shown wherever the outcome depends on the oracle. The first
+ *  half names where the number really comes from — a Polymarket odds market is not "a price from
+ *  Hyperliquid" (Р-69); the second half is the same for every source: it is OUR key that publishes it. */
+export function OracleDisclosureLine({ source = "hyperliquid" }: { source?: MarketDto["source"] }) {
+  const origin =
+    source === "polymarket"
+      ? "Odds from Polymarket"
+      : source === "synthetic"
+        ? "Simulated demo prices (no live source)"
+        : "Price from Hyperliquid";
+  return <p className="disclaimer-line">{origin}, published by our team's key — not a decentralized oracle.</p>;
 }
 
 /** §2 ("Про отсутствие защиты от мультиаккаунтов"). */
@@ -228,18 +261,22 @@ export function Countdown({
   nowMs,
   targetMs,
   prefix,
+  calm = false,
 }: {
   nowMs: number;
   targetMs: number;
   prefix?: string;
+  /** No last-10-seconds escalation: for a list where eighteen cards tick down in unison, a
+   *  screen-wide pulse would be noise, not information (the room's own countdown still escalates). */
+  calm?: boolean;
 }) {
   const remaining = Math.max(0, targetMs - nowMs);
   // Escalation in the last 10s/3s (docs/product/design/live-round.md §4) — a real, existing
   // timer reading more urgently as it actually runs out, not a fabricated pressure timer
   // (game-designer.md's "Честность" redline covers invented urgency, not an honest one).
-  const tier = remaining <= 3000 ? "countdown--critical" : remaining <= 10000 ? "countdown--warn" : "";
+  const tier = calm ? "" : remaining <= 3000 ? "countdown--critical" : remaining <= 10000 ? "countdown--warn" : "";
   return (
-    <span className={`countdown mono ${tier}`}>
+    <span className={`countdown mono ${calm ? "countdown--calm" : ""} ${tier}`}>
       {prefix}
       {formatCountdown(remaining)}
     </span>

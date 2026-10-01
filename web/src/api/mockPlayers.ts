@@ -21,7 +21,8 @@ import type {
 } from "./contract";
 import { RATING_ROUNDS_THRESHOLD } from "./contract";
 import { pick, randFloat, randInt, rngFor, chance } from "./rng";
-import { SIM_BASE_MS, windowFor, prevWindow, roundIdFor } from "./clock";
+import { SIM_BASE_MS, windowFor, prevWindow, roundIdForWindow } from "./clock";
+import { MOCK_MARKETS, MOCK_BTC, type MockMarketSpec } from "./mockMarkets";
 import { seasonIdOf, seasonRange } from "./season";
 
 export const NPC_COUNT = 40;
@@ -79,6 +80,17 @@ export function allNpcPlayers(): PlayerSummaryDto[] {
 
 type HistoryEntry = ProfileRoundEntryDto;
 
+/** The perps an NPC's past rounds can have been played on (all were listed long before the demo
+ *  anchor); BTC is more than half of them, the rest spread over the others. */
+const HISTORY_MARKETS: readonly MockMarketSpec[] = MOCK_MARKETS.filter((m) => m.kind === "PERP");
+
+/** Which market the `i`-th round of an NPC's history was on — its own seed, so the rest of the
+ *  history (windows, directions, payouts) is exactly what it was when only BTC existed. */
+function historyMarket(index: number, i: number): MockMarketSpec {
+  const rng = rngFor("npc-history-market", index, i);
+  return chance(rng, 0.55) ? MOCK_BTC : pick(rng, HISTORY_MARKETS);
+}
+
 function generateHistory(index: number): HistoryEntry[] {
   const rng = rngFor("npc-history", index);
   const count = randInt(rng, 4, 42);
@@ -114,13 +126,15 @@ function generateHistory(index: number): HistoryEntry[] {
       directionCorrect = chance(rng, 0.15);
     }
 
+    const market = historyMarket(index, i);
     entries.push({
-      roundId: roundIdFor(window),
+      roundId: roundIdForWindow(market.id, window),
       interval,
-      asset: "BTC",
+      marketId: market.id,
+      asset: market.symbol,
       settledAtMs: window.endMs - 1,
       direction,
-      leverage,
+      leverage: Math.min(leverage, market.maxLeverage),
       stake: stake.toFixed(3),
       liquidated,
       directionCorrect,

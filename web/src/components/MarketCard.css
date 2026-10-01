@@ -1,0 +1,465 @@
+/* Market cards (lobby, Р-69) and the round badge shared with the room / positions strip. Tokens come
+   from index.css / direction.md — no new colour values here, only mixes of the existing ones.
+   `--mk` is the market's own badge colour (`api/marketMeta.ts`), set inline per card.
+
+   Reduced motion: every animation below is switched off both by the OS media query and by the
+   `html[data-reduced-motion="true"]` attribute the fx layer keeps in sync (fx/reducedMotion.ts). */
+
+.mk-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--mk, var(--accent)) 22%, var(--bg-elevated-2));
+  border: 1.5px solid color-mix(in srgb, var(--mk, var(--accent)) 55%, transparent);
+  font-weight: 900;
+  line-height: 1;
+}
+.mk-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mk-icon__glyph {
+  color: color-mix(in srgb, var(--mk, var(--accent)) 70%, white);
+}
+
+/* ------------------------------------------------------------------ the card */
+
+.mk-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background:
+    radial-gradient(110% 90% at 0% 0%, color-mix(in srgb, var(--mk, var(--accent)) 12%, transparent) 0%, transparent 62%),
+    var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+  transition:
+    transform var(--dur-instant) ease,
+    border-color var(--dur-fast) ease;
+}
+.mk-card:hover {
+  border-color: var(--border-strong);
+}
+.mk-card:has(.mk-card__link:active) {
+  transform: scale(0.985);
+}
+.mk-card--hot {
+  border-color: color-mix(in srgb, var(--gold) 55%, transparent);
+  box-shadow:
+    var(--shadow-card),
+    0 0 26px -12px var(--gold-glow);
+}
+
+.mk-card__head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.mk-card__id {
+  min-width: 0;
+}
+.mk-card__namerow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+}
+.mk-card__symbol {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+/* The one link of the card: its ::after covers the whole card, so a tap anywhere opens the room;
+   everything interactive inside (UP/DOWN, star, herd badge) is lifted above it. */
+.mk-card__link {
+  color: var(--text);
+  text-decoration: none;
+}
+.mk-card__link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.mk-card__link:focus-visible {
+  outline: none;
+}
+.mk-card__link:focus-visible::after {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.mk-card__title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mk-card__question {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mk-card__price {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  text-align: right;
+}
+.mk-card__price-num {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.mk-card__price-num--none {
+  color: var(--text-faint);
+}
+.mk-card__change {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mk-card__change--up {
+  color: var(--up);
+}
+.mk-card__change--down {
+  color: var(--down);
+}
+.mk-card__change--flat {
+  color: var(--text-muted);
+}
+.mk-card__change-unit {
+  color: var(--text-faint);
+  font-weight: 600;
+  font-size: 11px;
+}
+.mk-card__stale {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--warning);
+}
+.mk-card--stale .mk-card__price-num {
+  color: var(--text-muted);
+}
+
+.mk-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.3;
+}
+.mk-tag--odds {
+  color: var(--accent-text);
+}
+.mk-tag--hot {
+  color: var(--gold);
+  border-color: var(--gold-strong);
+}
+.mk-tag__icon {
+  width: 11px;
+  height: 11px;
+}
+
+/* ------------------------------------------------------------------ crowd split */
+
+.mk-split {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mk-split__labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 800;
+}
+.mk-split__players {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.mk-split__label--up {
+  color: var(--up);
+}
+.mk-split__label--down {
+  color: var(--down);
+}
+.mk-split__bar {
+  display: flex;
+  gap: 3px;
+  height: 8px;
+}
+.mk-split__fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: flex-basis var(--dur-base) var(--ease-out-expo);
+}
+.mk-split__fill--up {
+  background: var(--up);
+}
+.mk-split__fill--down {
+  background: var(--down);
+}
+.mk-split--empty .mk-split__bar {
+  border-radius: 4px;
+  background: repeating-linear-gradient(90deg, var(--border-strong) 0 6px, transparent 6px 10px);
+}
+.mk-split__empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ------------------------------------------------------------------ meta / foot / actions */
+
+.mk-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+/* The herd badge rides at the end of the meta line (wrapping under it on a narrow card). */
+.mk-card__meta .mk-herd {
+  margin-left: auto;
+}
+.mk-card__meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.mk-card__meta-item--faint {
+  color: var(--text-faint);
+}
+.mk-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--up);
+  box-shadow: 0 0 8px var(--up);
+  animation: mk-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mk-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.mk-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mk-herd {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+.mk-herd--up {
+  color: var(--up);
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.1);
+}
+.mk-herd--down {
+  color: var(--down);
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+}
+.mk-herd--none {
+  font-weight: 700;
+  color: var(--text-faint);
+}
+.mk-herd:hover {
+  border-color: var(--text-muted);
+}
+
+/* 44 px touch target, drawn smaller: the negative margins keep the name row as tight as the text. */
+.mk-star {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -12px -6px -12px -8px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: transform var(--dur-instant) ease;
+}
+.mk-star:hover {
+  color: var(--text);
+}
+.mk-star:active {
+  transform: scale(0.88);
+}
+.mk-star[aria-pressed="true"] {
+  color: var(--gold);
+}
+
+.mk-card__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.mk-dir {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    transform var(--dur-instant) ease,
+    background var(--dur-fast) ease,
+    box-shadow var(--dur-fast) ease;
+}
+.mk-dir:active {
+  transform: scale(0.97);
+}
+.mk-dir--up {
+  color: var(--up);
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.45);
+}
+.mk-dir--up:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.22);
+  box-shadow: 0 8px 22px -12px var(--win-glow);
+}
+.mk-dir--down {
+  color: var(--down);
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.45);
+}
+.mk-dir--down:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.22);
+  box-shadow: 0 8px 22px -12px var(--loss-glow);
+}
+.mk-dir:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mk-dir__herd {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid currentColor;
+  opacity: 0.85;
+}
+
+/* ------------------------------------------------------------------ closed */
+
+.mk-card--closed .mk-card__id,
+.mk-card--closed .mk-card__price-num {
+  opacity: 0.7;
+}
+.mk-card__none {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.mk-closed {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.mk-closed p {
+  margin: 0;
+}
+.mk-closed strong {
+  color: var(--text);
+}
+.mk-closed__icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-live-dot {
+    animation: none;
+  }
+  .mk-card,
+  .mk-dir,
+  .mk-star,
+  .mk-split__fill {
+    transition: none;
+  }
+}
+html[data-reduced-motion="true"] .mk-live-dot {
+  animation: none;
+}
+html[data-reduced-motion="true"] .mk-card,
+html[data-reduced-motion="true"] .mk-dir,
+html[data-reduced-motion="true"] .mk-star,
+html[data-reduced-motion="true"] .mk-split__fill {
+  transition: none;
+}

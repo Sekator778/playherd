@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import type { Direction, Interval, RoundId } from "../api/contract";
+import type { Direction, RoundId } from "../api/contract";
 import { outcomeFromNet } from "../api/outcome";
 import { formatPlayAmount } from "../format";
 import { CrackIcon, DirectionGlyph, MinusDiscIcon, TrophyIcon } from "./icons";
@@ -29,7 +29,8 @@ const NET_CLASS: Record<ResultKind, string> = {
 
 export function ResultTile({
   roundId,
-  interval,
+  symbol,
+  seriesLabel,
   direction,
   leverage,
   net,
@@ -37,7 +38,12 @@ export function ResultTile({
   dateLabel,
 }: {
   roundId: RoundId;
-  interval: Interval;
+  /** The market's ticker ("BTC", "NVDA", "GER") — which market the round was played in (Р-69). */
+  symbol?: string;
+  /** The series' real length ("3 MIN"), when known: `ProfileRoundEntryDto` only carries the series' name,
+   *  so a caller that has the market list passes it; without it the tile simply leaves it out (never
+   *  "Hourly"/"Daily" for a round that was three minutes long). */
+  seriesLabel?: string;
   direction: Direction;
   leverage: number;
   net: number;
@@ -55,11 +61,35 @@ export function ResultTile({
         {(kind === "lost" || kind === "even") && <MinusDiscIcon />}
       </span>
       <span className="result-tile__body">
+        {/* Which market and how long first (what the round WAS), then what the player did and when. A
+            tile for a round whose market is unknown to the caller (no symbol, no length) leads with the
+            side instead, as it always did. */}
         <span className="result-tile__title">
-          {interval === "HOURLY" ? "Hourly" : "Daily"} · <DirectionGlyph direction={direction} /> {direction} · x
-          {leverage}
+          {symbol ? (
+            <>
+              <strong className="result-tile__symbol">{symbol}</strong>
+              {seriesLabel && ` · ${seriesLabel}`}
+            </>
+          ) : (
+            <>
+              {seriesLabel && `${seriesLabel} · `}
+              <span className="nowrap">
+                <DirectionGlyph direction={direction} /> {direction} · x{leverage}
+              </span>
+            </>
+          )}
         </span>
-        {dateLabel && <span className="result-tile__meta">{dateLabel}</span>}
+        <span className="result-tile__meta">
+          {symbol && (
+            <>
+              <span className="nowrap">
+                <DirectionGlyph direction={direction} /> {direction} · x{leverage}
+              </span>
+              {dateLabel && " · "}
+            </>
+          )}
+          {dateLabel}
+        </span>
       </span>
       <span className={`result-tile__net ${NET_CLASS[kind]}`}>
         {formatPlayAmount(net, { sign: true })} PLAY

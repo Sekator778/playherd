@@ -167,7 +167,7 @@ export const MOCK_CROWD_HISTORY = Array.from({ length: CROWD_HISTORY_DAYS }, (_,
     atMs: Date.now() - (CROWD_HISTORY_DAYS - i) * 86_400_000,
     seasonBoundary: i === 30 ? "2026-08" : i === 60 ? "2026-09" : null,
     crowdCapital: crowd.toFixed(2),
-    btcHoldCapital: btc.toFixed(2),
+    holdCapital: btc.toFixed(2),
     antiCrowdCapital: anti.toFixed(2),
   };
 });

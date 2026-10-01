@@ -1,0 +1,21 @@
+/* Profile: the three season numbers — two small ones side by side, the money one across the bottom
+   (three stacked full-width tiles were most of a phone screen). */
+.profile-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.profile-tiles > :last-child {
+  grid-column: 1 / -1;
+}
+.profile-tiles .stat-tile {
+  padding: 12px 14px;
+}
+@media (min-width: 640px) {
+  .profile-tiles {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .profile-tiles > :last-child {
+    grid-column: auto;
+  }
+}

@@ -1,9 +1,10 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiProvider } from "../api/ApiContext";
 import { mockApi } from "../api/mockApi";
+import { PLAY_ASSET_ID, RECOMMENDED_DEPOSIT_FEE } from "../components/playAsset";
 import { WalletPage } from "./WalletPage";
 
 /** Signs the shared `mockApi` singleton in once for this file — same pattern as
@@ -158,5 +159,41 @@ describe("keyboard/pointer smoke test via userEvent (no fake timers)", () => {
     await screen.findByText("Withdraw to wallet");
     await user.type(screen.getByLabelText("Amount (PLAY)"), "100");
     expect(screen.getByRole("button", { name: "Withdraw" })).not.toBeDisabled();
+  });
+});
+
+describe("Sage friction hints (docs/research/sage_real_e2e.md «Трение»)", () => {
+  it("four things to know, on the Wallet screen where the friction happens", async () => {
+    renderWallet();
+    const card = (await screen.findByRole("heading", { name: "Using Sage? Four things to know" })).closest(".card") as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(within(card).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(card).getByText(/Sage starts on mainnet — switch it to/)).toHaveTextContent("testnet11");
+    expect(within(card).getByText(/Each sign-in is a new WalletConnect connection/)).toBeInTheDocument();
+  });
+
+  it("PLAY shows as 'Unknown CAT' in Sage — so the card shows its full asset id, with a copy button", async () => {
+    const user = userEvent.setup(); // installs the clipboard stub the copy button writes to
+    renderWallet();
+    const id = await screen.findByLabelText("PLAY asset id");
+    expect(id.textContent).toBe(PLAY_ASSET_ID);
+    expect(PLAY_ASSET_ID).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(screen.getByText(/Unknown CAT/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copy asset id" }));
+    expect(await navigator.clipboard.readText()).toBe(PLAY_ASSET_ID);
+    expect(await screen.findByRole("button", { name: "Copied!" })).toBeInTheDocument();
+  });
+
+  it("names a fee that works on a busy testnet11", async () => {
+    renderWallet();
+    expect(await screen.findByText(RECOMMENDED_DEPOSIT_FEE)).toBeInTheDocument();
+    expect(RECOMMENDED_DEPOSIT_FEE).toBe("0.0005 TXCH");
+    expect(screen.getByText(/rejects a transfer with a zero fee/)).toBeInTheDocument();
+  });
+
+  it("the PLAY asset id is the testnet11 issuance from the docs", () => {
+    // docs/research/week1_testnet_results.md:60
+    expect(PLAY_ASSET_ID).toBe("0x4b88ce9712e97e73ad3759541fc23d38704e31d27d6586c28be14ee716080b70");
   });
 });

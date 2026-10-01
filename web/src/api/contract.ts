@@ -22,13 +22,19 @@
 // Primitives
 // ---------------------------------------------------------------------------
 
-/** Interval.java: the two round timeframes ("BTC up/down", hourly and daily — Р-19). */
+/**
+ * Interval.java: the two round series every market has (Р-19), the shorter and the longer. The
+ * names are historical — the real length of a series is `MarketSeriesDto.durationSec` (3 and 15
+ * minutes on the stand, 1 hour and 1 day live, Т-11), so label a series by that
+ * (`formatDuration`), never by "Hourly"/"Daily".
+ */
 export type Interval = "HOURLY" | "DAILY";
 
 /** Direction.java: which way a position bets the round closes. */
 export type Direction = "UP" | "DOWN";
 
-/** Leverage.java: integer 2..40 (Leverage.MIN/MAX, BTC tier0 — Р-33's slider range). */
+/** Leverage.java: an integer in 2..40 (Leverage.MIN/MAX — Р-33's slider range); a market's own cap
+ *  (`MarketDto.maxLeverage`, Т-4) can be lower. */
 export type Leverage = number;
 
 /**
@@ -42,8 +48,9 @@ export type PlayAmountStr = string;
 
 /**
  * A USD amount as a decimal string, scale 2 cents (`LiquidationCalculator`'s "money" scale).
- * Used for prices and for the crowd account's paper capital (Р-17) — the crowd account trades
- * paper USD, not PLAY, and never touches a player's PLAY balance (Р-5).
+ * Used for money: a position's P&L, the crowd account's paper capital and margin (Р-17) — the
+ * crowd account trades paper USD, not PLAY, and never touches a player's PLAY balance (Р-5). A
+ * market PRICE is a {@link PriceStr} instead (its own number of decimals).
  */
 export type UsdStr = string;
 
@@ -54,11 +61,33 @@ export type EpochMs = number;
 export type SeasonId = string;
 
 /**
- * `RoundWindow.roundId()`: `${interval.code()}-${startMs}`, e.g. `"1h-1735689600000"` —
- * `interval.code()` is `"1h"`/`"1d"` (Interval.java), not the `Interval` string above. Treat as
- * opaque; never parse it client-side.
+ * `RoundWindow.roundId()`: `${interval.code()}-${startMs}` for BTC (`"1h-1735689600000"`, the
+ * legacy form — published history depends on it) and `${marketId}-${interval.code()}-${startMs}`
+ * for every other market (`"ETH-1h-1735689600000"`). `interval.code()` is `"1h"`/`"1d"`
+ * (Interval.java), not the `Interval` string above. Treat as opaque; never parse it client-side —
+ * every DTO that carries a `roundId` also carries `marketId`.
  */
 export type RoundId = string;
+
+/**
+ * Server-assigned market id, `[A-Za-z0-9_]{1,32}` — `"BTC"`, `"ETH"`, `"xyz_NVDA"`, `"PM540816"`
+ * (docs/research/markets_architecture.md §3.1). Opaque; also the `:marketId` route param.
+ */
+export type MarketId = string;
+
+/** `PERP`: a Hyperliquid perpetual's mark price in USD. `ODDS`: the probability (0..1) of one
+ *  outcome of a Polymarket market (Т-2). Same round mechanics for both. */
+export type MarketKind = "PERP" | "ODDS";
+
+/** Lobby panels (Р-69, Т-1), in display order. */
+export type CategoryId = "crypto" | "politics" | "sports" | "stocks" | "indices" | "commodities";
+
+/**
+ * A market price as a decimal string with exactly `MarketDto.priceDecimals` fractional digits:
+ * USD for a `PERP` market, a probability in 0..1 for an `ODDS` market (show it as a percentage).
+ * Every price in every DTO of a market uses that market's `priceDecimals`.
+ */
+export type PriceStr = string;
 
 // ---------------------------------------------------------------------------
 // Engine constants the UI validates against before round-tripping to the server
@@ -79,7 +108,8 @@ export const MIN_STAKE_PLAY: PlayAmountStr = "100.000";
 export const MIN_WITHDRAWAL_PLAY: PlayAmountStr = "100.000";
 /** Leverage.MIN — the bet slip's leverage slider lower bound (Р-33). */
 export const LEVERAGE_MIN: Leverage = 2;
-/** Leverage.MAX — the bet slip's leverage slider upper bound (Р-33). */
+/** Leverage.MAX — the platform-wide cap. The bet slip's slider upper bound is the market's own
+ *  `MarketDto.maxLeverage` (Т-4), never above this. */
 export const LEVERAGE_MAX: Leverage = 40;
 /** RatingBook.DEFAULT_ROUNDS_THRESHOLD, fixed at 10 by Р-28 (common to both series, Р-30). */
 export const RATING_ROUNDS_THRESHOLD = 10;
@@ -112,15 +142,17 @@ export interface PublicProfileDto {
   player: PlayerSummaryDto;
   seasonRecord: SeasonRecordDto | null; // null if the player has no record in the current season yet
   history: ProfileRoundEntryDto[]; // newest first
+  /** Win streak over settled rounds, newest first (Р-71): a round counts as a win when
+   *  `payout > stake`; a flat round (`payout == stake`) neither extends nor breaks the streak. */
+  streak?: { current: number; best: number };
 }
 
 export interface ProfileRoundEntryDto {
   roundId: RoundId;
   interval: Interval;
-  /** Additive (multi-pair readiness, docs/research/multi_pair_architecture.md §8) — literal
-   *  `"BTC"` until other assets exist; present so a client can start branching on it without a
-   *  later breaking change. */
-  asset: "BTC";
+  marketId: MarketId;
+  /** The market's `symbol` at settlement time ("BTC", "NVDA", "GER"). */
+  asset: string;
   settledAtMs: EpochMs;
   direction: Direction;
   leverage: Leverage;
@@ -213,21 +245,21 @@ export interface PositionDto {
   roundId: RoundId;
   direction: Direction;
   leverage: Leverage;
-  size: string; // BTC size, 8dp (PositionSizing.SIZE_SCALE)
-  entryPrice: UsdStr;
-  liquidationPrice: UsdStr;
+  size: string; // position size in lots, 8dp (PositionSizing.SIZE_SCALE; one lot = 10^(priceDecimals-2) units, Т-3)
+  entryPrice: PriceStr;
+  liquidationPrice: PriceStr;
   pnl: UsdStr | null;
   /**
    * Additive (2026-09-25 UI bug fix — see `docs/product/ux_spec.md` §4/§7, "net result"): the
    * original PLAY stake this position was opened with (`Bet.stake` before `GameEngine` turns it
    * into `Position.size` at round start, round_engine_design.md §4.9). Without this, the only way
    * to show a position's net PLAY change (`payout - stake`) is `initialMargin(size, entryPrice,
-   * leverage)` (`liquidation.ts`) — the exact inverse of `sizeForMargin`, but lossy across the two
-   * roundings (5dp size, then 2dp margin): e.g. stake 100 PLAY at x10 leverage/entry 83451.00
-   * round-trips to 99.97, not 100.00. Optional so a `RealApi` build that predates this field still
-   * works (falls back to that derivation, `api/outcome.ts`'s `positionStakeStr`) — but the server
-   * should start sending it since it already has the exact number (`Bet.stake`) with no need to
-   * derive anything. */
+   * leverage)` (`liquidation.ts`) — the inverse of `sizeForMargin`, but only as good as its two
+   * roundings (size to 8dp, margin to cents) and blind to the stake's third PLAY decimal (a size
+   * handed over with fewer digits drifts further: 0.01198 BTC at x10/83451.00 recovers 99.97, not
+   * 100.00). Optional so a `RealApi` build that predates this field still works (falls back to
+   * that derivation, `api/outcome.ts`'s `positionStakeStr`) — but the server should start sending
+   * it since it already has the exact number (`Bet.stake`) with no need to derive anything. */
   stake?: PlayAmountStr;
 }
 
@@ -250,10 +282,10 @@ export interface PublicPositionDto extends PositionDto {
 export interface CrowdRoundPositionDto {
   roundId: RoundId;
   direction: Direction;
-  leverage: Leverage; // stake-weighted average of the majority side, HALF_UP, clamped 2..40 (Р-14)
+  leverage: Leverage; // stake-weighted average of the majority side, HALF_UP, clamped 2..the market's cap (Р-14)
   margin: UsdStr; // 10% of capitalBefore (Р-17)
-  entryPrice: UsdStr;
-  liquidationPrice: UsdStr;
+  entryPrice: PriceStr;
+  liquidationPrice: PriceStr;
 }
 
 /** CrowdAccount.RoundResult, once the round has settled. `traded=false` (all fields but
@@ -264,7 +296,7 @@ export interface CrowdRoundResultDto {
   direction: Direction | null;
   leverage: Leverage | null;
   margin: UsdStr | null;
-  entryPrice: UsdStr | null;
+  entryPrice: PriceStr | null;
   liquidated: boolean;
   capitalBefore: UsdStr;
   capitalAfter: UsdStr;
@@ -285,14 +317,16 @@ export interface CancellationDto {
 interface RoundBase {
   roundId: RoundId;
   window: RoundWindowDto;
-  asset: "BTC";
+  marketId: MarketId;
+  /** The market's `symbol` ("BTC", "NVDA", "GER"). */
+  asset: string;
 }
 
 export interface RoundBetting extends RoundBase {
   phase: "BETTING";
   /** Headcount — public even before Р-62 and still meaningful standalone (e.g. for a screen that
-   *  only wants "N playing", like the lobby tile, `docs/research/multi_pair_architecture.md` §8's
-   *  proposed pair-list endpoint). */
+   *  only wants "N playing", like a lobby card — `MarketSeriesDto.participantCount` carries the
+   *  same number for every market in one `markets()` call). */
   participantCount: number;
   /** The signed-in viewer's own pending bet on this round, if any — private to them, and the
    *  basis for the "already bet this round" edit/cancel state (Р-13). Null if signed out or has
@@ -375,14 +409,15 @@ export interface BetFeedEntryDto {
  */
 export interface BetFeedDto {
   roundId: RoundId;
-  asset: "BTC";
+  marketId: MarketId;
+  asset: string;
   entries: BetFeedEntryDto[];
   hasMore: boolean;
 }
 
 export interface RoundRunning extends RoundBase {
   phase: "RUNNING";
-  openPrice: UsdStr;
+  openPrice: PriceStr;
   /** Revealed at round start, together with the crowd position (Р-22). */
   positions: PublicPositionDto[];
   /** Null only for a tie / zero bets on both sides (Р-5). */
@@ -391,8 +426,8 @@ export interface RoundRunning extends RoundBase {
 
 export interface RoundSettled extends RoundBase {
   phase: "SETTLED";
-  openPrice: UsdStr;
-  closePrice: UsdStr;
+  openPrice: PriceStr;
+  closePrice: PriceStr;
   positions: PublicPositionDto[];
   crowd: CrowdRoundResultDto | null;
   /** Additive (task's FIXED INTERFACE (1), Р-41): "0x"+sha256 hex of the canonical results JSON
@@ -400,6 +435,17 @@ export interface RoundSettled extends RoundBase {
    *  oracle spend confirms on testnet11 (`ServerInfoDto.oracle.pendingRecords`). Verify at
    *  `GET /api/rounds/{roundId}/results.json`. */
   resultsHash?: string;
+  /** Where this round's oracle record is on Chia (Р-40, Р-41): `seq` in the oracle singleton's
+   *  stream, `state` as chainsvc reports it (`unknown` until queued, then `queued`, `in_flight`,
+   *  `confirmed`, or `conflict`), `height` once confirmed. Absent for a round with no record. */
+  oracleAnchor?: OracleAnchorDto;
+}
+
+/** Server `Rounds.OracleAnchorDto`. */
+export interface OracleAnchorDto {
+  seq: number;
+  state: string;
+  height: number | null;
 }
 
 export interface RoundCancelled extends RoundBase {
@@ -426,28 +472,31 @@ export interface RoundsPairDto {
 // Liquidation preview (Р-7, Р-33: shown BEFORE the bet is placed)
 // ---------------------------------------------------------------------------
 
-/** The current BTC reference price — used ONLY to preview a liquidation price before a bet is
- *  placed. The position's REAL entry price is fixed at round start (Р-8) and can differ from
- *  this preview price once the round actually opens; the UI must say so (see
- *  docs/product/ux_spec.md, "Round"/"Bet slip"). */
+/** A market's current reference price — the starting point of the liquidation preview before a bet
+ *  is placed, and the live price a RUNNING round's P&L is read against (`useReferencePrice`). The
+ *  position's REAL entry price is fixed at round start (Р-8) and can differ from this preview
+ *  price once the round actually opens; the UI must say so (see docs/product/ux_spec.md,
+ *  "Round"/"Bet slip"). */
 export interface MarketReferenceDto {
-  price: UsdStr;
+  price: PriceStr;
   asOfMs: EpochMs;
 }
 
 export interface LiquidationPreviewRequest {
+  /** Omitted → `"BTC"`. */
+  marketId?: MarketId;
   direction: Direction;
   leverage: Leverage;
   stake: PlayAmountStr;
   /** Omit to let the server use its own current reference price. */
-  referencePrice?: UsdStr;
+  referencePrice?: PriceStr;
 }
 
 /** Mirrors `LiquidationCalculator.liquidationPrice` computed against a reference price, not a
  *  real entry price yet — see `MarketReferenceDto`'s caveat. */
 export interface LiquidationPreviewDto {
-  entryPriceUsed: UsdStr;
-  liquidationPrice: UsdStr;
+  entryPriceUsed: PriceStr;
+  liquidationPrice: PriceStr;
   /** e.g. `0.025` = 2.5% adverse move from `entryPriceUsed` to `liquidationPrice` — the "%
    *  move to liquidation" figure Р-33 requires shown before the bet. */
   percentToLiquidation: number;
@@ -470,7 +519,7 @@ export interface PlayerAccountDto {
   balance: PlayAmountStr;
   currentSeason: SeasonId;
   /** Additive (2026-09-25 bug fix, backend): total stake currently sitting in bets that have not
-   *  settled yet (the BETTING and RUNNING rounds of both series) — already debited from `balance`
+   *  settled yet (the BETTING and RUNNING rounds of both series of EVERY market) — already debited from `balance`
    *  but not yet won or lost. Optional so a `RealApi` build that predates this field still works
    *  (falls back to not showing it) — but the server should start sending it. */
   inPlay?: PlayAmountStr;
@@ -582,11 +631,12 @@ export interface DepositAddressDto {
 // ---------------------------------------------------------------------------
 
 /**
- * One round's point on the crowd chart. `btcHoldCapital`/`antiCrowdCapital` — предложение: no
- * `BtcHoldAccount`/`AntiCrowdAccount` class exists in `engine/` yet, only `CrowdAccount`
+ * One round's point on the crowd chart. `holdCapital`/`antiCrowdCapital` — предложение: no
+ * `HoldAccount`/`AntiCrowdAccount` class exists in `engine/` yet, only `CrowdAccount`
  * itself. Р-26 fixes that these two comparison series must exist and their starting capital
  * ($100 000, same as the crowd account) and mechanics ("тот же счёт, всегда против
- * большинства" for anti-crowd; a flat buy-and-hold for the BTC line) — the per-round DTO shape
+ * большинства" for anti-crowd; a flat buy-and-hold of the market's asset for the hold line — it
+ * was `btcHoldCapital` while BTC was the only market) — the per-round DTO shape
  * here is this contract's proposal for how the backend will compute and serve them, modelled
  * as a small sibling engine class per round rather than re-deriving them from candle data on
  * every request. To confirm before backend work starts on this endpoint.
@@ -597,7 +647,9 @@ export interface CrowdHistoryPointDto {
   /** Marks a season boundary on the chart (Р-25); null on every other point. */
   seasonBoundary: SeasonId | null;
   crowdCapital: UsdStr;
-  btcHoldCapital: UsdStr;
+  /** "Just hold the asset" on the same starting capital, bought at the market's first resolved
+   *  round (Р-26, per market — Т-6). */
+  holdCapital: UsdStr;
   antiCrowdCapital: UsdStr;
 }
 
@@ -608,10 +660,148 @@ export interface SeasonReturnDto {
 }
 
 export interface CrowdAccountDto {
+  marketId: MarketId;
+  symbol: string;
   capital: UsdStr;
   /** One continuous series since day one — seasons never reset it (Р-25). Oldest first. */
   history: CrowdHistoryPointDto[];
   seasonReturns: SeasonReturnDto[];
+}
+
+// ---------------------------------------------------------------------------
+// Markets and categories (Р-69, Р-70, Р-71; docs/research/markets_architecture.md §3, §8)
+// ---------------------------------------------------------------------------
+
+export interface CategoryDto {
+  id: CategoryId;
+  title: string;
+  /** Active markets in the category. A category with no market is not listed. */
+  marketCount: number;
+}
+
+export interface MarketPriceDto {
+  price: PriceStr;
+  asOfMs: EpochMs;
+  /** Relative change vs 24h ago, e.g. `0.0098` = +0.98%; null when the source does not give it. */
+  change24h: number | null;
+  /** True when the last tick is older than the source's staleness limit: betting stays open, the
+   *  card shows the price as stale. */
+  stale: boolean;
+}
+
+/** One round series of a market, as the lobby card and the room header need it (Р-19, Р-62). */
+export interface MarketSeriesDto {
+  interval: Interval;
+  /** Real length of this series' rounds — label the series by it ("3 MIN", "1 HOUR"), never by
+   *  the `Interval` name. */
+  durationSec: number;
+  bettingRoundId: RoundId;
+  /** Betting closes when this round starts. */
+  bettingClosesAtMs: EpochMs;
+  runningRoundId: RoundId;
+  runningEndsAtMs: EpochMs;
+  /** Live split of the round open for betting. */
+  participantCount: number;
+  upStake: PlayAmountStr;
+  downStake: PlayAmountStr;
+  /** Null for a tie, including 0 vs 0. */
+  majorityDirection: Direction | null;
+}
+
+/** A market's own crowd account (Р-5, Р-17, Т-6) in card form — how the herd is doing here. */
+export interface MarketCrowdBriefDto {
+  capital: UsdStr;
+  /** `capital / 100000 - 1`. */
+  returnPct: number;
+  roundsTraded: number;
+  roundsWon: number;
+  /** The crowd's last traded round; null before the first one. */
+  lastOutcome: "WIN" | "LOSS" | "LIQUIDATED" | null;
+}
+
+export interface MarketDto {
+  id: MarketId;
+  kind: MarketKind;
+  category: CategoryId;
+  /** Card ticker: "BTC", "NVDA"; a short label for `ODDS` ("GER", "Lula"). */
+  symbol: string;
+  /** "Bitcoin"; for `ODDS` the market question. */
+  title: string;
+  /** `ODDS`: the outcome the price refers to plus its context ("Yes · Brazil election",
+   *  "Germany · UEFA Nations League"). `PERP`: null. */
+  subtitle: string | null;
+  /** Source image when there is one (`ODDS`); null → draw a glyph from `symbol`. */
+  iconUrl: string | null;
+  /** Upper bound of the leverage slider for this market (Т-4), 2..40. */
+  maxLeverage: Leverage;
+  priceDecimals: number;
+  status: "ACTIVE" | "CLOSED";
+  /** `ODDS`: when the underlying market is scheduled to end. Null otherwise. */
+  endsAtMs: EpochMs | null;
+  source: "hyperliquid" | "polymarket" | "synthetic";
+  /** Null until the first tick arrives. */
+  price: MarketPriceDto | null;
+  /** One entry per series, shortest first. */
+  series: MarketSeriesDto[];
+  crowd: MarketCrowdBriefDto;
+}
+
+/** The lobby in one call — poll it; it is built from memory, no source round-trip. */
+export interface MarketsDto {
+  serverTimeMs: EpochMs;
+  categories: CategoryDto[];
+  /** Active markets, plus markets closed within the last 10 minutes (so a card can say why it
+   *  left). Listing order. */
+  markets: MarketDto[];
+}
+
+export interface PriceTickDto {
+  atMs: EpochMs;
+  price: PriceStr;
+}
+
+/** Ticks for the room's live chart, oldest first. */
+export interface PriceSeriesDto {
+  marketId: MarketId;
+  priceDecimals: number;
+  ticks: PriceTickDto[];
+}
+
+/** One pending bet or open position of the signed-in player, in any market — the "my positions"
+ *  strip (Р-71). Live P&L is computed client-side from `markets()` prices with
+ *  `api/liquidation.ts`. */
+export interface MyPositionDto {
+  marketId: MarketId;
+  symbol: string;
+  roundId: RoundId;
+  interval: Interval;
+  phase: "BETTING" | "RUNNING";
+  direction: Direction;
+  leverage: Leverage;
+  stake: PlayAmountStr;
+  /** RUNNING only. */
+  entryPrice: PriceStr | null;
+  liquidationPrice: PriceStr | null;
+  /** RUNNING only: already liquidated on the path so far. */
+  liquidated: boolean;
+  /** BETTING: when the round starts. RUNNING: when it ends. */
+  untilMs: EpochMs;
+}
+
+/** All markets' crowd accounts side by side (Т-6). */
+export interface CrowdOverviewDto {
+  totalCapital: UsdStr;
+  totalStartingCapital: UsdStr;
+  returnPct: number;
+  markets: Array<{
+    marketId: MarketId;
+    symbol: string;
+    category: CategoryId;
+    capital: UsdStr;
+    returnPct: number;
+    roundsTraded: number;
+    roundsWon: number;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -647,7 +837,8 @@ export interface RatingsDto {
 // ---------------------------------------------------------------------------
 // Home aggregate (Р-34's fixed layout: open round + bet slip, then the crowd chart, then top
 // ratings — предложение: one call to avoid three round-trips for a screen whose composition is
-// itself a product decision, not something the UI assembles freely)
+// itself a product decision, not something the UI assembles freely). Describes BTC only: the
+// markets have `markets()`, `rounds(interval, marketId)` and `crowdAccount(marketId)`.
 // ---------------------------------------------------------------------------
 
 export interface HomeSummaryDto {
@@ -668,6 +859,11 @@ export interface HomeSummaryDto {
 
 export interface ServerInfoDto {
   mode: "live" | "replay";
+  /** Where prices come from (Т-12): `live` — the sources' real current prices; `synthetic` — a
+   *  deterministic random walk (CI, offline); `replay` — accelerated history (`mode: "replay"`). */
+  priceSource?: "live" | "synthetic" | "replay";
+  /** Active markets. */
+  markets?: number;
   /** Set only when `mode === "replay"` (Р-46: accelerated replay of real historical BTC prices
    *  in test mode). */
   replay?: {
@@ -675,6 +871,8 @@ export interface ServerInfoDto {
     sourceToIso: string;
     speedup: number;
   };
+  /** Length of the two series, in seconds — the same numbers `MarketSeriesDto.durationSec` carries
+   *  per market; the shorter is keyed `HOURLY`, the longer `DAILY` whatever their real length. */
   roundDurationsSec: { HOURLY: number; DAILY: number };
   /** Count of the labelled test-mode bots playing alongside real players (Р-46: 20). */
   bots: number;
@@ -685,6 +883,9 @@ export interface ServerInfoDto {
     lastConfirmedHeight: number | null;
     pendingRecords: number;
     operatorBalanceMojos: string | null;
+    /** Lowest `seq` this server's database knows — records below it were published before this
+     *  database existed and can only be checked on chain. Null until the first record. */
+    firstSeq?: number | null;
   };
   serverTimeMs: EpochMs;
   /**
@@ -742,7 +943,13 @@ export type ApiErrorCode =
   | "INVALID_LEVERAGE"
   | "WITHDRAWAL_EXCEEDS_BALANCE"
   | "CHALLENGE_EXPIRED_OR_UNKNOWN"
-  | "SIGNATURE_INVALID";
+  | "SIGNATURE_INVALID"
+  | "MARKET_NOT_FOUND"
+  | "MARKET_CLOSED"
+  | "PRICE_UNAVAILABLE"
+  | "RATE_LIMITED"
+  /** Any other server code: the message is still the server's own text and is shown as is. */
+  | "OTHER";
 
 export class ApiRequestError extends Error {
   constructor(
@@ -773,8 +980,17 @@ export interface Api {
   setNickname(nickname: string): Promise<PlayerSummaryDto>;
   signOut(): Promise<void>;
 
+  // --- markets (Р-69, Р-70) ---
+  markets(): Promise<MarketsDto>;
+  /** Ticks of the last 15 minutes, or since `sinceMs` (at most 600 points). */
+  priceSeries(marketId: MarketId, sinceMs?: EpochMs): Promise<PriceSeriesDto>;
+  referencePrice(marketId: MarketId): Promise<MarketReferenceDto>;
+  /** Every pending bet and open position of the signed-in player, all markets. */
+  myPositions(): Promise<MyPositionDto[]>;
+
   // --- rounds (Р-8, Р-13, Р-19, Р-22, Р-23, Р-32) ---
-  rounds(interval: Interval): Promise<RoundsPairDto>;
+  /** `marketId` omitted → `"BTC"`. */
+  rounds(interval: Interval, marketId?: MarketId): Promise<RoundsPairDto>;
   round(roundId: RoundId): Promise<RoundDto>;
   /**
    * Additive (server-side, Р-62): the FULL live bet feed for `roundId`, public — no session
@@ -786,6 +1002,7 @@ export interface Api {
    * all.
    */
   betFeed?(roundId: RoundId, sinceSeq?: number): Promise<BetFeedDto>;
+  /** Same as `referencePrice("BTC")` — kept for callers that predate markets. */
   btcReferencePrice(): Promise<MarketReferenceDto>;
   previewLiquidation(req: LiquidationPreviewRequest): Promise<LiquidationPreviewDto>;
   /** Also used to MODIFY an existing bet on the same round (Р-13) — mirrors
@@ -809,8 +1026,10 @@ export interface Api {
    *  cache it for the session instead of re-fetching on every render. */
   myDepositAddress(): Promise<DepositAddressDto>;
 
-  // --- crowd account (Р-5, Р-14, Р-17, Р-25, Р-26) ---
-  crowdAccount(): Promise<CrowdAccountDto>;
+  // --- crowd account (Р-5, Р-14, Р-17, Р-25, Р-26; one per market, Т-6) ---
+  /** `marketId` omitted → `"BTC"`. */
+  crowdAccount(marketId?: MarketId): Promise<CrowdAccountDto>;
+  crowdOverview(): Promise<CrowdOverviewDto>;
 
   // --- ratings (Р-9, Р-18, Р-28, Р-30) ---
   ratings(season?: SeasonId): Promise<RatingsDto>;

@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
+  Api,
+  PlayerAccountDto,
   PublicPositionDto,
   RoundBetting,
   RoundCancelled,
@@ -7,7 +9,7 @@ import type {
   RoundSettled,
   RoundsPairDto,
 } from "./contract";
-import { inPlayStakeForSeries, totalInPlayStake } from "./inPlay";
+import { accountInPlay, inPlayStakeForSeries, loadInPlay, totalInPlayStake } from "./inPlay";
 
 const PLAYER_ID = "me";
 
@@ -15,6 +17,7 @@ function bettingRound(myBetStake: string | null): RoundBetting {
   return {
     roundId: "1h-1",
     window: { interval: "HOURLY", startMs: 1000, endMs: 2000 },
+    marketId: "BTC",
     asset: "BTC",
     phase: "BETTING",
     participantCount: 5,
@@ -50,6 +53,7 @@ function runningRound(positions: PublicPositionDto[]): RoundRunning {
   return {
     roundId: "1h-0",
     window: { interval: "HOURLY", startMs: 0, endMs: 1000 },
+    marketId: "BTC",
     asset: "BTC",
     phase: "RUNNING",
     openPrice: "83451.00",
@@ -62,6 +66,7 @@ function settledRound(positions: PublicPositionDto[]): RoundSettled {
   return {
     roundId: "1h-0",
     window: { interval: "HOURLY", startMs: 0, endMs: 1000 },
+    marketId: "BTC",
     asset: "BTC",
     phase: "SETTLED",
     openPrice: "83451.00",
@@ -114,6 +119,7 @@ describe("inPlayStakeForSeries — Alex's report (2026-09-25): the header showed
     const cancelled: RoundCancelled = {
       roundId: "1h-1",
       window: { interval: "HOURLY", startMs: 1000, endMs: 2000 },
+      marketId: "BTC",
       asset: "BTC",
       phase: "CANCELLED",
       cancellation: { roundId: "1h-1", reason: "bad oracle read", cancelledAtMs: 1500, refundedBetCount: 3 },
@@ -147,5 +153,36 @@ describe("totalInPlayStake — combines both series (task: header shows '+{N} in
       running: runningRound([position({ stake: "2500.000" })]),
     };
     expect(totalInPlayStake(PLAYER_ID, hourly, daily)).toBeCloseTo(2600, 5);
+  });
+});
+
+const ACCOUNT: PlayerAccountDto = { playerId: PLAYER_ID, balance: "9000.000", currentSeason: "2026-09" };
+
+describe("accountInPlay / loadInPlay — the server's own figure covers every market", () => {
+  it("accountInPlay reads PlayerAccountDto.inPlay, or null when the server does not send it", () => {
+    expect(accountInPlay({ ...ACCOUNT, inPlay: "1250.500" })).toBe(1250.5);
+    expect(accountInPlay({ ...ACCOUNT, inPlay: "0.000" })).toBe(0);
+    expect(accountInPlay(ACCOUNT)).toBeNull();
+  });
+
+  it("loadInPlay uses the account's figure and does not touch rounds() at all", async () => {
+    const rounds = vi.fn();
+    const api = { rounds } as unknown as Api;
+    expect(await loadInPlay(api, PLAYER_ID, { ...ACCOUNT, inPlay: "700.000" })).toBe(700);
+    expect(rounds).not.toHaveBeenCalled();
+  });
+
+  it("loadInPlay falls back to summing the BTC pair's rounds for a server that predates the field", async () => {
+    const hourly: RoundsPairDto = { interval: "HOURLY", betting: bettingRound("100.000"), running: NOTHING_RUNNING };
+    const daily: RoundsPairDto = {
+      interval: "DAILY",
+      betting: NOTHING_BETTING,
+      running: runningRound([position({ stake: "2500.000" })]),
+    };
+    const rounds = vi.fn((interval: string) => Promise.resolve(interval === "HOURLY" ? hourly : daily));
+    const api = { rounds } as unknown as Api;
+    expect(await loadInPlay(api, PLAYER_ID, ACCOUNT)).toBeCloseTo(2600, 5);
+    expect(rounds).toHaveBeenCalledWith("HOURLY");
+    expect(rounds).toHaveBeenCalledWith("DAILY");
   });
 });

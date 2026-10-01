@@ -10,7 +10,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { Link } from "react-router-dom";
 import type { ResultEvent, Tier } from "./resultEvent";
 import type { DisplayItem } from "./resultQueue";
-import { formatPlayAmount } from "../format";
+import { useMarkets } from "../api/useMarkets";
+import { formatDuration, formatPlayAmount } from "../format";
 import { RollingDigits } from "./RollingDigits";
 import { usePrefersReducedMotion } from "./reducedMotion";
 import { burst, spawnCoinArc } from "./particles";
@@ -48,9 +49,18 @@ function balancePillRect(): DOMRect | null {
   return el ? el.getBoundingClientRect() : null;
 }
 
+/** "3 MIN" for the series an event's round was in — `ResultEvent` only carries the series' name, the real
+ *  length lives on the market; nothing when the market has left the list (never "hourly" for a 3-minute round). */
+function useSeriesLabel(event: Pick<ResultEvent, "marketId" | "interval">): string | null {
+  const { byId } = useMarkets();
+  const series = byId.get(event.marketId)?.series.find((s) => s.interval === event.interval);
+  return series ? formatDuration(series.durationSec) : null;
+}
+
 function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss: () => void }) {
   const reducedMotion = usePrefersReducedMotion();
   const fx = useFxSettings();
+  const seriesLabel = useSeriesLabel(event);
   const cardRef = useRef<HTMLDivElement>(null);
   // Coin-arc launch point for WIN (below) — deliberately the icon, not the whole card: the
   // card's own bounding-rect center used to be the arc's origin, which on a WIN sits at/just
@@ -220,8 +230,14 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
         {event.kind === "EVEN" && <p className="result-card__secondary">No gain, no loss</p>}
         {event.kind !== "EVEN" && (
           <p className="result-card__secondary">
-            stake {formatPlayAmount(event.stakePlay)} PLAY · x{event.leverage}
-            {event.interval === "DAILY" ? " · daily round" : ""}
+            <strong className="result-card__symbol">{event.symbol}</strong> · stake {formatPlayAmount(event.stakePlay)} PLAY · x{event.leverage}
+            {seriesLabel ? ` · ${seriesLabel} round` : ""}
+          </p>
+        )}
+        {event.kind === "EVEN" && (
+          <p className="result-card__secondary">
+            <strong className="result-card__symbol">{event.symbol}</strong>
+            {seriesLabel ? ` · ${seriesLabel} round` : ""}
           </p>
         )}
 
@@ -275,7 +291,7 @@ function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss:
                 </span>{" "}
                 <span className="muted">
                   {e.kind === "LIQUIDATION" ? "liquidated · " : ""}
-                  {e.interval.toLowerCase()} round · x{e.leverage}
+                  {e.symbol} · x{e.leverage}
                 </span>
               </li>
             ))}

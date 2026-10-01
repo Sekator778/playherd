@@ -1,60 +1,201 @@
-/* Pair room (`/play/:asset`) — concept A arena (Р-61/`docs/product/design/concepts.md`). Tokens
-   reused from index.css/direction.md; no new hex values invented here. */
+/* Pair room (`/play/:marketId`) — concept A arena (Р-61/`docs/product/design/concepts.md`) for every
+   market (Р-69). Tokens reused from index.css/direction.md; no new hex values invented here. */
 
 .room-root {
   max-width: 560px;
   margin: 0 auto;
 }
 
-.room-top {
+/* ---- header: back, icon, name, star ------------------------------------------------------ */
+
+.room-head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  row-gap: 4px;
   gap: 10px;
-  padding: 4px 0 8px;
+  padding: 2px 0 6px;
 }
 .room-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
+  width: 44px;
+  height: 44px;
+  margin-left: -10px;
+  border-radius: 50%;
   color: var(--text-muted);
   text-decoration: none;
-  font-weight: 700;
-  font-size: 14px;
 }
 .room-back:hover {
   color: var(--text);
 }
-.room-price {
+.room-back:active {
+  background: var(--bg-elevated-2);
+}
+.room-head__id {
   flex: 1 1 auto;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
 }
-.room-price__symbol {
+.room-head__name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.room-head__symbol {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+.room-head__title {
+  margin: 0;
   color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.room-head__sub {
+  margin: 0;
+  color: var(--text-faint);
   font-size: 12px;
 }
+.room-star {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-right: -8px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.room-star:hover {
+  color: var(--text);
+}
+.room-star[aria-pressed="true"] {
+  color: var(--gold);
+}
+
+/* ---- price bar: the live number, its 24 h change, the countdown --------------------------- */
+
+.room-pricebar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 10px;
+}
+.room-pricebar__main {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  min-width: 0;
+}
 .room-price__num {
-  font-size: 21px;
-  font-weight: 800;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: var(--num-xl-mobile);
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
   white-space: nowrap;
+}
+.room-price__num--none {
+  color: var(--text-faint);
+}
+.room-change {
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.room-change--up {
+  color: var(--up);
+}
+.room-change--down {
+  color: var(--down);
+}
+.room-change--flat {
+  color: var(--text-muted);
+}
+.room-change__unit {
+  color: var(--text-faint);
+  font-weight: 600;
+  font-size: 11px;
+}
+.room-stale {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--warning);
 }
 .room-countdown {
   flex: none;
 }
 
-/* 390px mobile fix: "← BTC/USD $84,xxx.xx" + "Closes in 00:xx" together are wider than a phone
-   viewport once real prices/countdowns are in (headless Chrome screenshot at 390px, 2026-09-26)
-   — force the countdown onto its own row below the price instead of letting it clip off-screen,
-   the same deterministic-wrap pattern the header uses for the balance pill at this width. */
-@media (max-width: 480px) {
-  .room-countdown {
-    flex-basis: 100%;
-    order: 3;
-    text-align: right;
-  }
+.room-odds-note {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.room-own {
+  margin-top: 12px;
+}
+.room-series {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 12px;
+}
+.live-prices {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.room-closed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.room-closed__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+.room-closed__title h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.room-closed p {
+  margin: 0;
+}
+.room-closed__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.room-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 16px 0 8px;
 }
 
 .room-arena-wrap {
@@ -163,9 +304,14 @@
   opacity: 0.85;
 }
 .room-arena__count {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  opacity: 0.75;
+}
+.room-arena__count-up {
+  color: var(--up);
+}
+.room-arena__count-down {
+  color: var(--down);
 }
 
 .room-section-title {

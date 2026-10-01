@@ -1,0 +1,423 @@
+import { act, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useLocation } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { apiWrapper, fakeApi } from "../api/apiTestUtils";
+import type { Api, MarketDto, MarketsDto } from "../api/contract";
+import { FAVORITES_STORAGE_KEY, reloadFavoritesFromStorage } from "../api/favorites";
+import { catalogue, market, marketsOf } from "../components/testFixtures";
+import { LobbyPage } from "./LobbyPage";
+
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname + location.search}</output>;
+}
+
+function renderLobby(markets: MarketDto[] = catalogue(), path = "/", methods: Partial<Api> = {}) {
+  const api = fakeApi({ markets: vi.fn(async () => marketsOf(markets)), ...methods });
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <LobbyPage />
+      <LocationProbe />
+    </MemoryRouter>,
+    { wrapper: apiWrapper(api) },
+  );
+}
+
+/** The cards on screen, top to bottom, by their ticker. */
+function tickers(): string[] {
+  return screen.getAllByRole("article").map((card) => within(card).getByRole("heading", { level: 3 }).textContent ?? "");
+}
+
+const cardOf = (symbol: string) => screen.getByRole("article", { name: new RegExp(`^${symbol}\\b`) });
+
+beforeEach(() => {
+  window.localStorage.clear();
+  reloadFavoritesFromStorage();
+});
+
+describe("Lobby — the ribbon of categories (Р-69)", () => {
+  it("shows skeletons while the first response is on its way, then a card for every market", async () => {
+    renderLobby();
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    await screen.findAllByRole("article");
+    expect(tickers()).toEqual(["BTC", "ETH", "NVDA", "RUNOFF", "GER", "OLD"]);
+  });
+
+  it("lists All and each category the server has, with the number of OPEN markets in it", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    const tabs = screen.getAllByRole("tab").map((t) => t.getAttribute("aria-label"));
+    expect(tabs).toEqual([
+      "All, 5 open markets", // the closed OLD market is on the list but is not "open"
+      "Crypto, 2 open markets",
+      "Politics, 1 open market",
+      "Sports, 1 open market",
+      "Stocks, 1 open market",
+    ]);
+    expect(screen.getByRole("tab", { name: /^All/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("a tab filters the list, marks itself selected and is written to the URL", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+
+    await user.click(screen.getByRole("tab", { name: /^Sports/ }));
+
+    expect(tickers()).toEqual(["GER", "OLD"]); // the open one, then the closed one of that panel
+    expect(screen.getByRole("tab", { name: /^Sports/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^All/ })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByTestId("location")).toHaveTextContent("/?c=sports");
+    expect(screen.getByText("2 markets")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /^All/ }));
+    expect(tickers()).toHaveLength(6);
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
+  });
+
+  it("opens on the panel a link points to, and reads an unknown panel as All", async () => {
+    renderLobby(catalogue(), "/?c=stocks");
+    await screen.findAllByRole("article");
+    expect(tickers()).toEqual(["NVDA"]);
+    expect(screen.getByRole("tab", { name: /^Stocks/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("a panel that is not on the ribbon (an old link) is All, not an empty page", async () => {
+    renderLobby(catalogue(), "/?c=gadgets");
+    await screen.findAllByRole("article");
+    expect(tickers()).toHaveLength(6);
+    expect(screen.getByRole("tab", { name: /^All/ })).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("Lobby — chips and search", () => {
+  it("Hot orders by the biggest pool in the open round, tags the top ones, and a second tap undoes it", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+
+    const hot = screen.getByRole("button", { name: /Hot/ });
+    expect(hot).toHaveAttribute("aria-pressed", "false");
+    await user.click(hot);
+
+    expect(hot).toHaveAttribute("aria-pressed", "true");
+    expect(tickers()).toEqual(["BTC", "ETH", "GER", "RUNOFF", "NVDA", "OLD"]);
+    expect(within(cardOf("BTC")).getByText("HOT")).toBeInTheDocument();
+    expect(within(cardOf("GER")).getByText("HOT")).toBeInTheDocument();
+    expect(within(cardOf("NVDA")).queryByText("HOT")).not.toBeInTheDocument(); // nothing staked there
+    expect(screen.getByText(/biggest pools first/)).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("sort=hot");
+
+    await user.click(hot);
+    expect(tickers()).toEqual(["BTC", "ETH", "NVDA", "RUNOFF", "GER", "OLD"]);
+    expect(screen.queryByText("HOT")).not.toBeInTheDocument();
+  });
+
+  it("Closing soon orders by what closes next — and swaps with Hot, they are one sort", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+
+    await user.click(screen.getByRole("button", { name: /Closing soon/ }));
+    expect(tickers()).toEqual(["GER", "ETH", "BTC", "NVDA", "RUNOFF", "OLD"]);
+    expect(screen.getByRole("button", { name: /Closing soon/ })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("button", { name: /Hot/ }));
+    expect(screen.getByRole("button", { name: /Closing soon/ })).toHaveAttribute("aria-pressed", "false");
+    expect(tickers()[0]).toBe("BTC");
+  });
+
+  it("a sort chip never hides a market", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+    await user.click(screen.getByRole("button", { name: /Hot/ }));
+    expect(tickers()).toHaveLength(6);
+    await user.click(screen.getByRole("button", { name: /Closing soon/ }));
+    expect(tickers()).toHaveLength(6);
+  });
+
+  it("search narrows the list as you type, in every part of a market's name", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+    const search = screen.getByRole("searchbox", { name: "Search markets" });
+
+    await user.type(search, "ger");
+    expect(tickers()).toEqual(["GER"]);
+    expect(screen.getByTestId("location")).toHaveTextContent("q=ger");
+
+    await user.clear(search);
+    await user.type(search, "brazil");
+    expect(tickers()).toEqual(["RUNOFF"]); // found by its question, not its ticker
+
+    await user.clear(search);
+    await user.type(search, "stocks");
+    expect(tickers()).toEqual(["NVDA"]); // found by its category
+  });
+
+  it("a search with no match says so, and one tap shows everything again", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+
+    await user.type(screen.getByRole("searchbox", { name: "Search markets" }), "zzzz");
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    expect(screen.getByText("No markets match “zzzz”.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show all markets" }));
+    expect(tickers()).toHaveLength(6);
+    expect(screen.getByRole("searchbox", { name: "Search markets" })).toHaveValue("");
+  });
+
+  it("the clear button empties the search", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+    const search = screen.getByRole("searchbox", { name: "Search markets" });
+    expect(screen.queryByRole("button", { name: "Clear search" })).not.toBeInTheDocument();
+    await user.type(search, "eth");
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(search).toHaveValue("");
+    expect(tickers()).toHaveLength(6);
+  });
+
+  it("search, panel and sort combine", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+    await user.click(screen.getByRole("tab", { name: /^Crypto/ }));
+    await user.click(screen.getByRole("button", { name: /Closing soon/ }));
+    expect(tickers()).toEqual(["ETH", "BTC"]);
+    await user.type(screen.getByRole("searchbox", { name: "Search markets" }), "bit");
+    expect(tickers()).toEqual(["BTC"]);
+  });
+});
+
+describe("Lobby — favourites", () => {
+  it("the star keeps a market, tells assistive technology it is pressed, and survives a reload", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+
+    const star = within(cardOf("ETH")).getByRole("button", { name: "Add ETH to favorites" });
+    expect(star).toHaveAttribute("aria-pressed", "false");
+    await user.click(star);
+
+    const pressed = within(cardOf("ETH")).getByRole("button", { name: "Remove ETH from favorites" });
+    expect(pressed).toHaveAttribute("aria-pressed", "true");
+    expect(JSON.parse(window.localStorage.getItem(FAVORITES_STORAGE_KEY) ?? "[]")).toEqual(["ETH"]);
+    expect(screen.getByRole("button", { name: /Favorites/ })).toHaveTextContent("1");
+
+    reloadFavoritesFromStorage();
+    expect(within(cardOf("ETH")).getByRole("button", { name: "Remove ETH from favorites" })).toBeInTheDocument();
+  });
+
+  it("the Favorites chip shows only the starred markets; without any it says how to add one", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+    await screen.findAllByRole("article");
+
+    await user.click(screen.getByRole("button", { name: /Favorites/ }));
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    expect(screen.getByText("No favorites yet")).toBeInTheDocument();
+    expect(screen.getByText(/Tap the star on a market/)).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("fav=1");
+
+    await user.click(screen.getByRole("button", { name: "Show all markets" }));
+    await user.click(within(cardOf("GER")).getByRole("button", { name: "Add GER to favorites" }));
+    await user.click(within(cardOf("BTC")).getByRole("button", { name: "Add BTC to favorites" }));
+    await user.click(screen.getByRole("button", { name: /Favorites/ }));
+    expect(tickers()).toEqual(["BTC", "GER"]);
+
+    // Un-starring inside the filtered view takes the card out of it.
+    await user.click(within(cardOf("BTC")).getByRole("button", { name: "Remove BTC from favorites" }));
+    expect(tickers()).toEqual(["GER"]);
+  });
+});
+
+describe("Lobby — the card", () => {
+  it("shows ticker, name, live price, 24 h change with an arrow, the split, players and the countdown", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    const btc = within(cardOf("BTC"));
+
+    expect(btc.getByText("Bitcoin")).toBeInTheDocument();
+    expect(btc.getByText("$83,451.00")).toBeInTheDocument();
+    expect(btc.getByText("+0.98%")).toBeInTheDocument();
+    expect(btc.getByRole("img", { name: /Crowd split by stake on BTC: 75% up, 25% down, 12 playing/ })).toBeInTheDocument();
+    expect(btc.getByText(/12 playing/)).toBeInTheDocument();
+    expect(btc.getByText("3 MIN")).toBeInTheDocument(); // the series is named by its real length
+    expect(btc.getByText(/closes in \d\d:\d\d/)).toBeInTheDocument();
+    expect(cardOf("ETH")).toHaveTextContent("-1.41%");
+  });
+
+  it("UP and DOWN open the room with that side preselected; the herd's side is marked in words", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    const btc = within(cardOf("BTC"));
+
+    const up = btc.getByRole("link", { name: /^Bet UP on BTC/ });
+    const down = btc.getByRole("link", { name: /^Bet DOWN on BTC/ });
+    expect(up).toHaveAttribute("href", "/play/BTC?side=up");
+    expect(down).toHaveAttribute("href", "/play/BTC?side=down");
+    expect(up).toHaveAccessibleName("Bet UP on BTC — the herd's side");
+    expect(down).toHaveAccessibleName("Bet DOWN on BTC");
+    expect(within(up).getByText("herd")).toBeInTheDocument();
+    expect(within(down).queryByText("herd")).not.toBeInTheDocument();
+  });
+
+  it("the card's own link opens the room and keeps ids URL-safe", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    expect(within(cardOf("NVDA")).getByRole("link", { name: /^NVDA — NVIDIA/ })).toHaveAttribute("href", "/play/xyz_NVDA");
+  });
+
+  it("the herd badge is the market's crowd account return, signed, and links to its stats", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+
+    const btcHerd = within(cardOf("BTC")).getByRole("link", { name: /Herd on BTC: \+3\.4% return over 20 traded rounds/ });
+    expect(btcHerd).toHaveAttribute("href", "/stats?m=BTC");
+    expect(btcHerd).toHaveTextContent("Herd +3.4%");
+    expect(within(cardOf("ETH")).getByRole("link", { name: /Herd on ETH: -3\.0% return/ })).toHaveTextContent("Herd -3.0%");
+    // No trades yet: say so, never a bare "0.0%".
+    expect(within(cardOf("NVDA")).getByRole("link", { name: "Herd — no trades yet" })).toBeInTheDocument();
+  });
+
+  it("an empty round says so instead of showing a made-up 50/50", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    const nvda = within(cardOf("NVDA"));
+    expect(nvda.getByText("No bets yet — be the first to call it")).toBeInTheDocument();
+    expect(nvda.queryByText(/UP 50%/)).not.toBeInTheDocument();
+  });
+
+  it("an odds market shows the question, the outcome and a percentage price, tagged ODDS", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    const runoff = within(cardOf("RUNOFF"));
+    expect(runoff.getByText("ODDS")).toBeInTheDocument();
+    expect(runoff.getByText("58.0%")).toBeInTheDocument();
+    expect(runoff.getByText("Will Brazil's 2026 presidential election go to a runoff?")).toBeInTheDocument();
+    expect(runoff.getByText("Yes · Brazil election")).toBeInTheDocument();
+    expect(runoff.getByTitle("If the market closes first, open bets are refunded")).toHaveTextContent(/Event ends in 5d/);
+    expect(within(cardOf("GER")).getByTitle("If the market closes first, open bets are refunded")).toHaveTextContent(/Event ends in \d+m/);
+    // Odds with no 24 h figure: a dash, not a made-up zero.
+    expect(within(cardOf("GER")).getByText("—")).toBeInTheDocument();
+    expect(within(cardOf("BTC")).queryByText("ODDS")).not.toBeInTheDocument();
+  });
+
+  it("a stale price stays on the card, dimmed and dated — betting is not blocked", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    const nvda = within(cardOf("NVDA"));
+    expect(nvda.getByText("$231.70")).toBeInTheDocument();
+    expect(nvda.getByText(/^Stale · /)).toBeInTheDocument();
+    expect(nvda.getByRole("link", { name: /^Bet UP on NVDA/ })).toBeInTheDocument();
+  });
+
+  it("a market with no price yet says so and its UP/DOWN are off — such a round could not settle", async () => {
+    renderLobby([market("BTC", { symbol: "BTC", title: "Bitcoin", price: null })]);
+    await screen.findAllByRole("article");
+    const btc = within(cardOf("BTC"));
+    expect(btc.getByLabelText("No price yet")).toBeInTheDocument();
+    expect(btc.getByText("Waiting for a price")).toBeInTheDocument();
+    expect(btc.getByText("No bets yet")).toBeInTheDocument(); // not "be the first to call it": it cannot be called yet
+    expect(btc.getByRole("button", { name: /Bet UP on BTC — waiting for a price/ })).toBeDisabled();
+    expect(btc.getByRole("button", { name: /Bet DOWN on BTC — waiting for a price/ })).toBeDisabled();
+    expect(btc.queryByRole("link", { name: /Bet UP/ })).not.toBeInTheDocument();
+  });
+
+  it("an open market listed with no round series is not called closed", async () => {
+    renderLobby([market("BTC", { symbol: "BTC", title: "Bitcoin", series: [] })]);
+    await screen.findAllByRole("article");
+    const btc = within(cardOf("BTC"));
+    expect(btc.getByText("No rounds are open on this market yet.")).toBeInTheDocument();
+    expect(btc.queryByText(/Closed/)).not.toBeInTheDocument();
+  });
+
+  it("a closed market says why and takes no bets, but can still be opened and starred", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    const old = within(cardOf("OLD"));
+    expect(old.getByText("Closed")).toBeInTheDocument();
+    expect(old.getByText(/open bets refunded/)).toBeInTheDocument();
+    expect(old.getByText("Last price")).toBeInTheDocument();
+    expect(old.queryByRole("link", { name: /Bet UP/ })).not.toBeInTheDocument();
+    expect(old.queryByRole("button", { name: /Bet UP/ })).not.toBeInTheDocument();
+    expect(old.getByRole("link", { name: /^OLD — .*\(closed\)/ })).toHaveAttribute("href", "/play/PM900199");
+    expect(old.getByRole("button", { name: "Add OLD to favorites" })).toBeInTheDocument();
+  });
+});
+
+describe("Lobby — honest about the crowd", () => {
+  it("a server that reports test bots says the counts and the split include them", async () => {
+    renderLobby(catalogue(), "/", {
+      serverInfo: vi.fn(async () => ({
+        mode: "live" as const,
+        roundDurationsSec: { HOURLY: 180, DAILY: 900 },
+        bots: 20,
+        oracle: { network: "testnet11" as const, launcherId: "0x", lastConfirmedSeq: null, lastConfirmedHeight: null, pendingRecords: 0, operatorBalanceMojos: null },
+        serverTimeMs: 0,
+      })),
+    });
+    expect(await screen.findByText(/include 20 labelled test bots/)).toBeInTheDocument();
+  });
+
+  it("says nothing without a server report (the mock) or with no bots", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    expect(screen.queryByText(/test bots/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Lobby — states", () => {
+  it("an empty market list says so", async () => {
+    renderLobby([]);
+    expect(await screen.findByText("No markets are open right now.")).toBeInTheDocument();
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    expect(screen.getByRole("tab", { name: "All, 0 open markets" })).toBeInTheDocument();
+  });
+
+  it("a failing first load is an error state with a retry that works", async () => {
+    const user = userEvent.setup();
+    const marketsMock = vi
+      .fn<() => Promise<MarketsDto>>()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(marketsOf([market("BTC", { symbol: "BTC", title: "Bitcoin" })]));
+    renderLobby([], "/", { markets: marketsMock });
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("article")).toBeInTheDocument();
+  });
+});
+
+describe("Lobby — a poll that fails after a good load", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps the last cards and says the prices may be out of date", async () => {
+    const marketsMock = vi
+      .fn<() => Promise<MarketsDto>>()
+      .mockResolvedValueOnce(marketsOf([market("BTC", { symbol: "BTC", title: "Bitcoin" })]))
+      .mockRejectedValue(new Error("offline"));
+    renderLobby([], "/", { markets: marketsMock });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.queryByText(/Can't reach the server/)).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByText(/Can't reach the server — showing the last prices we got/)).toBeInTheDocument();
+  });
+});

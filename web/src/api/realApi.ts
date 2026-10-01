@@ -10,6 +10,12 @@
  *
  * Selected via `VITE_API_MODE=real` (see `apiMode.ts`) — swapping this in for `mockApi` changes
  * no call site, by `contract.ts`'s own design.
+ *
+ * Errors: a server error whose code is in `ApiErrorCode` becomes an `ApiRequestError` with that
+ * code; ANY other code becomes `ApiRequestError("OTHER", <the server's own message>)`, so the UI
+ * can show the server's text instead of a generic "Something went wrong" (the old behaviour lost
+ * `RATE_LIMITED`, `BAD_REQUEST`, … that way). Only failures with no `{"error":…}` envelope at all —
+ * the network, a proxy's HTML error page — stay a plain `Error`.
  */
 import {
   ApiRequestError,
@@ -20,20 +26,27 @@ import {
   type AuthSessionDto,
   type AuthVerifyRequest,
   type BetDto,
+  type BetFeedDto,
   type CancellationDto,
   type CrowdAccountDto,
+  type CrowdOverviewDto,
   type DepositAddressDto,
+  type EpochMs,
   type HomeSummaryDto,
   type Interval,
   type LedgerEntryDto,
   type LiquidationPreviewDto,
   type LiquidationPreviewRequest,
+  type MarketId,
   type MarketReferenceDto,
+  type MarketsDto,
+  type MyPositionDto,
   type Page,
   type PageParams,
   type PlaceBetRequest,
   type PlayerAccountDto,
   type PlayerSummaryDto,
+  type PriceSeriesDto,
   type ProfileRoundEntryDto,
   type PublicProfileDto,
   type RatingsDto,
@@ -46,11 +59,9 @@ import {
   type WithdrawalRequestDto,
 } from "./contract";
 
-/** The subset of `ApiErrorCode` this build knows about — a code outside this set (a future
- *  server addition this frontend predates) surfaces as a plain `Error` instead of a typed
- *  `ApiRequestError`, per `contract.ts`'s own doc comment ("a plain `Error` on transport/
- *  unexpected failure"), rather than lying about its type. */
-const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
+/** The codes `ApiErrorCode` names. `"OTHER"` is deliberately not in the set: it is what everything
+ *  outside it turns into (a server that literally sent `"OTHER"` gets the same treatment). */
+const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<Exclude<ApiErrorCode, "OTHER">>([
   "NOT_SIGNED_IN",
   "ROUND_NOT_OPEN_FOR_BETTING",
   "STAKE_BELOW_MINIMUM",
@@ -59,6 +70,10 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "WITHDRAWAL_EXCEEDS_BALANCE",
   "CHALLENGE_EXPIRED_OR_UNKNOWN",
   "SIGNATURE_INVALID",
+  "MARKET_NOT_FOUND",
+  "MARKET_CLOSED",
+  "PRICE_UNAVAILABLE",
+  "RATE_LIMITED",
 ]);
 
 interface RpcErrorBody {
@@ -90,10 +105,10 @@ async function rpc<T>(method: string, args: unknown[]): Promise<T> {
 
   if (!res.ok) {
     const err = (body as RpcErrorBody | null)?.error;
-    const code = err?.code ?? "";
-    const message = err?.message ?? `Request failed (${res.status}).`;
-    if (KNOWN_ERROR_CODES.has(code)) throw new ApiRequestError(code as ApiErrorCode, message);
-    throw new Error(message);
+    const message = err?.message || `Request failed (${res.status}).`;
+    if (!err) throw new Error(message); // no server envelope: a transport/proxy failure
+    const code: ApiErrorCode = err.code && KNOWN_ERROR_CODES.has(err.code) ? (err.code as ApiErrorCode) : "OTHER";
+    throw new ApiRequestError(code, message);
   }
 
   // An empty or JSON-null body means null (e.g. currentPlayer with no session);
@@ -119,12 +134,29 @@ class RealApi implements Api {
     return rpc("signOut", []);
   }
 
-  // --- rounds ---
-  rounds(interval: Interval): Promise<RoundsPairDto> {
-    return rpc("rounds", [interval]);
+  // --- markets (Р-69, Р-70) ---
+  markets(): Promise<MarketsDto> {
+    return rpc("markets", []);
   }
-  round(roundId: string): Promise<RoundDto> {
+  priceSeries(marketId: MarketId, sinceMs?: EpochMs): Promise<PriceSeriesDto> {
+    return rpc("priceSeries", [marketId, sinceMs ?? null]);
+  }
+  referencePrice(marketId: MarketId): Promise<MarketReferenceDto> {
+    return rpc("referencePrice", [marketId]);
+  }
+  myPositions(): Promise<MyPositionDto[]> {
+    return rpc("myPositions", []);
+  }
+
+  // --- rounds ---
+  rounds(interval: Interval, marketId?: MarketId): Promise<RoundsPairDto> {
+    return rpc("rounds", [interval, marketId ?? null]);
+  }
+  round(roundId: RoundId): Promise<RoundDto> {
     return rpc("round", [roundId]);
+  }
+  betFeed(roundId: RoundId, sinceSeq?: number): Promise<BetFeedDto> {
+    return rpc("betFeed", [roundId, sinceSeq ?? null]);
   }
   btcReferencePrice(): Promise<MarketReferenceDto> {
     return rpc("btcReferencePrice", []);
@@ -135,7 +167,7 @@ class RealApi implements Api {
   placeBet(req: PlaceBetRequest): Promise<BetDto> {
     return rpc("placeBet", [req]);
   }
-  cancelBet(roundId: string): Promise<void> {
+  cancelBet(roundId: RoundId): Promise<void> {
     return rpc("cancelBet", [roundId]);
   }
 
@@ -159,9 +191,12 @@ class RealApi implements Api {
     return rpc("myDepositAddress", []);
   }
 
-  // --- crowd account ---
-  crowdAccount(): Promise<CrowdAccountDto> {
-    return rpc("crowdAccount", []);
+  // --- crowd account (one per market, Т-6) ---
+  crowdAccount(marketId?: MarketId): Promise<CrowdAccountDto> {
+    return rpc("crowdAccount", [marketId ?? null]);
+  }
+  crowdOverview(): Promise<CrowdOverviewDto> {
+    return rpc("crowdOverview", []);
   }
 
   // --- ratings ---
@@ -182,7 +217,7 @@ class RealApi implements Api {
     return rpc("cancellations", [params ?? null]);
   }
 
-  // --- home aggregate ---
+  // --- home aggregate (describes BTC) ---
   home(): Promise<HomeSummaryDto> {
     return rpc("home", []);
   }

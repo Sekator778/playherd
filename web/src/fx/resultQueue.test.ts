@@ -7,6 +7,8 @@ function makeEvent(id: string, net = 10): ResultEvent {
     id,
     kind: net >= 0 ? "WIN" : "LOSS",
     roundId: id,
+    marketId: "BTC",
+    symbol: "BTC",
     interval: "HOURLY",
     netPlay: net,
     stakePlay: 100,

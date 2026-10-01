@@ -6,6 +6,7 @@ import { formatPlayAmount, shortenAddress } from "../format";
 import { connectAndSignWithSage, getWalletConnectProjectId, rememberSageAddress } from "../wallet/walletConnect";
 import { QrCode } from "../wallet/QrCode";
 import { CopyButton, MultiAccountDisclosureLine } from "./Common";
+import { SageSignInTips } from "./SageHints";
 
 type Step = "connect" | "sage-qr" | "waiting" | "nickname" | "starter-pack" | "error";
 
@@ -235,28 +236,35 @@ export function ConnectWalletModal() {
         {step === "connect" && (
           <>
             <h2 id="connect-modal-title">Connect your wallet</h2>
+            {/* The test wallet leads on this stand (HANDOFF §6 п.10): it is the one path that works for
+             *  everybody — the Sage button first was a dead end for a visitor without Sage. Both stay. */}
+            <p className="test-wallet-tag">TEST WALLET</p>
+            <p className="muted">
+              Fastest way in: this stand signs you in with a real Chia key generated right in your browser — not Sage. It doesn't move any
+              funds, and each browser/profile is a separate player.
+            </p>
+            <div className="modal-actions" style={{ marginTop: 0 }}>
+              <button type="button" className="btn btn--primary btn--block btn--lg" onClick={() => void startConnect()}>
+                Continue with test wallet
+              </button>
+            </div>
+            <div className="modal-or" role="separator">
+              <span>or</span>
+            </div>
             <button
               type="button"
-              className="btn btn--primary btn--block btn--lg"
+              className="btn btn--secondary btn--block btn--lg"
               onClick={() => void startSageConnect()}
               disabled={!wcProjectId}
               title={wcProjectId ? undefined : "Coming soon — needs WalletConnect project id"}
             >
               Connect with Sage
             </button>
-            {!wcProjectId && <p className="field-hint">Coming soon — needs WalletConnect project id.</p>}
-            <p className="test-wallet-tag" style={{ marginTop: 20 }}>
-              TEST WALLET
-            </p>
-            <p className="muted">
-              This local stand can also sign you in with a real Chia key generated right in your browser — not Sage.
-              It doesn't move any funds, and each browser/profile is a separate player.
-            </p>
-            <div className="modal-actions">
-              <button type="button" className="btn btn--secondary btn--block btn--lg" onClick={() => void startConnect()}>
-                Continue with test wallet
-              </button>
-            </div>
+            {!wcProjectId ? (
+              <p className="field-hint">Coming soon — needs WalletConnect project id.</p>
+            ) : (
+              <p className="field-hint">Real wallet, real signature — Sage needs to be on testnet11.</p>
+            )}
             <button type="button" className="modal-close-text" onClick={handleClose}>
               Cancel
             </button>
@@ -276,6 +284,7 @@ export function ConnectWalletModal() {
                   message it shows you.
                 </p>
                 <CopyButton value={pairingUri} label="Copy connection link" className="btn btn--secondary btn--block" />
+                <SageSignInTips />
               </>
             ) : (
               <div style={{ padding: "24px 0" }}>

@@ -6,26 +6,45 @@ import type {
   CrowdRoundResultDto,
   Direction,
   Interval,
+  MarketDto,
   MarketReferenceDto,
   PublicPositionDto,
 } from "../api/contract";
 import { LONG, SHORT, percentToLiquidation, sizeForMargin, unrealizedPnl, type Side } from "../api/liquidation";
 import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
-import { formatPercent, formatPlayAmount, formatUsd } from "../format";
+import { formatPercent, formatPlayAmount, formatPrice, formatUsd } from "../format";
 import { Avatar } from "./Avatar";
 import { BotBadge, EmptyState, ResultsHashLine, RoundStatusBadge } from "./Common";
 import { DirectionGlyph } from "./icons";
 import { RollingDigits } from "../fx/RollingDigits";
 
-export function IntervalTabs({ value, onChange }: { value: Interval; onChange: (v: Interval) => void }) {
+/** `labels` name the two series by their real length (`formatDuration(MarketSeriesDto.durationSec)`,
+ *  "3 MIN" / "15 MIN"); the default words are only right for a server with 1 h / 1 d rounds.
+ *  `openCounts` puts a dot on a series where the player has bets open (the count is spoken, not only drawn). */
+export function IntervalTabs({
+  value,
+  onChange,
+  labels,
+  openCounts,
+}: {
+  value: Interval;
+  onChange: (v: Interval) => void;
+  labels?: Partial<Record<Interval, string>>;
+  openCounts?: Partial<Record<Interval, number>>;
+}) {
+  const tab = (interval: Interval, fallback: string) => {
+    const open = openCounts?.[interval] ?? 0;
+    return (
+      <button type="button" role="tab" aria-selected={value === interval} onClick={() => onChange(interval)}>
+        {labels?.[interval] ?? fallback}
+        {open > 0 && <span className="tabs__dot" role="img" aria-label={`${open} of your bets open in this series`} />}
+      </button>
+    );
+  };
   return (
     <div className="tabs" role="tablist" aria-label="Round interval">
-      <button type="button" role="tab" aria-selected={value === "HOURLY"} onClick={() => onChange("HOURLY")}>
-        Hourly
-      </button>
-      <button type="button" role="tab" aria-selected={value === "DAILY"} onClick={() => onChange("DAILY")}>
-        Daily
-      </button>
+      {tab("HOURLY", "Hourly")}
+      {tab("DAILY", "Daily")}
     </div>
   );
 }
@@ -74,20 +93,23 @@ export function PositionsList({
   positions,
   settled,
   referencePrice,
+  market,
 }: {
   positions: PublicPositionDto[];
   settled: boolean;
   /** RUNNING only: live reference price for each position's unrealized P&L (task: "live
    *  unrealized P&L ... updating every poll"). Undefined/null while SETTLED or not yet loaded. */
   referencePrice?: MarketReferenceDto | null;
+  /** The market the positions are in — its price scale drives the P&L math (BTC when omitted). */
+  market?: MarketDto;
 }) {
   if (positions.length === 0) return <EmptyState>No positions in this round.</EmptyState>;
   const up = positions.filter((p) => p.direction === "UP");
   const down = positions.filter((p) => p.direction === "DOWN");
   return (
     <div className="stage">
-      <StagePanel direction="UP" positions={up} settled={settled} referencePrice={referencePrice} />
-      <StagePanel direction="DOWN" positions={down} settled={settled} referencePrice={referencePrice} />
+      <StagePanel direction="UP" positions={up} settled={settled} referencePrice={referencePrice} market={market} />
+      <StagePanel direction="DOWN" positions={down} settled={settled} referencePrice={referencePrice} market={market} />
     </div>
   );
 }
@@ -97,11 +119,13 @@ function StagePanel({
   positions,
   settled,
   referencePrice,
+  market,
 }: {
   direction: Direction;
   positions: PublicPositionDto[];
   settled: boolean;
   referencePrice?: MarketReferenceDto | null;
+  market?: MarketDto;
 }) {
   const side = direction.toLowerCase();
   return (
@@ -125,7 +149,7 @@ function StagePanel({
             const net = settled && p.payout !== null ? netFromPayoutAndStake(p.payout, stake) : null;
             const live =
               !settled && referencePrice
-                ? unrealizedPnl(p.size, p.entryPrice, p.direction === "UP" ? LONG : SHORT, referencePrice.price)
+                ? unrealizedPnl(p.size, p.entryPrice, p.direction === "UP" ? LONG : SHORT, referencePrice.price, market)
                 : null;
             const value = settled && net !== null ? net : live ? live.toNumber() : null;
             return (
@@ -161,9 +185,12 @@ interface CrowdPositionCardProps {
   /** RUNNING only — same reference price passed to `PositionsList` (task: "live unrealized P&L
    *  ... of the crowd account"). */
   referencePrice?: MarketReferenceDto | null;
+  /** The market of the round — price scale and display format (BTC / plain USD when omitted). */
+  market?: MarketDto;
 }
 
-export function CrowdPositionCard({ phase, crowd, referencePrice }: CrowdPositionCardProps) {
+export function CrowdPositionCard({ phase, crowd, referencePrice, market }: CrowdPositionCardProps) {
+  const price = (p: string) => (market ? formatPrice(p, market) : formatUsd(p));
   if (!crowd || (phase === "SETTLED" && "traded" in crowd && !crowd.traded)) {
     return (
       <div className="card">
@@ -181,8 +208,8 @@ export function CrowdPositionCard({ phase, crowd, referencePrice }: CrowdPositio
     // `crowdRunningPosition`) — recomputing it here reproduces that size exactly, unlike
     // `PositionDto.stake`'s case (there the DTO only exposes the *output*, `size`, so recovering
     // the input needs a lossy inverse — see `outcome.ts`).
-    const size = referencePrice ? sizeForMargin(c.margin, c.leverage, c.entryPrice) : null;
-    const live = size ? unrealizedPnl(size, c.entryPrice, side, referencePrice!.price) : null;
+    const size = referencePrice ? sizeForMargin(c.margin, c.leverage, c.entryPrice, market) : null;
+    const live = size ? unrealizedPnl(size, c.entryPrice, side, referencePrice!.price, market) : null;
     const pctToLiq = referencePrice ? percentToLiquidation(referencePrice.price, c.liquidationPrice) : null;
     return (
       <div className="card">
@@ -200,8 +227,8 @@ export function CrowdPositionCard({ phase, crowd, referencePrice }: CrowdPositio
         )}
         {pctToLiq !== null && <p className="mono muted">{formatPercent(pctToLiq)} to liquidation</p>}
         <p className="mono muted">Margin: {formatUsd(c.margin)}</p>
-        <p className="mono muted">Entry price: {formatUsd(c.entryPrice)}</p>
-        <p className="mono muted">Liquidation price: {formatUsd(c.liquidationPrice)}</p>
+        <p className="mono muted">Entry price: {price(c.entryPrice)}</p>
+        <p className="mono muted">Liquidation price: {price(c.liquidationPrice)}</p>
       </div>
     );
   }
@@ -232,14 +259,18 @@ export function CancellationNotice({
   cancellation,
   resultsHash,
   roundId,
+  context,
 }: {
   cancellation: CancellationDto;
   resultsHash?: string;
   roundId: string;
+  /** Which market and series the round was in ("GER · 3 MIN") — a cancelled round has no hero card to say so. */
+  context?: string;
 }) {
   return (
     <div className="card">
       <RoundStatusBadge phase="CANCELLED" />
+      {context && <p className="faint round-context">{context}</p>}
       <h3 style={{ marginTop: 12 }}>This round was cancelled.</h3>
       <p>{cancellation.reason}</p>
       <p className="muted">

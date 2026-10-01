@@ -1,124 +1,217 @@
-/* Lobby (`/`) — pair tiles (task IA, concept A chosen per Р-61/`docs/product/design/concepts.md`).
-   Tokens reused from index.css/direction.md; no new hex values invented here. */
+/* Lobby (`/`) — category ribbon, sort/filter chips, search, market cards (Р-69). Concept A's tiles
+   (Р-61) grew into Polymarket-style panels → cards; the card itself is `components/MarketCard.css`.
+   Tokens only (index.css / direction.md). */
 
-.lobby-head {
-  padding: 4px 0 16px;
-}
-.lobby-title {
-  font-size: 30px;
-  font-weight: 900;
-  margin: 0;
-}
-.lobby-sub {
-  color: var(--text-muted);
-  margin: 4px 0 0;
-}
-
-.lobby-tile-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.lobby-root {
+  display: flex;
+  flex-direction: column;
   gap: 14px;
 }
-@media (max-width: 480px) {
-  .lobby-tile-grid {
-    grid-template-columns: 1fr;
-  }
-}
 
-.lobby-tile {
-  position: relative;
+/* The ribbon sticks under the header (`--header-offset` includes the status-bar inset) and bleeds to
+   the screen edges so cards never show through at its sides while they scroll under it. */
+.lobby-ribbon-wrap {
+  position: sticky;
+  top: var(--header-offset);
+  z-index: 30;
+  margin: 0 calc(-1 * max(16px, var(--safe-right))) 0 calc(-1 * max(16px, var(--safe-left)));
+  background: rgba(11, 14, 20, 0.94);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.lobby-ribbon {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-end;
-  min-height: 168px;
-  border-radius: var(--radius-lg);
-  padding: 16px;
-  text-decoration: none;
-  color: var(--text);
-  border: 1px solid var(--border);
-  overflow: hidden;
-}
-
-.lobby-tile--live {
-  background: radial-gradient(120% 140% at 20% 0%, #3a2470 0%, #1c2434 55%, #141a26 100%);
-  box-shadow: var(--shadow-card);
-}
-.lobby-tile--live:active {
-  transform: scale(0.98);
-}
-.lobby-tile__hot {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  background: var(--gold);
-  color: var(--bg);
-  font-weight: 800;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-}
-.lobby-tile__glyph {
-  position: absolute;
-  top: 8px;
-  left: 14px;
-  font-size: 44px;
-  opacity: 0.35;
-  color: var(--gold);
-}
-.lobby-tile__symbol {
-  font-size: 24px;
-  font-weight: 900;
-  letter-spacing: 0.02em;
-}
-.lobby-tile__meta {
-  display: flex;
-  flex-direction: column;
   gap: 2px;
-  color: var(--text-muted);
-  font-size: 13px;
-  margin-top: 4px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  padding: 0 max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
+  -webkit-overflow-scrolling: touch;
 }
-.lobby-tile__meta-row {
+.lobby-ribbon::-webkit-scrollbar {
+  display: none;
+}
+/* A fade at whichever end still has tabs hidden, so "there is more →" is visible without a scrollbar. */
+.lobby-ribbon[data-fade="end"] {
+  mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+}
+.lobby-ribbon[data-fade="start"] {
+  mask-image: linear-gradient(90deg, transparent, #000 36px);
+}
+.lobby-ribbon[data-fade="both"] {
+  mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+}
+.lobby-ribbon__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  min-height: 48px;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+  scroll-snap-align: center;
+  transition:
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.lobby-ribbon__tab:hover {
+  color: var(--text);
+}
+.lobby-ribbon__tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.lobby-ribbon__count {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+.lobby-ribbon__tab[aria-selected="true"] .lobby-ribbon__count {
+  background: var(--accent);
+  color: #fff;
+}
+
+.lobby-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.lobby-chips {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+.lobby-search {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  flex: 1 1 220px;
+  min-width: 0;
+  height: 44px;
+  padding: 0 6px 0 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
 }
-.lobby-tile__live-dot {
-  width: 7px;
-  height: 7px;
+.lobby-search:focus-within {
+  border-color: var(--accent);
+}
+.lobby-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--text);
+  /* 16 px: iOS Safari zooms the page into any smaller focused field. */
+  font-size: 16px;
+}
+.lobby-search input::placeholder {
+  color: var(--text-faint);
+}
+.lobby-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.lobby-search__clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
   border-radius: 50%;
-  background: var(--up);
-  box-shadow: 0 0 8px var(--up);
-  animation: lobby-pulse-dot 1.4s ease-in-out infinite;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
 }
-@keyframes lobby-pulse-dot {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-.lobby-tile__cta {
-  margin-top: 10px;
-  font-weight: 800;
-  color: var(--accent-text);
+.lobby-search__clear:hover {
+  color: var(--text);
 }
 
-.lobby-tile--soon {
-  background: var(--bg-elevated);
-  filter: grayscale(0.6);
-  opacity: 0.7;
-  cursor: not-allowed;
+.lobby-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 12px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
 }
-.lobby-tile__lock {
-  color: var(--text-faint);
+.lobby-status strong {
+  color: var(--text);
+  font-size: 15px;
+}
+.lobby-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lobby-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+@media (min-width: 640px) {
+  .lobby-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 960px) {
+  .lobby-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.lobby-grid > li {
+  min-width: 0;
+  display: flex;
+}
+.lobby-grid > li > * {
+  flex: 1;
+}
+
+.lobby-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 36px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--border-strong);
+  text-align: center;
+  color: var(--text-muted);
+}
+.lobby-empty p {
+  margin: 0;
+}
+.lobby-empty__title {
+  color: var(--text);
+  font-weight: 800;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lobby-tile__live-dot {
-    animation: none;
+  .lobby-ribbon__tab {
+    transition: none;
   }
 }

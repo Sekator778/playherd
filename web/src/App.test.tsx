@@ -1,8 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { ApiProvider } from "./api/ApiContext";
+import { reloadFavoritesFromStorage } from "./api/favorites";
 
 function renderApp(initialPath = "/") {
   return render(
@@ -14,32 +16,87 @@ function renderApp(initialPath = "/") {
   );
 }
 
+beforeEach(() => {
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+  reloadFavoritesFromStorage();
+  // `ScrollManager` (in `Layout`) scrolls the window on every navigation; jsdom has no `scrollTo`
+  // and would print "Not implemented" for each one.
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
-  it("loads the Lobby with a live BTC tile and clearly-labelled coming-soon tiles", async () => {
+  it("loads the Lobby: a ribbon of categories and a card for every market (Р-69), each with its own live numbers", async () => {
     renderApp("/");
-    expect(await screen.findByRole("heading", { name: "Pick a market" })).toBeInTheDocument();
-    expect(await screen.findByText(/playing this round/)).toBeInTheDocument();
-    // ETH/SOL are placeholders — never a fabricated live number next to them (task requirement).
-    expect(screen.getAllByText(/coming soon/i).length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByRole("heading", { level: 1, name: "Markets" })).toBeInTheDocument();
+    // 18 markets in the mock, one of which (the closing ODDS market) is still open at load.
+    expect(await screen.findAllByRole("article")).toHaveLength(18);
+    expect(screen.getAllByText(/playing/).length).toBeGreaterThanOrEqual(18);
+    expect(screen.getByRole("tablist", { name: "Market categories" })).toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^All/), expect.stringMatching(/^Crypto/), expect.stringMatching(/^Politics/), expect.stringMatching(/^Sports/)]),
+    );
+    expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
   });
 
-  it("the BTC lobby tile links to its pair room", async () => {
+  it("the BTC lobby card links to its pair room", async () => {
     renderApp("/");
-    const btcTile = await screen.findByRole("link", { name: /BTC/ });
-    expect(btcTile).toHaveAttribute("href", "/play/btc");
+    const btcCard = await screen.findByRole("article", { name: /^BTC/ });
+    expect(within(btcCard).getByRole("link", { name: /^BTC — Bitcoin/ })).toHaveAttribute("href", "/play/BTC");
+  });
+
+  it("a category tab narrows the lobby to that panel", async () => {
+    const user = userEvent.setup();
+    renderApp("/");
+    await screen.findAllByRole("article");
+    await user.click(screen.getByRole("tab", { name: /^Crypto/ }));
+    expect(screen.getAllByRole("article")).toHaveLength(6);
+    await user.click(screen.getByRole("tab", { name: /^Politics/ }));
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+  });
+
+  it("a card's DOWN button opens the room with DOWN preselected", async () => {
+    const user = userEvent.setup();
+    renderApp("/");
+    const eth = await screen.findByRole("article", { name: /^ETH/ });
+    await user.click(within(eth).getByRole("link", { name: /^Bet DOWN on ETH/ }));
+    expect(await screen.findByText("ETH/USD")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^DOWN/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /^UP/ })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("loads the BTC pair room with the live arena and a bet slip", async () => {
-    renderApp("/play/btc");
+    renderApp("/play/BTC");
     expect(await screen.findByText("BTC/USD")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /UP/ })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /DOWN/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^UP/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^DOWN/ })).toBeInTheDocument();
     expect(await screen.findAllByRole("button", { name: "CONNECT WALLET" })).not.toHaveLength(0);
   });
 
-  it("shows a coming-soon state for a pair that isn't live yet, without crashing", async () => {
-    renderApp("/play/eth");
-    expect(await screen.findByText("ETH — coming soon")).toBeInTheDocument();
+  it("an old lowercase /play/btc link still lands on the BTC room", async () => {
+    renderApp("/play/btc");
+    expect(await screen.findByText("BTC/USD")).toBeInTheDocument();
+  });
+
+  it("every market has a room now — ETH is live, not 'coming soon'", async () => {
+    renderApp("/play/ETH");
+    expect(await screen.findByText("ETH/USD")).toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
+  });
+
+  it("an odds market's room says what a bet on it is", async () => {
+    renderApp("/play/PM900101");
+    expect(await screen.findByText(/You bet on how the odds move during the round — not on who wins/)).toBeInTheDocument();
+    expect(screen.getByText(/Odds from Polymarket, published by our team's key — not a decentralized oracle/)).toBeInTheDocument();
+  });
+
+  it("shows an unknown-market state for a market that does not exist, without crashing", async () => {
+    renderApp("/play/NOPE");
+    expect(await screen.findByText("Unknown market.")).toBeInTheDocument();
   });
 
   it("renders the static How it works page without any backend call", () => {
@@ -53,10 +110,22 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     expect(screen.getByText("Page not found.")).toBeInTheDocument();
   });
 
-  it("loads the Stats tab's Crowd view", async () => {
+  it("loads the Stats tab's Crowd view, on BTC unless it is told or knows another market", async () => {
     renderApp("/stats");
     expect(await screen.findByRole("heading", { name: "Crowd account vs the market" })).toBeInTheDocument();
-    expect(screen.getByText(/Price from Hyperliquid/)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Market")).toHaveValue("BTC");
+    expect(await screen.findByText(/Price from Hyperliquid/)).toBeInTheDocument();
+  });
+
+  it("Stats opens on the market in ?m=", async () => {
+    renderApp("/stats?m=ETH");
+    expect(await screen.findByLabelText("Market")).toHaveValue("ETH");
+  });
+
+  it("Stats opens on the market the player was last in a room of", async () => {
+    window.sessionStorage.setItem("herd.lastMarket", "xyz_NVDA");
+    renderApp("/stats");
+    expect(await screen.findByLabelText("Market")).toHaveValue("xyz_NVDA");
   });
 
   it("/crowd redirects to the Stats tab's Crowd view", async () => {
@@ -80,12 +149,25 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     expect(screen.getByText("Connect your wallet to see your profile.")).toBeInTheDocument();
   });
 
+  it("signed out, there is no 'Your bets' strip", async () => {
+    renderApp("/");
+    await screen.findAllByRole("article");
+    expect(screen.queryByRole("region", { name: "Your open bets and positions" })).not.toBeInTheDocument();
+  });
+
+  it("the rejected concept prototypes B and C are gone, A is still there", async () => {
+    renderApp("/lab/concepts/b");
+    expect(screen.getByText("Page not found.")).toBeInTheDocument();
+    renderApp("/lab/concepts/c");
+    expect(screen.getAllByText("Page not found.")).toHaveLength(2);
+  });
+
   it("Р-63: the Lobby and Pair room carry no top DEMO/replay banner", async () => {
     renderApp("/");
-    await screen.findByRole("heading", { name: "Pick a market" });
+    await screen.findAllByRole("article");
     expect(screen.queryByText(/DEMO — PLAY is toy money/)).not.toBeInTheDocument();
 
-    renderApp("/play/btc");
+    renderApp("/play/BTC");
     await screen.findByText("BTC/USD");
     expect(screen.queryByText(/DEMO — PLAY is toy money/)).not.toBeInTheDocument();
   });

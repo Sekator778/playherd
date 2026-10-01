@@ -1,27 +1,25 @@
 import { useCallback, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { usePoll } from "../api/usePoll";
 import { useClock } from "../api/useClock";
 import { useReferencePrice } from "../api/useReferencePrice";
+import { useMarket } from "../api/useMarkets";
 import type { RoundDto } from "../api/contract";
-import { LONG, SHORT, percentToLiquidation, unrealizedPnl } from "../api/liquidation";
 import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
+import { AnchorLine } from "../components/AnchorLine";
 import { BetSlip } from "../components/BetSlip";
-import {
-  Countdown,
-  ErrorState,
-  OracleDisclosureLine,
-  ResultsHashLine,
-  RoundStatusBadge,
-  Skeleton,
-} from "../components/Common";
+import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton } from "../components/Common";
+import { MarketIcon } from "../components/MarketIcon";
+import { OwnPositionCard } from "../components/OwnPositionCard";
 import { CancellationNotice, CrowdPositionCard, PositionsList } from "../components/RoundParts";
-import { liquidationLiveCardClass } from "../components/LiquidationBar";
-import { RollingDigits } from "../fx/RollingDigits";
-import { formatPercent, formatPlayAmount, formatUsd } from "../format";
+import { formatDuration, formatPlayAmount, formatPrice, type PriceFormatMarket } from "../format";
+import "./RoundPage.css";
 
 const POLL_MS = 2000;
+
+/** Shown while the market list has not arrived: plain USD, as for BTC. */
+const FALLBACK_PRICE_MARKET: PriceFormatMarket = { kind: "PERP", priceDecimals: 2 };
 
 export function RoundPage() {
   const { roundId } = useParams<{ roundId: string }>();
@@ -30,9 +28,12 @@ export function RoundPage() {
   const nowMs = useClock(1000);
   const [round, setRound] = useState<RoundDto | null>(null);
   const [error, setError] = useState(false);
+  // The round's market: its price scale drives every price and P&L figure below.
+  const { market } = useMarket(round?.marketId);
   // Live reference price for the RUNNING phase's unrealized P&L / % to liquidation (task: "live
   // unrealized P&L ... updating every poll") — same interval as the round poll below.
-  const referencePrice = useReferencePrice(POLL_MS);
+  const referencePrice = useReferencePrice(round?.marketId, POLL_MS);
+  const priceText = (price: string) => formatPrice(price, market ?? FALLBACK_PRICE_MARKET);
 
   // Reset to loading only when navigating to a *different* round (during render, not in an
   // effect) — not on every tick's refetch of the same round, which would flash the skeleton
@@ -67,8 +68,18 @@ export function RoundPage() {
     );
   }
 
+  // Which market and how long a round: the round's own window says the length (never "Hourly"/"Daily").
+  const length = formatDuration((round.window.endMs - round.window.startMs) / 1000);
+
   if (round.phase === "CANCELLED") {
-    return <CancellationNotice cancellation={round.cancellation} resultsHash={round.resultsHash} roundId={round.roundId} />;
+    return (
+      <CancellationNotice
+        cancellation={round.cancellation}
+        resultsHash={round.resultsHash}
+        roundId={round.roundId}
+        context={`${round.asset} · ${length}`}
+      />
+    );
   }
 
   const ownPosition =
@@ -83,92 +94,54 @@ export function RoundPage() {
   return (
     <div className="stack" style={{ gap: 16 }}>
       <div key={`hero-${revealedKey}`} className={`card card--hero stack ${revealedKey === "revealed" ? "reveal-flip-in" : ""}`} style={{ gap: 8 }}>
-        <RoundStatusBadge phase={round.phase} />
+        <div className="round-head">
+          <Link to={`/play/${encodeURIComponent(round.marketId)}`} className="round-head__market" aria-label={`${round.asset}, ${length} round — open the market`}>
+            {market && <MarketIcon market={market} size={28} />}
+            <strong>{round.asset}</strong>
+            <span className="round-head__length">· {length}</span>
+          </Link>
+          <RoundStatusBadge phase={round.phase} />
+        </div>
         {round.phase === "BETTING" && (
           <Countdown nowMs={nowMs} targetMs={round.window.startMs} prefix="Closes in " />
         )}
         {round.phase === "RUNNING" && <Countdown nowMs={nowMs} targetMs={round.window.endMs} prefix="Resolves in " />}
         {round.phase === "SETTLED" && (
           <h2>
-            BTC closed{" "}
+            {round.asset} closed{" "}
             {Number(round.closePrice) === Number(round.openPrice)
               ? "FLAT"
               : Number(round.closePrice) > Number(round.openPrice)
                 ? "UP"
                 : "DOWN"}{" "}
-            — {formatUsd(round.openPrice)} → {formatUsd(round.closePrice)}
+            — {priceText(round.openPrice)} → {priceText(round.closePrice)}
           </h2>
         )}
       </div>
 
       {ownPosition &&
-        (() => {
-          // Net result (>0 won, <0 lost, =0 even) headline, never `payout > 0` alone (Alex's
-          // report, 2026-09-25 — see `api/outcome.ts`). `stake` prefers the server-sent exact
-          // value, falling back to a derivation only if it's absent.
-          const stake = positionStakeStr(ownPosition);
-          if (ownPosition.liquidated) {
-            const net = -Number(stake);
-            return (
-              <div className="card card--hero own-outcome own-outcome--liquidated">
-                <div className="net-result">
-                  <span className="outcome-lost">
-                    {formatPlayAmount(net, { sign: true })} PLAY · liquidated
-                  </span>
-                </div>
-                <p className="net-result__secondary">You lost your whole stake.</p>
-              </div>
-            );
-          }
-          if (round.phase === "SETTLED" && ownPosition.payout !== null) {
+        (round.phase === "SETTLED" && ownPosition.payout !== null && !ownPosition.liquidated ? (
+          // Net result (>0 won, <0 lost, =0 even) headline, never `payout > 0` alone (Alex's report,
+          // 2026-09-25 — see `api/outcome.ts`). `stake` prefers the server-sent exact value.
+          (() => {
+            const stake = positionStakeStr(ownPosition);
             const net = netFromPayoutAndStake(ownPosition.payout, stake);
             return (
               <div className="card card--hero own-outcome">
                 <div className="net-result">
-                  <span className={outcomeClassName(outcomeFromNet(net))}>
-                    {formatPlayAmount(net, { sign: true })} PLAY
-                  </span>
+                  <span className={outcomeClassName(outcomeFromNet(net))}>{formatPlayAmount(net, { sign: true })} PLAY</span>
                 </div>
                 <p className="net-result__secondary">
-                  stake {formatPlayAmount(stake)} → paid{" "}
-                  {formatPlayAmount(ownPosition.payout)}
+                  stake {formatPlayAmount(stake)} → paid {formatPlayAmount(ownPosition.payout)}
                 </p>
               </div>
             );
-          }
-          // RUNNING, not liquidated: live unrealized P&L from the current reference price
-          // (task: "so players can see they are winning" — previously just "Your position is
-          // live.", with no number at all).
-          const side = ownPosition.direction === "UP" ? LONG : SHORT;
-          const live = referencePrice
-            ? unrealizedPnl(ownPosition.size, ownPosition.entryPrice, side, referencePrice.price)
-            : null;
-          const pctToLiq = referencePrice
-            ? percentToLiquidation(referencePrice.price, ownPosition.liquidationPrice)
-            : null;
-          // Live-round.md §2: the own-position hero card pulses as the price approaches the
-          // liquidation price — same heat rhythm the pre-bet `LiquidationBar` already uses.
-          const pulseClass = pctToLiq !== null ? liquidationLiveCardClass(pctToLiq) : "";
-          return (
-            <div className={`card card--hero own-outcome ${pulseClass}`}>
-              {live ? (
-                <div className="net-result">
-                  <span className={outcomeClassName(outcomeFromNet(live.toNumber()))}>
-                    <RollingDigits
-                      value={live.toNumber()}
-                      durationMs={400}
-                      format={(n) => `${formatPlayAmount(n, { sign: true })} PLAY`}
-                    />
-                  </span>{" "}
-                  <span className="net-result__secondary">unrealized</span>
-                </div>
-              ) : (
-                <p className="muted">Your position is live.</p>
-              )}
-              {pctToLiq !== null && <p className="mono muted">{formatPercent(pctToLiq)} to liquidation</p>}
-            </div>
-          );
-        })()}
+          })()
+        ) : (
+          // RUNNING: live unrealized P&L, the room left before liquidation (pulsing as it closes in); a
+          // liquidated position (running or settled) reads as the whole stake gone (Р-7).
+          <OwnPositionCard position={ownPosition} referencePrice={referencePrice} market={market} hero />
+        ))}
 
       <div className="two-col">
         <div className="stack" style={{ gap: 16 }}>
@@ -194,21 +167,22 @@ export function RoundPage() {
           )}
           {(round.phase === "RUNNING" || round.phase === "SETTLED") && (
             <div className="stack reveal-flip-in" style={{ gap: 16 }}>
-              <p className="mono">Open price: {formatUsd(round.openPrice)}</p>
-              <OracleDisclosureLine />
-              {round.phase === "SETTLED" && <ResultsHashLine roundId={round.roundId} resultsHash={round.resultsHash} />}
+              <p className="mono">Open price: {priceText(round.openPrice)}</p>
+              <OracleDisclosureLine source={market?.source} />
+              {round.phase === "SETTLED" && <AnchorLine roundId={round.roundId} resultsHash={round.resultsHash} anchor={round.oracleAnchor} />}
               <h3>All positions</h3>
               <PositionsList
                 positions={round.positions}
                 settled={round.phase === "SETTLED"}
                 referencePrice={referencePrice}
+                market={market}
               />
             </div>
           )}
         </div>
         <div className="stack" style={{ gap: 16 }}>
           {round.phase !== "BETTING" && (
-            <CrowdPositionCard phase={round.phase} crowd={round.crowd} referencePrice={referencePrice} />
+            <CrowdPositionCard phase={round.phase} crowd={round.crowd} referencePrice={referencePrice} market={market} />
           )}
           {round.phase === "BETTING" && (
             <div className="card">

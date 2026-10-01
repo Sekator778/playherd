@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
-import type { UsdStr } from "../api/contract";
-import { formatPercent, formatUsd } from "../format";
-import type { HeatTier } from "./LeverageDial";
+import type { PriceStr } from "../api/contract";
+import { formatPercent, formatPrice, formatUsd, type PriceFormatMarket } from "../format";
+import { HEAT_VAR, liquidationZone } from "./heat";
 
 /**
  * Pre-bet liquidation distance meter (`docs/product/design/live-round.md` §2) — replaces the
@@ -25,46 +25,23 @@ import type { HeatTier } from "./LeverageDial";
  */
 const SAFE_REFERENCE = 0.4;
 
-function zoneForFraction(fraction: number): { tier: HeatTier; className: string } {
-  if (fraction >= 0.5) return { tier: 2, className: "" };
-  if (fraction >= 0.25) return { tier: 3, className: "liq-bar--watch" };
-  if (fraction >= 0.1) return { tier: 4, className: "liq-bar--close" };
-  return { tier: 5, className: "liq-bar--critical" };
-}
-
-/** Same zone table as the bar's own fill (above), exposed so a page can also pulse the whole
- *  card that hosts a LIVE (RUNNING-phase) bar — `live-round.md` §2: "карточка получает... пульс".
- *  Returns `""` for the Safe zone (no card-level pulse there, matching the bar's own "статично"
- *  row). `RoundPage.tsx` is the current caller. */
-export function liquidationLiveCardClass(percentToLiquidation: number): string {
-  const fraction = Math.max(0, Math.min(1, percentToLiquidation / SAFE_REFERENCE));
-  const { className } = zoneForFraction(fraction);
-  if (className === "liq-bar--watch") return "card--pulse-watch";
-  if (className === "liq-bar--close") return "card--pulse-close";
-  if (className === "liq-bar--critical") return "card--pulse-critical";
-  return "";
-}
-
-const HEAT_VAR: Record<HeatTier, string> = {
-  1: "var(--heat-1)",
-  2: "var(--heat-2)",
-  3: "var(--heat-3)",
-  4: "var(--heat-4)",
-  5: "var(--heat-5)",
-};
-
 export function LiquidationBar({
   entryPrice,
   liquidationPrice,
   percentToLiquidation,
+  market,
 }: {
-  entryPrice: UsdStr;
-  liquidationPrice: UsdStr;
+  entryPrice: PriceStr;
+  liquidationPrice: PriceStr;
   /** 0..1 fraction, e.g. `0.025` = 2.5% (`LiquidationPreviewDto.percentToLiquidation`). */
   percentToLiquidation: number;
+  /** The market the prices belong to, so a sub-dollar price or a probability is not squeezed into
+   *  cents; omitted → plain USD with 2 decimals, as for BTC. */
+  market?: PriceFormatMarket;
 }) {
+  const price = (p: PriceStr) => (market ? formatPrice(p, market) : formatUsd(p));
   const fraction = Math.max(0, Math.min(1, percentToLiquidation / SAFE_REFERENCE));
-  const { tier, className } = zoneForFraction(fraction);
+  const { tier, className } = liquidationZone(fraction);
   const style = {
     "--fill-pct": `${Math.round(fraction * 100)}%`,
     "--heat-color": HEAT_VAR[tier],
@@ -73,13 +50,52 @@ export function LiquidationBar({
   return (
     <div className={`liq-bar ${className}`} style={style}>
       <div className="liq-bar__labels">
-        <span>Entry ~{formatUsd(entryPrice)}</span>
-        <span>Liquidation price: {formatUsd(liquidationPrice)}</span>
+        <span>Entry ~{price(entryPrice)}</span>
+        <span>Liquidation price: {price(liquidationPrice)}</span>
       </div>
       <div className="liq-bar__track">
         <div className="liq-bar__fill" />
       </div>
       <p className="liq-bar__caption">{formatPercent(percentToLiquidation)} move to liquidation</p>
+    </div>
+  );
+}
+
+/**
+ * The live distance-to-liquidation meter of a RUNNING position (live-round.md §2, "полоска до
+ * ликвидации"): the bar is the room left as a share of the distance the position had at entry, coloured
+ * and pulsing by zone — the same ramp the pre-bet bar and the leverage dial use — and the caption says it
+ * in plain words (how far the price still has to move against the position). `thin` is the positions
+ * strip's compact version, the caption left to the card around it.
+ */
+export function LiveLiqBar({
+  roomFraction,
+  pctToLiquidation,
+  thin = false,
+}: {
+  /** 0..1, `livePosition.ts`'s `liquidationRoomFraction`. */
+  roomFraction: number;
+  /** The price move that would liquidate the position, as a fraction of the current price. */
+  pctToLiquidation: number;
+  thin?: boolean;
+}) {
+  const fraction = Math.max(0, Math.min(1, roomFraction));
+  const { tier, className } = liquidationZone(fraction);
+  const style = { "--fill-pct": `${Math.round(fraction * 100)}%`, "--heat-color": HEAT_VAR[tier] } as CSSProperties;
+  return (
+    <div className={`liq-bar liq-bar--live ${thin ? "liq-bar--thin" : ""} ${className}`} style={style}>
+      <div
+        className="liq-bar__track"
+        role="meter"
+        aria-label="Room left before liquidation"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(fraction * 100)}
+        aria-valuetext={`${formatPercent(pctToLiquidation)} to liquidation`}
+      >
+        <div className="liq-bar__fill" />
+      </div>
+      {!thin && <p className="liq-bar__caption">{formatPercent(pctToLiquidation)} to liquidation</p>}
     </div>
   );
 }

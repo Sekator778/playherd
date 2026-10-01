@@ -1,0 +1,74 @@
+/* "Anchored on Chia" block on a settled round. The state is the chip's WORD first; colour only dresses it. */
+.anchor {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+}
+.anchor__icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+.anchor--ok {
+  border-color: var(--up-strong);
+}
+.anchor--ok .anchor__icon {
+  color: var(--up);
+}
+.anchor--wait .anchor__icon {
+  color: var(--warning);
+}
+.anchor--bad {
+  border-color: var(--down-strong);
+}
+.anchor--bad .anchor__icon {
+  color: var(--down);
+}
+.anchor__body {
+  min-width: 0;
+}
+.anchor__body p {
+  margin: 0;
+}
+.anchor__title {
+  font-weight: 800;
+  font-size: 14px;
+}
+.anchor__chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  vertical-align: middle;
+}
+.anchor--ok .anchor__chip {
+  color: var(--up);
+  border-color: var(--up-strong);
+}
+.anchor--wait .anchor__chip {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+.anchor--bad .anchor__chip {
+  color: var(--down);
+  border-color: var(--down-strong);
+}
+.anchor__detail {
+  margin-top: 2px !important;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.anchor__hash {
+  margin-top: 6px !important;
+  font-size: 12px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}

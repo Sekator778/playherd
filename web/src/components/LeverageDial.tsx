@@ -2,6 +2,7 @@ import { useEffect, useRef, type CSSProperties } from "react";
 import { startAmbientEmission } from "../fx/particles";
 import { impact } from "../fx/haptics";
 import { usePrefersReducedMotion } from "../fx/reducedMotion";
+import { HEAT_VAR, leverageHeatTier, type HeatTier } from "./heat";
 
 /**
  * "Power dial" leverage control (`docs/product/design/live-round.md` §1) — replaces the unstyled
@@ -13,25 +14,6 @@ import { usePrefersReducedMotion } from "../fx/reducedMotion";
  * динамика" Alex asked for. Ambient sparks (Hot/Danger/Flame zones) and per-step haptics from
  * live-round.md §1's table are wired below via `fx/particles.ts`/`fx/haptics.ts`.
  */
-export type HeatTier = 1 | 2 | 3 | 4 | 5;
-
-/** live-round.md §1's zone table, by leverage value directly. */
-export function leverageHeatTier(leverage: number): HeatTier {
-  if (leverage <= 8) return 1; // Calm
-  if (leverage <= 15) return 2; // Warm
-  if (leverage <= 24) return 3; // Hot
-  if (leverage <= 33) return 4; // Danger
-  return 5; // Flame
-}
-
-const HEAT_VAR: Record<HeatTier, string> = {
-  1: "var(--heat-1)",
-  2: "var(--heat-2)",
-  3: "var(--heat-3)",
-  4: "var(--heat-4)",
-  5: "var(--heat-5)",
-};
-
 const ZONE_LABEL: Record<HeatTier, string> = {
   1: "Calm",
   2: "Warm",
@@ -59,7 +41,7 @@ export function LeverageDial({
   max: number;
   onChange: (value: number) => void;
 }) {
-  const tier = leverageHeatTier(value);
+  const tier = leverageHeatTier(value, max);
   const pct = ((value - min) / (max - min)) * 100;
   const style = {
     "--fill-pct": `${pct}%`,
@@ -94,8 +76,8 @@ export function LeverageDial({
   }, [tier, reducedMotion, min, max]);
 
   const handleChange = (next: number) => {
-    const crossedIntoHotter = next > prevValueRef.current && leverageHeatTier(next) > prevTierRef.current;
-    const nextTier = leverageHeatTier(next);
+    const crossedIntoHotter = next > prevValueRef.current && leverageHeatTier(next, max) > prevTierRef.current;
+    const nextTier = leverageHeatTier(next, max);
     const interval = HAPTIC_STEP_INTERVAL[nextTier];
     const now = performance.now();
     if (crossedIntoHotter && nextTier === 5) {
@@ -128,8 +110,14 @@ export function LeverageDial({
         onChange={(e) => handleChange(Number(e.target.value))}
         aria-describedby={`${id}-zone`}
       />
-      <div id={`${id}-zone`} className="leverage-dial__zone">
-        {ZONE_LABEL[tier]}
+      <div className="leverage-dial__foot">
+        <span id={`${id}-zone`} className="leverage-dial__zone">
+          {ZONE_LABEL[tier]}
+        </span>
+        {/* The market's own cap, always in view: the dial's right end is not x40 everywhere. */}
+        <span className="leverage-dial__cap">
+          x{min} – <strong>max x{max}</strong>
+        </span>
       </div>
     </div>
   );

@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { useClock } from "../api/useClock";
-import { totalInPlayStake } from "../api/inPlay";
+import { loadInPlay } from "../api/inPlay";
 import { formatPlayAmount } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
+import { PositionsStrip } from "./PositionsStrip";
+import { ScrollManager } from "./ScrollManager";
 import { CoinIcon, SpeakerOnIcon, SpeakerMuteIcon, VibrationOnIcon, VibrationOffIcon, LobbyTabIcon, StatsTabIcon, ProfileTabIcon } from "./icons";
 import { useSettlementWatcher } from "../fx/useSettlementWatcher";
 import { useAwayReplay } from "../fx/useAwayReplay";
@@ -38,20 +40,23 @@ function BalancePill() {
   // Sum of the player's stakes still tied up in an open or running round (Alex's report,
   // 2026-09-25): the free balance alone made a player who'd just won, then staked the payout on
   // the next round, look like they'd lost — nothing said the missing PLAY was reserved, not
-  // gone. Built from `rounds()` (already-returned data, `api/inPlay.ts`), no contract change.
+  // gone. `myAccount().inPlay` covers every market; `api/inPlay.ts` only falls back to summing
+  // `rounds()` (BTC) for a server that does not send it.
   const [inPlay, setInPlay] = useState<number | null>(null);
   const tick = useClock(4000);
 
   useEffect(() => {
     if (!player) return;
     let cancelled = false;
-    Promise.all([api.myAccount(), api.rounds("HOURLY"), api.rounds("DAILY")]).then(
-      ([acc, hourly, daily]) => {
+    api
+      .myAccount()
+      .then(async (acc) => {
+        const inPlayStake = await loadInPlay(api, player.playerId, acc);
         if (cancelled) return;
         setBalance(acc.balance);
-        setInPlay(totalInPlayStake(player.playerId, hourly, daily));
-      },
-    );
+        setInPlay(inPlayStake);
+      })
+      .catch(() => {}); // a failed tick keeps the pill as it was; the next tick tries again
     return () => {
       cancelled = true;
     };
@@ -261,12 +266,15 @@ export function Layout() {
 
   return (
     <div className="page">
+      <ScrollManager />
       <a href="#main-content" className="skip-link">
         Skip to content
       </a>
       <Header />
       <main id="main-content" className="main-content">
         <div className="container">
+          {/* "Your bets" across every market (Р-71) — in the page flow, never fixed to the screen. */}
+          <PositionsStrip />
           <Outlet />
         </div>
       </main>

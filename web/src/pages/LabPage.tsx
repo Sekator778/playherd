@@ -5,6 +5,7 @@
  * needed (nothing here touches real money or a real session).
  */
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import type { Interval } from "../api/contract";
 import { publish } from "../fx/resultEventBus";
 import type { ResultEvent, ResultKind, Tier } from "../fx/resultEvent";
@@ -22,6 +23,8 @@ function fireEvent(kind: ResultKind, tier: Tier, opts: { stake: number; net: num
     id: `lab-${kind}-${tier}-${labSeq}`,
     kind,
     roundId: "1h-lab-preview",
+    marketId: "BTC",
+    symbol: "BTC",
     interval: opts.interval ?? "HOURLY",
     netPlay: opts.net,
     stakePlay: opts.stake,
@@ -57,6 +60,9 @@ export function LabPage() {
         <p className="muted">
           Hidden page (not in the main nav) for previewing every result-moment kind × tier, and the leverage
           dial / liquidation bar across their full range, without playing real rounds.
+        </p>
+        <p>
+          <Link to="/lab/states">Market cards, positions, anchor and streak states →</Link>
         </p>
       </div>
 
@@ -137,6 +143,11 @@ export function LabPage() {
       <div className="lab-section">
         <h2>Leverage dial (x2–x40)</h2>
         <LeverageDial id="lab-leverage" value={leverage} min={2} max={40} onChange={setLeverage} />
+      </div>
+
+      <div className="lab-section">
+        <h2>Leverage dial of an odds market (x2–x10) — the heat ramp is relative to the cap</h2>
+        <LeverageDial id="lab-leverage-odds" value={Math.min(leverage, 10)} min={2} max={10} onChange={setLeverage} />
       </div>
 
       <div className="lab-section">

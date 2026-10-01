@@ -1,5 +1,6 @@
 /**
- * The demo's simulated clock and a deterministic, seeded BTC price path over time.
+ * The demo's simulated clock, the mock's round-window math, and the ONE place a round id is built
+ * or taken apart.
  *
  * `docs/product/decisions.md` Р-35: "фронт разрабатывается параллельно с бэкендом, сначала на
  * тестовых данных". Round windows here mirror `RoundClock`/`RoundWindow`
@@ -10,9 +11,12 @@
  * ({@link SIM_BASE_MS}, "today" per the task) and advances {@link SIM_SPEED}× faster than real
  * time, so a hovering demo session actually sees a round go BETTING → RUNNING → SETTLED instead
  * of waiting up to an hour — предложение, no source fixes a demo playback speed.
+ *
+ * What lives elsewhere: the mock's price paths are `mockPrices.ts`, its market catalog
+ * `mockMarkets.ts`. Real code never needs the window math below: a round's window comes from the
+ * server (`RoundDto.window`), a series' length from `MarketSeriesDto.durationSec`.
  */
-import type { EpochMs, Interval, RoundId, RoundWindowDto } from "./contract";
-import { randFloat, rngFor } from "./rng";
+import type { EpochMs, Interval, MarketId, RoundId, RoundWindowDto } from "./contract";
 
 export const HOUR_MS = 3_600_000;
 export const DAY_MS = 86_400_000;
@@ -38,15 +42,18 @@ export function simNowMs(): EpochMs {
 }
 
 // ---------------------------------------------------------------------------
-// Round windows (RoundClock/RoundWindow.java)
+// Round windows (RoundClock/RoundWindow.java) — the MOCK server's side of the clock
 // ---------------------------------------------------------------------------
 
-function windowSizeMs(interval: Interval): number {
-  return interval === "HOURLY" ? HOUR_MS : DAY_MS;
-}
+/**
+ * The mock server's round lengths, reported to clients through `MarketSeriesDto.durationSec`
+ * (the real server's are config: 180/900 s on the stand, 1 h/1 d live, Т-11). Only the `mock*`
+ * modules read this — UI code takes durations from the DTOs, never from constants.
+ */
+export const MOCK_SERIES_MS: Readonly<Record<Interval, number>> = { HOURLY: HOUR_MS, DAILY: DAY_MS };
 
 export function windowFor(interval: Interval, atMs: EpochMs): RoundWindowDto {
-  const size = windowSizeMs(interval);
+  const size = MOCK_SERIES_MS[interval];
   const startMs = Math.floor(atMs / size) * size;
   return { interval, startMs, endMs: startMs + size };
 }
@@ -61,106 +68,65 @@ export function prevWindow(window: RoundWindowDto): RoundWindowDto {
   return { interval: window.interval, startMs: window.startMs - size, endMs: window.startMs };
 }
 
-/** `RoundWindow.roundId()`: `${interval.code()}-${startMs}` (contract.ts's `RoundId` doc comment). */
-export function roundIdFor(window: RoundWindowDto): RoundId {
-  const code = window.interval === "HOURLY" ? "1h" : "1d";
-  return `${code}-${window.startMs}`;
-}
-
-export function parseRoundId(id: RoundId): { interval: Interval; startMs: EpochMs } | null {
-  const match = /^(1h|1d)-(\d+)$/.exec(id);
-  if (!match) return null;
-  return { interval: match[1] === "1h" ? "HOURLY" : "DAILY", startMs: Number(match[2]) };
-}
-
 // ---------------------------------------------------------------------------
-// Deterministic BTC price path (предложение — no historical replay endpoint exists yet in the
-// mock era, see week1_wallet_auth.md/round_engine_design.md open questions; a seeded random walk
-// stands in so every screen agrees on the same price for the same timestamp).
+// Round ids (`RoundWindow.roundId()` / `RoundWindow.parseRoundId`, engine README "Markets")
 // ---------------------------------------------------------------------------
 
-const PRICE_BASE_MS = SIM_BASE_MS;
-/** Last real BTC daily close price quoted in `hl_liquidation_math.md` §3's golden vectors —
- *  anchors the walk to a number that is already "real" elsewhere in this codebase. */
-const PRICE_BASE = 83_451;
+/** The legacy market: its rounds keep the pre-markets id (`"1h-<startMs>"`). */
+export const BTC_MARKET_ID: MarketId = "BTC";
 
-const dailyLogReturnCache = new Map<number, number>(); // dayIndex -> log-return for that day
-const cumulativeCache = new Map<number, number>([[0, 0]]); // dayIndex -> cumulative log-return from day 0
-let maxComputedDay = 0;
-let minComputedDay = 0;
+/** `Interval.code()` (Interval.java) — the id's series part, whatever the series' real length. */
+const INTERVAL_CODES: Readonly<Record<Interval, string>> = { HOURLY: "1h", DAILY: "1d" };
 
-function dailyLogReturn(dayIndex: number): number {
-  let cached = dailyLogReturnCache.get(dayIndex);
-  if (cached !== undefined) return cached;
-  const rng = rngFor("btc-daily-return", dayIndex);
-  // Two uniforms averaged approximate a triangular distribution (softer tails than one uniform),
-  // plus a small positive drift — plausible demo BTC volatility, not a real Hyperliquid feed.
-  const a = rng();
-  const b = rng();
-  cached = (a + b - 1) * 0.035 + 0.0008;
-  dailyLogReturnCache.set(dayIndex, cached);
-  return cached;
+function intervalOfCode(code: string): Interval | null {
+  return code === INTERVAL_CODES.HOURLY ? "HOURLY" : code === INTERVAL_CODES.DAILY ? "DAILY" : null;
 }
 
-function cumulativeLogReturn(dayIndex: number): number {
-  if (dayIndex > maxComputedDay) {
-    for (let d = maxComputedDay + 1; d <= dayIndex; d++) {
-      cumulativeCache.set(d, cumulativeCache.get(d - 1)! + dailyLogReturn(d));
-    }
-    maxComputedDay = dayIndex;
-  } else if (dayIndex < minComputedDay) {
-    for (let d = minComputedDay - 1; d >= dayIndex; d--) {
-      cumulativeCache.set(d, cumulativeCache.get(d + 1)! - dailyLogReturn(d + 1));
-    }
-    minComputedDay = dayIndex;
-  }
-  return cumulativeCache.get(dayIndex)!;
+const MARKET_ID_PATTERN = /^[A-Za-z0-9_]{1,32}$/;
+const START_MS_PATTERN = /^(0|[1-9]\d*)$/;
+
+/** A round id taken apart. */
+export interface RoundRef {
+  marketId: MarketId;
+  interval: Interval;
+  startMs: EpochMs;
 }
 
-function dailyAnchorPrice(dayIndex: number): number {
-  return PRICE_BASE * Math.exp(cumulativeLogReturn(dayIndex));
+/**
+ * The one builder of round ids: BTC → the legacy `"<code>-<startMs>"` (`"1h-1735689600000"`),
+ * every other market → `"<marketId>-<code>-<startMs>"` (`"ETH-1h-1735689600000"`). Nothing else in
+ * the web assembles an id — a UI that needs "the round after this one" asks {@link nextRoundId}.
+ */
+export function buildRoundId(marketId: MarketId, interval: Interval, startMs: EpochMs): RoundId {
+  const legacy = `${INTERVAL_CODES[interval]}-${startMs}`;
+  return marketId === BTC_MARKET_ID ? legacy : `${marketId}-${legacy}`;
 }
 
-/** A smooth, deterministic, always-positive BTC price for any timestamp — the sole source of
- *  truth for every open/close/reference price shown anywhere in the demo. */
-export function btcPriceAt(atMs: EpochMs): number {
-  const dayIndex = Math.floor((atMs - PRICE_BASE_MS) / DAY_MS);
-  const dayStartMs = PRICE_BASE_MS + dayIndex * DAY_MS;
-  const fracOfDay = (atMs - dayStartMs) / DAY_MS;
-  const p0 = dailyAnchorPrice(dayIndex);
-  const p1 = dailyAnchorPrice(dayIndex + 1);
-  const interpolated = p0 + (p1 - p0) * fracOfDay;
-  const noiseRng = rngFor("btc-hour-noise", Math.floor(atMs / HOUR_MS));
-  const noise = (noiseRng() - 0.5) * 0.006; // ± 0.3% texture within the hour
-  return Math.max(1, interpolated * (1 + noise));
+/**
+ * The one parser (inverse of {@link buildRoundId}): accepts exactly what the builder produces —
+ * one canonical id per round, like `RoundWindow.parseRoundId` — so `"BTC-1h-5"` (BTC is always the
+ * two-part form), `"1h-05"` and `"1h-+5"` are `null`, like any other malformed id. A market id
+ * never contains `'-'`, which is what makes the split unambiguous. Prefer the `marketId` carried by
+ * the DTOs; this exists for the mock and for an id that arrives without a DTO (a route param).
+ */
+export function parseRoundId(id: RoundId): RoundRef | null {
+  const parts = id.split("-");
+  if (parts.length !== 2 && parts.length !== 3) return null;
+  const [marketId, code, start] = parts.length === 2 ? [BTC_MARKET_ID, parts[0], parts[1]] : parts;
+  const interval = intervalOfCode(code);
+  if (!interval || !MARKET_ID_PATTERN.test(marketId) || !START_MS_PATTERN.test(start)) return null;
+  const startMs = Number(start);
+  if (!Number.isSafeInteger(startMs)) return null;
+  return buildRoundId(marketId, interval, startMs) === id ? { marketId, interval, startMs } : null;
 }
 
-export function btcPriceStrAt(atMs: EpochMs): string {
-  return btcPriceAt(atMs).toFixed(2);
+/** `buildRoundId` for a window DTO of `marketId`. */
+export function roundIdForWindow(marketId: MarketId, window: RoundWindowDto): RoundId {
+  return buildRoundId(marketId, window.interval, window.startMs);
 }
 
-export interface WindowOhlc {
-  open: string;
-  close: string;
-  low: string;
-  high: string;
-}
-
-/** A plausible OHLC for a round window, seeded by its `roundId` — open/close come straight from
- *  {@link btcPriceAt} (so the same round always has the same open/close), low/high add a bounded
- *  extra excursion so the liquidation math (doc §2.3) has something to bite on. */
-export function ohlcFor(window: RoundWindowDto): WindowOhlc {
-  const openRaw = btcPriceAt(window.startMs);
-  const closeRaw = btcPriceAt(window.endMs);
-  const rng = rngFor("ohlc-extremes", roundIdFor(window));
-  const lower = Math.min(openRaw, closeRaw);
-  const upper = Math.max(openRaw, closeRaw);
-  const low = lower * (1 - randFloat(rng, 0, 0.012));
-  const high = upper * (1 + randFloat(rng, 0, 0.012));
-  return {
-    open: openRaw.toFixed(2),
-    close: closeRaw.toFixed(2),
-    low: low.toFixed(2),
-    high: high.toFixed(2),
-  };
+/** The id of the round that starts where `round` ends — same market, same series (the bet slip's
+ *  "View next round" link once betting just closed). */
+export function nextRoundId(round: { marketId: MarketId; window: RoundWindowDto }): RoundId {
+  return buildRoundId(round.marketId, round.window.interval, round.window.endMs);
 }

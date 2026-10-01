@@ -1,0 +1,200 @@
+/* Stats → Crowd: the herd overview, the market selector, the account tiles. Tokens only. */
+
+.crowd-return {
+  font-weight: 800;
+  white-space: nowrap;
+}
+.crowd-return--up {
+  color: var(--up);
+}
+.crowd-return--down {
+  color: var(--down);
+}
+.crowd-return--flat {
+  color: var(--text-muted);
+}
+
+.crowd-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.crowd-overview .section-title {
+  margin: 0;
+}
+.crowd-overview p {
+  margin: 0;
+}
+.crowd-overview__totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  align-items: flex-start;
+}
+.crowd-overview__big {
+  font-size: var(--num-lg);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+.crowd-overview__extremes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.crowd-extreme {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 72px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.crowd-extreme:hover {
+  border-color: var(--text-muted);
+}
+.crowd-extreme__label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.crowd-extreme__symbol {
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.crowd-overview__all summary {
+  cursor: pointer;
+  color: var(--accent-text);
+  font-weight: 700;
+  font-size: 14px;
+  min-height: 32px;
+}
+.crowd-rank {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+}
+.crowd-rank__row {
+  display: grid;
+  grid-template-columns: 64px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.crowd-rank__row:hover {
+  background: var(--bg-elevated-2);
+}
+.crowd-rank__symbol {
+  font-weight: 800;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crowd-rank__bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-elevated-2);
+  overflow: hidden;
+}
+.crowd-rank__fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+.crowd-rank__fill--up {
+  background: var(--up);
+}
+.crowd-rank__fill--down {
+  background: var(--down);
+}
+.crowd-rank__fill--flat {
+  background: var(--text-muted);
+}
+.crowd-rank__won {
+  min-width: 38px;
+  text-align: right;
+}
+
+.crowd-selector {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.crowd-selector__field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.crowd-selector__field label {
+  margin: 0;
+}
+.crowd-selector__select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text);
+  /* 16 px: iOS Safari zooms the page into any smaller focused field. */
+  font-size: 16px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+}
+.crowd-selector__select:focus-visible {
+  outline-offset: 0;
+}
+.crowd-selector__play {
+  flex: none;
+  min-height: 44px;
+  align-self: flex-end;
+}
+
+/* The account's three numbers: Capital across the top, the two returns side by side — three stacked
+   full-width tiles were most of a phone screen. */
+.crowd-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.crowd-tiles > :first-child {
+  grid-column: 1 / -1;
+}
+.crowd-tiles .stat-tile {
+  padding: 12px 14px;
+}
+
+.crowd-chart__axis-note {
+  margin: 4px 0 0;
+}
+
+@media (max-width: 420px) {
+  .crowd-selector {
+    flex-wrap: wrap;
+  }
+  .crowd-selector__play {
+    align-self: auto;
+    width: 100%;
+  }
+}

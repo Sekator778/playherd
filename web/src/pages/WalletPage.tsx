@@ -9,6 +9,7 @@ import { RollingDigits } from "../fx/RollingDigits";
 import { useFxSettings } from "../fx/fxSettings";
 import { primeAudioContext } from "../fx/sound";
 import { QrCode } from "../wallet/QrCode";
+import { SageDepositHints } from "../components/SageHints";
 import {
   ArrowDownTrayIcon,
   ArrowUpTrayIcon,
@@ -454,6 +455,7 @@ export function WalletContent() {
       <div className="stack" style={{ gap: 16 }}>
         {player && <WithdrawCard balance={Number(account.balance)} address={player.walletAddress} onBalanceChange={load} />}
         <DepositCard />
+        <SageDepositHints />
         <SettingsCard />
       </div>
     </div>

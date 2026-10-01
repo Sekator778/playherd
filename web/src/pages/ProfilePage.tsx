@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
-import type { PublicProfileDto } from "../api/contract";
+import type { Interval, MarketDto, PublicProfileDto } from "../api/contract";
 import { netFromPayoutAndStake } from "../api/outcome";
 import { seasonHistory } from "../api/seasonStats";
+import { useMarkets } from "../api/useMarkets";
 import { Avatar } from "../components/Avatar";
 import { BotBadge, ErrorState, Skeleton } from "../components/Common";
 import { ResultTile } from "../components/ResultTile";
-import { formatDateTimeUtc, formatPercent, formatPlayAmount } from "../format";
+import { StreakBadge } from "../components/StreakBadge";
+import { formatDateTimeUtc, formatDuration, formatPercent, formatPlayAmount } from "../format";
+import "./ProfilePage.css";
 
 /** `SeasonRecordDto` has no "growth" field of its own — derive it the same way the "Richest"
  *  rating does, from the season-bounded slice of the player's full round history (`seasonStats.ts`'s
@@ -20,12 +23,20 @@ function seasonBalanceChange(profile: PublicProfileDto): number {
   );
 }
 
+/** "3 MIN" for the series the round was in, when its market is still on the list; nothing otherwise. */
+function seriesLabelOf(market: MarketDto | undefined, interval: Interval): string | undefined {
+  const series = market?.series.find((s) => s.interval === interval);
+  return series ? formatDuration(series.durationSec) : undefined;
+}
+
 export function ProfilePage({ mine = false }: { mine?: boolean }) {
   const { playerId } = useParams<{ playerId: string }>();
   const api = useApi();
   const { player, openConnectModal } = useSession();
   const [profile, setProfile] = useState<PublicProfileDto | null>(null);
   const [error, setError] = useState<"generic" | "not-found" | null>(null);
+  // A history row only carries the series' NAME (`Interval`); its real length lives on the market.
+  const { byId } = useMarkets();
 
   // Reset to loading whenever the profile's *subject* changes (navigating from one player's
   // profile to another) — during render, not in an effect, and deliberately not on every retry
@@ -84,8 +95,10 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
         </span>
       </h1>
 
+      {profile.streak && <StreakBadge current={profile.streak.current} best={profile.streak.best} />}
+
       {profile.seasonRecord && (
-        <div className="grid-3">
+        <div className="profile-tiles">
           <div className="stat-tile">
             <div className="stat-tile__label">Rounds played</div>
             <div className="stat-tile__value">{profile.seasonRecord.roundsPlayed}</div>
@@ -122,7 +135,8 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
             <ResultTile
               key={h.roundId}
               roundId={h.roundId}
-              interval={h.interval}
+              symbol={h.asset}
+              seriesLabel={seriesLabelOf(byId.get(h.marketId), h.interval)}
               direction={h.direction}
               leverage={h.leverage}
               net={netFromPayoutAndStake(h.payout, h.stake)}

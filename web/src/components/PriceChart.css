@@ -1,0 +1,260 @@
+/* The room's live price chart (`PriceChart.tsx`). Tokens only; the line colours follow the move since
+   the round opened (above open = up colour, below = down colour, level = neutral) — the one thing the
+   bet is about — and every colour is also carried by an arrow/sign in the text next to it. */
+
+.pchart {
+  --pchart-up: var(--up);
+  --pchart-down: var(--down);
+  --pchart-flat: var(--text-muted);
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pchart--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--border-strong);
+  color: var(--text-muted);
+  text-align: center;
+  padding: 16px;
+}
+.pchart--empty p {
+  margin: 0;
+}
+
+.pchart__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+}
+.pchart__chips {
+  flex: 0 1 auto;
+}
+.pchart__live {
+  padding: 0 4px;
+}
+.pchart__move {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.pchart__move--up {
+  color: var(--up);
+}
+.pchart__move--down {
+  color: var(--down);
+}
+.pchart__move--flat {
+  color: var(--text-muted);
+}
+.pchart__move-note {
+  color: var(--text-faint);
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.pchart__plot {
+  width: 100%;
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.pchart__plot svg {
+  display: block;
+  max-width: none;
+}
+
+.pchart__grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 2 5;
+}
+.pchart__axis {
+  fill: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.pchart__start {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+.pchart__line {
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.pchart__line--up {
+  stroke: var(--pchart-up);
+}
+.pchart__line--down {
+  stroke: var(--pchart-down);
+}
+.pchart__line--flat {
+  stroke: var(--pchart-flat);
+}
+
+.pchart__dot--up {
+  fill: var(--pchart-up);
+}
+.pchart__dot--down {
+  fill: var(--pchart-down);
+}
+.pchart__dot--flat {
+  fill: var(--pchart-flat);
+}
+.pchart__pulse {
+  fill: none;
+  stroke-width: 2;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pchart-pulse 1.8s ease-out infinite;
+}
+.pchart__pulse--up {
+  stroke: var(--pchart-up);
+}
+.pchart__pulse--down {
+  stroke: var(--pchart-down);
+}
+.pchart__pulse--flat {
+  stroke: var(--pchart-flat);
+}
+@keyframes pchart-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(3.2);
+    opacity: 0;
+  }
+}
+
+/* Current price: a solid bubble in the line's colour with dark text (both pass AA on it). */
+.pchart__bubble rect {
+  fill: var(--text-muted);
+}
+.pchart__bubble--up rect {
+  fill: var(--pchart-up);
+}
+.pchart__bubble--down rect {
+  fill: var(--pchart-down);
+}
+.pchart__bubble text {
+  fill: var(--bg);
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Reference lines (round open / entry / liquidation). */
+.pchart__ref-line {
+  stroke-width: 1.4;
+}
+.pchart__ref--open .pchart__ref-line {
+  stroke: var(--text-muted);
+  stroke-dasharray: 5 4;
+}
+.pchart__ref--entry .pchart__ref-line {
+  stroke: var(--gold);
+  stroke-dasharray: 5 4;
+}
+.pchart__ref--liq .pchart__ref-line {
+  stroke: var(--liq-magenta);
+  stroke-width: 1.8;
+}
+.pchart__ref-box {
+  fill: var(--bg);
+  fill-opacity: 0.88;
+  stroke-width: 1;
+}
+.pchart__ref--open .pchart__ref-box {
+  stroke: var(--text-muted);
+}
+.pchart__ref--entry .pchart__ref-box {
+  stroke: var(--gold);
+}
+.pchart__ref--liq .pchart__ref-box {
+  stroke: var(--liq-magenta);
+}
+.pchart__ref-text {
+  font-size: 10.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  fill: var(--text);
+}
+.pchart__ref--open .pchart__ref-text {
+  fill: var(--text-muted);
+}
+.pchart__ref--entry .pchart__ref-text {
+  fill: var(--gold);
+}
+.pchart__ref--liq .pchart__ref-text {
+  fill: var(--liq-magenta);
+}
+/* The herd's lines: same hues, fainter, and always dashed. */
+.pchart__ref--faint .pchart__ref-line {
+  stroke-opacity: 0.5;
+  stroke-dasharray: 3 5;
+}
+.pchart__ref--faint .pchart__ref-box {
+  stroke-opacity: 0.5;
+}
+.pchart__ref--faint .pchart__ref-text {
+  fill-opacity: 0.85;
+}
+
+.pchart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 11.5px;
+}
+.pchart__swatch {
+  display: inline-block;
+  width: 16px;
+  height: 0;
+  margin-right: 4px;
+  vertical-align: middle;
+  border-top: 2px dashed var(--text-muted);
+}
+.pchart__swatch--start {
+  width: 0;
+  height: 12px;
+  margin: 0 8px 0 7px;
+  border-top: 0;
+  border-left: 1.5px dashed var(--border-strong);
+}
+.pchart__swatch--entry {
+  border-top-color: var(--gold);
+}
+.pchart__swatch--liq {
+  border-top: 2px solid var(--liq-magenta);
+}
+.pchart__swatch--faint {
+  border-top-style: dashed;
+  opacity: 0.55;
+}
+.pchart__stale {
+  color: var(--warning);
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pchart__pulse {
+    animation: none;
+    opacity: 0;
+  }
+}
+html[data-reduced-motion="true"] .pchart__pulse {
+  animation: none;
+  opacity: 0;
+}
