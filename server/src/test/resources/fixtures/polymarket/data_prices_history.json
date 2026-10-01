@@ -1,0 +1,50 @@
+{
+ "data": [
+  {
+   "timestamp": 1790882940,
+   "price": 0.725,
+   "resolution_seconds": 60
+  },
+  {
+   "timestamp": 1790883000,
+   "price": 0.695,
+   "resolution_seconds": 60
+  },
+  {
+   "timestamp": 1790883060,
+   "price": 0.715,
+   "resolution_seconds": 60
+  },
+  {
+   "timestamp": 1790883120,
+   "price": 0.705,
+   "resolution_seconds": 60
+  },
+  {
+   "timestamp": 1790883180,
+   "price": 0.715,
+   "resolution_seconds": 60
+  },
+  {
+   "timestamp": 1790883240,
+   "price": 0.715,
+   "resolution_seconds": 60
+  },
+  {
+   "timestamp": 1790883300,
+   "price": 0.715,
+   "resolution_seconds": 60
+  },
+  {
+   "timestamp": 1790883611,
+   "price": 0.715,
+   "resolution_seconds": 0
+  }
+ ],
+ "pagination": {
+  "limit": 10000,
+  "offset": 0,
+  "has_more": false,
+  "next_cursor": null
+ }
+}

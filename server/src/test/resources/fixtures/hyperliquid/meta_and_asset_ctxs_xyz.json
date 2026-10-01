@@ -1,0 +1,190 @@
+[
+ {
+  "universe": [
+   {
+    "szDecimals": 3,
+    "name": "xyz:URANIUM",
+    "maxLeverage": 10,
+    "marginTableId": 10,
+    "onlyIsolated": true,
+    "isDelisted": true,
+    "marginMode": "strictIsolated",
+    "growthMode": "enabled",
+    "lastFeeScaleChangeTime": "2026-01-26T16:47:08.614356922",
+    "deployerFeeScale": "1.0"
+   },
+   {
+    "szDecimals": 3,
+    "name": "xyz:NVDA",
+    "maxLeverage": 20,
+    "marginTableId": 20,
+    "growthMode": "enabled",
+    "lastFeeScaleChangeTime": "2025-11-23T17:37:10.033211662",
+    "deployerFeeScale": "1.0"
+   },
+   {
+    "szDecimals": 4,
+    "name": "xyz:XYZ100",
+    "maxLeverage": 30,
+    "marginTableId": 30,
+    "growthMode": "enabled",
+    "lastFeeScaleChangeTime": "2025-11-23T17:37:10.033211662",
+    "deployerFeeScale": "1.0"
+   },
+   {
+    "szDecimals": 3,
+    "name": "xyz:TSLA",
+    "maxLeverage": 20,
+    "marginTableId": 20,
+    "growthMode": "enabled",
+    "lastFeeScaleChangeTime": "2025-11-23T17:37:10.033211662",
+    "deployerFeeScale": "1.0"
+   },
+   {
+    "szDecimals": 4,
+    "name": "xyz:GOLD",
+    "maxLeverage": 25,
+    "marginTableId": 25,
+    "lastFeeScaleChangeTime": "1970-01-01T00:00:00",
+    "deployerFeeScale": "1.0"
+   },
+   {
+    "szDecimals": 2,
+    "name": "xyz:BRENTOIL",
+    "maxLeverage": 20,
+    "marginTableId": 20,
+    "growthMode": "enabled",
+    "lastFeeScaleChangeTime": "2026-03-04T14:33:56.611209792",
+    "deployerFeeScale": "1.0"
+   },
+   {
+    "szDecimals": 3,
+    "name": "xyz:SP500",
+    "maxLeverage": 50,
+    "marginTableId": 50,
+    "growthMode": "enabled",
+    "lastFeeScaleChangeTime": "2026-03-18T11:38:49.335772800",
+    "deployerFeeScale": "1.0"
+   }
+  ],
+  "marginTables": [
+   [
+    50,
+    {
+     "description": "",
+     "marginTiers": [
+      {
+       "lowerBound": "0.0",
+       "maxLeverage": 50
+      }
+     ]
+    }
+   ]
+  ],
+  "collateralToken": 0
+ },
+ [
+  {
+   "funding": "0.0",
+   "openInterest": "0.0",
+   "prevDayPx": "85.0",
+   "dayNtlVlm": "0.0",
+   "premium": null,
+   "oraclePx": "85.0",
+   "markPx": "85.0",
+   "midPx": null,
+   "impactPxs": null,
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "0.00000625",
+   "openInterest": "682306.4280000001",
+   "prevDayPx": "230.73",
+   "dayNtlVlm": "130677904.3492900133",
+   "premium": "0.0003410317",
+   "oraclePx": "231.65",
+   "markPx": "231.7",
+   "midPx": "231.725",
+   "impactPxs": [
+    "231.72",
+    "231.738"
+   ],
+   "dayBaseVlm": "567148.8340000001"
+  },
+  {
+   "funding": "0.00000625",
+   "openInterest": "7734.292",
+   "prevDayPx": "30563.0",
+   "dayNtlVlm": "292787026.0481003523",
+   "premium": "-0.0000818116",
+   "oraclePx": "30558.0",
+   "markPx": "30557.0",
+   "midPx": "30555.5",
+   "impactPxs": [
+    "30555.0",
+    "30556.0"
+   ],
+   "dayBaseVlm": "9585.9871"
+  },
+  {
+   "funding": "0.0000170438",
+   "openInterest": "163074.448",
+   "prevDayPx": "351.99",
+   "dayNtlVlm": "23698142.4726299904",
+   "premium": "0.0007342657",
+   "oraclePx": "357.5",
+   "markPx": "357.74",
+   "midPx": "357.755",
+   "impactPxs": [
+    "357.738",
+    "357.787"
+   ],
+   "dayBaseVlm": "66485.211"
+  },
+  {
+   "funding": "0.00000625",
+   "openInterest": "68552.303",
+   "prevDayPx": "4154.4",
+   "dayNtlVlm": "40055004.4736199975",
+   "premium": "-0.0000119723",
+   "oraclePx": "4176.3",
+   "markPx": "4176.3",
+   "midPx": "4176.25",
+   "impactPxs": [
+    "4176.2",
+    "4176.3"
+   ],
+   "dayBaseVlm": "9620.0887"
+  },
+  {
+   "funding": "-0.0000339089",
+   "openInterest": "1579003.6399999999",
+   "prevDayPx": "97.993",
+   "dayNtlVlm": "192954583.597969979",
+   "premium": "-0.0008008785",
+   "oraclePx": "102.45",
+   "markPx": "102.37",
+   "midPx": "102.365",
+   "impactPxs": [
+    "102.36",
+    "102.3759"
+   ],
+   "dayBaseVlm": "1933677.3200000003"
+  },
+  {
+   "funding": "0.00000625",
+   "openInterest": "46586.8",
+   "prevDayPx": "7686.9",
+   "dayNtlVlm": "356764402.9936001301",
+   "premium": "-0.0000976931",
+   "oraclePx": "7677.1",
+   "markPx": "7676.3",
+   "midPx": "7676.35",
+   "impactPxs": [
+    "7676.3",
+    "7676.4"
+   ],
+   "dayBaseVlm": "46586.249"
+  }
+ ]
+]
