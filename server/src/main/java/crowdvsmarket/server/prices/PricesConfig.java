@@ -28,6 +28,11 @@ import crowdvsmarket.server.config.GameMode;
  * @param requireMinuteAlignedRounds {@code herd.prices.require-minute-aligned-rounds}: with real sources the
  *                          server refuses to start unless every round boundary is on a whole minute
  *                          ({@link RoundAlignmentCheck}); {@code false} only warns
+ * @param hyperliquidMaxBasis {@code herd.prices.hyperliquid.max-basis}: how far a live mark may lie outside the
+ *                          range its own minute's candle traded at, relative to the mark, for the candles to bridge
+ *                          a gap between two live ticks ({@link GapBridge}); default 0.0015 (15 bp)
+ * @param hyperliquidMaxHealMs {@code herd.prices.hyperliquid.max-heal-ms}: the longest gap between two live ticks
+ *                          that candles bridge; default 30 minutes; 0 switches bridging off
  */
 public record PricesConfig(
         boolean liveMode,
@@ -49,7 +54,9 @@ public record PricesConfig(
         int readTimeoutMs,
         long quietCarryMaxMs,
         int hyperliquidSeedBudgetPerMinute,
-        boolean requireMinuteAlignedRounds) {
+        boolean requireMinuteAlignedRounds,
+        double hyperliquidMaxBasis,
+        long hyperliquidMaxHealMs) {
 
     /** {@code herd.prices.source}: {@code live} polls Hyperliquid and Polymarket,
      *  {@code synthetic} is the offline walk for CI, e2e and work without a network (Т-12). */
@@ -78,6 +85,31 @@ public record PricesConfig(
                 Boolean.parseBoolean(DEFAULT_REQUIRE_ALIGNED_ROUNDS));
     }
 
+    /** The settings of before the bridge over a gap between live ticks (20 components), with its defaults. */
+    public PricesConfig(boolean liveMode, SourceKind source, long dailyRoundMs, String hyperliquidUrl,
+                        String polymarketClobUrl, String polymarketGammaUrl, String polymarketDataUrl,
+                        long hyperliquidStaleMs, long hyperliquidXyzStaleMs, long hyperliquidMaxGapMs,
+                        long polymarketStaleMs, long polymarketMaxGapMs, long syntheticStaleMs, long syntheticMaxGapMs,
+                        long backfillCooldownMs, int connectTimeoutMs, int readTimeoutMs, long quietCarryMaxMs,
+                        int hyperliquidSeedBudgetPerMinute, boolean requireMinuteAlignedRounds) {
+        this(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl, polymarketDataUrl,
+                hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs,
+                syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs,
+                quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
+                Double.parseDouble(DEFAULT_HYPERLIQUID_MAX_BASIS), Long.parseLong(DEFAULT_HYPERLIQUID_MAX_HEAL_MS));
+    }
+
+    public PricesConfig {
+        if (Double.isNaN(hyperliquidMaxBasis) || Double.isInfinite(hyperliquidMaxBasis) || hyperliquidMaxBasis < 0) {
+            throw new IllegalArgumentException("herd.prices.hyperliquid.max-basis must be a relative distance of at "
+                    + "least 0, got " + hyperliquidMaxBasis);
+        }
+        if (hyperliquidMaxHealMs < 0) {
+            throw new IllegalArgumentException("herd.prices.hyperliquid.max-heal-ms must be at least 0 (0 switches "
+                    + "bridging off), got " + hyperliquidMaxHealMs);
+        }
+    }
+
     // Defaults live here, as compile-time constants, so the @ConfigProperty annotations in the
     // producer, the @RegisterRestClient base URIs and defaults() cannot drift apart.
     public static final String DEFAULT_MODE = "replay";
@@ -103,6 +135,18 @@ public record PricesConfig(
     /** 1200 a minute − 600 polling − 40 catalog = 560 spare; seeds may take 260 of it, so the first minute stays near 900 (see {@link HistorySeeder}). */
     public static final String DEFAULT_HYPERLIQUID_SEED_BUDGET = "260";
     public static final String DEFAULT_REQUIRE_ALIGNED_ROUNDS = "true";
+    /**
+     * 15 basis points (0.15%): three times the farthest a mark was seen from the range of its own minute's candle
+     * (5.2 bp over 7 476 marks of the 12 default markets, hl_multi_asset_live.md §13.4), and an eighth of the
+     * distance at which a 40x position is liquidated (about 1.25%).
+     */
+    public static final String DEFAULT_HYPERLIQUID_MAX_BASIS = "0.0015";
+    /**
+     * Half an hour: half of the shortest production round (the HOURLY one), so one gap never puts more than half of a
+     * round on trade prices, and about the stretch the measurement behind the basis covers (41 minutes of the stand's
+     * marks, hl_multi_asset_live.md §13.4).
+     */
+    public static final String DEFAULT_HYPERLIQUID_MAX_HEAL_MS = "1800000";
 
     /** The tick buffer keeps 10 minutes more than two DAILY rounds (§3.2 rule 2). */
     public static final long RETENTION_EXTRA_MS = 600_000L;
@@ -117,7 +161,8 @@ public record PricesConfig(
                 Long.parseLong(DEFAULT_SYNTHETIC_STALE_MS), Long.parseLong(DEFAULT_SYNTHETIC_MAX_GAP_MS),
                 Long.parseLong(DEFAULT_BACKFILL_COOLDOWN_MS), Integer.parseInt(DEFAULT_CONNECT_TIMEOUT_MS),
                 Integer.parseInt(DEFAULT_READ_TIMEOUT_MS), Long.parseLong(DEFAULT_QUIET_CARRY_MAX_MS),
-                Integer.parseInt(DEFAULT_HYPERLIQUID_SEED_BUDGET), Boolean.parseBoolean(DEFAULT_REQUIRE_ALIGNED_ROUNDS));
+                Integer.parseInt(DEFAULT_HYPERLIQUID_SEED_BUDGET), Boolean.parseBoolean(DEFAULT_REQUIRE_ALIGNED_ROUNDS),
+                Double.parseDouble(DEFAULT_HYPERLIQUID_MAX_BASIS), Long.parseLong(DEFAULT_HYPERLIQUID_MAX_HEAL_MS));
     }
 
     /** The same settings with another mode and source. */
@@ -125,7 +170,8 @@ public record PricesConfig(
         return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
-                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds);
+                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
+                hyperliquidMaxBasis, hyperliquidMaxHealMs);
     }
 
     /** The same settings with other base URLs and timeouts — for a client talking to a local test server. */
@@ -133,7 +179,7 @@ public record PricesConfig(
         return new PricesConfig(liveMode, source, dailyRoundMs, baseUrl, baseUrl, baseUrl, baseUrl, hyperliquidStaleMs,
                 hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs, syntheticStaleMs,
                 syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs, quietCarryMaxMs,
-                hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds);
+                hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis, hyperliquidMaxHealMs);
     }
 
     /** The same settings with another longest quiet carry. */
@@ -141,7 +187,8 @@ public record PricesConfig(
         return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
-                readTimeoutMs, maxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds);
+                readTimeoutMs, maxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
+                hyperliquidMaxHealMs);
     }
 
     /** The same settings with another seed budget. */
@@ -149,7 +196,8 @@ public record PricesConfig(
         return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
-                readTimeoutMs, quietCarryMaxMs, weightPerMinute, requireMinuteAlignedRounds);
+                readTimeoutMs, quietCarryMaxMs, weightPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
+                hyperliquidMaxHealMs);
     }
 
     /** The same settings with another daily round — for the budget arithmetic of a seed. */
@@ -157,7 +205,26 @@ public record PricesConfig(
         return new PricesConfig(liveMode, source, dailyMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
-                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds);
+                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
+                hyperliquidMaxBasis, hyperliquidMaxHealMs);
+    }
+
+    /** The same settings with another tolerance between a live mark and the candle of its minute. */
+    public PricesConfig withHyperliquidMaxBasis(double maxBasis) {
+        return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
+                polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
+                polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
+                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, maxBasis,
+                hyperliquidMaxHealMs);
+    }
+
+    /** The same settings with another longest gap that candles bridge (0: none). */
+    public PricesConfig withHyperliquidMaxHealMs(long maxMs) {
+        return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
+                polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
+                polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
+                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
+                hyperliquidMaxBasis, maxMs);
     }
 
     /** {@code herd.mode} text → {@code liveMode}, with the same parser the rest of the server uses. */

@@ -213,8 +213,10 @@ public class TickStore {
     /**
      * The same, and with {@code preHistoryOnly} only points older than every live tick of the market: the
      * rule for a source whose history is another kind of number than its ticks (Hyperliquid's candles are
-     * trade prices, its ticks are mark prices) — its history may be the past of the first poll, never a
-     * stretch between two polls (see {@code HyperliquidPriceSource}).
+     * trade prices, its ticks are mark prices) — its history may be the past of the first poll, and the points
+     * of a bridge over a gap between two live ticks ({@code GapBridge} has checked those, and
+     * {@code preHistoryOnly} is false for them), never a stretch between two polls otherwise (see
+     * {@code HyperliquidPriceSource}).
      */
     int mergeHistory(String marketId, List<PricePoint> points, boolean preHistoryOnly) {
         TickRing ring = ring(marketId);

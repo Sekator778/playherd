@@ -419,30 +419,231 @@ class PolymarketCatalogTest {
     }
 
     @Test
-    void moneylineMarketsAreTriedBeforeTheOtherTypes() {
+    void onlyMoneylineMarketsAreCandidatesOfSports() {
         List<GammaMarket> candidates = catalog(config(0, 3, false)).candidates(Category.SPORTS, NOW);
 
-        List<String> types = candidates.stream().map(m -> m.isMoneyline() ? "ml" : "other").toList();
-        assertThat(types.lastIndexOf("ml")).isLessThan(types.indexOf("other"));
+        // the listing has a totals market ("Germany vs. Serbia: O/U 3.5") and a futures market with no type at all
+        // ("Will Shakhtar Donetsk win the 2026-27 UEFA Champions League"): neither is a candidate
+        assertThat(candidates).isNotEmpty().allSatisfy(m -> assertThat(m.sportsMarketType()).isEqualTo("moneyline"));
+        assertThat(candidates).extracting(GammaMarket::id).doesNotContain("4679591", "2772194");
     }
 
     @Test
     void theSameGameIsOneEventEvenWhenItsMarketsComeFromDifferentGammaEvents() {
-        // Germany-Serbia: the main event and "More Markets" share the game id 90108423 in the sports listing
+        // Germany-Serbia: the main event and a second event ("More Markets") share the game id 90108423; two moneyline
+        // markets of it, one in each event, are one game and take one place
         ObjectNode germany = copy(sports, 9); // "Will Germany win" in the main event
-        ObjectNode totals = copy(sports, 7); // "O/U 3.5" in the More Markets event
+        ObjectNode serbia = copy(sports, 9);
+        serbia.put("id", "4678614");
+        serbia.put("question", "Will Serbia win on 2026-10-01?");
+        serbia.put("groupItemTitle", "Serbia");
+        serbia.put("clobTokenIds", "[\"tokSerbiaYes\", \"tokSerbiaNo\"]");
+        ((ObjectNode) serbia.get("events").get(0)).put("id", "1042999");
         assertThat(germany.get("events").get(0).get("gameId").asText())
-                .isEqualTo(totals.get("events").get(0).get("gameId").asText());
+                .isEqualTo(serbia.get("events").get(0).get("gameId").asText());
         assertThat(germany.get("events").get(0).get("id").asText())
-                .isNotEqualTo(totals.get("events").get(0).get("id").asText());
-        gamma.markets.handler = call -> wrap(totals, germany);
+                .isNotEqualTo(serbia.get("events").get(0).get("id").asText());
+        gamma.markets.handler = call -> wrap(serbia, germany);
         gamma.events.handler = call -> Fixtures.parse("{\"events\":[]}");
-        book.set(token(sports.get("markets"), "4679591"), "0.345", "0.34", "0.35")
-                .set(token(sports.get("markets"), "4678613"), "0.62", "0.61", "0.63").install(clob); // Germany now in the band
+        book.set("tokSerbiaYes", "0.345", "0.34", "0.35")
+                .set(token(sports.get("markets"), "4678613"), "0.62", "0.61", "0.63").install(clob); // both in the band
 
         catalog(config(0, 3, true)).refresh(NOW);
 
-        assertThat(registry.log).hasSize(1); // the first of the two takes the game's only slot
+        assertThat(registry.log).containsExactly("listed PM4678614"); // the first of the two takes the game's only place
+    }
+
+    // ------------------------------------------------------ sports: only who wins, and a game cooled down (S1)
+
+    private final JsonNode mlbLive = Fixtures.json("polymarket/gamma_events_live_mlb.json");
+
+    private static final String NO_MARKETS = "{\"markets\":[]}";
+    private static final long SIX_HOURS = 6 * 3_600_000L;
+
+    /** The live-games fixture reduced to the events with these ids. */
+    private static JsonNode eventsOf(JsonNode live, String... eventIds) {
+        ObjectNode out = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        ArrayNode array = out.putArray("events");
+        for (JsonNode event : live.get("events")) {
+            if (List.of(eventIds).contains(event.get("id").asText())) {
+                array.add(event);
+            }
+        }
+        return out;
+    }
+
+    @Test
+    void aTotalsMarketOfAGameWhoseMoneylineWasClosedIsNotListedInItsPlace() {
+        // seen live on 2026-10-01: Phillies-Braves in play; the moneyline (PHI) was closed at 97%, and the category was
+        // topped up with "Philadelphia Phillies vs. Atlanta Braves: O/U 8.5" under the same ticker PHI
+        gamma.events.handler = call -> mlbLive;
+        gamma.markets.handler = call -> Fixtures.parse(NO_MARKETS);
+        book = ClobBook.of(mlbLive.get("events"));
+        book.install(clob);
+        PolymarketCatalog catalog = catalog(config(0, 3, true));
+
+        catalog.refresh(NOW);
+
+        // the game's moneyline takes the game's place; its totals, spread and first-inning markets are not candidates
+        assertThat(registry.log).containsExactly("listed PM5073589");
+        assertThat(market("PM5073589").symbol()).isEqualTo("PHI");
+        assertThat(market("PM5073589").subtitle()).isEqualTo("Philadelphia Phillies to win · MLB");
+
+        store.append("polymarket", NOW + 1_000, Map.of("PM5073589", bd("0.975"))); // the game is decided
+        assertThat(catalog.watch(NOW + 2_000)).isEqualTo(1);
+        catalog.refresh(NOW + 300_000L);
+
+        assertThat(registry.log).containsExactly("listed PM5073589", "closed PM5073589: " + PolymarketCatalog.REASON_PRICE);
+        assertThat(activeIds(Category.SPORTS)).as("fewer than the 3 configured is fine").isEmpty();
+        // the O/U 8.5 market passes every other rule: it is the type alone that keeps it out
+        JsonNode eventNode = mlbLive.get("events").get(0);
+        GammaMarket totals = GammaMarket.parseAll(eventNode.get("markets"), GammaEvent.parse(eventNode)).stream()
+                .filter(m -> m.id().equals("5165511")).findFirst().orElseThrow();
+        assertThat(totals.question()).isEqualTo("Philadelphia Phillies vs. Atlanta Braves: O/U 8.5");
+        assertThat(totals.sportsMarketType()).isEqualTo("totals");
+        assertThat(catalog.passesStaticRules(totals, NOW + 300_000L)).isTrue();
+        assertThat(catalog.readClob(List.of(totals.token())).get(totals.token()).acceptable()).isTrue();
+        assertThat(catalog.candidates(Category.SPORTS, NOW + 300_000L)).isEmpty();
+    }
+
+    @Test
+    void theTypeRuleDoesNotDependOnTheGameCooldown() {
+        CatalogConfig noCooldown = new CatalogConfig(true, false, List.of("BTC"), List.of(), List.of(), List.of(), true,
+                0, 3, 10, true, 0L);
+        gamma.events.handler = call -> mlbLive;
+        gamma.markets.handler = call -> Fixtures.parse(NO_MARKETS);
+        book = ClobBook.of(mlbLive.get("events"));
+        book.install(clob);
+        registry.add(activePm("PM5073589", "x", Category.SPORTS, null, null).closed(NOW, "test"));
+
+        catalog(noCooldown).refresh(NOW + 1_000L);
+
+        assertThat(registry.log).isEmpty(); // the moneyline is known and closed; the rest of the game says nothing about who wins
+    }
+
+    @Test
+    void aMarketThatIsNotTheGamesWinnerIsNeverASportsCandidate() {
+        // the CS2 event with its BO3 moneyline taken out: what is left is two "Map N Winner" markets (child_moneyline,
+        // both in the band) and the total "Games Total: O/U 2.5"
+        ObjectNode event = (ObjectNode) eventsOf(liveEvents, "1038938").get("events").get(0).deepCopy();
+        ArrayNode markets = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+        for (JsonNode m : event.get("markets")) {
+            if (!"moneyline".equals(m.get("sportsMarketType").asText())) {
+                markets.add(m);
+            }
+        }
+        assertThat(markets).extracting(m -> m.get("sportsMarketType").asText())
+                .containsExactly("child_moneyline", "child_moneyline", "totals");
+        event.set("markets", markets);
+        ObjectNode live = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        live.putArray("events").add(event);
+        gamma.events.handler = call -> live;
+        gamma.markets.handler = call -> Fixtures.parse(NO_MARKETS);
+
+        catalog(config(0, 3, true)).refresh(NOW);
+
+        assertThat(registry.log).isEmpty();
+    }
+
+    @Test
+    void aSportsMarketWithoutAMarketTypeIsNotACandidateAndAPoliticsMarketDoesNotNeedOne() {
+        // a futures market of the sports listing has no sportsMarketType; politics markets never have one
+        ObjectNode shakhtar = copy(sports, 6);
+        assertThat(shakhtar.has("sportsMarketType")).isFalse();
+        book.set(token(sports.get("markets"), "2772194"), "0.5", "0.49", "0.51").install(clob); // in the band, a tight book
+        gamma.markets.handler = call -> "1".equals(call.tagId()) ? wrap(shakhtar) : politics;
+        gamma.events.handler = call -> Fixtures.parse("{\"events\":[]}");
+
+        catalog(config(3, 3, true)).refresh(NOW);
+
+        assertThat(activeIds(Category.SPORTS)).isEmpty();
+        assertThat(activeIds(Category.POLITICS)).hasSize(3);
+        assertThat(GammaMarket.parseAll(politics.get("markets"), null)).allSatisfy(
+                m -> assertThat(m.sportsMarketType()).isNull());
+    }
+
+    @Test
+    void afterAMarketOfAGameWasClosedNoMarketOfThatGameIsListedForSixHours() {
+        // Denmark-Portugal has three moneyline markets: Portugal 0.715, the draw 0.20, Denmark 0.085 (out of the band)
+        gamma.events.handler = call -> eventsOf(liveEvents, "1042358");
+        gamma.markets.handler = call -> Fixtures.parse(NO_MARKETS);
+        PolymarketCatalog catalog = catalog(config(0, 1, true));
+        catalog.refresh(NOW);
+        assertThat(registry.log).containsExactly("listed PM4678642"); // Portugal, the most traded of the game
+
+        store.append("polymarket", NOW + 1_000, Map.of("PM4678642", bd("0.98")));
+        assertThat(catalog.watch(NOW + 2_000)).isEqualTo(1); // closed by the price rule at NOW + 2 s
+        long closedAt = NOW + 2_000;
+
+        catalog.refresh(NOW + 300_000L);
+        assertThat(activeIds(Category.SPORTS)).as("5 minutes after: the draw of the same game is in the band, and waits")
+                .isEmpty();
+        catalog.refresh(closedAt + SIX_HOURS - 1);
+        assertThat(activeIds(Category.SPORTS)).as("one millisecond short of 6 hours").isEmpty();
+        catalog.refresh(closedAt + SIX_HOURS);
+
+        assertThat(activeIds(Category.SPORTS)).as("6 hours after the close").containsExactly("PM4678640");
+        assertThat(market("PM4678640").symbol()).isEqualTo("DRAW");
+    }
+
+    @Test
+    void theCooldownIsKeptInTheRegistryAndSurvivesARestartOfTheCatalog() {
+        gamma.events.handler = call -> eventsOf(liveEvents, "1042358");
+        gamma.markets.handler = call -> Fixtures.parse(NO_MARKETS);
+        catalog(config(0, 1, true)).refresh(NOW);
+        registry.close("PM4678642", PolymarketCatalog.REASON_ABSENT, NOW + 1_000L); // any reason, by anyone
+
+        PolymarketCatalog afterRestart = catalog(config(0, 1, true)); // nothing in memory
+        afterRestart.refresh(NOW + 3 * 3_600_000L);
+
+        assertThat(activeIds(Category.SPORTS)).isEmpty();
+        assertThat(afterRestart.candidates(Category.SPORTS, NOW + 3 * 3_600_000L)).isEmpty();
+    }
+
+    @Test
+    void anotherGameIsNotHeldBackByTheCooldownOfTheOne() {
+        // the two soccer games in play, one place: Denmark-Portugal's Portugal is listed and closed, the draw of that game
+        // waits, and Wales-Norway's Norway (0.495) takes the place
+        gamma.events.handler = call -> eventsOf(liveEvents, "1042358", "1042356");
+        gamma.markets.handler = call -> Fixtures.parse(NO_MARKETS);
+        PolymarketCatalog catalog = catalog(config(0, 1, true));
+        catalog.refresh(NOW);
+        registry.close("PM4678642", PolymarketCatalog.REASON_PRICE, NOW + 1_000L);
+
+        catalog.refresh(NOW + 300_000L);
+
+        assertThat(activeIds(Category.SPORTS)).containsExactly("PM4678632"); // Norway; not the draw of the first game
+    }
+
+    @Test
+    void aCooldownOfZeroTurnsTheRuleOff() {
+        CatalogConfig off = new CatalogConfig(true, false, List.of("BTC"), List.of(), List.of(), List.of(), true, 0, 1, 10,
+                true, 0L);
+        gamma.events.handler = call -> eventsOf(liveEvents, "1042358");
+        gamma.markets.handler = call -> Fixtures.parse(NO_MARKETS);
+        catalog(off).refresh(NOW);
+        registry.close("PM4678642", PolymarketCatalog.REASON_PRICE, NOW + 1_000L);
+
+        catalog(off).refresh(NOW + 2_000L);
+
+        assertThat(activeIds(Category.SPORTS)).containsExactly("PM4678640"); // the draw, at once
+    }
+
+    @Test
+    void aMarketClosedLongAgoOrOfNoGameStartsNoCooldown() {
+        gamma.events.handler = call -> eventsOf(liveEvents, "1042358");
+        gamma.markets.handler = call -> Fixtures.parse(NO_MARKETS);
+        // a market of the game closed 7 hours ago: the cooldown is over; one of another game (and one with no game at
+        // all) closed a minute ago: not this game's business
+        String meta = "{\"gameId\":\"90108425\"}";
+        registry.add(activePm("PM1", "t1", Category.SPORTS, null, meta).closed(NOW - 7 * 3_600_000L, "test"));
+        registry.add(activePm("PM2", "t2", Category.SPORTS, null, "{\"gameId\":\"555\"}").closed(NOW - 60_000L, "test"));
+        registry.add(activePm("PM3", "t3", Category.POLITICS, null, "{\"eventKey\":\"event:90108425\"}")
+                .closed(NOW - 60_000L, "test"));
+
+        catalog(config(0, 1, true)).refresh(NOW);
+
+        assertThat(activeIds(Category.SPORTS)).containsExactly("PM4678642"); // Portugal, as if nothing had closed
     }
 
     // ---------------------------------------------------------------------------------- closing

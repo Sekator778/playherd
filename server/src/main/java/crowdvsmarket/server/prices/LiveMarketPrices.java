@@ -51,11 +51,36 @@ import org.jboss.logging.Logger;
  * ({@link PriceSource#historyKind}). A source whose history is the same kind of number as its ticks
  * (Polymarket's midpoint buckets) fills any hole. A source whose history is another one (Hyperliquid: candles are
  * trade prices, the ticks are mark prices, and a quiet asset's last trade can be a percent away from its
- * mark) may only be the <i>past of the first poll</i> — points older than every live tick of the market —
- * and never a stretch between two polls: a trade price put between marks made a flat mark settle as DOWN
- * and put a dip into a path that the liquidation check used. What such a source still says about a hole
- * between live ticks is evidence for the quiet rule below: any trade inside the hole means the asset was
- * not quiet.
+ * mark) is the <i>past of the first poll</i> — points older than every live tick of the market — and a
+ * <i>bridge over a gap between two live ticks</i> (below), and nothing else: a trade price put between marks in
+ * any other way made a flat mark settle as DOWN and put a dip into a path that the liquidation check used. What
+ * such a source still says about a hole between live ticks is evidence for the quiet rule: any trade inside the
+ * hole means the asset was not quiet.
+ *
+ * <p><b>The bridge</b> ({@link GapBridge}). A hole whose two neighbours are live ticks — the left one may be a
+ * pin or a carried copy standing for a live tick, and a window's start is the left edge when the live tick before it
+ * is still fresh at the start — is healed by the 1-minute candles that overlap it, all or nothing: every minute of
+ * the gap has a closed candle with trades; the live price on each side lies inside the range of its own minute's
+ * candle, widened by {@link PricesConfig#hyperliquidMaxBasis()}; and the gap is not longer than
+ * {@link PricesConfig#hyperliquidMaxHealMs()}. What a candle contributes is what the liquidation check needs, its
+ * low and its high (a third and two thirds into the minute) and its close at the end of the minute — points at
+ * most 20.001 s apart, so a fully covered gap satisfies the maximum gap of 30 s and a candle missing from the answer
+ * breaks it. The bridge covers the whole gap up to the live tick on the right, also the part behind the window's end:
+ * the round that starts there then finds no hole. The boundary prices keep the rule of the candle before the
+ * boundary ({@link HyperliquidPriceSource}), and a pinned boundary is never touched ({@link TickStore#pinBoundary}).
+ *
+ * <p><b>How long a gap is bridged, and what a redeploy does to the running rounds.</b> A gap up to 30 minutes
+ * ({@code herd.prices.hyperliquid.max-heal-ms}): half of the HOURLY round of production, so that one gap puts at most half of
+ * a round on trade prices, and about the length of the stretch over which the marks of the stand were compared
+ * with the candles (docs/research/hl_multi_asset_live.md §13.4); the two checks look at the ends of a gap only, and
+ * the longer it is, the less they say about the middle. A redeploy of the server — a minute or a few without
+ * polls — therefore no longer voids the rounds that were running: when such a round ends, the gap in its ticks is
+ * bridged by the candles (one {@code candleSnapshot}), it settles, and a gap across a round boundary does not
+ * hurt the round after it. The round stays a hole — it is retried, and an hour after its end cancelled with a
+ * refund (Р-23), as before — when the gap is longer than the cap, when a minute of it had no trades (the asset is
+ * not liquid: BTC, ETH, SOL and HYPE had none missing in 24 hours, TSLA only 60% of the 20-minute stretches were
+ * fully traded, §13.5), when a live price is outside the range of its minute by more than the basis, or when the
+ * candle of the live tick on the right is not closed yet (it is asked again after the cooldown).
  *
  * <p><b>A quiet asset</b> (a stock outside its exchange's hours, an illiquid coin): the source may
  * have nothing at all for a hole, because nothing traded. The price of the last <i>live</i> tick then
@@ -215,8 +240,15 @@ public class LiveMarketPrices implements MarketPrices {
      * ({@link Px} units; {@code null} for the head of a window that has no tick before it, or the
      * tail of one that has no tick after it), and whether the tick on the left is a copy of a <i>live</i> one
      * (it stands for a poll's answer, not for a history point).
+     *
+     * <p>What a bridge over the hole needs to know about its two live ticks: {@code leftRealAtMs}, the time of the
+     * live tick the left neighbour stands for ({@code fromMs} itself unless the neighbour is a copy, or a window's
+     * start clamps the edge), and {@code rightAtMs} with {@code rightLive}, the time of the right neighbour — which
+     * for the tail of a window is the first tick after its end, past {@code toMs} — and whether it is a live tick
+     * ({@link Long#MIN_VALUE}: there is none).
      */
-    private record Hole(long fromMs, long toMs, Long leftPx, Long rightPx, boolean leftLive) {
+    private record Hole(long fromMs, long toMs, Long leftPx, Long rightPx, boolean leftLive, long leftRealAtMs,
+                        long rightAtMs, boolean rightLive) {
 
         /** Ticks on both sides, at the same price: a quiet asset's price did not move across the hole. */
         boolean flatBothSides() {
@@ -225,6 +257,12 @@ public class LiveMarketPrices implements MarketPrices {
 
         boolean contains(long atMs) {
             return atMs > fromMs && atMs < toMs;
+        }
+
+        /** A live tick on both sides: something the candles can be checked against. */
+        boolean betweenLiveTicks() {
+            return leftPx != null && leftLive && leftRealAtMs != Long.MIN_VALUE && rightPx != null && rightLive
+                    && rightAtMs != Long.MIN_VALUE;
         }
     }
 
@@ -279,24 +317,33 @@ public class LiveMarketPrices implements MarketPrices {
         boolean startOk = w.hasFloor() && start - w.floorAtMs() <= feed.staleMs();
         long floorAt = startOk ? Math.max(w.floorAtMs(), start) : w.floorAtMs();
         boolean floorLive = w.hasFloor() && w.floorSourceKind() == TickRing.LIVE;
+        long floorRealAt = w.hasFloor() ? w.floorSourceAtMs() : Long.MIN_VALUE; // the tick the floor's price was seen at
         if (!startOk) {
             long a = w.hasFloor() ? floorAt : start - feed.staleMs() - HISTORY_PAD_MS;
             long b = at.length > 0 ? at[0] : end + 1;
             Long left = w.hasFloor() ? Long.valueOf(w.floorPx()) : null;
-            Long right = at.length > 0 ? Long.valueOf(px[0]) : pxAfter(market, end);
-            holes.add(new Hole(a, b, left, right, floorLive));
+            if (at.length > 0) {
+                holes.add(new Hole(a, b, left, px[0], floorLive, floorRealAt, at[0], kind[0] == TickRing.LIVE));
+            } else {
+                long[] after = tickAfter(market, end);
+                holes.add(new Hole(a, b, left, after == null ? null : after[1], floorLive, floorRealAt,
+                        after == null ? Long.MIN_VALUE : after[0], after != null && after[2] == 1L));
+            }
         }
         long previousAt = startOk ? floorAt : Long.MIN_VALUE;
         long previousPx = startOk ? w.floorPx() : 0L;
         boolean previousLive = floorLive; // the real tick a copy at the head of the window stands for is the floor's
+        long previousRealAt = floorRealAt;
         for (int i = 0; i < at.length; i++) {
             if (previousAt != Long.MIN_VALUE && at[i] - previousAt > feed.maxGapMs()) {
-                holes.add(new Hole(previousAt, at[i], previousPx, px[i], previousLive));
+                holes.add(new Hole(previousAt, at[i], previousPx, px[i], previousLive, previousRealAt, at[i],
+                        kind[i] == TickRing.LIVE));
             }
             previousAt = at[i];
             previousPx = px[i];
             if (TickRing.isReal(kind[i])) { // a copy keeps standing for the real tick before it
                 previousLive = kind[i] == TickRing.LIVE;
+                previousRealAt = at[i];
             }
         }
         long lastAt = at.length > 0 ? at[at.length - 1] : (w.hasFloor() ? w.floorAtMs() : Long.MIN_VALUE);
@@ -308,15 +355,21 @@ public class LiveMarketPrices implements MarketPrices {
             Long left = at.length > 0 ? Long.valueOf(px[at.length - 1])
                     : (w.hasFloor() ? Long.valueOf(w.floorPx()) : null);
             boolean leftLive = at.length > 0 ? previousLive : floorLive;
-            holes.add(new Hole(a, end + 1, left, pxAfter(market, end), leftLive));
+            long[] after = tickAfter(market, end);
+            holes.add(new Hole(a, end + 1, left, after == null ? null : after[1], leftLive,
+                    at.length > 0 ? previousRealAt : floorRealAt, after == null ? Long.MIN_VALUE : after[0],
+                    after != null && after[2] == 1L));
         }
         return new Assessment(w, start, end, feed, merge(holes));
     }
 
-    /** The price of the first tick after the window, if the source has come back since; else null. */
-    private Long pxAfter(Market market, long end) {
+    /**
+     * The first tick after the window, if the source has come back since, as {@code {atMs, px, 1 if it is a live
+     * tick else 0}}; else null.
+     */
+    private long[] tickAfter(Market market, long end) {
         long[] tick = store.tickAfter(market.id(), end);
-        return tick == null ? null : tick[1];
+        return tick == null ? null : new long[] {tick[0], tick[1], store.liveTickAfter(market.id(), end) ? 1L : 0L};
     }
 
     private static List<Hole> merge(List<Hole> holes) {
@@ -327,8 +380,8 @@ public class LiveMarketPrices implements MarketPrices {
             if (last == null || h.fromMs() >= last.toMs()) {
                 merged.add(h);
             } else if (h.toMs() > last.toMs()) { // overlapping: one hole, from the first's start to the later end
-                merged.set(merged.size() - 1,
-                        new Hole(last.fromMs(), h.toMs(), last.leftPx(), h.rightPx(), last.leftLive()));
+                merged.set(merged.size() - 1, new Hole(last.fromMs(), h.toMs(), last.leftPx(), h.rightPx(),
+                        last.leftLive(), last.leftRealAtMs(), h.rightAtMs(), h.rightLive()));
             }
         }
         return merged;
@@ -357,10 +410,18 @@ public class LiveMarketPrices implements MarketPrices {
         long pinned = store.latestPin(market.id()).orElse(Long.MIN_VALUE);
         long from = Math.max(holes.get(0).fromMs(), pinned);
         long to = Math.min(holes.get(holes.size() - 1).toMs(), window.endMs());
+        boolean tradePrices = source.historyKind() == PriceSource.HistoryKind.TRADE_PRICES;
+        boolean bridging = tradePrices && config.hyperliquidMaxHealMs() > 0;
+        if (bridging) {
+            for (Hole hole : holes) {
+                if (bridgeable(hole)) {
+                    to = Math.max(to, hole.rightAtMs() + 1); // the candle that holds the live tick on the right too
+                }
+            }
+        }
         if (from >= to) {
             return;
         }
-        boolean tradePrices = source.historyKind() == PriceSource.HistoryKind.TRADE_PRICES;
         PriceSource.History answer;
         try {
             // no lock is held: this blocks on HTTP; the boundaries let a candle source build their prices itself
@@ -383,8 +444,55 @@ public class LiveMarketPrices implements MarketPrices {
         LOG.infof("price history for %s %s: %d point(s) from the source, %d added into %d hole(s)%s", market.id(),
                 window.roundId(), answer.points().size(), added, holes.size(),
                 tradePrices && !inHoles.isEmpty() && added < inHoles.size()
-                        ? " (trade prices are only the past of the first poll, never put between live ticks)" : "");
-        carryQuietHoles(market, window, holes, perHole, answer.lastTrade(), tradePrices);
+                        ? " (trade prices are only the past of the first poll, never put between live ticks, "
+                        + "unless the candles bridge the whole gap)" : "");
+        boolean[] bridged = bridging ? bridgeHoles(market, window, assessment, answer, pinned)
+                : new boolean[holes.size()];
+        carryQuietHoles(market, window, holes, perHole, bridged, answer.lastTrade(), tradePrices);
+    }
+
+    /** A live tick on both sides and a gap within the cap: worth fetching the candles up to the tick on the right. */
+    private boolean bridgeable(Hole hole) {
+        return hole.betweenLiveTicks() && hole.rightAtMs() - hole.leftRealAtMs() <= config.hyperliquidMaxHealMs();
+    }
+
+    /**
+     * Bridges every hole that lies between two live ticks with the candles of the answer, hole by hole and each
+     * all or nothing ({@link GapBridge}); returns which holes were bridged. The points go to the ring like any
+     * history ({@link TickStore#mergeHistory}): never over a tick, never at or before the latest pinned boundary.
+     */
+    private boolean[] bridgeHoles(Market market, RoundWindow window, Assessment assessment, PriceSource.History answer,
+                                  long pinned) {
+        List<Hole> holes = assessment.holes();
+        boolean[] bridged = new boolean[holes.size()];
+        // the boundary prices of this window the source priced itself (the close of the candle before the boundary)
+        List<PricePoint> atBoundaries = answer.points().stream()
+                .filter(p -> p.atMs() == window.startMs() || p.atMs() == window.endMs()).toList();
+        BigDecimal maxBasis = BigDecimal.valueOf(config.hyperliquidMaxBasis());
+        for (int i = 0; i < holes.size(); i++) {
+            Hole hole = holes.get(i);
+            long fillFrom = Math.max(hole.fromMs(), pinned);
+            if (!hole.betweenLiveTicks() || fillFrom >= hole.rightAtMs()) {
+                continue; // nothing to check the candles against, or nothing left that may still be merged
+            }
+            GapBridge.Gap gap = new GapBridge.Gap(hole.leftRealAtMs(), Px.decode(hole.leftPx()), fillFrom,
+                    hole.rightAtMs(), Px.decode(hole.rightPx()));
+            GapBridge.Result result = GapBridge.bridge(answer.bars(), gap, atBoundaries, assessment.feed().maxGapMs(),
+                    config.hyperliquidMaxHealMs(), maxBasis, p -> usable(market, p));
+            if (result.ok()) {
+                int added = store.mergeHistory(market.id(), result.points(), false);
+                bridged[i] = true;
+                LOG.infof("price history for %s %s: the gap between the live ticks of %s and %s (%d s) is bridged "
+                        + "by the candles, %d point(s) of %d added", market.id(), window.roundId(),
+                        Instant.ofEpochMilli(hole.leftRealAtMs()), Instant.ofEpochMilli(hole.rightAtMs()),
+                        (hole.rightAtMs() - hole.leftRealAtMs()) / 1000, added, result.points().size());
+            } else {
+                LOG.infof("price history for %s %s: the gap between the live ticks of %s and %s stays a hole: %s",
+                        market.id(), window.roundId(), Instant.ofEpochMilli(hole.leftRealAtMs()),
+                        Instant.ofEpochMilli(hole.rightAtMs()), result.refusal());
+            }
+        }
+        return bridged;
     }
 
     /**
@@ -397,12 +505,12 @@ public class LiveMarketPrices implements MarketPrices {
      * trade price. Only called after the source answered.
      */
     private void carryQuietHoles(Market market, RoundWindow window, List<Hole> holes, int[] perHole,
-                                 Optional<PricePoint> lastTrade, boolean tradePrices) {
+                                 boolean[] bridged, Optional<PricePoint> lastTrade, boolean tradePrices) {
         List<PricePoint> carried = new ArrayList<>();
         for (int i = 0; i < holes.size(); i++) {
             Hole hole = holes.get(i);
-            if (perHole[i] > 0 || hole.leftPx() == null || (tradePrices && !hole.leftLive())) {
-                continue;
+            if (perHole[i] > 0 || bridged[i] || hole.leftPx() == null || (tradePrices && !hole.leftLive())) {
+                continue; // a bridged hole has its points; one the asset traded in is not a quiet one
             }
             long spanEnd = Math.min(hole.toMs(), window.endMs() + 1);
             if (spanEnd - hole.fromMs() > config.quietCarryMaxMs()) {

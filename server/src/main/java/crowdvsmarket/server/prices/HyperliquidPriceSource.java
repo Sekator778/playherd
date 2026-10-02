@@ -52,34 +52,40 @@ import org.jboss.logging.Logger;
  *
  * <p><b>Candles are trade prices, ticks are mark prices</b> (§3.4, §4.1, §10 p. 5): the mark is a median of
  * the oracle, the book and other exchanges, and a quiet asset's last trade can sit a percent away from it. So
- * the history is declared {@link HistoryKind#TRADE_PRICES} and {@link LiveMarketPrices} puts it to two uses only.
+ * the history is declared {@link HistoryKind#TRADE_PRICES} and {@link LiveMarketPrices} puts it to three uses.
  * <b>(1) The past of the first poll</b>: points older than every live tick of the market — what
  * {@link HistorySeeder} seeds a new market with, so that the first running round has an opening price and the
- * chart is not empty. <b>(2) Evidence</b>: whether the asset traded inside a hole between live ticks (a trade
+ * chart is not empty. <b>(2) A bridge over a gap between two live ticks</b>: {@link History#bars}, every closed
+ * candle with trades of the answer, of which {@link GapBridge} makes the points of the gap — all or nothing, only
+ * when every minute of the gap has such a candle and each live neighbour's mark lies inside the range its own
+ * minute traded at (within {@code herd.prices.hyperliquid.max-basis}); that is what a redeploy needs, see
+ * {@link LiveMarketPrices}. <b>(3) Evidence</b>: whether the asset traded inside a hole between live ticks (a trade
  * means it was not quiet) and its last trade before the hole ({@link History#lastTrade}), which is what lets a
  * quiet asset's last <i>live</i> price be carried across a hole. A trade price is never put into a hole next to
- * live ticks, and this source never carries a candle's close forward by itself — both used to, and a flat mark
- * settled as DOWN on a close of an old trade, and a path got a dip that the liquidation check used.
+ * live ticks in any other way, and this source never carries a candle's close forward by itself — both used to,
+ * and a flat mark settled as DOWN on the close of an old trade, and a path got a dip that the liquidation check
+ * used.
  *
  * <p><b>What a candle gives.</b> Only a candle <i>with trades</i> ({@code n > 0}) holds a price: Hyperliquid's own
  * filler candles for quiet minutes ({@code n = 0}, {@code o = h = l = c =} the previous close, §4.3) say nothing
  * and are skipped, and a candle that is still open ({@code T} not yet past — its high and low change by the
- * second, and its {@code T} is in the future) is skipped as well, so that a seed never quotes the high of the
- * minute in progress as a fresh price.
+ * second, and its {@code T} is in the future) is skipped as well, so that neither a seed nor a bridge quotes the
+ * high of the minute in progress as a price.
  *
  * <p><b>Boundary convention: the price at time {@code t} is the last trade at or before {@code t}</b>, the same as
  * for a live tick ({@link LiveMarketPrices}: {@code P(t)} is the last tick with {@code at <= t}). A candle
  * {@code [t, T]} says: its close is the last trade up to {@code T} (a point at {@code T = t + 59 999 ms}); its low
  * and high happened some time inside the minute (two shape points at {@code t + 20 s} and {@code t + 40 s}, the
  * low first when the candle closed up, the high first when it closed down — a chart wants the extremes, not
- * their exact time, which nobody knows); its open is the <i>first</i> trade at or after {@code t}, so it is
- * <b>not</b> the price at {@code t}: that is the previous candle's close, one millisecond earlier. Hence a
- * candle that has a predecessor contributes three points; only the first row of an answer, which has no
- * predecessor to take the price at its start from, also contributes its open. A round that ends at the minute
- * {@code end} closes on the last trade of the minute before it, never on the first trade after it (measured
- * 2026-10-02: {@code endTime = end} returns the candle that starts at {@code end} as its last row,
+ * their exact time, which nobody knows: {@link PriceSource.Bar#shapePoints}); its open is the <i>first</i> trade
+ * at or after {@code t}, so it is <b>not</b> the price at {@code t}: that is the previous candle's close, one
+ * millisecond earlier. Hence a candle that has a predecessor contributes three points; only the first row of an
+ * answer, which has no predecessor to take the price at its start from, also contributes its open. A round that
+ * ends at the minute {@code end} closes on the last trade of the minute before it, never on the first trade after
+ * it (measured 2026-10-02: {@code endTime = end} returns the candle that starts at {@code end} as its last row,
  * {@code endTime = end − 1} stops at the minute before — hl_multi_asset_live.md §4.1); {@link #history}
- * therefore asks with {@code endTime = toMs − 1}.
+ * therefore asks with {@code endTime = toMs − 1}. A bridge needs the candle that holds the live tick on the right
+ * of the gap, which is asked for with {@code toMs} one millisecond past that tick.
  *
  * <p><b>The boundary price comes from the closed candle before the boundary, not from a shape point.</b> A shape
  * point is a candle's low or high at an invented time; a boundary price taken from one is a wick, and one that
@@ -101,9 +107,10 @@ public class HyperliquidPriceSource implements PriceSource {
     public static final List<String> DEXES = List.of("", "xyz");
 
     static final long CANDLE_MS = 60_000L;
-    static final long FIRST_EXTREME_OFFSET_MS = 20_000L;
-    static final long SECOND_EXTREME_OFFSET_MS = 40_000L;
-    /** A history request starts this long before its range, to find the last trade of a quiet asset. */
+    /**
+     * A history request starts this long before its range: to find the last trade of a quiet asset, and so that the
+     * candle of the live tick on the left of a gap (which a bridge checks that tick against) is in the answer.
+     */
     static final long LOOKBACK_MS = 30 * 60_000L;
 
     private final Supplier<HyperliquidInfoApi> api;
@@ -323,7 +330,8 @@ public class HyperliquidPriceSource implements PriceSource {
     /**
      * What a {@code candleSnapshot} answer says about {@code [fromMs, toMs]}: the points of its closed candles
      * with trades ({@link #candlePoints}), a point at each boundary that the close of a candle before it can
-     * price ({@link #boundaryPoint}), and the last trade before the range ({@link #lastTradeBefore}).
+     * price ({@link #boundaryPoint}), the last trade before the range ({@link #lastTradeBefore}), and those
+     * candles themselves, all of the answer ({@link #bars}), for a bridge over a gap between live ticks.
      *
      * @param nowMs the clock: a candle whose {@code T} is not before it is still open and says nothing yet
      */
@@ -340,7 +348,18 @@ public class HyperliquidPriceSource implements PriceSource {
             }
         }
         points.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
-        return new History(points, lastTradeBefore(candles, fromMs, nowMs));
+        return new History(points, lastTradeBefore(candles, fromMs, nowMs), bars(candles, nowMs));
+    }
+
+    /** The closed candles with trades of an answer as bars, oldest first: what a minute of the market traded at. */
+    static List<PriceSource.Bar> bars(List<Candle> candles, long nowMs) {
+        List<PriceSource.Bar> bars = new ArrayList<>();
+        for (Candle c : candles) {
+            if (c.closed(nowMs) && c.hasTrades()) {
+                bars.add(c.toBar());
+            }
+        }
+        return bars;
     }
 
     /**
@@ -372,13 +391,12 @@ public class HyperliquidPriceSource implements PriceSource {
             if (!c.closed(nowMs) || !c.hasTrades()) {
                 continue;
             }
-            boolean up = c.close().compareTo(c.open()) >= 0;
             if (i == 0 && c.t() < toMs) {
                 add(out, c.t(), c.open(), fromMs, toMs); // no earlier candle to take the price at t from
             }
-            add(out, c.t() + FIRST_EXTREME_OFFSET_MS, up ? c.low() : c.high(), fromMs, toMs);
-            add(out, c.t() + SECOND_EXTREME_OFFSET_MS, up ? c.high() : c.low(), fromMs, toMs);
-            add(out, c.closeAt(), c.close(), fromMs, toMs);
+            for (PricePoint p : c.toBar().shapePoints()) { // the extremes inside the minute, the close at its end
+                add(out, p.atMs(), p.raw(), fromMs, toMs);
+            }
         }
         out.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
         return out;
@@ -447,13 +465,20 @@ public class HyperliquidPriceSource implements PriceSource {
             if (t == Long.MIN_VALUE || open == null || high == null || low == null || close == null) {
                 return null;
             }
-            return new Candle(t, row.path("T").asLong(t + CANDLE_MS - 1), open, high, low, close,
-                    row.path("n").asLong(-1L));
+            long closeAt = row.path("T").asLong(t + CANDLE_MS - 1);
+            if (closeAt < t) {
+                closeAt = t + CANDLE_MS - 1; // a candle cannot end before it starts
+            }
+            return new Candle(t, closeAt, open, high, low, close, row.path("n").asLong(-1L));
         }
 
         /** A minute with trades holds a price; a filler ({@code n = 0}) repeats the previous close. */
         boolean hasTrades() {
             return trades != 0;
+        }
+
+        PriceSource.Bar toBar() {
+            return new PriceSource.Bar(t, closeAt, open, high, low, close);
         }
 
         /** {@code T} is past: no trade will change the row any more (hl_multi_asset_live.md §4.1: closed means T < now). */

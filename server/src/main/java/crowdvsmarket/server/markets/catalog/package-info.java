@@ -5,7 +5,8 @@
  * configured perpetuals from Hyperliquid's own parameters and closes the market of an asset the
  * exchange delisted,
  * {@link crowdvsmarket.server.markets.catalog.PolymarketCatalog} keeps the configured number of
- * politics and sports odds markets and closes them when they stop being tradable,
+ * politics and sports odds markets — in sports only the markets that say who wins a game, and none of a game
+ * a market of which it closed within the last hours — and closes them when they stop being tradable,
  * {@link crowdvsmarket.server.markets.catalog.SyntheticCatalog} is the offline equivalent for
  * {@code herd.prices.source=synthetic}. Settings: {@link crowdvsmarket.server.markets.catalog.CatalogConfig}.
  *

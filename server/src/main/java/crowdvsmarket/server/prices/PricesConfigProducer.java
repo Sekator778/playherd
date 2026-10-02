@@ -56,11 +56,16 @@ public class PricesConfigProducer {
             @ConfigProperty(name = "herd.prices.hyperliquid.seed-budget-per-minute",
                     defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_SEED_BUDGET) int seedBudgetPerMinute,
             @ConfigProperty(name = "herd.prices.require-minute-aligned-rounds",
-                    defaultValue = PricesConfig.DEFAULT_REQUIRE_ALIGNED_ROUNDS) boolean requireMinuteAlignedRounds) {
+                    defaultValue = PricesConfig.DEFAULT_REQUIRE_ALIGNED_ROUNDS) boolean requireMinuteAlignedRounds,
+            @ConfigProperty(name = "herd.prices.hyperliquid.max-basis",
+                    defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_MAX_BASIS) double hyperliquidMaxBasis,
+            @ConfigProperty(name = "herd.prices.hyperliquid.max-heal-ms",
+                    defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_MAX_HEAL_MS) long hyperliquidMaxHealMs) {
         return new PricesConfig(PricesConfig.isLiveMode(mode), PricesConfig.SourceKind.parse(source),
                 dailySec * 1000L, hyperliquidUrl, clobUrl, gammaUrl, dataUrl, hyperliquidStaleMs,
                 hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs,
                 syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs,
-                quietCarryMaxMs, seedBudgetPerMinute, requireMinuteAlignedRounds);
+                quietCarryMaxMs, seedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
+                hyperliquidMaxHealMs);
     }
 }

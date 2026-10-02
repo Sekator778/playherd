@@ -43,11 +43,59 @@ public interface PriceSource {
      * What the numbers of {@link #history} are, compared with the ticks of {@link #poll}.
      * {@link #SAME_AS_LIVE}: the same quantity (Polymarket's midpoint buckets against its live midpoints) — a
      * history point may stand between two ticks. {@link #TRADE_PRICES}: another one (Hyperliquid's candles are
-     * trade prices, its ticks are mark prices) — history may be the past of the first tick but never a stretch
-     * between two ticks ({@link LiveMarketPrices}).
+     * trade prices, its ticks are mark prices) — history is the past of the first tick, and it bridges a gap between
+     * two live ticks only as a whole, when every bar of the gap is there and the live prices around it lie inside
+     * their own bars ({@link LiveMarketPrices}, {@code GapBridge}); it is never put between two live ticks otherwise.
      */
     enum HistoryKind {
         SAME_AS_LIVE, TRADE_PRICES
+    }
+
+    /**
+     * One closed bar of trade prices, with trades in it (a 1-minute candle): the span it covers, {@code startMs}
+     * to {@code endMs} both inclusive (Hyperliquid: {@code t} and {@code T = t + 59 999}), and what traded in it.
+     * Where inside the bar the extremes happened nobody knows, so a bar puts them a third and two thirds into its
+     * span — the low first when it closed up, the high first when it closed down — and its close at its end:
+     * consecutive bars then give points at most a third of a bar (20.001 s for a minute) apart, which is what
+     * lets a gap that is fully covered satisfy the "no two neighbouring points further apart than the maximum gap"
+     * rule and a missing bar break it ({@code GapBridge}).
+     */
+    record Bar(long startMs, long endMs, BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close) {
+
+        long widthMs() {
+            return endMs - startMs + 1;
+        }
+
+        boolean contains(long atMs) {
+            return atMs >= startMs && atMs <= endMs;
+        }
+
+        /** The bar closed at or above where it opened: its low came before its high. */
+        boolean closedUp() {
+            return close.compareTo(open) >= 0;
+        }
+
+        long firstExtremeAtMs() {
+            return startMs + widthMs() / 3;
+        }
+
+        long secondExtremeAtMs() {
+            return startMs + 2 * (widthMs() / 3);
+        }
+
+        BigDecimal firstExtreme() {
+            return closedUp() ? low : high;
+        }
+
+        BigDecimal secondExtreme() {
+            return closedUp() ? high : low;
+        }
+
+        /** The points a bar stands for: its two extremes inside its span and its close at its end, oldest first. */
+        List<PricePoint> shapePoints() {
+            return List.of(new PricePoint(firstExtremeAtMs(), firstExtreme()),
+                    new PricePoint(secondExtremeAtMs(), secondExtreme()), new PricePoint(endMs, close));
+        }
     }
 
     /**
@@ -56,11 +104,18 @@ public interface PriceSource {
      * @param lastTrade the price of the last trade the source knows of before the requested range, with the time
      *                  it happened — evidence for "the asset has not traded since" (empty for a source with no
      *                  notion of a trade)
+     * @param bars      for a source whose history is {@link HistoryKind#TRADE_PRICES}: every closed bar with trades
+     *                  of the answer (it starts earlier than the range asked for, see the source), oldest first —
+     *                  what {@code GapBridge} bridges a gap between two live ticks with; empty otherwise
      */
-    record History(List<PricePoint> points, Optional<PricePoint> lastTrade) {
+    record History(List<PricePoint> points, Optional<PricePoint> lastTrade, List<Bar> bars) {
+
+        public History(List<PricePoint> points, Optional<PricePoint> lastTrade) {
+            this(points, lastTrade, List.of());
+        }
 
         public static History of(List<PricePoint> points) {
-            return new History(points, Optional.empty());
+            return new History(points, Optional.empty(), List.of());
         }
     }
 

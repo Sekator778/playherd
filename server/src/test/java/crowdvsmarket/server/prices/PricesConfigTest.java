@@ -12,7 +12,45 @@ class PricesConfigTest {
         return new PricesConfigProducer().pricesConfig(mode, source, dailySec, PricesConfig.DEFAULT_HYPERLIQUID_URL,
                 PricesConfig.DEFAULT_POLYMARKET_CLOB_URL, PricesConfig.DEFAULT_POLYMARKET_GAMMA_URL,
                 PricesConfig.DEFAULT_POLYMARKET_DATA_URL, 15_000, 20_000, 30_000, 30_000, 90_000, 5_000, 10_000, 60_000,
-                3_000, 5_000, 600_000L, 260, true);
+                3_000, 5_000, 600_000L, 260, true, 0.0015, 1_800_000L);
+    }
+
+    @Test
+    void theGapSettingsHaveTheirDefaultsAndTheEarlierConstructorsKeepWorking() {
+        PricesConfig c = PricesConfig.defaults();
+
+        assertThat(c.hyperliquidMaxBasis()).isEqualTo(0.0015); // 15 bp
+        assertThat(c.hyperliquidMaxHealMs()).isEqualTo(30 * 60_000L); // half an hour
+        PricesConfig twenty = new PricesConfig(true, PricesConfig.SourceKind.LIVE, 900_000L, "h", "c", "g", "d", 15_000,
+                20_000, 30_000, 30_000, 90_000, 5_000, 10_000, 60_000, 3_000, 5_000, 600_000L, 260, true); // before the bridge
+        assertThat(twenty.hyperliquidMaxBasis()).isEqualTo(0.0015);
+        assertThat(twenty.hyperliquidMaxHealMs()).isEqualTo(1_800_000L);
+        PricesConfig old = new PricesConfig(true, PricesConfig.SourceKind.LIVE, 900_000L, "h", "c", "g", "d", 15_000,
+                20_000, 30_000, 30_000, 90_000, 5_000, 10_000, 60_000, 3_000, 5_000);
+        assertThat(old.hyperliquidMaxBasis()).isEqualTo(0.0015);
+        assertThat(old.hyperliquidMaxHealMs()).isEqualTo(1_800_000L);
+        assertThat(c.withHyperliquidMaxBasis(0.002).hyperliquidMaxBasis()).isEqualTo(0.002);
+        assertThat(c.withHyperliquidMaxHealMs(0).hyperliquidMaxHealMs()).isZero(); // 0 switches bridging off
+        // the other settings survive the change of one of them
+        assertThat(c.withHyperliquidMaxBasis(0.002).hyperliquidMaxHealMs()).isEqualTo(1_800_000L);
+        assertThat(c.withHyperliquidMaxHealMs(5).hyperliquidMaxBasis()).isEqualTo(0.0015);
+        assertThat(c.withMode(true, PricesConfig.SourceKind.SYNTHETIC).hyperliquidMaxBasis()).isEqualTo(0.0015);
+        assertThat(c.withQuietCarryMaxMs(1L).hyperliquidMaxHealMs()).isEqualTo(1_800_000L);
+        assertThat(produce("live", "live", 900).hyperliquidMaxBasis()).isEqualTo(0.0015);
+    }
+
+    @Test
+    void aNegativeOrNonsenseGapSettingFailsAtStartupNotAtTheFirstSettlement() {
+        PricesConfig c = PricesConfig.defaults();
+
+        assertThatThrownBy(() -> c.withHyperliquidMaxBasis(-0.001)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("herd.prices.hyperliquid.max-basis");
+        assertThatThrownBy(() -> c.withHyperliquidMaxBasis(Double.NaN)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> c.withHyperliquidMaxBasis(Double.POSITIVE_INFINITY))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> c.withHyperliquidMaxHealMs(-1)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("herd.prices.hyperliquid.max-heal-ms");
+        assertThat(c.withHyperliquidMaxBasis(0).hyperliquidMaxBasis()).isZero(); // zero tolerance is legal (strict)
     }
 
     @Test

@@ -34,10 +34,12 @@ public class CatalogConfigProducer {
             @ConfigProperty(name = "herd.markets.odds.max-leverage",
                     defaultValue = CatalogConfig.DEFAULT_ODDS_MAX_LEVERAGE) int oddsMaxLeverage,
             @ConfigProperty(name = "herd.markets.polymarket.in-play-first",
-                    defaultValue = CatalogConfig.DEFAULT_IN_PLAY_FIRST) boolean inPlayFirst) {
+                    defaultValue = CatalogConfig.DEFAULT_IN_PLAY_FIRST) boolean inPlayFirst,
+            @ConfigProperty(name = "herd.markets.polymarket.game-cooldown",
+                    defaultValue = CatalogConfig.DEFAULT_GAME_COOLDOWN) String gameCooldown) {
         return new CatalogConfig(prices.liveSources(), prices.syntheticSource(), CatalogConfig.parseNames(crypto),
                 CatalogConfig.parseNames(stocks), CatalogConfig.parseNames(indices),
                 CatalogConfig.parseNames(commodities), polymarketEnabled, politicsCount, sportsCount,
-                oddsMaxLeverage, inPlayFirst);
+                oddsMaxLeverage, inPlayFirst, CatalogConfig.parseDurationMs(gameCooldown));
     }
 }

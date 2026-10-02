@@ -12,7 +12,8 @@
  *        |     HistorySeeder  <-- catalogs         LiveMarketPrices (MarketPrices):  latest / series / resolve / soFar
  *        |        ^ RunningWindows (where the      |       --> RoundPath (≤ 30 candles)
  *        |        | running windows began)         |  a hole in a round window --> PriceSource.historyOf(...)
- *        | restore at start / prune every 10 min   |  once per cooldown; what it may fill depends on the history's kind
+ *        | restore at start / prune every 10 min   |  once per cooldown; what it may fill depends on the history's kind;
+ *        |                                         |  candles bridge a gap between two live ticks: GapBridge
  *   HyperliquidLiveState / PolymarketLiveState: what a poll tells the catalog (delisted, token missing —
  *                                               as consecutive successful answers)
  *   RoundAlignmentCheck: at start-up, refuses round boundaries that are not on a whole minute
@@ -21,6 +22,12 @@
  * The fixed contract is {@link crowdvsmarket.server.prices.MarketPrices} and its four records;
  * everything else here is replaceable. Nothing in this package runs with {@code herd.mode=replay}.
  * Settings: {@link crowdvsmarket.server.prices.PricesConfig}.
+ *
+ * <p>A redeploy leaves a gap in the ticks of a running round. For a source whose history is trade prices
+ * (Hyperliquid's candles against its marks) {@code GapBridge} bridges the gap with the lows, highs and closes of the
+ * candles — all or nothing, when every minute of it traded, the live marks around it lie inside their own minute's
+ * range, and it is not longer than {@code herd.prices.hyperliquid.max-heal-ms}; otherwise the round waits and is
+ * refunded an hour after its end, as it always was.
  *
  * <p>Only a poll makes a quote: history, a quiet asset's carried price and the boundary pin of a settled round
  * live in the ring (a price is looked up there) but are never what {@code latest()} answers, and a pin is not

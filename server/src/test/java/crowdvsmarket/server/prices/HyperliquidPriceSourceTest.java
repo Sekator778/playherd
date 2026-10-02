@@ -509,6 +509,65 @@ class HyperliquidPriceSourceTest {
         assertThat(api.info.requests.get(0).get("req").get("endTime").asLong()).isEqualTo(330_000L - 1);
     }
 
+    // ------------------------------------------------------ the bars a bridge over a gap is made of
+
+    @Test
+    void theAnswerCarriesEveryClosedCandleWithTradesAsABarNotOnlyTheOnesInsideTheRange() {
+        JsonNode rows = minuteCandles(6); // minutes 1..6, each n = 4
+        long now = 10 * 60_000L;
+
+        // the range is minute 4 only: the bars are all six minutes of the answer, the left neighbour's candle among them
+        PriceSource.History answer = HyperliquidPriceSource.historyAnswer(rows, 4 * 60_000L, 5 * 60_000L, now);
+
+        assertThat(answer.bars()).extracting(PriceSource.Bar::startMs).containsExactly(60_000L, 120_000L, 180_000L,
+                240_000L, 300_000L, 360_000L);
+        PriceSource.Bar third = answer.bars().get(2); // minute 3: o 102, h 113, l 93, c 103
+        assertThat(third.endMs()).isEqualTo(239_999L);
+        assertThat(third.open()).isEqualByComparingTo("102");
+        assertThat(third.high()).isEqualByComparingTo("113");
+        assertThat(third.low()).isEqualByComparingTo("93");
+        assertThat(third.close()).isEqualByComparingTo("103");
+        // a source that answers a plain history() is no bar source
+        assertThat(PriceSource.History.of(List.of()).bars()).isEmpty();
+        assertThat(new PriceSource.History(List.of(), java.util.Optional.empty()).bars()).isEmpty();
+    }
+
+    @Test
+    void aFillerACandleStillOpenAndAGarbageRowAreNoBars() {
+        String filler = "{\"t\":60000,\"T\":119999,\"o\":\"5\",\"h\":\"5\",\"l\":\"5\",\"c\":\"5\",\"n\":0}";
+        String traded = "{\"t\":120000,\"T\":179999,\"o\":\"5\",\"h\":\"6\",\"l\":\"4\",\"c\":\"5\",\"n\":2}";
+        String open = "{\"t\":180000,\"T\":239999,\"o\":\"5\",\"h\":\"6\",\"l\":\"4\",\"c\":\"5\",\"n\":9}";
+        String garbage = "{\"t\":240000,\"o\":\"x\"}";
+
+        PriceSource.History answer = HyperliquidPriceSource.historyAnswer(
+                Fixtures.parse("[" + open + "," + traded + "," + garbage + "," + filler + "]"), 0, 400_000L, 200_000L);
+
+        assertThat(answer.bars()).extracting(PriceSource.Bar::startMs).containsExactly(120_000L); // oldest first, only it
+    }
+
+    @Test
+    void aCandleThatSaysItEndsBeforeItStartsIsStillAMinuteLong() {
+        PriceSource.History answer = HyperliquidPriceSource.historyAnswer(Fixtures.parse(
+                "[{\"t\":120000,\"T\":5,\"o\":\"5\",\"h\":\"6\",\"l\":\"4\",\"c\":\"5\",\"n\":2}]"), 0, 400_000L,
+                400_000L);
+
+        assertThat(answer.bars()).hasSize(1);
+        assertThat(answer.bars().get(0).widthMs()).isEqualTo(60_000L);
+    }
+
+    @Test
+    void theCandlePointsAreTheShapePointsOfItsBarSoASeedAndABridgePlaceThemAlike() {
+        JsonNode rows = minuteCandles(3);
+        long now = 10 * 60_000L;
+
+        PriceSource.History answer = HyperliquidPriceSource.historyAnswer(rows, 120_000L, 179_999L, now);
+
+        // minute 2 (t = 120 000) in the range: the points of the answer are exactly the bar's
+        PriceSource.Bar bar = answer.bars().get(1);
+        assertThat(bar.startMs()).isEqualTo(120_000L);
+        assertThat(answer.points()).isEqualTo(bar.shapePoints());
+    }
+
     // ---------------------------------------------------------- the candle in progress is not seeded
 
     @Test

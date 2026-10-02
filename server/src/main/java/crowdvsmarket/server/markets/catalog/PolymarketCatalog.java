@@ -9,6 +9,7 @@ import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.markets.MarketStatus;
 import crowdvsmarket.server.markets.NewMarket;
 import crowdvsmarket.server.prices.Dec;
 import crowdvsmarket.server.prices.HistorySeeder;
@@ -48,14 +49,27 @@ import org.jboss.logging.Logger;
  *
  * <p><b>Candidates</b> come from {@code GET /markets/keyset?tag_id=<2 politics | 1 sports>&closed=false&
  * order=volume24hr&ascending=false&limit=50}; for sports the games in play come first
- * ({@code GET /events/keyset?tag_id=1&live=true&closed=false}), then moneyline markets before the
- * rest. A candidate accepts orders, has an order book, has exactly two outcomes, is not closed, ends
- * at least 30 minutes from now, is not in the registry yet (a closed market is never re-listed) and
- * belongs to an event (a game, when there is one) that has no listed market yet — at most one market
- * per event. It is then checked against the live CLOB: the midpoint of outcome 0 in [0.10, 0.90]
+ * ({@code GET /events/keyset?tag_id=1&live=true&closed=false}). A candidate accepts orders, has an order book,
+ * has exactly two outcomes, is not closed, ends at least 30 minutes from now, is not in the registry yet (a closed
+ * market is never re-listed) and belongs to an event (a game, when there is one) that has no listed market yet — at
+ * most one market per event. It is then checked against the live CLOB: the midpoint of outcome 0 in [0.10, 0.90]
  * and the spread {@code ≤ 0.05} (best ask − best bid; measured: {@code BUY} is the bid and
  * {@code SELL} the ask, the docs say the opposite). Degenerate prices (0.0005, 0.9995) and wide
  * books are therefore never listed.
+ *
+ * <p><b>Sports lists only "who wins" markets.</b> A game has dozens of markets (a baseball game 31 of eight types: the
+ * winner, spreads, totals such as "O/U 8.5", first-inning and team totals — measured 2026-10-02,
+ * polymarket_data_api.md §13.7) and only the winner is a bet on the game's outcome the way a card says it. So a
+ * sports candidate must be a <i>moneyline</i> market — Gamma's {@code sportsMarketType == "moneyline"}, the market
+ * of the game itself ({@code child_moneyline} is one map or set of a series, {@code first_half_moneyline} and
+ * {@code q1_moneyline} a period) — and a sports market without that field (a futures market such as the winner of a
+ * league) is not a candidate. Politics markets have no such field and are not asked for it. And once a market of a
+ * game ({@code gameId}) was closed by the catalog, whatever the reason, no market of that game is listed again for
+ * {@code herd.markets.polymarket.game-cooldown} (6 hours by default): the game was decided or is over, and what is
+ * left of it — seen live on 2026-10-01, a totals market listed under the ticker of the moneyline that had just been
+ * closed at 97% — is no bet on anything that is still open. The cooldown is read from the registry (the closed
+ * market's {@code closedAtMs} and the {@code gameId} in its {@code sourceMeta}), so it survives a restart. A category
+ * with fewer markets than its configured count is fine: it is topped up when the next game appears.
  *
  * <p><b>Closing</b> ({@code registry.close(id, reason, now)}): closed at the source (Gamma
  * {@code closed}, looked up by token at every refresh — with {@code closed=true}: a lookup by token
@@ -301,9 +315,9 @@ public class PolymarketCatalog {
     }
 
     /**
-     * The candidates of a category in the order they are tried: games in play first (sports), then
-     * the volume listing — with moneyline markets ahead of the rest for sports. Only markets that
-     * pass the rules that need no live price.
+     * The candidates of a category in the order they are tried: games in play first (sports), then the volume
+     * listing. Only markets that pass the rules that need no live price — and, for sports, only moneyline markets
+     * of games with no market closed within the cooldown (class comment).
      */
     List<GammaMarket> candidates(String category, long nowMs) {
         boolean sports = Category.SPORTS.equals(category);
@@ -318,28 +332,67 @@ public class PolymarketCatalog {
                         continue;
                     }
                     List<GammaMarket> markets = GammaMarket.parseAll(eventNode.path("markets"), event);
-                    markets.sort(Comparator.comparing((GammaMarket m) -> !m.isMoneyline())
-                            .thenComparing(Comparator.comparingDouble(GammaMarket::volume24hr).reversed()));
+                    markets.sort(Comparator.comparingDouble(GammaMarket::volume24hr).reversed());
                     ordered.addAll(markets);
                 }
             }
         }
         JsonNode listing = gamma.get().markets(sports ? TAG_SPORTS : TAG_POLITICS, false, "volume24hr", false,
                 MARKETS_LIMIT);
-        List<GammaMarket> byVolume = GammaMarket.parseAll(listing == null ? null : listing.path("markets"), null);
-        if (sports) {
-            byVolume.sort(Comparator.comparing((GammaMarket m) -> !m.isMoneyline())); // stable: volume order is kept
-        }
-        ordered.addAll(byVolume);
+        ordered.addAll(GammaMarket.parseAll(listing == null ? null : listing.path("markets"), null));
 
+        Set<String> cooling = sports ? gamesCoolingDown(nowMs) : Set.of();
         List<GammaMarket> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
+        int notWinner = 0;
+        int cooled = 0;
         for (GammaMarket market : ordered) {
-            if (seen.add(market.id()) && registry.byId(idOf(market)).isEmpty() && passesStaticRules(market, nowMs)) {
+            if (!seen.add(market.id()) || registry.byId(idOf(market)).isPresent()) {
+                continue;
+            }
+            if (sports && !market.isMoneyline()) {
+                notWinner++; // a total, a spread, a prop, a map of a series, a futures market: not "who wins the game"
+            } else if (sports && market.event() != null && market.event().gameId() != null
+                    && cooling.contains(market.event().gameId())) {
+                cooled++; // a market of this game was closed a while ago: the game is decided or over
+            } else if (passesStaticRules(market, nowMs)) {
                 out.add(market);
             }
         }
+        if (sports) {
+            LOG.debugf("Polymarket sports candidates: %d, left out %d that do not say who wins and %d in a game "
+                    + "cooling down (%d game(s))", out.size(), notWinner, cooled, cooling.size());
+        }
         return out;
+    }
+
+    /**
+     * The {@code gameId}s of the games a market of which the catalog closed less than
+     * {@link CatalogConfig#gameCooldownMs()} ago, from the registry: the closing time and the game id in the
+     * market's {@code sourceMeta}. Nothing is kept in memory, so a restart does not forget a cooldown.
+     */
+    private Set<String> gamesCoolingDown(long nowMs) {
+        Set<String> games = new HashSet<>();
+        long cooldown = config.gameCooldownMs();
+        if (cooldown <= 0) {
+            return games;
+        }
+        for (Market market : registry.all()) {
+            if (!PolymarketPriceSource.NAME.equals(market.source()) || market.status() != MarketStatus.CLOSED
+                    || market.closedAtMs() == null || nowMs - market.closedAtMs() >= cooldown
+                    || market.sourceMeta() == null) {
+                continue;
+            }
+            try {
+                String gameId = GammaJson.text(JSON.readTree(market.sourceMeta()), "gameId");
+                if (gameId != null) {
+                    games.add(gameId);
+                }
+            } catch (Exception ignored) {
+                // a market listed by something else: no game to cool down
+            }
+        }
+        return games;
     }
 
     /** Accepting orders, an order book, not closed, and ends 30+ minutes from now (a game in play is exempt). */
