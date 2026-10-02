@@ -1,0 +1,55 @@
+{
+  "method": "crowdOverview",
+  "args": [],
+  "response": {
+    "totalCapital": "390809.23",
+    "totalStartingCapital": "400000.00",
+    "returnPct": -0.022976925,
+    "markets": [
+      {
+        "marketId": "BTC",
+        "symbol": "BTC",
+        "title": "Bitcoin",
+        "status": "ACTIVE",
+        "category": "crypto",
+        "capital": "100000.00",
+        "returnPct": 0.0,
+        "roundsTraded": 0,
+        "roundsWon": 0
+      },
+      {
+        "marketId": "T_WIRE_PERP",
+        "symbol": "WPR",
+        "title": "Wirecoin",
+        "status": "ACTIVE",
+        "category": "crypto",
+        "capital": "90809.23",
+        "returnPct": -0.0919077,
+        "roundsTraded": 12,
+        "roundsWon": 11
+      },
+      {
+        "marketId": "T_WIRE_ODDS",
+        "symbol": "BRA",
+        "title": "Will Lula win the Brazilian election?",
+        "status": "ACTIVE",
+        "category": "politics",
+        "capital": "100000.00",
+        "returnPct": 0.0,
+        "roundsTraded": 0,
+        "roundsWon": 0
+      },
+      {
+        "marketId": "T_WIRE_GAME",
+        "symbol": "GER",
+        "title": "Germany vs France",
+        "status": "CLOSED",
+        "category": "sports",
+        "capital": "100000.00",
+        "returnPct": 0.0,
+        "roundsTraded": 0,
+        "roundsWon": 0
+      }
+    ]
+  }
+}

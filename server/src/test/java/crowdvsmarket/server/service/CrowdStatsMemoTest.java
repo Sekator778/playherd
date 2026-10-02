@@ -97,14 +97,32 @@ class CrowdStatsMemoTest {
     }
 
     @Test
-    void aFlatTradedRoundIsTradedButNotWonAndReadsAsALoss() {
+    void aFlatTradedRoundIsTradedButNeitherWonNorLostAndReadsAsFlat() {
         CrowdAccount account = new CrowdAccount();
         flat(account, "r1");
 
         CrowdAccount.RoundResult result = account.history().get(0);
         assertThat(result.traded()).isTrue();
         assertThat(result.capitalAfter()).isEqualByComparingTo(result.capitalBefore());
-        assertThat(memo.of("M", account)).isEqualTo(new CrowdStatsMemo.Stats(1, 0, Enums.CrowdOutcome.LOSS));
+        assertThat(memo.of("M", account)).as("traded, not won, and not a loss either: FLAT (contract.ts)")
+                .isEqualTo(new CrowdStatsMemo.Stats(1, 0, Enums.CrowdOutcome.FLAT));
+    }
+
+    @Test
+    void theLastOutcomeFollowsTheLatestTradedRoundThroughFlatAndBack() {
+        CrowdAccount account = new CrowdAccount();
+        win(account, "r1");
+        flat(account, "r2");
+        assertThat(memo.of("M", account)).isEqualTo(new CrowdStatsMemo.Stats(2, 1, Enums.CrowdOutcome.FLAT));
+
+        untraded(account, "r3");
+        assertThat(memo.of("M", account)).as("an untraded round leaves it alone")
+                .isEqualTo(new CrowdStatsMemo.Stats(2, 1, Enums.CrowdOutcome.FLAT));
+
+        loss(account, "r4");
+        assertThat(memo.of("M", account)).isEqualTo(new CrowdStatsMemo.Stats(3, 1, Enums.CrowdOutcome.LOSS));
+        // counting from the beginning gives the same answer as the incremental count above
+        assertThat(new CrowdStatsMemo().of("M", account)).isEqualTo(memo.of("M", account));
     }
 
     @Test

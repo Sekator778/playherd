@@ -62,7 +62,13 @@ public class AuthService {
     public record VerifyResult(Auth.AuthSessionDto session, String sessionId) {
     }
 
+    /** Verifies the signed challenge and signs the player in. A sign-in that meets an engine that is not ready
+     *  (a failed recovery, {@code EngineRebuildService}) is refused with 503 {@code ENGINE_NOT_READY} BEFORE the
+     *  one-time challenge is consumed: the 503 says "nothing was changed, please try again", and the same signed
+     *  challenge must then still work (it used to be burned first — the retry got 401 {@code
+     *  CHALLENGE_EXPIRED_OR_UNKNOWN} and the player a second Sage prompt, review of the core, finding 6). */
     public VerifyResult verify(Auth.AuthVerifyRequest req) {
+        gameService.requireEngineReady();
         AuthChallengeRepository.Row row = challenges.find(req.nonce())
                 .orElseThrow(ApiException::challengeExpiredOrUnknown);
         long now = System.currentTimeMillis();

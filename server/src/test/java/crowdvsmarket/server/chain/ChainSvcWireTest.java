@@ -51,6 +51,7 @@ class ChainSvcWireTest {
     private HttpServer server;
     private final List<Received> received = new CopyOnWriteArrayList<>();
     private volatile String replyBody = "{}";
+    private volatile int replyStatus = 200;
     private ChainSvcClientImpl impl;
 
     @BeforeEach
@@ -82,9 +83,13 @@ class ChainSvcWireTest {
                 exchange.getRequestHeaders().getFirst("Content-Type"), body));
         byte[] bytes = replyBody.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(200, bytes.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(bytes);
+        exchange.sendResponseHeaders(replyStatus, bytes.length == 0 ? -1 : bytes.length);
+        if (bytes.length > 0) {
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(bytes);
+            }
+        } else {
+            exchange.close();
         }
     }
 
@@ -164,5 +169,91 @@ class ChainSvcWireTest {
 
         assertThat(status).as("an unknown field must not turn the status into 'chainsvc unavailable'").isNotNull();
         assertThat(status.maxKnownSeq()).isEqualTo(209L);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // POST /v1/play/withdrawals: accepted, or HTTP 409 (E3)
+    // ------------------------------------------------------------------------------------------
+
+    @Test
+    void aWithdrawalLeavesUnderTheIdItIsGivenAndAnAcceptedAnswerIsAcceptedNotAConflict() throws Exception {
+        replyBody = fixture("WithdrawalAcceptedResponse");
+
+        ChainSvcClient.PlayWithdrawalSubmitResult result = impl.submitPlayWithdrawal("w-11-3fa9c01b",
+                "txch1recipient", 250_000L);
+
+        assertThat(result.accepted()).isTrue();
+        assertThat(result.isConflict()).isFalse();
+        Received request = received.get(0);
+        assertThat(request.method()).isEqualTo("POST");
+        assertThat(request.path()).isEqualTo("/v1/play/withdrawals");
+        assertThat(request.authorization()).isEqualTo("Bearer wire-test-token");
+        JsonNode sent = mapper.readTree(request.body());
+        assertThat(sent.get("requestId").asText()).as("the id of the chain service's namespace").isEqualTo("w-11-3fa9c01b");
+        assertThat(sent.get("toAddress").asText()).isEqualTo("txch1recipient");
+        assertThat(sent.get("amountMojos").asLong()).isEqualTo(250_000L);
+    }
+
+    @Test
+    void aHttp409WithAnErrorTextIsAConflictResultCarryingThatText() {
+        replyStatus = 409;
+        replyBody = "{\"error\": \"requestId w-11 is already held by this service with a different recipient or amount\"}";
+
+        ChainSvcClient.PlayWithdrawalSubmitResult result = impl.submitPlayWithdrawal("w-11", "txch1recipient", 250_000L);
+
+        assertThat(result.isConflict()).isTrue();
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.conflict()).isEqualTo(
+                "requestId w-11 is already held by this service with a different recipient or amount");
+    }
+
+    @Test
+    void theCommittedConflictFixtureServedWithHttp409IsAConflictResultWithItsErrorText() throws Exception {
+        replyStatus = 409;
+        replyBody = fixture("WithdrawalConflictResponse");
+
+        ChainSvcClient.PlayWithdrawalSubmitResult result = impl.submitPlayWithdrawal("w-11", "txch1recipient", 250_000L);
+
+        assertThat(result.isConflict()).isTrue();
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.conflict()).isEqualTo(mapper.readTree(fixture("WithdrawalConflictResponse")).get("error")
+                .asText());
+    }
+
+    @Test
+    void theConflictBodyThatTheChainServiceSendsTodayHasCodeAndRequestIdBesideTheErrorAndIsReadTheSame() {
+        replyStatus = 409;
+        replyBody = "{\"error\": \"requestId w-12 is already held by this service, but its recipient and amount "
+                + "were not recorded\", \"code\": \"request_id_conflict\", \"requestId\": \"w-12\"}";
+
+        ChainSvcClient.PlayWithdrawalSubmitResult result = impl.submitPlayWithdrawal("w-12", "txch1recipient", 1L);
+
+        assertThat(result.isConflict()).isTrue();
+        assertThat(result.conflict()).startsWith("requestId w-12 is already held").doesNotContain("request_id_conflict");
+    }
+
+    @Test
+    void aHttp409WhoseBodyIsNotTheExpectedJsonStillIsAConflictWithWhatThereIs() {
+        replyStatus = 409;
+        replyBody = "conflict, plain text";
+        assertThat(impl.submitPlayWithdrawal("w-1", "txch1r", 1L).conflict()).isEqualTo("conflict, plain text");
+
+        replyBody = "{\"unexpected\": true}";
+        assertThat(impl.submitPlayWithdrawal("w-1", "txch1r", 1L).conflict()).isEqualTo("{\"unexpected\": true}");
+
+        replyBody = "";
+        ChainSvcClient.PlayWithdrawalSubmitResult empty = impl.submitPlayWithdrawal("w-1", "txch1r", 1L);
+        assertThat(empty.isConflict()).isTrue();
+        assertThat(empty.conflict()).isEqualTo("HTTP 409");
+    }
+
+    @Test
+    void otherErrorsAreAnOutageForTheRetryAndNeverAConflict() {
+        for (int status : new int[] {400, 404, 500, 503}) {
+            replyStatus = status;
+            replyBody = "{\"error\": \"something\"}";
+
+            assertThat(impl.submitPlayWithdrawal("w-1", "txch1r", 1L)).as("HTTP %d", status).isNull();
+        }
     }
 }

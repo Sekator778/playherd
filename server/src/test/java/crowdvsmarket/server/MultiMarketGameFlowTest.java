@@ -254,7 +254,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         // --- a restart changes nothing: balances, crowd accounts and chart lines come back from the log ---
         String btcCapital = gameService.crowdAccount("BTC").capital();
         int ethPoints = gameService.crowdAccount(eth.id()).history().size();
-        rebuild.rebuild();
+        rebuild.rebuild(btcBet.endMs());   // restarted at the instant the test's clock stands at, not at the real one
         assertThat(gameService.account(p1).balance()).isEqualTo("10490.000");
         assertThat(gameService.account(p2).balance()).isEqualTo("9990.000");
         assertThat(gameService.crowdAccount("BTC").capital()).isEqualTo(btcCapital);
@@ -509,7 +509,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         gameService.cancelRoundById(nextBetting.roundId(), "operator test", nextBetting.startMs() - 1);
         // the newest result row now belongs to the window AFTER the running one
 
-        rebuild.rebuild();
+        rebuild.rebuild(first.endMs() + 1_000L);   // a restart inside the running window, on the test's clock
 
         assertThat(roundProgress.next(market.id(), HOURLY)).as("not skipped to the window after the cancelled one")
                 .isEqualTo(bettingNow);
@@ -744,7 +744,10 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         RoundWindow betting = roundProgress.bettingWindow(market.id(), HOURLY);
         String p = signUp("running");
         gameService.placeBet(p, bet(betting, Enums.Direction.UP, 20, "300.000"), betting.startMs() - 1);
-        scheduler.tick(running.endMs());                       // betting becomes the running round
+        // `betting` becomes the running round — without the window before it having been settled: nothing closed where
+        // it starts, so nothing is known about its open (once a round has closed there, its close is the open, whatever
+        // the price source knows: BoundaryContinuityTest)
+        roundProgress.seed(market.id(), HOURLY, betting);
         assertThat(roundProgress.next(market.id(), HOURLY)).isEqualTo(betting);
 
         // the open price is not known yet: "waiting for the opening price" — openPrice is null (neither a

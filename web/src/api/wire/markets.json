@@ -1,0 +1,224 @@
+{
+  "method": "markets",
+  "args": [],
+  "response": {
+    "serverTimeMs": 1790919586432,
+    "categories": [
+      {
+        "id": "crypto",
+        "title": "Crypto",
+        "marketCount": 2
+      },
+      {
+        "id": "politics",
+        "title": "Politics",
+        "marketCount": 1
+      }
+    ],
+    "markets": [
+      {
+        "id": "BTC",
+        "kind": "PERP",
+        "category": "crypto",
+        "symbol": "BTC",
+        "title": "Bitcoin",
+        "subtitle": null,
+        "iconUrl": null,
+        "maxLeverage": 40,
+        "priceDecimals": 2,
+        "status": "ACTIVE",
+        "endsAtMs": null,
+        "eventStartsAtMs": null,
+        "closedAtMs": null,
+        "closeReason": null,
+        "oracleIndex": 0,
+        "source": "hyperliquid",
+        "price": {
+          "price": "84000.50",
+          "asOfMs": 1790919585525,
+          "change24h": null,
+          "stale": false
+        },
+        "series": [
+          {
+            "interval": "HOURLY",
+            "durationSec": 60,
+            "bettingRoundId": "1h-1790919180000",
+            "bettingClosesAtMs": 1790919180000,
+            "runningRoundId": "1h-1790919120000",
+            "runningEndsAtMs": 1790919180000,
+            "participantCount": 1,
+            "upStake": "250.000",
+            "downStake": "0.000",
+            "majorityDirection": "UP"
+          },
+          {
+            "interval": "DAILY",
+            "durationSec": 120,
+            "bettingRoundId": "1d-1790919240000",
+            "bettingClosesAtMs": 1790919240000,
+            "runningRoundId": "1d-1790919120000",
+            "runningEndsAtMs": 1790919240000,
+            "participantCount": 0,
+            "upStake": "0.000",
+            "downStake": "0.000",
+            "majorityDirection": null
+          }
+        ],
+        "crowd": {
+          "capital": "100000.00",
+          "returnPct": 0.0,
+          "roundsTraded": 0,
+          "roundsWon": 0,
+          "lastOutcome": null
+        }
+      },
+      {
+        "id": "T_WIRE_PERP",
+        "kind": "PERP",
+        "category": "crypto",
+        "symbol": "WPR",
+        "title": "Wirecoin",
+        "subtitle": null,
+        "iconUrl": null,
+        "maxLeverage": 25,
+        "priceDecimals": 3,
+        "status": "ACTIVE",
+        "endsAtMs": null,
+        "eventStartsAtMs": null,
+        "closedAtMs": null,
+        "closeReason": null,
+        "oracleIndex": 1,
+        "source": "hyperliquid",
+        "price": {
+          "price": "2412.000",
+          "asOfMs": 1790919586365,
+          "change24h": null,
+          "stale": false
+        },
+        "series": [
+          {
+            "interval": "HOURLY",
+            "durationSec": 60,
+            "bettingRoundId": "T_WIRE_PERP-1h-1790919180000",
+            "bettingClosesAtMs": 1790919180000,
+            "runningRoundId": "T_WIRE_PERP-1h-1790919120000",
+            "runningEndsAtMs": 1790919180000,
+            "participantCount": 2,
+            "upStake": "150.000",
+            "downStake": "400.000",
+            "majorityDirection": "DOWN"
+          },
+          {
+            "interval": "DAILY",
+            "durationSec": 120,
+            "bettingRoundId": "T_WIRE_PERP-1d-1790919240000",
+            "bettingClosesAtMs": 1790919240000,
+            "runningRoundId": "T_WIRE_PERP-1d-1790919120000",
+            "runningEndsAtMs": 1790919240000,
+            "participantCount": 0,
+            "upStake": "0.000",
+            "downStake": "0.000",
+            "majorityDirection": null
+          }
+        ],
+        "crowd": {
+          "capital": "90809.23",
+          "returnPct": -0.0919077,
+          "roundsTraded": 12,
+          "roundsWon": 11,
+          "lastOutcome": "WIN"
+        }
+      },
+      {
+        "id": "T_WIRE_ODDS",
+        "kind": "ODDS",
+        "category": "politics",
+        "symbol": "BRA",
+        "title": "Will Lula win the Brazilian election?",
+        "subtitle": "Yes · Brazil election",
+        "iconUrl": "https://img.example/lula.png",
+        "maxLeverage": 10,
+        "priceDecimals": 6,
+        "status": "ACTIVE",
+        "endsAtMs": 1793511585505,
+        "eventStartsAtMs": null,
+        "closedAtMs": null,
+        "closeReason": null,
+        "oracleIndex": 2,
+        "source": "polymarket",
+        "price": {
+          "price": "0.523000",
+          "asOfMs": 1790919585005,
+          "change24h": 0.0098,
+          "stale": false
+        },
+        "series": [
+          {
+            "interval": "HOURLY",
+            "durationSec": 60,
+            "bettingRoundId": "T_WIRE_ODDS-1h-1790919180000",
+            "bettingClosesAtMs": 1790919180000,
+            "runningRoundId": "T_WIRE_ODDS-1h-1790919120000",
+            "runningEndsAtMs": 1790919180000,
+            "participantCount": 1,
+            "upStake": "250.000",
+            "downStake": "0.000",
+            "majorityDirection": "UP"
+          },
+          {
+            "interval": "DAILY",
+            "durationSec": 120,
+            "bettingRoundId": "T_WIRE_ODDS-1d-1790919240000",
+            "bettingClosesAtMs": 1790919240000,
+            "runningRoundId": "T_WIRE_ODDS-1d-1790919120000",
+            "runningEndsAtMs": 1790919240000,
+            "participantCount": 0,
+            "upStake": "0.000",
+            "downStake": "0.000",
+            "majorityDirection": null
+          }
+        ],
+        "crowd": {
+          "capital": "100000.00",
+          "returnPct": 0.0,
+          "roundsTraded": 0,
+          "roundsWon": 0,
+          "lastOutcome": null
+        }
+      },
+      {
+        "id": "T_WIRE_GAME",
+        "kind": "ODDS",
+        "category": "sports",
+        "symbol": "GER",
+        "title": "Germany vs France",
+        "subtitle": "Germany · UEFA Nations League",
+        "iconUrl": "https://img.example/ger.png",
+        "maxLeverage": 10,
+        "priceDecimals": 6,
+        "status": "CLOSED",
+        "endsAtMs": null,
+        "eventStartsAtMs": 1791053100000,
+        "closedAtMs": 1790919586401,
+        "closeReason": "The source market ended",
+        "oracleIndex": 3,
+        "source": "polymarket",
+        "price": {
+          "price": "0.410000",
+          "asOfMs": 1790919585005,
+          "change24h": -0.012,
+          "stale": false
+        },
+        "series": [],
+        "crowd": {
+          "capital": "100000.00",
+          "returnPct": 0.0,
+          "roundsTraded": 0,
+          "roundsWon": 0,
+          "lastOutcome": null
+        }
+      }
+    ]
+  }
+}

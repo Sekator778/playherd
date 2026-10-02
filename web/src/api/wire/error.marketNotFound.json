@@ -1,0 +1,13 @@
+{
+  "method": "referencePrice",
+  "args": [
+    "NOPE"
+  ],
+  "status": 404,
+  "response": {
+    "error": {
+      "code": "MARKET_NOT_FOUND",
+      "message": "unknown market NOPE"
+    }
+  }
+}

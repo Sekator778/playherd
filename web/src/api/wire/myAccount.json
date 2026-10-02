@@ -1,0 +1,10 @@
+{
+  "method": "myAccount",
+  "args": [],
+  "response": {
+    "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
+    "balance": "9157.500",
+    "currentSeason": "2026-10",
+    "inPlay": "750.000"
+  }
+}

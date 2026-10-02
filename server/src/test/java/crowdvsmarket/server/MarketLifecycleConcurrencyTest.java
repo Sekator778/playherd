@@ -16,8 +16,10 @@ import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.persistence.OracleRecordRepository;
+import crowdvsmarket.server.scheduler.OraclePublisherService;
 import crowdvsmarket.server.testsupport.LiveGameTestBase;
 import crowdvsmarket.server.testsupport.LiveMarketsWithBotsProfile;
+import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.junit.mockito.InjectSpy;
@@ -66,6 +68,10 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
 
     @Inject
     BotService botService;
+    /** Silenced: after every tick it reads the spied repository on a thread of its own, and a stubbing that thread
+     *  hits in its midst is taken by the wrong thread (Mockito's UnfinishedStubbingException). */
+    @InjectMock
+    OraclePublisherService oraclePublisher;
     @InjectSpy
     EventStore eventStoreSpy;
     @InjectSpy
@@ -146,7 +152,9 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
     void aListingAndAClosingThatArriveDuringARebuildQueueBehindItAndAreServedAfterIt() throws Exception {
         Market doomed = list("T_LC_DOOMED", MarketKind.PERP, Category.CRYPTO, "DMD", 10, 0);
         prices.setPrice(doomed, "50.00");
-        alignTo(doomed, HOURLY, roundProgress.next("BTC", HOURLY));
+        // The market's own series, seeded by the listing at the window containing the real "now" — never read off
+        // BTC's cursor, which another test of this class may have left hours ahead of the clock (it ticks the
+        // scheduler with a later one): the test then depended on the order its siblings ran in.
         RoundWindow betting = roundProgress.bettingWindow(doomed.id(), HOURLY);
         String bettor = signUp("lcdoomed");
         gameService.placeBet(bettor, bet(betting, Enums.Direction.UP, 5, "400.000"), betting.startMs() - 1);
@@ -197,8 +205,7 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
         // the settlement that will hold the engine lock
         Market settling = list("T_LC_SETTLE", MarketKind.PERP, Category.CRYPTO, "STL", 25, 1);
         prices.setPrice(settling, "2500.000");
-        alignTo(settling, HOURLY, roundProgress.next("BTC", HOURLY));
-        RoundWindow running = roundProgress.next(settling.id(), HOURLY);
+        RoundWindow running = roundProgress.next(settling.id(), HOURLY);   // the window containing the real "now"
         RoundWindow betting = roundProgress.bettingWindow(settling.id(), HOURLY);
         String bettor = signUp("lcsettle");
         gameService.placeBet(bettor, bet(betting, Enums.Direction.DOWN, 20, "300.000"), betting.startMs() - 1);

@@ -1,0 +1,28 @@
+{
+  "method": "serverInfo",
+  "args": [],
+  "response": {
+    "mode": "live",
+    "priceSource": "live",
+    "markets": 3,
+    "replay": null,
+    "roundDurationsSec": {
+      "HOURLY": 60,
+      "DAILY": 120
+    },
+    "bots": 0,
+    "oracle": {
+      "network": "testnet11",
+      "launcherId": "c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20",
+      "lastConfirmedSeq": 38,
+      "lastConfirmedHeight": 4735705,
+      "pendingRecords": 2,
+      "operatorBalanceMojos": "9999990000000",
+      "firstSeq": 1
+    },
+    "serverTimeMs": 1790919586420,
+    "playAssetId": "0x4b88ce9712e97e73ad3759541fc23d38704e31d27d6586c28be14ee716080b70",
+    "testWallet": true,
+    "engineReady": true
+  }
+}

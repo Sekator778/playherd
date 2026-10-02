@@ -11,6 +11,8 @@ import crowdvsmarket.server.markets.MarketRegistry;
 import crowdvsmarket.server.persistence.Db;
 import crowdvsmarket.server.persistence.OracleRecordRepository;
 import crowdvsmarket.server.prices.PricesConfig;
+import crowdvsmarket.server.scheduler.EngineRebuildService;
+import crowdvsmarket.server.util.LogThrottle;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Instant;
@@ -27,7 +29,11 @@ import org.jboss.logging.Logger;
  * <p>Needs no engine state: the mode and the configuration, the market registry (memory), the oracle
  * status cache (a background refresh, never a chainsvc call on the request thread — {@link
  * OracleStatusCache}) and one indexed database read for {@code oracle.firstSeq}. So it is answered while the
- * engine is recovering from a failed settlement too ({@code EngineRebuildService}).
+ * engine is recovering from a failed settlement too ({@code EngineRebuildService}) — and says so: {@code
+ * engineReady}. It is answered while the database does not answer, too: the two values it reads from there
+ * ({@code firstSeq}, the pending count when chainsvc has no status) are then the last ones it read, or
+ * {@code null}/0 when it never read one — a status page that fails exactly when the operator needs it is no use
+ * (review of the core, finding 2).
  */
 @ApplicationScoped
 public class ServerInfoService {
@@ -49,15 +55,21 @@ public class ServerInfoService {
     OracleRecordRepository oracleRecords;
     @Inject
     Db db;
+    @Inject
+    EngineRebuildService rebuildService;
 
     /** Set once the configured PLAY asset id was found malformed, so that it is said once, not per poll. */
     private volatile boolean badAssetIdLogged;
+    /** What the database last said, for the moment it does not answer. */
+    private volatile Long lastFirstOracleSeq;
+    private volatile int lastPendingRecords;
+    private final LogThrottle databaseLog = new LogThrottle(60_000L);
 
     public ServerInfo.ServerInfoDto serverInfo() {
         // Bug fix: never call the chainsvc client synchronously here — read the background-
         // refreshed cache instead (OracleStatusCache's own javadoc has the full story).
         ChainSvcClient.OracleStatus status = oracleStatusCache.get();
-        int pendingRecords = status != null ? status.pendingRecords() : oracleRecords.pendingCount();
+        int pendingRecords = status != null ? status.pendingRecords() : pendingRecordsFromTheDatabase();
         ServerInfo.OracleInfoDto oracle = new ServerInfo.OracleInfoDto(config.oracleNetwork(), config.oracleLauncherId(),
                 status == null ? null : status.lastConfirmedSeq(), status == null ? null : status.lastConfirmedHeight(),
                 pendingRecords, status == null ? null : status.operatorBalanceMojos(), firstOracleSeq());
@@ -73,7 +85,7 @@ public class ServerInfoService {
                 config.roundDurations().forInterval(Interval.DAILY) / 1000);
         return new ServerInfo.ServerInfoDto(config.mode().name().toLowerCase(Locale.ROOT), priceSource(),
                 activeMarkets(), replay, durationsSec, config.botsCount(), oracle, System.currentTimeMillis(),
-                playAssetId(), config.testWalletEnabled());
+                playAssetId(), config.testWalletEnabled(), rebuildService.isReady());
     }
 
     /** Т-12: {@code "replay"} in {@code mode=replay} (accelerated history), otherwise {@code herd.prices.source}. */
@@ -88,10 +100,36 @@ public class ServerInfoService {
     }
 
     /** The lowest {@code seq} in {@code oracle_records}, {@code null} while the table is empty (an index read of
-     *  the primary key). */
+     *  the primary key); the last value read when the database does not answer. */
     Long firstOracleSeq() {
-        return db.read(c -> db.queryOne(c, "SELECT MIN(seq) AS first_seq FROM oracle_records",
-                rs -> (Long) rs.getObject("first_seq")));
+        try {
+            Long first = db.read(c -> db.queryOne(c, "SELECT MIN(seq) AS first_seq FROM oracle_records",
+                    rs -> (Long) rs.getObject("first_seq")));
+            lastFirstOracleSeq = first;
+            return first;
+        } catch (RuntimeException e) {
+            databaseDidNotAnswer(e);
+            return lastFirstOracleSeq;
+        }
+    }
+
+    /** The count of records not yet published, for the moment chainsvc has no status to give one; the last value
+     *  read when the database does not answer. */
+    private int pendingRecordsFromTheDatabase() {
+        try {
+            int pending = oracleRecords.pendingCount();
+            lastPendingRecords = pending;
+            return pending;
+        } catch (RuntimeException e) {
+            databaseDidNotAnswer(e);
+            return lastPendingRecords;
+        }
+    }
+
+    private void databaseDidNotAnswer(RuntimeException e) {
+        if (databaseLog.allow("database", System.currentTimeMillis())) {
+            LOG.warnf(e, "serverInfo could not read the database — answering with the last values it read");
+        }
     }
 
     /** {@code herd.play.asset-id} as {@code "0x"} + 64 lower-case hex, or {@code null} (with one warning) when

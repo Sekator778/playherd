@@ -119,8 +119,8 @@ class AtomicSettlementTest extends LiveGameTestBase {
         assertThat(snapshot(p, market, betting)).isEqualTo(before);
         assertThat(roundProgress.next(market.id(), Interval.HOURLY)).isEqualTo(betting);
 
-        // and that IS what a fresh rebuild gives
-        rebuild.rebuild();
+        // and that IS what a fresh rebuild gives (on the test's clock: the one the cursor was seeded at)
+        rebuild.rebuild(betting.endMs());
         assertThat(snapshot(p, market, betting)).isEqualTo(before);
 
         // the same call now succeeds, once

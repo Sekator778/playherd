@@ -1,0 +1,10 @@
+{
+  "method": "referencePrice",
+  "args": [
+    "T_WIRE_PERP"
+  ],
+  "response": {
+    "price": "2412.000",
+    "asOfMs": 1790919586365
+  }
+}

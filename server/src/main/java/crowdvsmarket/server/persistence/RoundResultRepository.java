@@ -43,6 +43,29 @@ public class RoundResultRepository {
                 rs -> (Long) rs.getObject("m"), marketId, interval.name())));
     }
 
+    /** One settled round's closing price, keyed by where its window ends — what {@link
+     *  #settledCloses} hands to {@code BoundaryPrices}. {@code closeCents} is the engine (lot) price
+     *  times 100, like the column it comes from. */
+    public record SettledClose(long windowEndMs, long closeCents) {
+    }
+
+    /**
+     * The closing prices of the SETTLED rounds of one series whose window starts at or after {@code
+     * fromStartMs}, oldest end first (cancelled rounds have no close and are not listed). {@code
+     * BoundaryPrices} reads them when a state is built: the open of a round is the close of the round that
+     * ended where it starts (Р-40), and that must not depend on what the price pipeline still remembers.
+     * Answered from the {@code (market, interval, window_start_ms)} index.
+     */
+    public List<SettledClose> settledCloses(String marketId, Interval interval, long fromStartMs) {
+        return db.read(c -> db.queryList(c, """
+                SELECT window_end_ms, close_price_cents FROM round_results
+                WHERE market = ? AND interval = ? AND status = 'SETTLED' AND window_start_ms >= ?
+                ORDER BY window_end_ms, round_id
+                """,
+                rs -> new SettledClose(rs.getLong("window_end_ms"), rs.getLong("close_price_cents")),
+                marketId, interval.name(), fromStartMs));
+    }
+
     public boolean exists(String roundId) {
         return db.read(c -> db.queryOne(c, "SELECT 1 FROM round_results WHERE round_id = ?",
                 rs -> Boolean.TRUE, roundId)) != null;
@@ -107,9 +130,11 @@ public class RoundResultRepository {
         }
         return switch (dto) {
             case Rounds.RoundSettled s -> new Rounds.RoundSettled(s.roundId(), s.window(), s.marketId(), s.asset(),
-                    s.phase(), s.openPrice(), s.closePrice(), s.positions(), s.crowd(), s.resultsHash(), anchor);
+                    s.kind(), s.priceDecimals(), s.source(), s.phase(), s.openPrice(), s.closePrice(), s.positions(),
+                    s.crowd(), s.resultsHash(), anchor);
             case Rounds.RoundCancelled c -> new Rounds.RoundCancelled(c.roundId(), c.window(), c.marketId(),
-                    c.asset(), c.phase(), c.cancellation(), anchor);
+                    c.asset(), c.kind(), c.priceDecimals(), c.source(), c.phase(), c.cancellation(),
+                    c.resultsHash(), anchor);
             default -> dto; // toRoundDto never returns RoundBetting/RoundRunning
         };
     }
@@ -137,12 +162,11 @@ public class RoundResultRepository {
         long before = params.before() == null ? Long.MAX_VALUE : params.before();
         int limit = params.limitOrDefault();
         List<Rounds.CancellationDto> items = db.read(c -> db.queryList(c, """
-                SELECT round_id, cancellation_reason, cancelled_at_ms, refunded_bet_count
+                SELECT round_id, market, cancellation_reason, cancelled_at_ms, refunded_bet_count
                 FROM round_results WHERE status = 'CANCELLED' AND cancelled_at_ms < ?
                 ORDER BY cancelled_at_ms DESC LIMIT ?
                 """,
-                rs -> new Rounds.CancellationDto(rs.getString("round_id"), rs.getString("cancellation_reason"),
-                        rs.getLong("cancelled_at_ms"), rs.getInt("refunded_bet_count")),
+                rs -> cancellationOf(rs, rs.getString("round_id")),
                 before, limit + 1));
         boolean hasMore = items.size() > limit;
         return new Paging.Page<>(hasMore ? items.subList(0, limit) : items, hasMore);
@@ -227,9 +251,10 @@ public class RoundResultRepository {
         // LEFT JOIN: a history row always has its round's result row (both are written in one
         // transaction), so null cannot happen — but "unknown" is better told than guessed.
         Long durationSec = rs.wasNull() ? null : durationMs / 1000L;
+        Market market = market(marketId);
         return new Identity.ProfileRoundEntryDto(rs.getString("round_id"),
-                Enums.Interval.valueOf(rs.getString("interval")), marketId, market(marketId).symbol(), durationSec,
-                rs.getLong("settled_at_ms"), Enums.Direction.valueOf(rs.getString("direction")),
+                Enums.Interval.valueOf(rs.getString("interval")), marketId, market.symbol(), durationSec,
+                kindOf(market), rs.getLong("settled_at_ms"), Enums.Direction.valueOf(rs.getString("direction")),
                 rs.getInt("leverage"), java.math.BigDecimal.valueOf(rs.getLong("stake_mojos"), 3).toPlainString(),
                 rs.getBoolean("liquidated"), (Boolean) rs.getObject("direction_correct"),
                 java.math.BigDecimal.valueOf(rs.getLong("payout_mojos"), 3).toPlainString());
@@ -250,9 +275,8 @@ public class RoundResultRepository {
                 rs.getLong("window_end_ms"));
         String status = rs.getString("status");
         if ("CANCELLED".equals(status)) {
-            Rounds.CancellationDto cancellation = new Rounds.CancellationDto(roundId,
-                    rs.getString("cancellation_reason"), rs.getLong("cancelled_at_ms"), rs.getInt("refunded_bet_count"));
-            return new Rounds.RoundCancelled(roundId, window, market.id(), market.symbol(), cancellation);
+            return new Rounds.RoundCancelled(roundId, window, market.id(), market.symbol(), kindOf(market),
+                    market.priceDecimals(), market.source(), cancellationOf(rs, roundId), rs.getString("results_hash"));
         }
         List<Rounds.PublicPositionDto> positions = db.readJson(rs, "positions_json",
                 new TypeReference<List<Rounds.PublicPositionDto>>() {
@@ -260,7 +284,20 @@ public class RoundResultRepository {
         Rounds.CrowdRoundResultDto crowd = db.readJson(rs, "crowd_json", Rounds.CrowdRoundResultDto.class);
         String openPrice = market.rawString(java.math.BigDecimal.valueOf(rs.getLong("open_price_cents"), 2));
         String closePrice = market.rawString(java.math.BigDecimal.valueOf(rs.getLong("close_price_cents"), 2));
-        return new Rounds.RoundSettled(roundId, window, market.id(), market.symbol(), openPrice, closePrice,
-                positions, crowd, rs.getString("results_hash"));
+        return new Rounds.RoundSettled(roundId, window, market.id(), market.symbol(), kindOf(market),
+                market.priceDecimals(), market.source(), openPrice, closePrice, positions, crowd,
+                rs.getString("results_hash"));
+    }
+
+    /** The cancellation of the row {@code rs} is on, named by its market (the log of cancellations lists the pair,
+     *  not only the round id). */
+    private Rounds.CancellationDto cancellationOf(java.sql.ResultSet rs, String roundId) throws SQLException {
+        Market market = market(rs.getString("market"));
+        return new Rounds.CancellationDto(roundId, market.id(), market.symbol(), rs.getString("cancellation_reason"),
+                rs.getLong("cancelled_at_ms"), rs.getInt("refunded_bet_count"));
+    }
+
+    private static Enums.MarketKind kindOf(Market market) {
+        return Enums.MarketKind.valueOf(market.kind().name());
     }
 }

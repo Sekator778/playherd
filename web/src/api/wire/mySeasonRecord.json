@@ -1,0 +1,15 @@
+{
+  "method": "mySeasonRecord",
+  "args": [
+    null
+  ],
+  "response": {
+    "season": "2026-10",
+    "baselineBalance": "0.000",
+    "deposited": "0.000",
+    "withdrawn": "0.000",
+    "roundsPlayed": 2,
+    "directionEligibleRounds": 2,
+    "directionCorrectRounds": 1
+  }
+}

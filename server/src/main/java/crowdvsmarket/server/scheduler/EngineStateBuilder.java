@@ -11,24 +11,23 @@ import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.service.BoundaryPrices;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.service.RoundCancellations;
 import crowdvsmarket.server.service.SeriesSeeder;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import java.util.Collection;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import org.jboss.logging.Logger;
 
 /**
  * Builds a complete engine state ASIDE: a fresh {@link EngineHub} with the engines of every market in
  * the registry (closed ones too: their history replays), a fresh {@link BetFeed}, the replay of
- * {@code game_events} into both, the cancellation of what a closed market left open, and the cursor
- * of every running series — and touches nothing that serves requests. Whatever it throws, the live
+ * {@code game_events} into both, the cancellation of what a closed market left open, the cursor
+ * of every running series and the boundary prices those cursors can open at ({@link BoundaryPrices}) —
+ * and touches nothing that serves requests. Whatever it throws, the live
  * state is exactly what it was; whatever it returns is complete, and {@code EngineRebuildService}
  * swaps it in without anything left to fail. That is what makes a rebuild safe to attempt at the very
  * moment something has just gone wrong (a half-replayed hub that requests could reach, or an empty
@@ -55,12 +54,16 @@ public class EngineStateBuilder {
     @Inject
     RoundCancellations cancellations;
     @Inject
+    BoundaryPrices boundaryPrices;
+    @Inject
     GameService gameService;
 
     /** A finished build: ready to be swapped in. {@code cursors} holds one window per running series;
-     *  {@code description} is the log line's tail. */
+     *  {@code boundaries} the closes of the settled rounds those cursors may open at; {@code description}
+     *  is the log line's tail. */
     public record Built(EngineHub hub, BetFeed betFeed, Map<RoundProgress.SeriesKey, RoundWindow> cursors,
-                        int eventsReplayed, int marketCount, String description) {
+                        BoundaryPrices.Snapshot boundaries, int eventsReplayed, int marketCount,
+                        String description) {
     }
 
     /**
@@ -77,15 +80,10 @@ public class EngineStateBuilder {
             hub.ensureMarket(market);
         }
         List<GameEvent> events = eventStore.loadAll();
-        // Every window that got a bet and has not been resolved or cancelled since — what the seeding
-        // must not leave behind a cursor (SeriesSeeder). A bet that was cancelled by its player
-        // leaves its window here; the hub's bet book, asked afterwards, says it holds nothing.
-        Map<RoundProgress.SeriesKey, Map<Long, RoundWindow>> betWindows = new HashMap<>();
         for (GameEvent event : events) {
-            applier.apply(event);
-            trackBetWindows(betWindows, event);
+            applier.apply(event); // also keeps the hub's index of the windows that hold bets
         }
-        cancelRoundsOfClosedMarkets(applier, hub, markets, betWindows, nowMs);
+        cancelRoundsOfClosedMarkets(applier, hub, markets, nowMs);
 
         Map<RoundProgress.SeriesKey, RoundWindow> cursors = new LinkedHashMap<>();
         StringBuilder series = new StringBuilder();
@@ -95,56 +93,29 @@ public class EngineStateBuilder {
             }
             for (Interval interval : Interval.values()) {
                 RoundProgress.SeriesKey key = new RoundProgress.SeriesKey(market.id(), interval);
-                RoundWindow seed = seeder.seedFor(hub, market, interval, nowMs, betWindowsOf(betWindows, key));
+                RoundWindow seed = seeder.seedFor(hub, market, interval, nowMs);
                 cursors.put(key, seed);
                 series.append(' ').append(market.id()).append('/').append(interval).append(".next=")
                         .append(seed.roundId());
             }
         }
-        return new Built(hub, betFeed, cursors, events.size(), markets.size(), series.toString());
-    }
-
-    private static void trackBetWindows(Map<RoundProgress.SeriesKey, Map<Long, RoundWindow>> betWindows,
-                                        GameEvent event) {
-        switch (event) {
-            case GameEvent.BetPlaced e -> betWindows
-                    .computeIfAbsent(new RoundProgress.SeriesKey(e.market(), e.interval()), k -> new TreeMap<>())
-                    .put(e.windowStart(), new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd()));
-            case GameEvent.RoundResolved e -> forget(betWindows, e.market(), e.interval(), e.windowStart());
-            case GameEvent.RoundCancelled e -> forget(betWindows, e.market(), e.interval(), e.windowStart());
-            default -> {
-            }
-        }
-    }
-
-    private static void forget(Map<RoundProgress.SeriesKey, Map<Long, RoundWindow>> betWindows, String market,
-                               Interval interval, long windowStart) {
-        Map<Long, RoundWindow> windows = betWindows.get(new RoundProgress.SeriesKey(market, interval));
-        if (windows != null) {
-            windows.remove(windowStart);
-        }
-    }
-
-    private static Collection<RoundWindow> betWindowsOf(Map<RoundProgress.SeriesKey, Map<Long, RoundWindow>> betWindows,
-                                                        RoundProgress.SeriesKey series) {
-        return betWindows.getOrDefault(series, Map.of()).values();
+        return new Built(hub, betFeed, cursors, boundaryPrices.load(cursors), events.size(), markets.size(),
+                series.toString());
     }
 
     /** Restart safety net: a market was closed in the database but the process stopped before its
      *  listener cancelled the open rounds, so the replayed bet book still holds bets whose stake is
      *  debited and that nobody would ever settle — the scheduler does not run a closed market. Every
-     *  window of such a market that still holds bets and has no result row is cancelled with a
-     *  refund. */
+     *  window of such a market, of either series, that still holds bets and has no result row is cancelled
+     *  with a refund. */
     private void cancelRoundsOfClosedMarkets(EventApplier applier, EngineHub hub, List<Market> markets,
-                                             Map<RoundProgress.SeriesKey, Map<Long, RoundWindow>> betWindows,
                                              long nowMs) {
         for (Market market : markets) {
             if (market.isActive() || market.closedAtMs() == null) {
                 continue;
             }
             for (Interval interval : Interval.values()) {
-                RoundProgress.SeriesKey series = new RoundProgress.SeriesKey(market.id(), interval);
-                for (RoundWindow window : seeder.pending(hub, market, interval, betWindowsOf(betWindows, series))) {
+                for (RoundWindow window : seeder.pending(hub, market, interval)) {
                     LOG.warnf("market %s closed while round %s still held bets — cancelling it with a refund",
                             market.id(), window.roundId());
                     cancellations.cancel(applier, hub, market, window, "market closed: " + market.closeReason(), nowMs);

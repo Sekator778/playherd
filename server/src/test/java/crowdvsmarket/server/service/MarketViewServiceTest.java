@@ -86,6 +86,7 @@ class MarketViewServiceTest {
         gameService.marketPrices = prices;
         gameService.priceService = replay;
         gameService.marketRegistry = registry;
+        gameService.boundaries = new BoundaryPrices(); // nothing settled before: the source's prices as they are
         view = new MarketViewService(gameService, config, registry, hub, progress,
                 new OpenBets(hub, progress));
 
@@ -310,6 +311,34 @@ class MarketViewServiceTest {
                 .divide(new BigDecimal("100000.00")).subtract(BigDecimal.ONE).doubleValue());
         // the other markets' crowds are their own
         assertThat(dto(view.markets(NOW), "PERP4").crowd().roundsTraded()).isZero();
+    }
+
+    @Test
+    void aTradedRoundThatClosedWhereItOpenedIsFlatNeitherWonNorLostAndTheNextOneTakesTheLastOutcomeOver() {
+        // the crowd trades UP (500 vs 100) at 3x and the price ends exactly where it began, after a dip and a rally
+        RoundWindow flat = running(btc, Interval.HOURLY);
+        bet("p1", btc, Interval.HOURLY, flat, Direction.UP, 3, 500);
+        bet("p2", btc, Interval.HOURLY, flat, Direction.DOWN, 3, 100);
+        hub.engine("BTC", Interval.HOURLY).runRound(flat, flatPrices("84000.00", "84500.00", "83500.00", "84000.00"));
+
+        Markets.MarketCrowdBriefDto brief = dto(view.markets(NOW), "BTC").crowd();
+
+        assertThat(brief.roundsTraded()).isEqualTo(1);
+        assertThat(brief.roundsWon()).as("level is not won").isZero();
+        assertThat(brief.lastOutcome()).as("level is not lost either (contract.ts FLAT)")
+                .isEqualTo(Enums.CrowdOutcome.FLAT);
+        assertThat(brief.capital()).isEqualTo("100000.00");
+        assertThat(brief.returnPct()).isZero();
+
+        // a lost round after it is a loss, and a flat one never counted as won
+        RoundWindow next = RoundClock.next(flat);
+        bet("p1", btc, Interval.HOURLY, next, Direction.UP, 3, 500);
+        hub.engine("BTC", Interval.HOURLY).runRound(next, flatPrices("84000.00", "84000.00", "83000.00", "83000.00"));
+        view.invalidate(); // the lobby is kept for a second
+        Markets.MarketCrowdBriefDto after = dto(view.markets(NOW), "BTC").crowd();
+        assertThat(after.roundsTraded()).isEqualTo(2);
+        assertThat(after.roundsWon()).isZero();
+        assertThat(after.lastOutcome()).isEqualTo(Enums.CrowdOutcome.LOSS);
     }
 
     @Test

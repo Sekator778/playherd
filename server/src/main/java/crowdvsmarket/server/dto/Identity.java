@@ -24,9 +24,11 @@ public final class Identity {
 
     /** {@code asset}: the market's symbol ("BTC", "NVDA"), {@code marketId}: its id; {@code durationSec}: the
      *  real length of the round (its window in {@code round_results}), so a row can be labelled "3 MIN" even
-     *  after its market has left {@code markets()} — all contract.ts. */
+     *  after its market has left {@code markets()}; {@code kind}: the market's kind, for the same reason (a
+     *  row of an {@code ODDS} market is worded as odds) — all contract.ts. */
     public record ProfileRoundEntryDto(String roundId, Enums.Interval interval, String marketId, String asset,
-                                         Long durationSec, long settledAtMs, Enums.Direction direction, int leverage,
-                                         String stake, boolean liquidated, Boolean directionCorrect, String payout) {
+                                         Long durationSec, Enums.MarketKind kind, long settledAtMs,
+                                         Enums.Direction direction, int leverage, String stake, boolean liquidated,
+                                         Boolean directionCorrect, String payout) {
     }
 }

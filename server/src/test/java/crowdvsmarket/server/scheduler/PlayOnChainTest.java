@@ -3,6 +3,7 @@ package crowdvsmarket.server.scheduler;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import crowdvsmarket.engine.ledger.PlayAmount;
+import crowdvsmarket.server.chain.ChainRequestIds;
 import crowdvsmarket.server.chain.ChainSvcClient;
 import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.dto.ApiException;
@@ -58,11 +59,18 @@ class PlayOnChainTest {
     WithdrawalPollerService withdrawalPoller;
     @Inject
     EngineRebuildService engineRebuildService;
+    @Inject
+    ChainRequestIds chainRequestIds;
 
     private String signUpPlayer(String label) {
         long now = System.currentTimeMillis();
         String wallet = "txch1onchain" + label + UUID.randomUUID().toString().replace("-", "");
         return gameService.registerOrTouchPlayer(wallet, now).player().playerId();
+    }
+
+    /** The id the chain service knows a withdrawal by (E1): the engine's with the database's epoch tag. */
+    private String chainIdOf(String engineRequestId) {
+        return chainRequestIds.forWithdrawal(engineRequestId);
     }
 
     private int playerIndexOf(String playerId) {
@@ -158,8 +166,8 @@ class PlayOnChainTest {
         String balanceAfterRequest = gameService.account(playerId).balance();
         assertThat(balanceAfterRequest).isEqualTo("9000.000");
 
-        org.mockito.Mockito.when(chainSvcClient.playWithdrawalStatus(requested.requestId()))
-                .thenReturn(new ChainSvcClient.PlayWithdrawalStatus(requested.requestId(), "confirmed",
+        org.mockito.Mockito.when(chainSvcClient.playWithdrawalStatus(chainIdOf(requested.requestId())))
+                .thenReturn(new ChainSvcClient.PlayWithdrawalStatus(chainIdOf(requested.requestId()), "confirmed",
                         "0xcoin-withdrawal-confirmed", 4_800_300L, null));
 
         withdrawalPoller.poll();
@@ -191,8 +199,8 @@ class PlayOnChainTest {
                 System.currentTimeMillis());
         assertThat(gameService.account(playerId).balance()).isEqualTo("8500.000");
 
-        org.mockito.Mockito.when(chainSvcClient.playWithdrawalStatus(requested.requestId()))
-                .thenReturn(new ChainSvcClient.PlayWithdrawalStatus(requested.requestId(), "failed", null, null,
+        org.mockito.Mockito.when(chainSvcClient.playWithdrawalStatus(chainIdOf(requested.requestId())))
+                .thenReturn(new ChainSvcClient.PlayWithdrawalStatus(chainIdOf(requested.requestId()), "failed", null, null,
                         "fee estimate rejected"));
 
         withdrawalPoller.poll();
@@ -212,11 +220,11 @@ class PlayOnChainTest {
         Ledger.WithdrawalRequestDto requested = gameService.requestWithdrawal(playerId, "300.000",
                 System.currentTimeMillis());
 
-        org.mockito.Mockito.when(chainSvcClient.submitPlayWithdrawal(org.mockito.ArgumentMatchers.eq(requested.requestId()),
+        org.mockito.Mockito.when(chainSvcClient.submitPlayWithdrawal(org.mockito.ArgumentMatchers.eq(chainIdOf(requested.requestId())),
                         org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(300_000L)))
                 .thenReturn(new ChainSvcClient.PlayWithdrawalSubmitResult(true));
-        org.mockito.Mockito.when(chainSvcClient.playWithdrawalStatus(requested.requestId()))
-                .thenReturn(new ChainSvcClient.PlayWithdrawalStatus(requested.requestId(), "queued", null, null, null));
+        org.mockito.Mockito.when(chainSvcClient.playWithdrawalStatus(chainIdOf(requested.requestId())))
+                .thenReturn(new ChainSvcClient.PlayWithdrawalStatus(chainIdOf(requested.requestId()), "queued", null, null, null));
 
         withdrawalPoller.poll(); // retries submission, then polls status (now "queued")
 
@@ -240,8 +248,8 @@ class PlayOnChainTest {
                 .thenReturn(new ChainSvcClient.PlayWithdrawalSubmitResult(true));
         Ledger.WithdrawalRequestDto requested = gameService.requestWithdrawal(playerId, "600.000",
                 System.currentTimeMillis());
-        org.mockito.Mockito.when(chainSvcClient.playWithdrawalStatus(requested.requestId()))
-                .thenReturn(new ChainSvcClient.PlayWithdrawalStatus(requested.requestId(), "confirmed",
+        org.mockito.Mockito.when(chainSvcClient.playWithdrawalStatus(chainIdOf(requested.requestId())))
+                .thenReturn(new ChainSvcClient.PlayWithdrawalStatus(chainIdOf(requested.requestId()), "confirmed",
                         "0xcoin-replay-withdrawal", 4_800_500L, null));
         withdrawalPoller.poll();
 

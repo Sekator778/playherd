@@ -40,8 +40,8 @@ public class WithdrawalDepositRepository {
      *  read-model write in this class — never carries an engine-state effect, so it needs no
      *  {@code GameEvent}. */
     public void markWithdrawalSubmitted(String requestId, long atMs) {
-        db.tx(c -> db.update(c, "UPDATE withdrawal_requests SET submitted_at_ms = ?, chain_state = 'submitted' "
-                + "WHERE request_id = ?", atMs, requestId));
+        db.tx(c -> db.update(c, "UPDATE withdrawal_requests SET submitted_at_ms = ?, chain_state = ? "
+                + "WHERE request_id = ?", atMs, Enums.WithdrawalChainState.SUBMITTED.wire(), requestId));
     }
 
     /** Р-53: a non-terminal chain-state refresh from {@code GET /v1/play/withdrawals/{requestId}}
@@ -60,9 +60,9 @@ public class WithdrawalDepositRepository {
      *  event's append (see {@code GameService#confirmWithdrawalOnChain}). */
     public void markWithdrawalConfirmedOnChain(Connection c, String requestId, String coinId, long height, long atMs)
             throws SQLException {
-        db.update(c, "UPDATE withdrawal_requests SET state = 'CONFIRMED', chain_state = 'confirmed', "
+        db.update(c, "UPDATE withdrawal_requests SET state = 'CONFIRMED', chain_state = ?, "
                 + "coin_id = ?, height = ?, last_checked_at_ms = ? WHERE request_id = ?",
-                coinId, height, atMs, requestId);
+                Enums.WithdrawalChainState.CONFIRMED.wire(), coinId, height, atMs, requestId);
     }
 
     /** Р-53: the real on-chain failure — mirrors {@link #markWithdrawalConfirmedOnChain}, called
@@ -70,8 +70,9 @@ public class WithdrawalDepositRepository {
      *  (see {@code GameService#failWithdrawalOnChain}); the balance refund itself is the event's
      *  engine-side effect, not something this read-model write does. */
     public void markWithdrawalFailed(Connection c, String requestId, String reason, long atMs) throws SQLException {
-        db.update(c, "UPDATE withdrawal_requests SET state = 'FAILED', chain_state = 'failed', "
-                + "failure_reason = ?, last_checked_at_ms = ? WHERE request_id = ?", reason, atMs, requestId);
+        db.update(c, "UPDATE withdrawal_requests SET state = 'FAILED', chain_state = ?, "
+                + "failure_reason = ?, last_checked_at_ms = ? WHERE request_id = ?",
+                Enums.WithdrawalChainState.FAILED.wire(), reason, atMs, requestId);
     }
 
     /** Requests whose {@code POST /v1/play/withdrawals} call has never yet been accepted — either

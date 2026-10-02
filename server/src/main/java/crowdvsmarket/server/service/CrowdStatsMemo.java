@@ -19,9 +19,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * readers that count the same history at the same time store equal values.
  *
  * <p><b>"Won".</b> A traded round is won when the account ended it with MORE capital than it started it with
- * (a liquidation always ends with less). A traded round that ends level — close equal to open — is not won;
- * {@code lastOutcome} has no value for it in contract.ts, and says {@code LOSS} (the web mock's rule: not won
- * is a loss), which understates the crowd rather than flatters it.
+ * (a liquidation always ends with less). A traded round that ends with exactly the capital it started with and
+ * was not liquidated — the price closed where it opened — is FLAT: traded, neither won nor lost, and {@code
+ * lastOutcome} says so ({@link Enums.CrowdOutcome#FLAT}, contract.ts; it used to say {@code LOSS}, which
+ * understated the crowd). Anything else is a loss; a liquidation is {@code LIQUIDATED}, whatever the capital.
+ * The three outcomes follow the capital, as {@code roundsWon} does.
  */
 final class CrowdStatsMemo {
 
@@ -58,12 +60,14 @@ final class CrowdStatsMemo {
                 continue;
             }
             traded++;
-            boolean roundWon = !round.liquidated() && round.capitalAfter().compareTo(round.capitalBefore()) > 0;
+            int change = round.capitalAfter().compareTo(round.capitalBefore());
+            boolean roundWon = !round.liquidated() && change > 0;
             if (roundWon) {
                 won++;
             }
             last = round.liquidated() ? Enums.CrowdOutcome.LIQUIDATED
-                    : roundWon ? Enums.CrowdOutcome.WIN : Enums.CrowdOutcome.LOSS;
+                    : roundWon ? Enums.CrowdOutcome.WIN
+                    : change == 0 ? Enums.CrowdOutcome.FLAT : Enums.CrowdOutcome.LOSS;
         }
         Stats stats = new Stats(traded, won, last);
         entries.put(marketId, new Entry(account, history.size(), stats));

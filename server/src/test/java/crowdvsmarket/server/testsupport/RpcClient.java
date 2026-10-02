@@ -50,6 +50,12 @@ public final class RpcClient {
 
     /** A new player: {@code chainSvc} (the test's {@code @InjectMock}) accepts any signature. */
     public static Session signIn(ChainSvcClient chainSvc, String label) {
+        return signInAs(chainSvc, "txch1rpc" + label + UUID.randomUUID().toString().replace("-", ""));
+    }
+
+    /** The player of {@code address} (new, or the one that address belongs to), signed in through the real
+     *  {@code authChallenge}/{@code authVerify}: for a test that wants an address of its own choosing. */
+    public static Session signInAs(ChainSvcClient chainSvc, String address) {
         org.mockito.Mockito.when(chainSvc.authVerify(org.mockito.ArgumentMatchers.anyString(),
                         org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
                         org.mockito.ArgumentMatchers.anyString()))
@@ -58,7 +64,7 @@ public final class RpcClient {
                 .post("/api/rpc/authChallenge");
         String nonce = challenge.jsonPath().getString("nonce");
         Response verify = given().contentType(ContentType.JSON).body(Map.of("args", List.of(Map.of(
-                "nonce", nonce, "address", "txch1rpc" + label + UUID.randomUUID().toString().replace("-", ""),
+                "nonce", nonce, "address", address,
                 "publicKey", "0x" + "ab".repeat(48), "signature", "0x" + "cd".repeat(96)))))
                 .post("/api/rpc/authVerify");
         assertThat(verify.statusCode()).as(verify.asString()).isEqualTo(200);

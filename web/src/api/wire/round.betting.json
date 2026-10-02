@@ -1,0 +1,56 @@
+{
+  "method": "round",
+  "args": [
+    "T_WIRE_PERP-1h-1790919180000"
+  ],
+  "response": {
+    "roundId": "T_WIRE_PERP-1h-1790919180000",
+    "window": {
+      "interval": "HOURLY",
+      "startMs": 1790919180000,
+      "endMs": 1790919240000
+    },
+    "marketId": "T_WIRE_PERP",
+    "asset": "WPR",
+    "kind": "PERP",
+    "priceDecimals": 3,
+    "source": "hyperliquid",
+    "phase": "BETTING",
+    "participantCount": 2,
+    "myBet": null,
+    "upStake": "150.000",
+    "downStake": "400.000",
+    "upCount": 1,
+    "downCount": 1,
+    "majorityDirection": "DOWN",
+    "majorityLeverage": 3,
+    "recentBets": [
+      {
+        "player": {
+          "playerId": "b34ff01c-81fe-45b6-8bde-ab95ed06d9d5",
+          "nickname": "Bob_Wire",
+          "walletAddress": "txch1bob0wire0player000000000000000000000000000000000000000q5h3xm",
+          "displayName": "Bob_Wire (txch1b…h3xm)",
+          "isBot": false
+        },
+        "direction": "UP",
+        "leverage": 5,
+        "stake": "150.000",
+        "atMs": 1790919179999
+      },
+      {
+        "player": {
+          "playerId": "46bae30d-4ac7-47ae-93ec-5d1b14975000",
+          "nickname": "Vera_Wire",
+          "walletAddress": "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn",
+          "displayName": "Vera_Wire (txch1v…d4wn)",
+          "isBot": false
+        },
+        "direction": "DOWN",
+        "leverage": 3,
+        "stake": "400.000",
+        "atMs": 1790919179999
+      }
+    ]
+  }
+}

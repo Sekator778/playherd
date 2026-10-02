@@ -69,11 +69,13 @@ public final class EngineHub {
         }
     }
 
-    /** The ledger and the markets' engines of one moment: what {@link #adopt} swaps in one step. An
-     *  engine is built over the ledger of ITS state, so the two never mix. */
+    /** The ledger, the markets' engines and the index of the windows that hold bets, of one moment: what
+     *  {@link #adopt} swaps in one step. An engine is built over the ledger of ITS state, so the two never
+     *  mix, and the index describes the bet books of the engines beside it. */
     private static final class State {
         final LedgerBook ledger = new LedgerBook();
         final ConcurrentHashMap<String, MarketEngines> markets = new ConcurrentHashMap<>();
+        final BetWindows betWindows = new BetWindows();
     }
 
     private volatile State state;
@@ -90,11 +92,11 @@ public final class EngineHub {
         ensureMarket(MarketSpec.BTC);
     }
 
-    /** Takes over everything {@code built} holds — its ledger and every market's engines — in one
-     *  volatile write: the swap that ends a rebuild, once the replay and the seeding of a hub built
-     *  aside ({@code new EngineHub()} + {@link #ensureMarket} + the replay) have both succeeded.
-     *  {@code built} must not be used afterwards: this hub and it would share one state. The caller
-     *  holds the engine lock, so no reader of this hub is in the middle of a call. */
+    /** Takes over everything {@code built} holds — its ledger, every market's engines and the index of
+     *  the windows with bets — in one volatile write: the swap that ends a rebuild, once the replay and
+     *  the seeding of a hub built aside ({@code new EngineHub()} + {@link #ensureMarket} + the replay)
+     *  have both succeeded. {@code built} must not be used afterwards: this hub and it would share one
+     *  state. The caller holds the engine lock, so no reader of this hub is in the middle of a call. */
     public void adopt(EngineHub built) {
         state = built.state;
     }
@@ -114,9 +116,20 @@ public final class EngineHub {
         return state.ledger;
     }
 
+    /** The windows that may still hold a bet ({@link BetWindows}); kept by {@code EventApplier}. */
+    public BetWindows betWindows() {
+        return state.betWindows;
+    }
+
     /** The market's engines, or empty when {@link #ensureMarket} never ran for it. */
     public Optional<MarketEngines> findMarket(String marketId) {
         return Optional.ofNullable(state.markets.get(marketId));
+    }
+
+    /** Whether {@code playerId} has a bet on round {@code roundId} of {@code marketId}'s {@code interval} series. */
+    public boolean hasBet(String marketId, Interval interval, String roundId, String playerId) {
+        return findMarket(marketId).map(m -> m.engine(interval).betBook().betsFor(roundId).stream()
+                .anyMatch(b -> b.playerId().equals(playerId))).orElse(false);
     }
 
     /** @throws IllegalStateException when the market has no engines — a programming error for a

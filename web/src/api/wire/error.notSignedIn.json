@@ -1,0 +1,11 @@
+{
+  "method": "myAccount",
+  "args": [],
+  "status": 401,
+  "response": {
+    "error": {
+      "code": "NOT_SIGNED_IN",
+      "message": "not signed in"
+    }
+  }
+}

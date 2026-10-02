@@ -182,10 +182,12 @@ class ProfileRpcTest extends LiveRpcTestBase {
 
         assertThat(history).hasSize(2);
         for (JsonNode entry : history) {
-            assertKeys(entry, "roundId", "interval", "marketId", "asset", "durationSec", "settledAtMs", "direction",
+            assertKeys(entry, "roundId", "interval", "marketId", "asset", "durationSec", "kind", "settledAtMs", "direction",
                     "leverage", "stake", "liquidated", "directionCorrect", "payout");
             assertThat(entry.path("marketId").asText()).isEqualTo("T_PF_LEN");
             assertThat(entry.path("asset").asText()).isEqualTo("PRF");
+            assertThat(entry.path("kind").asText()).as("the market's kind, so a row survives its market leaving markets()")
+                    .isEqualTo("PERP");
         }
         JsonNode hourlyEntry = history.stream().filter(e -> e.path("roundId").asText().equals(hourly.roundId()))
                 .findFirst().orElseThrow();
@@ -199,7 +201,7 @@ class ProfileRpcTest extends LiveRpcTestBase {
         JsonNode unseen = ok(me, "unseenResults");
         assertThat(unseen).hasSize(2);
         for (JsonNode entry : unseen) {
-            assertKeys(entry, "roundId", "interval", "marketId", "asset", "durationSec", "settledAtMs", "direction",
+            assertKeys(entry, "roundId", "interval", "marketId", "asset", "durationSec", "kind", "settledAtMs", "direction",
                     "leverage", "stake", "liquidated", "directionCorrect", "payout");
             assertThat(entry.path("durationSec").asLong()).isEqualTo(entry.path("interval").asText().equals("DAILY") ? 120 : 60);
         }

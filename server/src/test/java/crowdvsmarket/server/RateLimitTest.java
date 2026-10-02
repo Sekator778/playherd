@@ -68,6 +68,25 @@ class RateLimitTest {
     }
 
     @Test
+    void cancelBetIsRateLimitedLikePlaceBetBeforeItEvenLooksForASession() {
+        Response first = rpcWithoutSession("cancelBet");
+        Response second = rpcWithoutSession("cancelBet");
+        assertThat(first.statusCode()).as(first.asString()).isEqualTo(401);   // not signed in: the call was let through
+        assertThat(second.statusCode()).as(second.asString()).isEqualTo(401);
+
+        Response third = rpcWithoutSession("cancelBet");
+
+        assertThat(third.statusCode()).as(third.asString()).isEqualTo(429);
+        assertThat(third.jsonPath().getString("error.code")).isEqualTo("RATE_LIMITED");
+    }
+
+    private Response rpcWithoutSession(String method) {
+        return given().contentType(ContentType.JSON)
+                .body(Map.of("args", List.of("BTC-1h-1")))
+                .post("/api/rpc/" + method);
+    }
+
+    @Test
     void nonRateLimitedMethodIsNeverThrottled() {
         for (int i = 0; i < 5; i++) {
             Response resp = given().contentType(ContentType.JSON)

@@ -1,0 +1,39 @@
+{
+  "method": "ratings",
+  "args": [
+    null
+  ],
+  "response": {
+    "season": "2026-10",
+    "roundsThreshold": 10,
+    "rich": [
+      {
+        "rank": 1,
+        "player": {
+          "playerId": "46bae30d-4ac7-47ae-93ec-5d1b14975000",
+          "nickname": "Vera_Wire",
+          "walletAddress": "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn",
+          "displayName": "Vera_Wire (txch1v…d4wn)",
+          "isBot": false
+        },
+        "growth": "-516.030",
+        "roundsPlayed": 10
+      }
+    ],
+    "prophets": [
+      {
+        "rank": 1,
+        "player": {
+          "playerId": "46bae30d-4ac7-47ae-93ec-5d1b14975000",
+          "nickname": "Vera_Wire",
+          "walletAddress": "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn",
+          "displayName": "Vera_Wire (txch1v…d4wn)",
+          "isBot": false
+        },
+        "accuracy": 1.0,
+        "eligibleRounds": 10,
+        "roundsPlayed": 10
+      }
+    ]
+  }
+}

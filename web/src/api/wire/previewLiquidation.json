@@ -1,0 +1,16 @@
+{
+  "method": "previewLiquidation",
+  "args": [
+    {
+      "marketId": "T_WIRE_PERP",
+      "direction": "UP",
+      "leverage": 10,
+      "stake": "250.000"
+    }
+  ],
+  "response": {
+    "entryPriceUsed": "2412.000",
+    "liquidationPrice": "2215.102",
+    "percentToLiquidation": 0.08163266998341626
+  }
+}

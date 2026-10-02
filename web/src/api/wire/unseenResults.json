@@ -1,0 +1,36 @@
+{
+  "method": "unseenResults",
+  "args": [],
+  "response": [
+    {
+      "roundId": "T_WIRE_PERP-1h-1790919060000",
+      "interval": "HOURLY",
+      "marketId": "T_WIRE_PERP",
+      "asset": "WPR",
+      "durationSec": 60,
+      "kind": "PERP",
+      "settledAtMs": 1790919119999,
+      "direction": "UP",
+      "leverage": 5,
+      "stake": "300.000",
+      "liquidated": false,
+      "directionCorrect": true,
+      "payout": "307.500"
+    },
+    {
+      "roundId": "T_WIRE_PERP-1h-1790919000000",
+      "interval": "HOURLY",
+      "marketId": "T_WIRE_PERP",
+      "asset": "WPR",
+      "durationSec": 60,
+      "kind": "PERP",
+      "settledAtMs": 1790919059999,
+      "direction": "UP",
+      "leverage": 25,
+      "stake": "100.000",
+      "liquidated": true,
+      "directionCorrect": false,
+      "payout": "0.000"
+    }
+  ]
+}

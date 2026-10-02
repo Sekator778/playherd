@@ -32,7 +32,8 @@ import java.util.List;
  *
  * <p>The four round events are routed by their {@code market}; an event that names a market the hub
  * has no engines for is an {@link IllegalStateException} naming the event — a rebuild must never
- * silently skip a bet or a settlement (money), it must stop and say why.
+ * silently skip a bet or a settlement (money), it must stop and say why. The same events keep the hub's
+ * {@link EngineHub#betWindows() index of the windows that hold bets}.
  */
 @ApplicationScoped
 public final class EventApplier {
@@ -78,6 +79,7 @@ public final class EventApplier {
                 market.engine(e.interval()).placeBet(e.playerId(), window, e.direction(),
                         new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()), Instant.ofEpochMilli(e.atMs()));
                 recordBetFeedEntry(window.roundId(), e);
+                hub.betWindows().placed(window);
                 yield null;
             }
             case GameEvent.BetCancelled e -> {
@@ -93,12 +95,14 @@ public final class EventApplier {
                 RoundPrices prices = new StoredRoundPrices(new BigDecimal(e.openPrice()), new BigDecimal(e.closePrice()), path);
                 RoundReport report = market.engine(e.interval()).runRound(window, prices);
                 market.comparison().onRoundResolved(report, path);
+                hub.betWindows().closed(window);
                 yield report;
             }
             case GameEvent.RoundCancelled e -> {
                 EngineHub.MarketEngines market = marketOf(e, e.market());
                 RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
                 refundAndClear(market.engine(e.interval()), window, Instant.ofEpochMilli(e.atMs()));
+                hub.betWindows().closed(window);
                 yield null;
             }
             case GameEvent.WithdrawalRequested e -> {

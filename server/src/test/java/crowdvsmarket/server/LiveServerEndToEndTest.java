@@ -243,8 +243,8 @@ class LiveServerEndToEndTest extends LiveServerTestBase {
             JsonNode oddsBrief = market(ODDS).path("crowd");
             assertThat(btcBrief.path("roundsTraded").asInt()).isGreaterThanOrEqualTo(1);
             assertThat(oddsBrief.path("roundsTraded").asInt()).isGreaterThanOrEqualTo(1);
-            assertThat(btcBrief.path("lastOutcome").asText()).isIn("WIN", "LOSS", "LIQUIDATED");
-            assertThat(oddsBrief.path("lastOutcome").asText()).isIn("WIN", "LOSS", "LIQUIDATED");
+            assertThat(btcBrief.path("lastOutcome").asText()).isIn("WIN", "LOSS", "LIQUIDATED", "FLAT");
+            assertThat(oddsBrief.path("lastOutcome").asText()).isIn("WIN", "LOSS", "LIQUIDATED", "FLAT");
             assertThat(btcBrief.path("roundsWon").asInt()).isLessThanOrEqualTo(btcBrief.path("roundsTraded").asInt());
         });
         JsonNode overview = ok(null, "crowdOverview");

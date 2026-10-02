@@ -177,4 +177,33 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
         assertThat(gameService.account(p).inPlay()).isEqualTo("0.000");
         assertThat(roundProgress.isSeeded(market.id(), HOURLY)).isFalse();
     }
+
+    @Test
+    void aBetOnTheDailySeriesOfAMarketClosedInTheDatabaseIsRefundedByARebuildToo() {
+        // review of the core, finding 7c: nothing placed a bet on the DAILY series of a market that is closed in the
+        // database before a rebuild, so a refund that looked at the HOURLY series only passed every test
+        Market market = list("T_DAILYCLOSE", MarketKind.PERP, Category.CRYPTO, "DCL", 10, 0);
+        prices.setPrice(market, "100.00");
+        RoundWindow hourlyBetting = roundProgress.bettingWindow(market.id(), HOURLY);
+        RoundWindow dailyBetting = roundProgress.bettingWindow(market.id(), Interval.DAILY);
+        String p = signUp("dailyclose");
+        gameService.placeBet(p, bet(hourlyBetting, Enums.Direction.UP, 5, "300.000"), hourlyBetting.startMs() - 1);
+        gameService.placeBet(p, bet(dailyBetting, Enums.Direction.DOWN, 4, "200.000"), dailyBetting.startMs() - 1);
+        assertThat(gameService.account(p).inPlay()).isEqualTo("500.000");
+        long closedAt = dailyBetting.endMs() + 10 * STEP;
+        db.tx(c -> db.update(c, "UPDATE markets SET status = 'CLOSED', closed_at_ms = ?, close_reason = 'old close' "
+                + "WHERE id = ?", closedAt, market.id()));
+
+        rebuild.rebuild(closedAt + STEP);
+
+        for (RoundWindow window : new RoundWindow[] {hourlyBetting, dailyBetting}) {
+            Rounds.RoundDto dto = roundResults.findRoundDto(window.roundId()).orElseThrow();
+            assertThat(dto).as(window.roundId()).isInstanceOf(Rounds.RoundCancelled.class);
+            assertThat(((Rounds.RoundCancelled) dto).cancellation().reason()).isEqualTo("market closed: old close");
+        }
+        assertThat(gameService.account(p).balance()).isEqualTo("10000.000");
+        assertThat(gameService.account(p).inPlay()).isEqualTo("0.000");
+        assertThat(roundProgress.isSeeded(market.id(), HOURLY)).isFalse();
+        assertThat(roundProgress.isSeeded(market.id(), Interval.DAILY)).isFalse();
+    }
 }

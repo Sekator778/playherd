@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
  * {@code chain/}) whenever a wire type's shape changes on the Rust side; this test then fails
  * loudly here instead of the drift only ever being observed live.
  *
- * <p><b>All fifteen fixtures</b> (2026-10-02; the chain-side generator writes the {@code /v1/play/*}
+ * <p><b>All sixteen fixtures</b> (2026-10-02; the chain-side generator writes the {@code /v1/play/*}
  * ones since 2026-09-26 and the record-format-2 fields — {@code asset} on a record, {@code
  * maxKnownSeq}/{@code recordFormat}/{@code feeCoinsFree}/{@code feeCoinsFreeMojos} on the status —
  * since 2026-10-01): {@link #everyFixtureHasADtoHereAndRoundTripsThroughIt} walks the fixture
@@ -71,6 +71,7 @@ class ChainSvcContractFixturesTest {
             Map.entry("OracleStatusResponse", ChainSvcRestClient.OracleStatusResponse.class),
             Map.entry("WithdrawalRequestDto", ChainSvcRestClient.PlayWithdrawalRequest.class),
             Map.entry("WithdrawalAcceptedResponse", ChainSvcRestClient.PlayWithdrawalAcceptedResponse.class),
+            Map.entry("WithdrawalConflictResponse", ChainSvcRestClient.WithdrawalConflictResponse.class),
             Map.entry("WithdrawalStatusResponse_queued", ChainSvcRestClient.PlayWithdrawalStatusResponse.class),
             Map.entry("WithdrawalStatusResponse_confirmed", ChainSvcRestClient.PlayWithdrawalStatusResponse.class),
             Map.entry("WithdrawalStatusResponse_failed", ChainSvcRestClient.PlayWithdrawalStatusResponse.class),
@@ -121,7 +122,7 @@ class ChainSvcContractFixturesTest {
         assertThat(onDisk)
                 .as("the fixtures chain/c2-svc writes and the DTOs this class knows must be the same set")
                 .containsExactlyInAnyOrderElementsOf(DTO_OF.keySet());
-        assertThat(onDisk).hasSize(15);
+        assertThat(onDisk).hasSize(16);
 
         for (Map.Entry<String, Class<?>> entry : new TreeMap<>(DTO_OF).entrySet()) {
             JsonNode fixture = readFixture(entry.getKey());
@@ -312,6 +313,21 @@ class ChainSvcContractFixturesTest {
                 mapper.treeToValue(json, ChainSvcRestClient.PlayWithdrawalAcceptedResponse.class);
 
         assertThat(dto.accepted()).isTrue();
+        assertThat(mapper.readTree(mapper.writeValueAsString(dto))).isEqualTo(json);
+    }
+
+    @Test
+    void withdrawalConflictResponseFixtureRoundTripsAndNamesTheFieldsTheServerReads() throws IOException {
+        // HTTP 409 of POST /v1/play/withdrawals (docs/research/chain_service.md §17.6): a request id the chain service
+        // already holds with another recipient or amount. The server reads `error` (what it logs, and keeps for the
+        // refund's log line); `code` is for a program and `requestId` names the id that was refused.
+        JsonNode json = readFixture("WithdrawalConflictResponse");
+        ChainSvcRestClient.WithdrawalConflictResponse dto =
+                mapper.treeToValue(json, ChainSvcRestClient.WithdrawalConflictResponse.class);
+
+        assertThat(dto.error()).isEqualTo(json.get("error").asText()).contains("already held");
+        assertThat(dto.code()).isEqualTo("request_id_conflict");
+        assertThat(dto.requestId()).isEqualTo("w-11");
         assertThat(mapper.readTree(mapper.writeValueAsString(dto))).isEqualTo(json);
     }
 

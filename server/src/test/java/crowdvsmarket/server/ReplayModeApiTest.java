@@ -69,8 +69,9 @@ class ReplayModeApiTest {
         assertThat(info.path("markets").asInt()).as("BTC alone is played").isEqualTo(1);
         assertKeys(info.path("replay"), "sourceFromIso", "sourceToIso", "speedup");
         assertThat(info.path("replay").path("speedup").asDouble()).isEqualTo(20.0);
-        assertThat(info.path("roundDurationsSec").path("hourly").asLong()).isEqualTo(180);
-        assertThat(info.path("roundDurationsSec").path("daily").asLong()).isEqualTo(900);
+        assertKeys(info.path("roundDurationsSec"), "HOURLY", "DAILY"); // the Interval names, as contract.ts keys them
+        assertThat(info.path("roundDurationsSec").path("HOURLY").asLong()).isEqualTo(180);
+        assertThat(info.path("roundDurationsSec").path("DAILY").asLong()).isEqualTo(900);
         assertThat(info.path("testWallet").asBoolean()).isTrue();
         assertThat(info.path("playAssetId").asText()).matches("0x[0-9a-f]{64}");
         assertThat(info.path("oracle").has("firstSeq")).isTrue();

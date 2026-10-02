@@ -12,10 +12,10 @@ import org.jboss.logging.Logger;
  * past the client's own 5s read-timeout ({@code quarkus.rest-client.chainsvc.read-timeout}) —
  * even though the TCP connection itself is instant (raw curl to the same
  * {@code herd.chainsvc.base-url} address connects in low single-digit milliseconds; the slowness
- * is on chainsvc's own handler, not the network). {@link crowdvsmarket.server.service.GameService
- * #serverInfo} used to call {@link ChainSvcClient#oracleStatus()} synchronously on every RPC, so a
- * slow chainsvc round-trip blocked the calling request thread for up to 5s each time serverInfo
- * was polled.
+ * is on chainsvc's own handler, not the network). {@link crowdvsmarket.server.service.ServerInfoService
+ * #serverInfo} (it was {@code GameService#serverInfo} then) used to call {@link ChainSvcClient#oracleStatus()}
+ * synchronously on every RPC, so a slow chainsvc round-trip blocked the calling request thread for up to 5s
+ * each time serverInfo was polled.
  *
  * <p>This bean owns a single background refresh instead — its own {@code @Scheduled} tick, never
  * on a request thread, and always at most one {@code oracleStatus()} call in flight regardless of

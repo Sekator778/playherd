@@ -21,6 +21,7 @@ import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.domain.RoundCalendar;
 import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.service.BoundaryPrices;
 import crowdvsmarket.server.service.GameService;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,7 @@ class EngineRebuildServiceTest {
 
     private EngineRebuildService service;
     private EngineStateBuilder builder;
+    private BoundaryPrices boundaryPrices;
     private GameService gameService;
     private BotService botService;
     private PlayerDirectory players;
@@ -44,7 +46,7 @@ class EngineRebuildServiceTest {
     private EngineHub hub;
 
     private static EngineStateBuilder.Built built(RoundProgress.SeriesKey series, RoundWindow cursor) {
-        return new EngineStateBuilder.Built(new EngineHub(), new BetFeed(), Map.of(series, cursor), 3, 1, " x");
+        return new EngineStateBuilder.Built(new EngineHub(), new BetFeed(), Map.of(series, cursor), null, 3, 1, " x");
     }
 
     private final RoundProgress.SeriesKey btcHourly = new RoundProgress.SeriesKey("BTC", Interval.HOURLY);
@@ -65,6 +67,8 @@ class EngineRebuildServiceTest {
         service.roundProgress = progress;
         builder = mock(EngineStateBuilder.class);
         service.builder = builder;
+        boundaryPrices = mock(BoundaryPrices.class);
+        service.boundaryPrices = boundaryPrices;
         botService = mock(BotService.class);
         service.botService = botService;
         gameService = mock(GameService.class);
@@ -153,6 +157,54 @@ class EngineRebuildServiceTest {
         verify(builder, times(2)).build(anyLong());   // after it: one more
         assertThat(service.retryPendingRebuild()).isFalse();
         verify(builder, times(2)).build(anyLong());   // and the gap starts over
+    }
+
+    /** What the service logs at ERROR. */
+    private static final class Errors extends java.util.logging.Handler {
+        final java.util.List<java.util.logging.LogRecord> records = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override
+        public void publish(java.util.logging.LogRecord record) {
+            if (record.getLevel().intValue() >= java.util.logging.Level.SEVERE.intValue()) {
+                records.add(record);
+            }
+        }
+
+        long withTrace() {
+            return records.stream().filter(r -> r.getThrown() != null).count();
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    @Test
+    void theRecoveryOfAKeyIsLoggedWithATraceOnceThenALineAMinuteAndWorkingAgainMakesTheNextOneAFirstOneAgain() {
+        when(builder.build(anyLong())).thenReturn(built(btcHourly, cursor));
+        java.util.logging.Logger log = java.util.logging.Logger.getLogger(EngineRebuildService.class.getName());
+        Errors errors = new Errors();
+        log.addHandler(errors);
+        try {
+            service.recoverAfterFailure(new IllegalStateException("one"), "round A", 1_000L);    // first: with its trace
+            service.recoverAfterFailure(new IllegalStateException("two"), "round A", 2_000L);    // inside the minute
+            service.recoverAfterFailure(new IllegalStateException("three"), "round A", 61_000L); // a minute on: a line
+            service.recoverAfterFailure(new IllegalStateException("four"), "round B", 62_000L);  // another key: first
+            service.recovered("round A");
+            service.recoverAfterFailure(new IllegalStateException("five"), "round A", 63_000L);  // first again
+        } finally {
+            log.removeHandler(errors);
+        }
+
+        assertThat(errors.records).as("three traces and one line, nothing for the failure inside the minute")
+                .hasSize(4);
+        assertThat(errors.withTrace()).isEqualTo(3);
+        verify(builder, times(5)).build(anyLong());   // but the engine is rebuilt after every one of them
+        assertThat(service.isReady()).isTrue();
     }
 
     @Test

@@ -18,6 +18,7 @@ import crowdvsmarket.server.markets.NewMarket;
 import crowdvsmarket.server.persistence.Db;
 import crowdvsmarket.server.persistence.OracleRecordRepository;
 import crowdvsmarket.server.prices.PricesConfig;
+import crowdvsmarket.server.scheduler.EngineRebuildService;
 import crowdvsmarket.server.testsupport.PlainMarketRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,7 @@ class ServerInfoServiceTest {
     private OracleStatusCache statusCache;
     private OracleRecordRepository oracleRecords;
     private PricesConfig prices;
+    private EngineRebuildService rebuildService;
     private ServerInfoService service;
 
     @BeforeEach
@@ -53,6 +55,8 @@ class ServerInfoServiceTest {
         db = mock(Db.class);
         statusCache = mock(OracleStatusCache.class);
         oracleRecords = mock(OracleRecordRepository.class);
+        rebuildService = mock(EngineRebuildService.class);
+        when(rebuildService.isReady()).thenReturn(true);
         prices = PricesConfig.defaults(); // mode live, source live
 
         GameService gameService = new GameService();
@@ -65,6 +69,7 @@ class ServerInfoServiceTest {
         service.oracleStatusCache = statusCache;
         service.oracleRecords = oracleRecords;
         service.db = db;
+        service.rebuildService = rebuildService;
     }
 
     private void list(String id, String category) {
@@ -193,5 +198,47 @@ class ServerInfoServiceTest {
                 "PMODDS", null, 10, Market.ODDS_LOT_EXP, null), 1L);
 
         assertThat(service.serverInfo().markets()).isEqualTo(2);
+    }
+
+    @Test
+    void engineReadyIsWhatTheRebuildServiceSays() {
+        assertThat(service.serverInfo().engineReady()).isTrue();
+
+        when(rebuildService.isReady()).thenReturn(false);
+        assertThat(service.serverInfo().engineReady()).as("a recovery that has not succeeded yet").isFalse();
+    }
+
+    @Test
+    void aDatabaseThatDoesNotAnswerLeavesTheLastFirstSeqNotAFailure() {
+        when(db.read(any())).thenReturn(17L);
+        assertThat(service.serverInfo().oracle().firstSeq()).isEqualTo(17L);
+
+        when(db.read(any())).thenThrow(new RuntimeException("db connection failure"));
+        ServerInfo.ServerInfoDto info = service.serverInfo();
+
+        assertThat(info.oracle().firstSeq()).as("the value it last read").isEqualTo(17L);
+        assertThat(info.engineReady()).isTrue();
+    }
+
+    @Test
+    void aDatabaseThatNeverAnsweredGivesNullAndZeroNotAFailure() {
+        when(db.read(any())).thenThrow(new RuntimeException("db connection failure"));
+        when(oracleRecords.pendingCount()).thenThrow(new RuntimeException("db connection failure"));
+
+        ServerInfo.ServerInfoDto info = service.serverInfo();
+
+        assertThat(info.oracle().firstSeq()).isNull();
+        assertThat(info.oracle().pendingRecords()).isZero();
+        assertThat(info.mode()).isEqualTo("live");
+    }
+
+    @Test
+    void thePendingCountOfTheLastGoodReadAnswersWhenTheDatabaseDoesNot() {
+        when(oracleRecords.pendingCount()).thenReturn(5);
+        assertThat(service.serverInfo().oracle().pendingRecords()).isEqualTo(5);
+
+        when(oracleRecords.pendingCount()).thenThrow(new RuntimeException("db connection failure"));
+
+        assertThat(service.serverInfo().oracle().pendingRecords()).isEqualTo(5);
     }
 }

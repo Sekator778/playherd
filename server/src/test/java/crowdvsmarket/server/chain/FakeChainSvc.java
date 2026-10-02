@@ -2,13 +2,16 @@ package crowdvsmarket.server.chain;
 
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,6 +40,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       makes a server resend a record chainsvc already holds. Tied to a {@code seq}, not to "the next
  *       POST", so a test that shares the application with a background publisher still loses the answer
  *       it means to.
+ *   <li>{@code POST /v1/play/withdrawals} and {@code GET /v1/play/withdrawals/{requestId}}: a request id the
+ *       chain service holds is kept for good, in whatever state, and answered by ITS status — the rule that
+ *       made a new database's {@code w-11} meet an old one's ({@code docs/research/chain_service.md} §17.6,
+ *       {@code chain/c2-svc/src/play/withdrawal_queue.rs}): the same id with the same recipient and amount is a
+ *       repeat (accepted again), with another recipient or amount — or when the entry predates content
+ *       tracking ({@link #holdLegacyConfirmed}) — a conflict ({@code HTTP 409}, the typed result of the
+ *       client), never the old request's status.
  * </ul>
  */
 public class FakeChainSvc implements ChainSvcClient {
@@ -128,14 +138,80 @@ public class FakeChainSvc implements ChainSvcClient {
         return new AuthVerifyResult(true, null);
     }
 
+    /** One request id the chain service holds. {@code toAddress}/{@code amountMojos} are {@code null} for an
+     *  entry from before content was recorded. */
+    public record HeldWithdrawal(String toAddress, Long amountMojos, String state, String coinId, Long height,
+                                   String reason) {
+    }
+
+    private final Map<String, HeldWithdrawal> withdrawals = new LinkedHashMap<>();
+    private final List<String> withdrawalSubmissions = new CopyOnWriteArrayList<>();
+    private final List<String> withdrawalStatusReads = new CopyOnWriteArrayList<>();
+
     @Override
-    public PlayWithdrawalSubmitResult submitPlayWithdrawal(String requestId, String toAddress, long amountMojos) {
-        return null;
+    public synchronized PlayWithdrawalSubmitResult submitPlayWithdrawal(String requestId, String toAddress,
+                                                                        long amountMojos) {
+        withdrawalSubmissions.add(requestId);
+        if (down) {
+            return null;
+        }
+        HeldWithdrawal held = withdrawals.get(requestId);
+        if (held == null) {
+            withdrawals.put(requestId, new HeldWithdrawal(toAddress, amountMojos, "queued", null, null, null));
+            return new PlayWithdrawalSubmitResult(true);
+        }
+        if (held.toAddress() == null || held.amountMojos() == null) {
+            return PlayWithdrawalSubmitResult.refusedAsConflict("requestId " + requestId + " is already held by this "
+                    + "service, but its recipient and amount were not recorded (the entry predates content tracking)");
+        }
+        if (held.toAddress().equals(toAddress) && held.amountMojos() == amountMojos) {
+            return new PlayWithdrawalSubmitResult(true); // a repeat
+        }
+        return PlayWithdrawalSubmitResult.refusedAsConflict("requestId " + requestId + " is already held by this "
+                + "service with a different recipient or amount");
     }
 
     @Override
-    public PlayWithdrawalStatus playWithdrawalStatus(String requestId) {
-        return null;
+    public synchronized PlayWithdrawalStatus playWithdrawalStatus(String requestId) {
+        withdrawalStatusReads.add(requestId);
+        HeldWithdrawal held = down ? null : withdrawals.get(requestId);
+        if (held == null) {
+            return null; // 404 at the real one, which the client turns into null
+        }
+        return new PlayWithdrawalStatus(requestId, held.state(), held.coinId(), held.height(), held.reason());
+    }
+
+    /** An entry of an OLDER database's epoch, as the stand's chain service holds them: confirmed, with its coin, and
+     *  — as everything from before content tracking — without the recipient and the amount it was for. */
+    public synchronized void holdLegacyConfirmed(String requestId, String coinId, long height) {
+        withdrawals.put(requestId, new HeldWithdrawal(null, null, "confirmed", coinId, height, null));
+    }
+
+    /** An entry that is confirmed, for the recipient and amount it was submitted with. */
+    public synchronized void holdConfirmed(String requestId, String toAddress, long amountMojos, String coinId,
+                                            long height) {
+        withdrawals.put(requestId, new HeldWithdrawal(toAddress, amountMojos, "confirmed", coinId, height, null));
+    }
+
+    /** The chain service confirms a request it holds (a spend that got on chain). */
+    public synchronized void confirmWithdrawal(String requestId, String coinId, long height) {
+        HeldWithdrawal held = withdrawals.get(requestId);
+        withdrawals.put(requestId, new HeldWithdrawal(held == null ? null : held.toAddress(),
+                held == null ? null : held.amountMojos(), "confirmed", coinId, height, null));
+    }
+
+    /** Every request id of every submission, in order — what the server called its withdrawals. */
+    public List<String> withdrawalSubmissions() {
+        return List.copyOf(withdrawalSubmissions);
+    }
+
+    /** Every request id the server asked the status of, in order. */
+    public List<String> withdrawalStatusReads() {
+        return List.copyOf(withdrawalStatusReads);
+    }
+
+    public synchronized Optional<HeldWithdrawal> heldWithdrawal(String requestId) {
+        return Optional.ofNullable(withdrawals.get(requestId));
     }
 
     @Override
@@ -219,12 +295,15 @@ public class FakeChainSvc implements ChainSvcClient {
     }
 
     /** Routes the {@code @InjectMock ChainSvcClient} {@code mock} into this fake, for the calls the oracle
-     *  wiring makes. Other methods keep Mockito's defaults. */
+     *  wiring and the withdrawals make. Other methods keep Mockito's defaults. */
     public FakeChainSvc install(ChainSvcClient mock) {
         when(mock.oracleRecords(anyList())).thenAnswer(inv -> oracleRecords(inv.getArgument(0)));
         when(mock.oracleStatus()).thenAnswer(inv -> oracleStatus());
         when(mock.oracleRecordStatus(anyLong())).thenAnswer(inv -> oracleRecordStatus(inv.getArgument(0)));
         when(mock.health()).thenAnswer(inv -> health());
+        when(mock.submitPlayWithdrawal(anyString(), anyString(), anyLong())).thenAnswer(
+                inv -> submitPlayWithdrawal(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        when(mock.playWithdrawalStatus(anyString())).thenAnswer(inv -> playWithdrawalStatus(inv.getArgument(0)));
         return this;
     }
 }

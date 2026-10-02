@@ -8,6 +8,13 @@ import java.util.List;
  * (non-polymorphic) Jackson serialization of whichever concrete record a handler returns already
  * produces the exact same shape the TS union member expects; no {@code @JsonTypeInfo} needed
  * since the server only ever serializes these, never deserializes them from a client.
+ *
+ * <p>Every round carries the facts of its market that a round page needs to print the round's prices and
+ * to name their source without {@code markets()} — contract.ts {@code RoundBase}: {@code marketId}, {@code
+ * asset} (the market's symbol), {@code kind}, {@code priceDecimals} and {@code source}. A market leaves
+ * {@code markets()} ten minutes after it closes, its rounds stay readable for good, so these come from the
+ * market registry, which keeps every market it ever listed. They sit after {@code asset} in every record,
+ * in the order contract.ts has them.
  */
 public final class Rounds {
     private Rounds() {
@@ -43,7 +50,10 @@ public final class Rounds {
                                         String capitalAfter) {
     }
 
-    public record CancellationDto(String roundId, String reason, long cancelledAtMs, int refundedBetCount) {
+    /** {@code marketId}/{@code asset}: the round's market and its symbol, so that the public cancellations log names
+     *  the pair and not only the round id (contract.ts: optional there, always sent here). */
+    public record CancellationDto(String roundId, String marketId, String asset, String reason, long cancelledAtMs,
+                                    int refundedBetCount) {
     }
 
     /** Additive (Р-62, web-side counterpart already in contract.ts): one row of
@@ -102,16 +112,19 @@ public final class Rounds {
      *  calc (Р-14) as {@link CrowdRoundPositionDto}/{@code CrowdAccount}'s own majority-side
      *  computation, just previewed one phase earlier, before the round has actually opened a
      *  position. */
-    public record RoundBetting(String roundId, RoundWindowDto window, String marketId, String asset, String phase,
+    public record RoundBetting(String roundId, RoundWindowDto window, String marketId, String asset,
+                                 Enums.MarketKind kind, int priceDecimals, String source, String phase,
                                  int participantCount, BetDto myBet, String upStake, String downStake, int upCount,
                                  int downCount, Enums.Direction majorityDirection, Integer majorityLeverage,
                                  List<LiveBetDto> recentBets) implements RoundDto {
         public RoundBetting(String roundId, RoundWindowDto window, String marketId, String asset,
+                             Enums.MarketKind kind, int priceDecimals, String source,
                              int participantCount, BetDto myBet, String upStake, String downStake, int upCount,
                              int downCount, Enums.Direction majorityDirection, Integer majorityLeverage,
                              List<LiveBetDto> recentBets) {
-            this(roundId, window, marketId, asset, Enums.RoundPhase.BETTING.name(), participantCount, myBet, upStake,
-                    downStake, upCount, downCount, majorityDirection, majorityLeverage, recentBets);
+            this(roundId, window, marketId, asset, kind, priceDecimals, source, Enums.RoundPhase.BETTING.name(),
+                    participantCount, myBet, upStake, downStake, upCount, downCount, majorityDirection,
+                    majorityLeverage, recentBets);
         }
     }
 
@@ -121,32 +134,44 @@ public final class Rounds {
      *  outage across the boundary) — web/src/api/contract.ts: "show waiting for the opening price,
      *  never a zero" — and then {@code positions} is empty and {@code crowd} null too: nothing can be
      *  derived from an entry price that does not exist yet. */
-    public record RoundRunning(String roundId, RoundWindowDto window, String marketId, String asset, String phase,
+    public record RoundRunning(String roundId, RoundWindowDto window, String marketId, String asset,
+                                 Enums.MarketKind kind, int priceDecimals, String source, String phase,
                                  String openPrice, List<PublicPositionDto> positions, CrowdRoundPositionDto crowd)
             implements RoundDto {
-        public RoundRunning(String roundId, RoundWindowDto window, String marketId, String asset, String openPrice,
+        public RoundRunning(String roundId, RoundWindowDto window, String marketId, String asset,
+                             Enums.MarketKind kind, int priceDecimals, String source, String openPrice,
                              List<PublicPositionDto> positions, CrowdRoundPositionDto crowd) {
-            this(roundId, window, marketId, asset, Enums.RoundPhase.RUNNING.name(), openPrice, positions, crowd);
+            this(roundId, window, marketId, asset, kind, priceDecimals, source, Enums.RoundPhase.RUNNING.name(),
+                    openPrice, positions, crowd);
         }
     }
 
-    public record RoundSettled(String roundId, RoundWindowDto window, String marketId, String asset, String phase,
+    public record RoundSettled(String roundId, RoundWindowDto window, String marketId, String asset,
+                                 Enums.MarketKind kind, int priceDecimals, String source, String phase,
                                  String openPrice, String closePrice, List<PublicPositionDto> positions,
                                  CrowdRoundResultDto crowd, String resultsHash, OracleAnchorDto oracleAnchor)
             implements RoundDto {
-        public RoundSettled(String roundId, RoundWindowDto window, String marketId, String asset, String openPrice,
+        public RoundSettled(String roundId, RoundWindowDto window, String marketId, String asset,
+                             Enums.MarketKind kind, int priceDecimals, String source, String openPrice,
                              String closePrice, List<PublicPositionDto> positions, CrowdRoundResultDto crowd,
                              String resultsHash) {
-            this(roundId, window, marketId, asset, Enums.RoundPhase.SETTLED.name(), openPrice, closePrice, positions,
-                    crowd, resultsHash, null);
+            this(roundId, window, marketId, asset, kind, priceDecimals, source, Enums.RoundPhase.SETTLED.name(),
+                    openPrice, closePrice, positions, crowd, resultsHash, null);
         }
     }
 
-    public record RoundCancelled(String roundId, RoundWindowDto window, String marketId, String asset, String phase,
-                                   CancellationDto cancellation, OracleAnchorDto oracleAnchor) implements RoundDto {
+    /** {@code resultsHash}: the hash of the canonical results JSON stored with the cancellation (its {@code status}
+     *  is {@code CANCELLED}, no positions, no crowd) — {@code GET /api/rounds/{id}/results.json} serves the JSON it
+     *  covers, so a cancelled round can be verified like a settled one. Always sent for a stored round. */
+    public record RoundCancelled(String roundId, RoundWindowDto window, String marketId, String asset,
+                                   Enums.MarketKind kind, int priceDecimals, String source, String phase,
+                                   CancellationDto cancellation, String resultsHash, OracleAnchorDto oracleAnchor)
+            implements RoundDto {
         public RoundCancelled(String roundId, RoundWindowDto window, String marketId, String asset,
-                               CancellationDto cancellation) {
-            this(roundId, window, marketId, asset, Enums.RoundPhase.CANCELLED.name(), cancellation, null);
+                               Enums.MarketKind kind, int priceDecimals, String source,
+                               CancellationDto cancellation, String resultsHash) {
+            this(roundId, window, marketId, asset, kind, priceDecimals, source, Enums.RoundPhase.CANCELLED.name(),
+                    cancellation, resultsHash, null);
         }
     }
 

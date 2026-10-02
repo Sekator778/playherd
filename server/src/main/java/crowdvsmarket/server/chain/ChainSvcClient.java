@@ -89,11 +89,29 @@ public interface ChainSvcClient {
 
     // --- Р-53: real on-chain PLAY withdraw/deposit (chainsvc FIXED INTERFACE, /v1/play/*) ---
 
-    /** {@code POST /v1/play/withdrawals}'s {@code 202 {accepted:true}} — idempotent by
-     *  {@code requestId} per the FIXED INTERFACE, so {@code WithdrawalPollerService} retries a
-     *  submission it never confirmed the response of exactly the same way it submits a brand-new
-     *  one. */
-    record PlayWithdrawalSubmitResult(boolean accepted) {
+    /** {@code POST /v1/play/withdrawals}'s answer. {@code 202 {accepted:true}} — idempotent by
+     *  {@code requestId} and content per the FIXED INTERFACE, so {@code WithdrawalPollerService} retries a
+     *  submission it never confirmed the response of exactly the same way it submits a brand-new one — or
+     *  HTTP 409 (E3, chain/c2-svc {@code WithdrawalConflictResponse}, {@code docs/research/chain_service.md}
+     *  §17.6): the chain service already holds this {@code requestId} with another recipient or amount (or
+     *  cannot tell), and refuses it rather than answer with the old request's status. A conflict is not a
+     *  transient failure: retrying it changes nothing, so it is a result of its own — {@link #isConflict()},
+     *  with the chain service's own text in {@link #conflict()} — and {@code accepted} is {@code false}. */
+    record PlayWithdrawalSubmitResult(boolean accepted, String conflict) {
+
+        /** An answer without a conflict. */
+        public PlayWithdrawalSubmitResult(boolean accepted) {
+            this(accepted, null);
+        }
+
+        /** The chain service refused the id with HTTP 409; {@code message} is its {@code error} text. */
+        public static PlayWithdrawalSubmitResult refusedAsConflict(String message) {
+            return new PlayWithdrawalSubmitResult(false, message == null ? "request id conflict" : message);
+        }
+
+        public boolean isConflict() {
+            return conflict != null;
+        }
     }
 
     /** {@code GET /v1/play/withdrawals/{requestId}}. {@code state} is one of
@@ -120,14 +138,16 @@ public interface ChainSvcClient {
     record PlayDepositsResult(List<PlayDeposit> deposits, long tipHeight) {
     }
 
-    /** {@code null} on a chainsvc/network failure — {@code GameService#requestWithdrawal}/{@code
-     *  WithdrawalPollerService} treat that as "not yet accepted, retry next tick", never an error
-     *  surfaced past the escrow debit that already happened (task: "never block the game on chain
-     *  confirmation"). */
+    /** {@code null} on a chainsvc/network failure — {@code WithdrawalSubmitter} treats that as "not yet
+     *  accepted, retry next tick", never an error surfaced past the escrow debit that already happened
+     *  (task: "never block the game on chain confirmation"). {@code requestId} is the id the chain service
+     *  knows the withdrawal by ({@link ChainRequestIds#forWithdrawal}), not the engine's own. A refusal with
+     *  HTTP 409 is a {@link PlayWithdrawalSubmitResult#isConflict() conflict result}, not {@code null}. */
     PlayWithdrawalSubmitResult submitPlayWithdrawal(String requestId, String toAddress, long amountMojos);
 
     /** {@code null} on a chainsvc/network failure — {@code WithdrawalPollerService} just retries
-     *  next tick, same "degrade gracefully" contract as {@link #oracleRecordStatus(long)}. */
+     *  next tick, same "degrade gracefully" contract as {@link #oracleRecordStatus(long)}. {@code requestId}
+     *  is the chain service's id for the withdrawal ({@link ChainRequestIds#forWithdrawal}). */
     PlayWithdrawalStatus playWithdrawalStatus(String requestId);
 
     /** {@code null} on a chainsvc/network failure — {@code GameService#myDepositAddress} surfaces

@@ -35,14 +35,15 @@ public final class Enums {
         ACTIVE, CLOSED
     }
 
-    /** contract.ts `MarketCrowdBriefDto.lastOutcome`: how the crowd's last traded round ended. */
+    /** contract.ts `MarketCrowdBriefDto.lastOutcome`: how the crowd's last traded round ended. {@code FLAT}: the
+     *  round ended with exactly the capital it started with and was not liquidated (the price closed where it
+     *  opened) — traded, neither won nor lost. */
     public enum CrowdOutcome {
-        WIN, LOSS, LIQUIDATED
+        WIN, LOSS, LIQUIDATED, FLAT
     }
 
     /** contract.ts `LedgerEntryType` — mirrors {@code crowdvsmarket.engine.ledger.LedgerEntryType}.
-     *  {@code OPERATOR_CORRECTION} (wave-2 security fix) is additive, not in contract.ts's union —
-     *  same situation as {@code ApiErrorCode.INVALID_NICKNAME}/{@code RATE_LIMITED} below. */
+     *  {@code OPERATOR_CORRECTION} (wave-2 security fix): a signed correction booked by the operator. */
     public enum LedgerEntryType {
         STARTER_PACK, STAKE_DEBIT, STAKE_REFUND, SETTLEMENT, DEPOSIT, WITHDRAWAL, WITHDRAWAL_REFUND,
         OPERATOR_CORRECTION
@@ -51,6 +52,23 @@ public final class Enums {
     /** contract.ts `WithdrawalState`. */
     public enum WithdrawalState {
         REQUESTED, CONFIRMED, FAILED
+    }
+
+    /**
+     * contract.ts `WithdrawalChainState` — the words of {@code withdrawal_requests.chain_state}, which {@code
+     * WithdrawalRequestDto.chainState} hands to the web client: {@code submitted} is this server's own ("the POST
+     * was accepted, not yet polled", {@code WithdrawalDepositRepository#markWithdrawalSubmitted}), the others are
+     * chainsvc's own {@code state} for a withdrawal ({@code queued}, {@code in_flight}, {@code confirmed},
+     * {@code failed}), passed on as they come. On the wire they are lower case ({@link #wire()}); the enum exists
+     * so that the vocabulary is written down once in Java and a test can hold it against contract.ts.
+     */
+    public enum WithdrawalChainState {
+        SUBMITTED, QUEUED, IN_FLIGHT, CONFIRMED, FAILED;
+
+        /** The word as it is stored and sent: {@code in_flight}, {@code confirmed}, … */
+        public String wire() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
     }
 
     /** contract.ts `DepositState`. */
@@ -72,11 +90,12 @@ public final class Enums {
          *  failures and unknown RPC method names, which contract.ts does not model (it only
          *  documents Api-method-level failures). */
         UNAUTHORIZED,
+        /** HTTP 404 — no such player, round or request (contract.ts names it). */
         NOT_FOUND,
         BAD_REQUEST,
-        /** предложение (wave-1 finding, additive — same "not in contract.ts" situation as
-         *  {@code UNAUTHORIZED} above) — {@code setNickname}'s dedicated validation failure, kept
-         *  distinct from the generic {@code BAD_REQUEST} so a client can show a specific message. */
+        /** предложение (wave-1 finding; contract.ts names it) — {@code setNickname}'s dedicated validation
+         *  failure, kept distinct from the generic {@code BAD_REQUEST} so a client can show a specific
+         *  message. 400. */
         INVALID_NICKNAME,
         /** предложение (task item 2: per-IP rate limit on authChallenge/authVerify/placeBet,
          *  Р-38 VPS stand-in) — same "additive, not in contract.ts" situation as above. */
@@ -111,9 +130,9 @@ public final class Enums {
         MARKET_CLOSED,
         /** No price for the market right now (nothing ticked yet / source down). 503. */
         PRICE_UNAVAILABLE,
-        /** Additive, not in contract.ts (the web client shows its message like any {@code OTHER}
-         *  code): the engine is being rebuilt from the event log after a failed settlement and does
-         *  not answer until that has succeeded. 503, nothing was changed. */
+        /** The engine is being rebuilt from the event log after a failed settlement and does not
+         *  answer until that has succeeded (contract.ts names it: the web client keeps what is on
+         *  screen and retries). 503, nothing was changed. */
         ENGINE_NOT_READY
     }
 }

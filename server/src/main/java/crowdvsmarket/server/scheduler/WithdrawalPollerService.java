@@ -1,9 +1,11 @@
 package crowdvsmarket.server.scheduler;
 
+import crowdvsmarket.server.chain.ChainRequestIds;
 import crowdvsmarket.server.chain.ChainSvcClient;
 import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.persistence.WithdrawalDepositRepository;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.service.WithdrawalSubmitter;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -32,6 +34,10 @@ import org.jboss.logging.Logger;
  * <p>Each row is processed in its own try/catch — one bad/unreachable row never stops the rest of
  * the tick, and a transition {@code LedgerBook} itself rejects (e.g. a request some other path
  * already confirmed) is simply logged and skipped, not retried forever.
+ *
+ * <p>The chain service knows a withdrawal by {@link ChainRequestIds#forWithdrawal its own id} — the engine's
+ * {@code w-N} with the database's epoch tag (E1) — for the submission ({@link WithdrawalSubmitter}) and for
+ * the status polling alike; the id in the database, the DTOs and the events stays the engine's.
  */
 @ApplicationScoped
 public class WithdrawalPollerService {
@@ -42,6 +48,10 @@ public class WithdrawalPollerService {
     WithdrawalDepositRepository withdrawalDeposits;
     @Inject
     ChainSvcClient chainSvc;
+    @Inject
+    ChainRequestIds chainRequestIds;
+    @Inject
+    WithdrawalSubmitter withdrawalSubmitter;
     @Inject
     GameService gameService;
     @Inject
@@ -68,11 +78,7 @@ public class WithdrawalPollerService {
         }
         for (WithdrawalDepositRepository.Row row : pending) {
             try {
-                ChainSvcClient.PlayWithdrawalSubmitResult result =
-                        chainSvc.submitPlayWithdrawal(row.requestId(), row.toAddress(), row.amountMojos());
-                if (result != null && result.accepted()) {
-                    withdrawalDeposits.markWithdrawalSubmitted(row.requestId(), now);
-                }
+                withdrawalSubmitter.submit(row.requestId(), row.toAddress(), row.amountMojos(), now);
             } catch (Exception e) {
                 LOG.debugf(e, "withdrawal submit retry failed for %s — will retry next tick", row.requestId());
             }
@@ -97,7 +103,8 @@ public class WithdrawalPollerService {
     }
 
     private void pollOne(WithdrawalDepositRepository.Row row, long now) {
-        ChainSvcClient.PlayWithdrawalStatus status = chainSvc.playWithdrawalStatus(row.requestId());
+        ChainSvcClient.PlayWithdrawalStatus status =
+                chainSvc.playWithdrawalStatus(chainRequestIds.forWithdrawal(row.requestId()));
         if (status == null) {
             return; // chainsvc unreachable this tick
         }

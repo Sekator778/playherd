@@ -1,0 +1,73 @@
+{
+  "method": "round",
+  "args": [
+    "T_WIRE_PERP-1h-1790919120000"
+  ],
+  "response": {
+    "roundId": "T_WIRE_PERP-1h-1790919120000",
+    "window": {
+      "interval": "HOURLY",
+      "startMs": 1790919120000,
+      "endMs": 1790919180000
+    },
+    "marketId": "T_WIRE_PERP",
+    "asset": "WPR",
+    "kind": "PERP",
+    "priceDecimals": 3,
+    "source": "hyperliquid",
+    "phase": "RUNNING",
+    "openPrice": "2412.000",
+    "positions": [
+      {
+        "playerId": "b34ff01c-81fe-45b6-8bde-ab95ed06d9d5",
+        "roundId": "T_WIRE_PERP-1h-1790919120000",
+        "direction": "DOWN",
+        "leverage": 10,
+        "size": "0.08291874",
+        "entryPrice": "2412.000",
+        "liquidationPrice": "2601.176",
+        "pnl": "-5.39",
+        "stake": "200.000",
+        "player": {
+          "playerId": "b34ff01c-81fe-45b6-8bde-ab95ed06d9d5",
+          "nickname": "Bob_Wire",
+          "walletAddress": "txch1bob0wire0player000000000000000000000000000000000000000q5h3xm",
+          "displayName": "Bob_Wire (txch1b…h3xm)",
+          "isBot": false
+        },
+        "liquidated": false,
+        "payout": null,
+        "directionCorrect": null
+      },
+      {
+        "playerId": "46bae30d-4ac7-47ae-93ec-5d1b14975000",
+        "roundId": "T_WIRE_PERP-1h-1790919120000",
+        "direction": "UP",
+        "leverage": 4,
+        "size": "0.01990050",
+        "entryPrice": "2412.000",
+        "liquidationPrice": "1845.918",
+        "pnl": "1.29",
+        "stake": "120.000",
+        "player": {
+          "playerId": "46bae30d-4ac7-47ae-93ec-5d1b14975000",
+          "nickname": "Vera_Wire",
+          "walletAddress": "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn",
+          "displayName": "Vera_Wire (txch1v…d4wn)",
+          "isBot": false
+        },
+        "liquidated": false,
+        "payout": null,
+        "directionCorrect": null
+      }
+    ],
+    "crowd": {
+      "roundId": "T_WIRE_PERP-1h-1790919120000",
+      "direction": "DOWN",
+      "leverage": 10,
+      "margin": "9080.92",
+      "entryPrice": "2412.000",
+      "liquidationPrice": "2601.176"
+    }
+  }
+}

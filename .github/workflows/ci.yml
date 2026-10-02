@@ -72,9 +72,13 @@ jobs:
               - 'server/**'
               - 'engine/**'
               - 'pom.xml'
+              # the server's tests read the web client's contract and the wire fixtures it is held against
+              - 'web/src/api/contract.ts'
+              - 'web/src/api/wire/**'
             chain:
               - 'chain/**'
             web:
+              # includes web/src/api/wire/** (written by the server's tests, read by the web tests)
               - 'web/**'
             docker:
               - 'docker-compose.yml'

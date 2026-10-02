@@ -74,6 +74,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The orchestrator behind every mutating {@code Api} method (web/src/api/contract.ts) and most
@@ -114,9 +115,9 @@ import java.util.UUID;
  * <p><b>Settlement is atomic (§4 п.3):</b> {@link #resolveRound} fetches prices BEFORE taking the
  * lock (the source may be asked over the network), then, under the write lock, runs ONE database
  * transaction — the {@code RoundResolved} event, the result and history rows, the oracle record —
- * and applies the event to the engine inside it. If anything throws, the transaction rolls back and
- * the in-memory state is rebuilt from the event log before the exception propagates, so memory and
- * database can never disagree about a round. {@link #cancelRound} works the same way.
+ * and applies the event to the engine inside it. If anything throws, the transaction rolls back and — when
+ * the event had been applied by then — the in-memory state is rebuilt from the event log before the exception
+ * propagates, so memory and database can never disagree about a round. {@link #cancelRound} works the same way.
  *
  * <p><b>Fail-stop.</b> If that rebuild fails too, the engine is not ready ({@code
  * EngineRebuildService#isReady}) until one succeeds: every method that changes anything and every read
@@ -154,6 +155,10 @@ public class GameService implements MarketListener {
     OpenBets openBets;
     @Inject
     RoundCancellations cancellations;
+    @Inject
+    BoundaryPrices boundaries;
+    @Inject
+    WithdrawalSubmitter withdrawalSubmitter;
     @Inject
     PriceService priceService;
     @Inject
@@ -294,6 +299,11 @@ public class GameService implements MarketListener {
 
     private static Enums.Direction toDto(crowdvsmarket.engine.round.Direction d) {
         return Enums.Direction.valueOf(d.name());
+    }
+
+    /** The kind of a market as every round DTO carries it ({@code Rounds}' class javadoc). */
+    private static Enums.MarketKind kindOf(Market market) {
+        return Enums.MarketKind.valueOf(market.kind().name());
     }
 
     private static crowdvsmarket.engine.round.Direction toEngine(Enums.Direction d) {
@@ -516,7 +526,7 @@ public class GameService implements MarketListener {
                 hub.ensureMarket(market);
                 cancellations.closeSeries(eventApplier, hub, market, "market closed: " + reason, nowMs);
             } catch (RuntimeException | Error e) {
-                recoverEngineState(e);
+                rebuildService.recoverAfterFailure(e, "market " + market.id(), nowMs); // always: completes a close
                 throw e;
             }
         } finally {
@@ -650,6 +660,7 @@ public class GameService implements MarketListener {
         }
     }
 
+    /** Р-13: cancels the player's bet on a round open for betting and refunds it; no bet — nothing persisted (§4 п.18). */
     public void cancelBet(String playerId, String roundId, long nowMs) {
         RoundWindow.RoundRef ref = parseRoundId(roundId);
         marketRegistry.require(ref.market());
@@ -662,6 +673,9 @@ public class GameService implements MarketListener {
             // its stake refunded) once its round has, by wall-clock time, already started.
             if (!bettingWindow.roundId().equals(ref.roundId()) || nowMs >= bettingWindow.startMs()) {
                 throw ApiException.roundNotOpenForBetting(roundId);
+            }
+            if (!hub.hasBet(ref.market(), ref.interval(), bettingWindow.roundId(), playerId)) {
+                return;
             }
             GameEvent.BetCancelled event = new GameEvent.BetCancelled(playerId, ref.interval(),
                     bettingWindow.startMs(), bettingWindow.endMs(), nowMs, ref.market());
@@ -687,10 +701,10 @@ public class GameService implements MarketListener {
      *       and not inside the settlement transaction.
      *   <li>Under the write lock: looks at {@code round_results} again (the round may have been
      *       resolved or cancelled while prices were fetched — then nothing happens and {@code null} is
-     *       returned), then runs ONE database transaction that appends the {@code RoundResolved} event,
-     *       inserts the result and history rows and the oracle record, and applies the event to the
-     *       engine inside it. Any failure rolls the transaction back and rebuilds the in-memory state
-     *       from the event log before it propagates.
+     *       returned), takes the open from the round that closed there ({@link BoundaryPrices}, Р-40), then runs ONE
+     *       database transaction: the {@code RoundResolved} event, the result and history rows and the oracle record,
+     *       and the event applied to the engine inside it. A failure rolls it back and, if the event had been applied,
+     *       rebuilds the in-memory state from the event log before it propagates (§4 п.13).
      * </ol>
      * A round nobody bet on stores a single open→close candle as its path (§4 п.7); one with bets
      * stores the source's path (at most 30 candles in live mode).
@@ -700,9 +714,7 @@ public class GameService implements MarketListener {
     public RoundReport resolveRound(RoundWindow window, long nowMs) throws PriceUnavailableException {
         requireReady(); // no point in asking the price source while the engine cannot take the result
         Market market = marketRegistry.require(window.market());
-        RoundPriceData data = resolvePrices(market, window); // phase 1 — no lock
-        BigDecimal open = data.open().setScale(2, RoundingMode.HALF_UP);
-        BigDecimal close = data.close().setScale(2, RoundingMode.HALF_UP);
+        RoundPriceData fetched = resolvePrices(market, window); // phase 1 — no lock
 
         lockWrite();
         try {
@@ -710,21 +722,31 @@ public class GameService implements MarketListener {
                 return null;
             }
             hub.ensureMarket(market);
+            RoundPriceData data = boundaries.forSettlement(window, fetched);
+            BigDecimal open = data.open().setScale(2, RoundingMode.HALF_UP);
+            BigDecimal close = data.close().setScale(2, RoundingMode.HALF_UP);
             boolean hasBets = hasBetsLocked(window);
             List<Candle> path = hasBets && !data.path().isEmpty() ? data.path()
                     : List.of(singleCandle(window, open, close));
             GameEvent.RoundResolved event = new GameEvent.RoundResolved(window.interval(), window.startMs(),
                     window.endMs(), open.toPlainString(), close.toPlainString(), EventApplier.fromCandles(path),
                     nowMs, market.id());
+            AtomicBoolean touchedMemory = new AtomicBoolean();
             try {
-                return db.tx(c -> {
+                RoundReport report = db.tx(c -> {
                     eventStore.append(c, event, nowMs);
-                    RoundReport report = (RoundReport) eventApplier.apply(event);
-                    storeSettledResult(c, market, window, report, data.sourceTsMs());
-                    return report;
+                    touchedMemory.set(true); // from here the engine may be ahead of the database
+                    RoundReport r = (RoundReport) eventApplier.apply(event);
+                    storeSettledResult(c, market, window, r, data.sourceTsMs());
+                    return r;
                 });
+                boundaries.settled(window, close.movePointRight(2).longValueExact()); // only once it has committed
+                rebuildService.recovered(window.roundId());
+                return report;
             } catch (RuntimeException | Error e) {
-                recoverEngineState(e);
+                if (touchedMemory.get()) {
+                    rebuildService.recoverAfterFailure(e, window.roundId(), nowMs);
+                }
                 throw e;
             }
         } finally {
@@ -753,16 +775,6 @@ public class GameService implements MarketListener {
     static Candle singleCandle(RoundWindow window, BigDecimal open, BigDecimal close) {
         return new Candle(window.startMs(), window.endMs() - 1, open, open.max(close), open.min(close), close,
                 BigDecimal.ZERO, 0);
-    }
-
-    /** After a failed round operation the in-memory engine may be ahead of the database (the event
-     *  was applied inside a transaction that then rolled back): rebuild it from the log so memory and
-     *  database agree again — and if that fails too, stop serving from it ({@link
-     *  EngineRebuildService#recoverAfterFailure}). The caller holds the write lock. */
-    private void recoverEngineState(Throwable cause) {
-        LOG.errorf(cause, "a round operation failed after the engine may have been changed — rebuilding the "
-                + "engine from the event log");
-        rebuildService.recoverAfterFailure(cause);
     }
 
     /** Inside {@link #resolveRound}'s transaction: the settled result, the per-player history rows
@@ -884,11 +896,17 @@ public class GameService implements MarketListener {
                         + window.interval());
             }
             hub.ensureMarket(market);
+            AtomicBoolean touchedMemory = new AtomicBoolean();
             try {
                 // one transaction, like the settlement; never touches RoundProgress (the scheduler steps over)
-                return cancellations.cancel(eventApplier, hub, market, window, reason, nowMs);
+                Rounds.CancellationDto cancelled =
+                        cancellations.cancel(eventApplier, hub, market, window, reason, nowMs, touchedMemory);
+                rebuildService.recovered(window.roundId());
+                return cancelled;
             } catch (RuntimeException | Error e) {
-                recoverEngineState(e);
+                if (touchedMemory.get()) {
+                    rebuildService.recoverAfterFailure(e, window.roundId(), nowMs);
+                }
                 throw e;
             }
         } finally {
@@ -977,9 +995,9 @@ public class GameService implements MarketListener {
                         e.stake(), e.atMs()))
                 .toList();
         return new Rounds.RoundBetting(window.roundId(), new Rounds.RoundWindowDto(toDto(window.interval()),
-                window.startMs(), window.endMs()), market.id(), market.symbol(), bets.size(), myBet,
-                split.upStake(), split.downStake(), split.upCount(), split.downCount(), split.majorityDirection(),
-                split.majorityLeverage(), recentBets);
+                window.startMs(), window.endMs()), market.id(), market.symbol(), kindOf(market),
+                market.priceDecimals(), market.source(), bets.size(), myBet, split.upStake(), split.downStake(),
+                split.upCount(), split.downCount(), split.majorityDirection(), split.majorityLeverage(), recentBets);
     }
 
     /** Defensive fallback for a {@code playerId} the {@link PlayerDirectory} cache has no row for
@@ -1038,19 +1056,18 @@ public class GameService implements MarketListener {
      *  docs/research/round_engine_design.md's own note that "RUNNING" is not a stored engine
      *  state.
      *
-     *  <p>Prices come from {@link #soFar} — memory only, so this is safe under the read lock. When
-     *  the window's open price is not known yet (the market was listed during this window, or the tick
-     *  buffer is still empty after a restart) there is nothing to derive an entry price from: the DTO
-     *  then carries {@code openPrice = null} (contract.ts: "waiting for the opening price"; never a
-     *  zero, never the latest tick, which is not the round's open), no positions and no crowd
-     *  position, instead of failing the whole {@code rounds} call. */
+     *  <p>Prices come from {@link #soFar} — memory only, so this is safe under the read lock (the open is the close of
+     *  the round that ended where this one started, if any: Р-40). When the open is not known yet (the market was
+     *  listed during this window, or the tick buffer is still empty after a restart) there is nothing to derive an
+     *  entry price from: the DTO then carries {@code openPrice = null} (contract.ts: "waiting for the opening price";
+     *  never a zero, never the latest tick), no positions and no crowd position, instead of failing {@code rounds}. */
     private Rounds.RoundDto buildRunningDto(Market market, RoundWindow window, long nowMs) {
         Rounds.RoundWindowDto windowDto = new Rounds.RoundWindowDto(toDto(window.interval()), window.startMs(),
                 window.endMs());
         Optional<RoundPriceData> soFar = soFar(market, window, nowMs);
         if (soFar.isEmpty()) {
-            return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(), null,
-                    List.of(), null);
+            return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(), kindOf(market),
+                    market.priceDecimals(), market.source(), null, List.of(), null);
         }
         MarketSpec spec = market.spec();
         BigDecimal openPrice = soFar.get().open();
@@ -1107,17 +1124,17 @@ public class GameService implements MarketListener {
                     margin.toPlainString(), openRaw, market.rawString(crowdPosition.liquidationPrice()));
         }
 
-        return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(), openRaw, positions,
-                crowdPreview);
+        return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(), kindOf(market),
+                market.priceDecimals(), market.source(), openRaw, positions, crowdPreview);
     }
 
-    /** Open price and path so far of a running window, in engine (lot) prices; empty when the open
-     *  price is not known yet. {@code mode=live}: {@link MarketPrices#soFar} (memory only, no
-     *  network). {@code mode=replay}: the replay series, BTC only. Public: {@code MarketViewService}
-     *  reads a player's running positions off the same prices. */
+    /** Open price and path so far of a running window, in engine (lot) prices; empty when the open price is not
+     *  known yet. {@code mode=live}: {@link MarketPrices#soFar} (memory only, no network) with {@link
+     *  BoundaryPrices#forRunning}'s open (Р-40). {@code mode=replay}: the replay series, BTC only. Public: {@code
+     *  MarketViewService} reads a player's running positions off the same prices. */
     public Optional<RoundPriceData> soFar(Market market, RoundWindow window, long nowMs) {
         if (config.mode() == GameMode.LIVE) {
-            return marketPrices.soFar(market, window, nowMs);
+            return boundaries.forRunning(market, window, marketPrices.soFar(market, window, nowMs));
         }
         if (!Market.BTC_ID.equals(market.id())) {
             return Optional.empty();
@@ -1427,6 +1444,7 @@ public class GameService implements MarketListener {
             toAddress = players.byId(playerId)
                     .orElseThrow(() -> ApiException.notFound("unknown player " + playerId))
                     .walletAddress();
+            withdrawalSubmitter.ensureNamespace(); // E1: before this database's first withdrawal row exists (§4 п.16)
             GameEvent.WithdrawalRequested event = new GameEvent.WithdrawalRequested(playerId, amt.mojos(), nowMs);
             persist(event, nowMs);
             // LedgerBook assigns its own "w-N" id inside requestWithdrawal (a single counter shared
@@ -1444,25 +1462,8 @@ public class GameService implements MarketListener {
         } finally {
             engineLock.writeLock().unlock();
         }
-        submitWithdrawalToChain(requestId, toAddress, amt.mojos(), nowMs);
+        withdrawalSubmitter.submit(requestId, toAddress, amt.mojos(), nowMs);
         return withdrawalDeposits.findWithdrawal(requestId).orElseThrow();
-    }
-
-    /** Best-effort {@code POST /v1/play/withdrawals} — outside {@link #engineLock} on purpose (a
-     *  network call has no business holding the in-memory engine lock), and never lets a failure
-     *  propagate: the escrow debit already happened and must stand regardless, per the class-level
-     *  javadoc's "never block the game on chain confirmation". {@code
-     *  WithdrawalPollerService.retrySubmissions} is the safety net for a failure here. */
-    private void submitWithdrawalToChain(String requestId, String toAddress, long amountMojos, long nowMs) {
-        try {
-            ChainSvcClient.PlayWithdrawalSubmitResult result =
-                    chainSvc.submitPlayWithdrawal(requestId, toAddress, amountMojos);
-            if (result != null && result.accepted()) {
-                withdrawalDeposits.markWithdrawalSubmitted(requestId, nowMs);
-            }
-        } catch (Exception e) {
-            LOG.warnf(e, "chainsvc withdrawal submit failed for %s — poller will retry", requestId);
-        }
     }
 
     /** Р-53: {@code WithdrawalPollerService}'s entry point once {@code GET
@@ -1605,15 +1606,12 @@ public class GameService implements MarketListener {
     }
 
     /**
-     * Р-53: {@link crowdvsmarket.server.scheduler.DepositPollerService}'s entry point for one
-     * chainsvc-reported deposit coin. Reserves {@code coinId} in {@code deposit_confirmations}
-     * FIRST, crediting the balance only if that reservation is the one that actually claimed it —
-     * see that repository's javadoc for why this ordering (rather than crediting first) is the
-     * deliberate, documented trade-off for a ledger that treats "never mint extra PLAY" as the
-     * paramount invariant (task items 1/wave-2's exact class of CRITICAL bug): a crash between the
-     * two steps below can strand a coin reserved-but-uncredited (fixable by hand, an operator can
-     * look for a {@code deposit_confirmations} row with no matching {@code DEPOSIT} ledger entry),
-     * never double-credited.
+     * Р-53: {@link crowdvsmarket.server.scheduler.DepositPollerService}'s entry point for one chainsvc-reported
+     * deposit coin. Under the engine's write lock (readiness checked with it held) the coin is reserved in {@code
+     * deposit_confirmations} and the {@code DepositConfirmedOnChain} event appended in ONE transaction; the balance
+     * is credited once it has committed. A refused call (503) changed nothing, so the poller offers the coin
+     * again; a coin is never credited twice ({@code coin_id} is the primary key); a crash before the apply is
+     * healed by the next rebuild (§4 п.18).
      *
      * @return {@code true} if this call is the one that credited the deposit; {@code false} if
      *         {@code coinId} was already credited by an earlier call (not an error — chainsvc can
@@ -1621,23 +1619,30 @@ public class GameService implements MarketListener {
      */
     public boolean creditOnChainDeposit(String playerId, int playerIndex, PlayAmount amount, String coinId,
                                          long height, long nowMs) {
-        // Before the coin is reserved: a coin reserved and then refused would be uncredited for good,
-        // while a refused call leaves it for the poller's next pass.
-        requireReady();
-        boolean reserved = depositConfirmations.tryReserve(coinId, playerId, playerIndex, amount.mojos(), height, nowMs);
-        if (!reserved) {
-            return false;
-        }
         lockWrite();
         try {
             GameEvent.DepositConfirmedOnChain event =
                     new GameEvent.DepositConfirmedOnChain(playerId, playerIndex, amount.mojos(), coinId, height, nowMs);
-            persist(event, nowMs);
-            eventApplier.apply(event);
+            if (!db.tx(c -> {
+                if (!depositConfirmations.tryReserve(c, coinId, playerId, playerIndex, amount.mojos(), height, nowMs)) {
+                    return false;
+                }
+                eventStore.append(c, event, nowMs);
+                return true;
+            })) {
+                return false;
+            }
+            try {
+                eventApplier.apply(event);
+            } catch (RuntimeException | Error e) {
+                // committed and reserved: no later offer of the coin can credit it, so the rebuild must (it replays it)
+                rebuildService.recoverAfterFailure(e, "deposit " + coinId, nowMs);
+                throw e;
+            }
+            return true;
         } finally {
             engineLock.writeLock().unlock();
         }
-        return true;
     }
 
     // ---------------------------------------------------------------------------------------

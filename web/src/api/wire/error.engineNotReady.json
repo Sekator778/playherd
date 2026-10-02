@@ -1,0 +1,11 @@
+{
+  "method": "markets",
+  "args": [],
+  "status": 503,
+  "response": {
+    "error": {
+      "code": "ENGINE_NOT_READY",
+      "message": "the game engine is recovering — nothing was changed, please try again in a moment"
+    }
+  }
+}

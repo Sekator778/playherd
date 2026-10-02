@@ -27,11 +27,18 @@ public class DepositConfirmationRepository {
      *          {@code sinceHeight} windows). */
     public boolean tryReserve(String coinId, String playerId, int playerIndex, long amountMojos, long height,
                                long creditedAtMs) {
-        int rows = db.tx(c -> db.update(c, "INSERT INTO deposit_confirmations "
+        return db.tx(c -> tryReserve(c, coinId, playerId, playerIndex, amountMojos, height, creditedAtMs));
+    }
+
+    /** {@link #tryReserve(String, String, int, long, long, long)} inside the caller's transaction: {@code
+     *  GameService#creditOnChainDeposit} reserves the coin in the very transaction that appends the {@code
+     *  DepositConfirmedOnChain} event, so a coin is never reserved without its credit being in the log. */
+    public boolean tryReserve(java.sql.Connection c, String coinId, String playerId, int playerIndex,
+                               long amountMojos, long height, long creditedAtMs) throws java.sql.SQLException {
+        return db.update(c, "INSERT INTO deposit_confirmations "
                         + "(coin_id, player_id, player_index, amount_mojos, height, credited_at_ms) "
                         + "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (coin_id) DO NOTHING",
-                coinId, playerId, playerIndex, amountMojos, height, creditedAtMs));
-        return rows == 1;
+                coinId, playerId, playerIndex, amountMojos, height, creditedAtMs) == 1;
     }
 
     public Optional<Row> find(String coinId) {

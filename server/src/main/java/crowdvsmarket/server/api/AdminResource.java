@@ -2,6 +2,7 @@ package crowdvsmarket.server.api;
 
 import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.dto.ApiException;
+import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Ledger;
 import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.Rounds;
@@ -18,6 +19,7 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
+import org.jboss.logging.Logger;
 
 /**
  * Р-43: operator admin endpoints, protected by a bearer token from {@code HERD_OPERATOR_TOKEN}
@@ -27,6 +29,8 @@ import jakarta.ws.rs.core.MediaType;
  */
 @Path("/api/admin")
 public class AdminResource {
+
+    private static final Logger LOG = Logger.getLogger(AdminResource.class);
 
     @Inject
     GameConfig config;
@@ -107,19 +111,40 @@ public class AdminResource {
         return gameService.reverseDeposit(requestId, reason, System.currentTimeMillis());
     }
 
+    /**
+     * The operator's status page. It is the page the operator needs MOST while something is wrong, so it answers
+     * during an outage: {@code server.engineReady} says whether the engine is ready, the list of ledger
+     * corrections — which is read from the engine and answers 503 {@code ENGINE_NOT_READY} while it is not — is
+     * then absent ({@code null}) instead of failing the whole page, and so is the list of cancellations when the
+     * database does not answer (review of the core, finding 2).
+     */
     @GET
     @Path("/status")
     @Produces(MediaType.APPLICATION_JSON)
     public AdminStatusDto status(@HeaderParam("Authorization") String auth) {
         requireOperator(auth);
         ServerInfo.ServerInfoDto info = serverInfoService.serverInfo();
-        Paging.Page<Rounds.CancellationDto> recentCancellations = gameService.cancellations(new Paging.PageParams(20, null));
+        java.util.List<Rounds.CancellationDto> cancellations = null;
+        try {
+            cancellations = gameService.cancellations(new Paging.PageParams(20, null)).items();
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "the operator status could not list the cancellations");
+        }
         // Wave-2 security fix: same "journal of exceptional operator actions" pattern as
         // recentCancellations, for ledger corrections (Р-32/Р-43).
-        Paging.Page<Ledger.LedgerCorrectionDto> recentCorrections = gameService.ledgerCorrections(new Paging.PageParams(20, null));
-        return new AdminStatusDto(info, recentCancellations.items(), recentCorrections.items());
+        java.util.List<Ledger.LedgerCorrectionDto> corrections = null;
+        try {
+            corrections = gameService.ledgerCorrections(new Paging.PageParams(20, null)).items();
+        } catch (ApiException e) {
+            if (e.code() != Enums.ApiErrorCode.ENGINE_NOT_READY) {
+                throw e;
+            }
+        }
+        return new AdminStatusDto(info, cancellations, corrections);
     }
 
+    /** {@code recentCancellations} is {@code null} while the database does not answer, {@code
+     *  recentLedgerCorrections} while the engine is not ready ({@code server.engineReady} is {@code false}). */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                                    java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections) {
     }

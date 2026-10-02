@@ -94,6 +94,15 @@ public interface ChainSvcRestClient {
     record PlayWithdrawalAcceptedResponse(boolean accepted) {
     }
 
+    /** The body of HTTP 409 from {@code POST /v1/play/withdrawals} (docs/research/chain_service.md §17.6; fixture
+     *  {@code WithdrawalConflictResponse.json}): a {@code requestId} the chain service already holds with another
+     *  recipient or amount — or whose content it never recorded — is refused, never answered with the old request's
+     *  status. {@code code} ({@code "request_id_conflict"}) is for a program, {@code error} for a person, {@code
+     *  requestId} is the id that was refused. {@link ChainSvcClientImpl} turns it into a conflict result of {@link
+     *  ChainSvcClient#submitPlayWithdrawal}. */
+    record WithdrawalConflictResponse(String error, String code, String requestId) {
+    }
+
     @POST
     @Path("/v1/play/withdrawals")
     @Consumes(MediaType.APPLICATION_JSON)

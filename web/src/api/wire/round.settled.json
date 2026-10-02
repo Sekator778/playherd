@@ -1,0 +1,83 @@
+{
+  "method": "round",
+  "args": [
+    "T_WIRE_PERP-1h-1790919060000"
+  ],
+  "response": {
+    "roundId": "T_WIRE_PERP-1h-1790919060000",
+    "window": {
+      "interval": "HOURLY",
+      "startMs": 1790919060000,
+      "endMs": 1790919120000
+    },
+    "marketId": "T_WIRE_PERP",
+    "asset": "WPR",
+    "kind": "PERP",
+    "priceDecimals": 3,
+    "source": "hyperliquid",
+    "phase": "SETTLED",
+    "openPrice": "2400.000",
+    "closePrice": "2412.000",
+    "positions": [
+      {
+        "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
+        "roundId": "T_WIRE_PERP-1h-1790919060000",
+        "direction": "UP",
+        "leverage": 5,
+        "size": "0.06250000",
+        "entryPrice": "2400.000",
+        "liquidationPrice": "1959.184",
+        "pnl": "7.500",
+        "stake": "300.000",
+        "player": {
+          "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
+          "nickname": "Alice_Wire",
+          "walletAddress": "txch1alice0wire0player0000000000000000000000000000000000000q2k7ar",
+          "displayName": "Alice_Wire (txch1a…k7ar)",
+          "isBot": false
+        },
+        "liquidated": false,
+        "payout": "307.500",
+        "directionCorrect": true
+      },
+      {
+        "playerId": "b34ff01c-81fe-45b6-8bde-ab95ed06d9d5",
+        "roundId": "T_WIRE_PERP-1h-1790919060000",
+        "direction": "UP",
+        "leverage": 25,
+        "size": "0.10416667",
+        "entryPrice": "2400.000",
+        "liquidationPrice": "2351.020",
+        "pnl": "-100.000",
+        "stake": "100.000",
+        "player": {
+          "playerId": "b34ff01c-81fe-45b6-8bde-ab95ed06d9d5",
+          "nickname": "Bob_Wire",
+          "walletAddress": "txch1bob0wire0player000000000000000000000000000000000000000q5h3xm",
+          "displayName": "Bob_Wire (txch1b…h3xm)",
+          "isBot": false
+        },
+        "liquidated": true,
+        "payout": "0.000",
+        "directionCorrect": true
+      }
+    ],
+    "crowd": {
+      "roundId": "T_WIRE_PERP-1h-1790919060000",
+      "traded": true,
+      "direction": "UP",
+      "leverage": 10,
+      "margin": "9035.74",
+      "entryPrice": "2400.000",
+      "liquidated": false,
+      "capitalBefore": "90357.44",
+      "capitalAfter": "90809.23"
+    },
+    "resultsHash": "0x494fa609320db3dc5904e614e3f88c0949261a1c65c3c0d2fdd21f4d59f8d150",
+    "oracleAnchor": {
+      "seq": 76,
+      "state": "unknown",
+      "height": null
+    }
+  }
+}

@@ -45,7 +45,10 @@ public class RpcResource {
     /** Task item 2 (wave-1 security findings): "add a simple per-IP rate limit on
      *  authChallenge/authVerify/placeBet" — the three RPC methods a single caller could otherwise
      *  hammer for free (no session required for the first two; placeBet is the one mutating,
-     *  balance-affecting call under a signed-in session). See {@link RateLimiter}.
+     *  balance-affecting call under a signed-in session) — and {@code cancelBet}, which takes the engine's
+     *  write lock like {@code placeBet} does and was one more call a signed-in player (the browser test wallet
+     *  makes any visitor one) could repeat for free, a thousand times a second (review of the core, finding 9).
+     *  See {@link RateLimiter}.
      *
      *  <p>The read methods of the markets ({@code markets}, {@code priceSeries}, {@code myPositions}, {@code
      *  crowdOverview}) are deliberately NOT in this set: every open lobby and room POLLS them every 2–3 s
@@ -54,7 +57,8 @@ public class RpcResource {
      *  cache of about a second, {@code priceSeries} at most 600 points, {@code myPositions} for the one
      *  session's own bets. Only what mutates, or can be hammered for free into a database or a chain call,
      *  is limited. */
-    private static final Set<String> RATE_LIMITED_METHODS = Set.of("authChallenge", "authVerify", "placeBet");
+    private static final Set<String> RATE_LIMITED_METHODS =
+            Set.of("authChallenge", "authVerify", "placeBet", "cancelBet");
 
     @Inject
     ObjectMapper mapper;

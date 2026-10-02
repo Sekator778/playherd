@@ -252,4 +252,49 @@ class ChainSvcClientImplTest {
         // health() takes no Authorization parameter at all (FIXED INTERFACE a explicitly exempts
         // GET /health) — nothing more to verify beyond the interface shape itself compiling.
     }
+
+    @Test
+    void aWithdrawalIsSubmittedUnderTheIdItIsGiven() {
+        when(rest.submitPlayWithdrawal(any(), any()))
+                .thenReturn(new ChainSvcRestClient.PlayWithdrawalAcceptedResponse(true));
+
+        ChainSvcClient.PlayWithdrawalSubmitResult result = impl.submitPlayWithdrawal("w-3-1a2b3c4d", "txch1to", 5_000L);
+
+        verify(rest).submitPlayWithdrawal(eq("Bearer " + TOKEN),
+                eq(new ChainSvcRestClient.PlayWithdrawalRequest("w-3-1a2b3c4d", "txch1to", 5_000L)));
+        assertThat(result.accepted()).isTrue();
+        assertThat(result.isConflict()).isFalse();
+    }
+
+    @Test
+    void aHttp409IsAConflictResultAndAnyOtherFailureIsNull() {
+        when(rest.submitPlayWithdrawal(any(), any())).thenThrow(new jakarta.ws.rs.WebApplicationException(
+                jakarta.ws.rs.core.Response.status(409).type("application/json")
+                        .entity("{\"error\": \"id already held with other content\"}").build()));
+
+        ChainSvcClient.PlayWithdrawalSubmitResult conflict = impl.submitPlayWithdrawal("w-3", "txch1to", 5_000L);
+
+        assertThat(conflict.isConflict()).isTrue();
+        assertThat(conflict.accepted()).isFalse();
+        assertThat(conflict.conflict()).isEqualTo("id already held with other content");
+
+        org.mockito.Mockito.doThrow(new jakarta.ws.rs.WebApplicationException(
+                jakarta.ws.rs.core.Response.status(500).build())).when(rest).submitPlayWithdrawal(any(), any());
+        assertThat(impl.submitPlayWithdrawal("w-3", "txch1to", 5_000L)).isNull();
+
+        org.mockito.Mockito.doThrow(new RuntimeException("connection refused")).when(rest)
+                .submitPlayWithdrawal(any(), any());
+        assertThat(impl.submitPlayWithdrawal("w-3", "txch1to", 5_000L)).isNull();
+    }
+
+    @Test
+    void theStatusOfAWithdrawalIsAskedUnderTheIdItIsGiven() {
+        when(rest.playWithdrawalStatus(any(), any())).thenReturn(
+                new ChainSvcRestClient.PlayWithdrawalStatusResponse("w-3-1a2b3c4d", "confirmed", "0xcoin", 9L, null));
+
+        ChainSvcClient.PlayWithdrawalStatus status = impl.playWithdrawalStatus("w-3-1a2b3c4d");
+
+        verify(rest).playWithdrawalStatus(eq("Bearer " + TOKEN), eq("w-3-1a2b3c4d"));
+        assertThat(status.state()).isEqualTo("confirmed");
+    }
 }

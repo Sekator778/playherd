@@ -1,0 +1,33 @@
+{
+  "method": "betFeed",
+  "args": [
+    "T_WIRE_PERP-1h-1790919180000",
+    null
+  ],
+  "response": {
+    "roundId": "T_WIRE_PERP-1h-1790919180000",
+    "marketId": "T_WIRE_PERP",
+    "asset": "WPR",
+    "entries": [
+      {
+        "seq": 18,
+        "atMs": 1790919179999,
+        "playerDisplayName": "Vera_Wire (txch1v…d4wn)",
+        "isBot": false,
+        "direction": "DOWN",
+        "stake": "400.000",
+        "leverage": 3
+      },
+      {
+        "seq": 19,
+        "atMs": 1790919179999,
+        "playerDisplayName": "Bob_Wire (txch1b…h3xm)",
+        "isBot": false,
+        "direction": "UP",
+        "stake": "150.000",
+        "leverage": 5
+      }
+    ],
+    "hasMore": false
+  }
+}

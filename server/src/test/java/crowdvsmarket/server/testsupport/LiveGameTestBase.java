@@ -20,6 +20,7 @@ import crowdvsmarket.server.service.GameService;
 import io.quarkus.test.InjectMock;
 import jakarta.inject.Inject;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 
@@ -59,6 +60,8 @@ public abstract class LiveGameTestBase {
     @BeforeEach
     protected void resetScriptAndMockChain() {
         prices.reset();
+        scheduler.forgetFailedAttempts();   // what one test's clock left behind must not hold a window back in another
+        startBtcSeriesPastWhatIsSettled();
         org.mockito.Mockito.when(chainSvcClient.oracleRecords(org.mockito.ArgumentMatchers.anyList()))
                 .thenAnswer(inv -> {
                     List<ChainSvcClient.OracleRecord> records = inv.getArgument(0);
@@ -67,6 +70,23 @@ public abstract class LiveGameTestBase {
                 });
         org.mockito.Mockito.when(chainSvcClient.oracleStatus()).thenReturn(null);
         org.mockito.Mockito.when(chainSvcClient.health()).thenReturn(true);
+    }
+
+    /**
+     * BTC's series are shared by every test, and a test that ticks the scheduler with a clock of its own leaves result
+     * rows ahead of the real one. A restart on the real clock ({@code rebuild.rebuild()}: a series never starts ahead
+     * of it, {@code SeriesSeeder}) then puts the cursor back at "now", behind those rows, and the next test finds the
+     * betting window it wants already settled. Every test starts with BTC's cursors past everything settled, where a
+     * restart put them before that rule.
+     */
+    private void startBtcSeriesPastWhatIsSettled() {
+        for (Interval interval : Interval.values()) {
+            Optional<Long> latestEnd = roundResults.latestWindowEnd("BTC", interval);
+            Optional<RoundWindow> cursor = roundProgress.findNext("BTC", interval);
+            if (latestEnd.isPresent() && cursor.isPresent() && cursor.get().startMs() < latestEnd.get()) {
+                roundProgress.seed("BTC", interval, calendar.windowContaining("BTC", interval, latestEnd.get()));
+            }
+        }
     }
 
     protected Market list(String id, MarketKind kind, String category, String symbol, int maxLeverage, int lotExp) {

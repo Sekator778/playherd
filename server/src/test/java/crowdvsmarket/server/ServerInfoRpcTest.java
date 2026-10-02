@@ -41,19 +41,22 @@ class ServerInfoRpcTest extends LiveRpcTestBase {
         JsonNode info = ok(null, "serverInfo");
 
         assertKeys(info, "mode", "priceSource", "markets", "replay", "roundDurationsSec", "bots", "oracle",
-                "serverTimeMs", "playAssetId", "testWallet");
+                "serverTimeMs", "playAssetId", "testWallet", "engineReady");
         assertKeys(info.path("oracle"), "network", "launcherId", "lastConfirmedSeq", "lastConfirmedHeight",
                 "pendingRecords", "operatorBalanceMojos", "firstSeq");
-        assertKeys(info.path("roundDurationsSec"), "hourly", "daily");
+        // the keys are the Interval names contract.ts declares ({ HOURLY, DAILY }) — lower-case ones printed "NaN SEC"
+        // on the Status page (parity review, finding 1)
+        assertKeys(info.path("roundDurationsSec"), "HOURLY", "DAILY");
         assertThat(info.path("mode").asText()).isEqualTo("live");
         assertThat(info.path("priceSource").asText()).as("herd.prices.source defaults to live").isEqualTo("live");
         assertThat(info.get("replay").isNull()).as("replay is for mode=replay only").isTrue();
-        assertThat(info.path("roundDurationsSec").path("hourly").asLong()).isEqualTo(60);
-        assertThat(info.path("roundDurationsSec").path("daily").asLong()).isEqualTo(120);
+        assertThat(info.path("roundDurationsSec").path("HOURLY").asLong()).isEqualTo(60);
+        assertThat(info.path("roundDurationsSec").path("DAILY").asLong()).isEqualTo(120);
         assertThat(info.path("bots").asInt()).isZero();
         assertThat(info.path("playAssetId").asText())
                 .isEqualTo("0x4b88ce9712e97e73ad3759541fc23d38704e31d27d6586c28be14ee716080b70");
         assertThat(info.path("testWallet").asBoolean()).isTrue();
+        assertThat(info.path("engineReady").asBoolean()).as("a server that is up and has rebuilt says so").isTrue();
         assertThat(info.path("oracle").path("network").asText()).isEqualTo("testnet11");
     }
 

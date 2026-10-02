@@ -7,7 +7,9 @@ import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.domain.RoundCalendar;
 import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.service.BoundaryPrices;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.util.FailureLog;
 import crowdvsmarket.server.util.LogThrottle;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -75,6 +77,8 @@ public class EngineRebuildService {
     @Inject
     EngineStateBuilder builder;
     @Inject
+    BoundaryPrices boundaryPrices;
+    @Inject
     BotService botService;
     @Inject
     GameService gameService;
@@ -94,6 +98,9 @@ public class EngineRebuildService {
     private volatile boolean recoveryPending;
     private volatile long lastAttemptAtNanos;
     private final LogThrottle retryFailureLog = new LogThrottle(60_000L);
+    /** Why the engine is rebuilt after a failed operation: per window, market or coin, the first with its stack
+     *  trace, then a line a minute ({@link #recoverAfterFailure(Throwable, String, long)}). */
+    private final FailureLog recoveryLog = new FailureLog(60_000L);
 
     void onStart(@Observes StartupEvent ev) {
         rebuild();
@@ -156,6 +163,7 @@ public class EngineRebuildService {
      */
     public void rebuildStateLocked(long nowMs) {
         lastAttemptAtNanos = System.nanoTime();
+        boolean recovering = recoveryPending;
         roundCalendar.init(nowMs);
         players.reload();
         marketRegistry.reload();
@@ -163,17 +171,26 @@ public class EngineRebuildService {
         EngineStateBuilder.Built built = builder.build(nowMs);
 
         // The swap of a state that is complete. The cursors go first: replaceAll checks its windows and
-        // assigns last, so if it were ever to throw, nothing would have changed; the two that follow
+        // assigns last, so if it were ever to throw, nothing would have changed; the three that follow
         // cannot fail.
         roundProgress.replaceAll(built.cursors());
         hub.adopt(built.hub());
         betFeed.adopt(built.betFeed());
+        boundaryPrices.adopt(built.boundaries());
         ready = true;
         recoveryPending = false;
         retryFailureLog.reset("retry");
-        LOG.infof("engine rebuilt: %d event(s) replayed, markets=%d, players=%d, ledger-player-count=%d,%s",
-                built.eventsReplayed(), built.marketCount(), players.all().size(), hub.ledger().playerIds().size(),
-                built.description());
+        if (recovering) {
+            // a recovery is one of a failing window's every attempt: not the 36 cursors each time
+            LOG.infof("engine rebuilt after a failure: %d event(s) replayed, markets=%d, players=%d, "
+                    + "ledger-player-count=%d", built.eventsReplayed(), built.marketCount(), players.all().size(),
+                    hub.ledger().playerIds().size());
+            LOG.debugf("cursors after the rebuild:%s", built.description());
+        } else {
+            LOG.infof("engine rebuilt: %d event(s) replayed, markets=%d, players=%d, ledger-player-count=%d,%s",
+                    built.eventsReplayed(), built.marketCount(), players.all().size(),
+                    hub.ledger().playerIds().size(), built.description());
+        }
     }
 
     /**
@@ -185,15 +202,46 @@ public class EngineRebuildService {
      * suppressed. <b>The caller holds the engine write lock.</b>
      */
     public void recoverAfterFailure(Throwable cause) {
+        recoverAfterFailure(cause, System.currentTimeMillis());
+    }
+
+    /** {@link #recoverAfterFailure(Throwable)} with the clock of the operation that failed: the rebuild seeds the
+     *  series as of that instant ({@code SeriesSeeder}: never ahead of it), which is the real "now" in production
+     *  and the test's own clock in a test that drives {@code RoundSchedulerService#tick(now)}. */
+    public void recoverAfterFailure(Throwable cause, long nowMs) {
         ready = false;
         recoveryPending = true;
         try {
-            rebuildStateLocked(System.currentTimeMillis());
+            rebuildStateLocked(nowMs);
         } catch (RuntimeException | Error rebuildFailure) {
             cause.addSuppressed(rebuildFailure);
             LOG.error("the engine rebuild after a failed round operation failed as well — the game answers 503 "
                     + "until a rebuild succeeds, which the scheduler keeps trying", rebuildFailure);
         }
+    }
+
+    /**
+     * {@link #recoverAfterFailure(Throwable, long)} for a failure of the operation on {@code key} (a window, a market,
+     * a coin) that the caller rethrows: says why the engine is being rebuilt — the first failure of a key with its
+     * stack trace, then one line a minute, so that a window that fails every attempt does not bury the log — and
+     * rebuilds. <b>The caller holds the engine write lock.</b>
+     */
+    public void recoverAfterFailure(Throwable cause, String key, long nowMs) {
+        switch (recoveryLog.next(key, nowMs)) {
+            case STACK_TRACE -> LOG.errorf(cause, "a round operation failed after the engine may have been changed "
+                    + "(%s) — rebuilding the engine from the event log", key);
+            case LINE -> LOG.errorf("a round operation failed again after the engine may have been changed (%s: %s) "
+                    + "— rebuilding the engine from the event log again", key, cause);
+            case NOTHING -> {
+                // already said this minute
+            }
+        }
+        recoverAfterFailure(cause, nowMs);
+    }
+
+    /** The operation on {@code key} worked: its next failure is a first one again ({@link FailureLog#clear}). */
+    public void recovered(String key) {
+        recoveryLog.clear(key);
     }
 
     /**
@@ -203,6 +251,11 @@ public class EngineRebuildService {
      * @return whether the engine is ready now (it was, or this attempt made it so)
      */
     public boolean retryPendingRebuild() {
+        return retryPendingRebuild(System.currentTimeMillis());
+    }
+
+    /** {@link #retryPendingRebuild()} as of {@code nowMs}, the clock of the scheduler tick that asks. */
+    public boolean retryPendingRebuild(long nowMs) {
         if (ready) {
             return true;
         }
@@ -213,7 +266,6 @@ public class EngineRebuildService {
             if (ready) {
                 return; // someone else recovered it while this call waited for the lock
             }
-            long nowMs = System.currentTimeMillis();
             try {
                 rebuildStateLocked(nowMs);
             } catch (RuntimeException | Error e) {

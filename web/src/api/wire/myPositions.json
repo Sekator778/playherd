@@ -1,0 +1,54 @@
+{
+  "method": "myPositions",
+  "args": [],
+  "response": [
+    {
+      "marketId": "BTC",
+      "symbol": "BTC",
+      "roundId": "1h-1790919120000",
+      "interval": "HOURLY",
+      "durationSec": 60,
+      "phase": "RUNNING",
+      "direction": "UP",
+      "leverage": 5,
+      "stake": "250.000",
+      "entryPrice": "84000.50",
+      "liquidationPrice": "68051.03",
+      "size": "0.01488086",
+      "liquidated": false,
+      "untilMs": 1790919180000
+    },
+    {
+      "marketId": "BTC",
+      "symbol": "BTC",
+      "roundId": "1h-1790919180000",
+      "interval": "HOURLY",
+      "durationSec": 60,
+      "phase": "BETTING",
+      "direction": "UP",
+      "leverage": 5,
+      "stake": "250.000",
+      "entryPrice": null,
+      "liquidationPrice": null,
+      "size": null,
+      "liquidated": false,
+      "untilMs": 1790919180000
+    },
+    {
+      "marketId": "T_WIRE_ODDS",
+      "symbol": "BRA",
+      "roundId": "T_WIRE_ODDS-1h-1790919180000",
+      "interval": "HOURLY",
+      "durationSec": 60,
+      "phase": "BETTING",
+      "direction": "UP",
+      "leverage": 5,
+      "stake": "250.000",
+      "entryPrice": null,
+      "liquidationPrice": null,
+      "size": null,
+      "liquidated": false,
+      "untilMs": 1790919180000
+    }
+  ]
+}

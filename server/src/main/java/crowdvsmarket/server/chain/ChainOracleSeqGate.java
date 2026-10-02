@@ -24,8 +24,9 @@ import org.jboss.logging.Logger;
  *       HERD_ORACLE_REQUIRE_SEQ_FLOOR}): {@link #open()} turns true once this process has read the
  *       chain service's status successfully and raised the counter to its {@code maxKnownSeq}, and stays
  *       true — a chain service that goes away later does not stop the game; the floor was obtained for
- *       this process. Until then the scheduler settles nothing (it asks {@link #open()} before it
- *       settles or cancels, both reserve a {@code seq}) and rounds queue up, to be caught up when the
+ *       this process. Until then the scheduler settles nothing (it asks {@link #open()} before each
+ *       settlement, the only thing that reserves a {@code seq}; the refund of a round that is an hour late
+ *       and the jump over empty windows go on) and rounds queue up, to be caught up when the
  *       gate opens. A status without {@code maxKnownSeq} (a chain service older than record format 2)
  *       <b>never</b> opens a required gate: there is no floor to obtain, and guessing one is how a
  *       fresh database ends up replaying history.

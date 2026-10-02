@@ -8,8 +8,9 @@ package crowdvsmarket.server.chain;
  * {@code seq} is issued, the server raises its counter to the chain service's
  * {@code maxKnownSeq} ("the floor").
  *
- * <p>FIXED INTERFACE between the round scheduler (asks {@link #open()} before it settles or
- * cancels anything — both reserve a {@code seq}) and the oracle wiring (owns the floor).
+ * <p>FIXED INTERFACE between the round scheduler (asks {@link #open()} around a settlement and nowhere
+ * else: only a settlement reserves a {@code seq} — a cancellation, a refund and the jump of a series over empty
+ * windows write no oracle record, so they never wait for the gate) and the oracle wiring (owns the floor).
  */
 public interface OracleSeqGate {
 

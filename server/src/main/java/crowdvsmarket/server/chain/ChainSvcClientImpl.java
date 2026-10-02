@@ -1,8 +1,11 @@
 package crowdvsmarket.server.chain;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import crowdvsmarket.server.config.GameConfig;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.Response;
 import java.util.List;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 import org.jboss.logging.Logger;
@@ -14,6 +17,10 @@ import org.jboss.logging.Logger;
 public class ChainSvcClientImpl implements ChainSvcClient {
 
     private static final Logger LOG = Logger.getLogger(ChainSvcClientImpl.class);
+
+    /** Unknown fields (the chain service may add some) are not an error: the body is read for its {@code error}. */
+    private static final ObjectMapper JSON = new ObjectMapper()
+            .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     @RestClient
     ChainSvcRestClient rest;
@@ -85,9 +92,40 @@ public class ChainSvcClientImpl implements ChainSvcClient {
             ChainSvcRestClient.PlayWithdrawalAcceptedResponse r = rest.submitPlayWithdrawal(bearerToken(),
                     new ChainSvcRestClient.PlayWithdrawalRequest(requestId, toAddress, amountMojos));
             return new PlayWithdrawalSubmitResult(r.accepted());
+        } catch (WebApplicationException e) {
+            if (e.getResponse() != null && e.getResponse().getStatus() == Response.Status.CONFLICT.getStatusCode()) {
+                // E3: the chain service holds this requestId with another recipient or amount. Not an outage:
+                // retrying never changes the answer, so it is a result of its own.
+                return PlayWithdrawalSubmitResult.refusedAsConflict(conflictText(e.getResponse()));
+            }
+            LOG.warnf(e, "chainsvc /v1/play/withdrawals refused requestId=%s — will retry", requestId);
+            return null;
         } catch (Exception e) {
             LOG.warnf(e, "chainsvc /v1/play/withdrawals unreachable for requestId=%s — will retry", requestId);
             return null;
+        }
+    }
+
+    /** The {@code error} text of a 409 body ({@link ChainSvcRestClient.WithdrawalConflictResponse}: {@code error},
+     *  {@code code}, {@code requestId}); the body itself when it is not that, "HTTP 409" when there is none. */
+    private static String conflictText(Response response) {
+        try {
+            String body = response.hasEntity() ? response.readEntity(String.class) : null;
+            if (body == null || body.isBlank()) {
+                return "HTTP 409";
+            }
+            try {
+                ChainSvcRestClient.WithdrawalConflictResponse conflict =
+                        JSON.readValue(body, ChainSvcRestClient.WithdrawalConflictResponse.class);
+                if (conflict != null && conflict.error() != null && !conflict.error().isBlank()) {
+                    return conflict.error();
+                }
+            } catch (Exception notTheExpectedJson) {
+                // fall through: the body as it is
+            }
+            return body.length() > 500 ? body.substring(0, 500) : body;
+        } catch (Exception unreadable) {
+            return "HTTP 409";
         }
     }
 

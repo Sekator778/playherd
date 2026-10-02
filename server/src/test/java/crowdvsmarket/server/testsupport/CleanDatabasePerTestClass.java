@@ -3,6 +3,7 @@ package crowdvsmarket.server.testsupport;
 import crowdvsmarket.server.bots.BotService;
 import crowdvsmarket.server.persistence.Db;
 import crowdvsmarket.server.scheduler.EngineRebuildService;
+import crowdvsmarket.server.scheduler.RoundSchedulerService;
 import crowdvsmarket.server.service.GameService;
 import io.quarkus.arc.Arc;
 import io.quarkus.test.junit.callback.QuarkusTestBeforeEachCallback;
@@ -97,6 +98,8 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
         Db db = Arc.container().instance(Db.class).get();
         GameService gameService = Arc.container().instance(GameService.class).get();
         EngineRebuildService rebuildService = Arc.container().instance(EngineRebuildService.class).get();
+        // the windows it had failed to settle are gone with the database: nothing may hold a new class's windows back
+        Arc.container().instance(RoundSchedulerService.class).get().forgetFailedAttempts();
         gameService.runExclusively(() -> {
             db.tx(c -> {
                 db.update(c, TRUNCATE_SQL);

@@ -17,6 +17,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Optional;
+import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Cancels one round with a refund of every pending bet, in ONE database transaction like the
@@ -42,34 +44,58 @@ public class RoundCancellations {
     RoundResultRepository roundResults;
     @Inject
     RoundProgress roundProgress;
+    @Inject
+    SeriesSeeder seeder;
 
     /**
      * A market closed: cancels, with a refund, the running round and the round open for betting of each
      * of its series that have no result yet — even an empty one, so that a round a player still has open
-     * in the app resolves to a cancelled round, not to "unknown" — and stops the series. The caller
-     * holds the engine lock and recovers from a failure ({@link #cancel}).
+     * in the app resolves to a cancelled round, not to "unknown" — and EVERY other window of the series that
+     * holds a bet and has no result (the hub's index of the windows with bets, the same list a rebuild
+     * refunds a market closed in the database by: the cursor and the window after it are where bets are in a
+     * game that runs forward, but a stake must never depend on that — a bet left in a window the cursor
+     * does not point at is debited, never settled, never refunded), earliest first. Then stops the series.
+     * The caller holds the engine lock and recovers from a failure ({@link #cancel}).
      */
     public void closeSeries(EventApplier applier, EngineHub hub, Market market, String reason, long nowMs) {
         for (Interval interval : Interval.values()) {
+            TreeMap<Long, RoundWindow> windows = new TreeMap<>();
             Optional<RoundWindow> running = roundProgress.findNext(market.id(), interval);
             if (running.isPresent()) {
                 for (RoundWindow window : List.of(running.get(), RoundClock.next(running.get()))) {
-                    if (!roundResults.exists(window.roundId())) {
-                        cancel(applier, hub, market, window, reason, nowMs);
-                    }
+                    windows.put(window.startMs(), window);
+                }
+            }
+            for (RoundWindow window : seeder.pending(hub, market, interval)) {
+                windows.put(window.startMs(), window);
+            }
+            for (RoundWindow window : windows.values()) {
+                if (!roundResults.exists(window.roundId())) {
+                    cancel(applier, hub, market, window, reason, nowMs);
                 }
             }
             roundProgress.remove(market.id(), interval);
         }
     }
 
-    /**
-     * @param applier the applier of the state the cancellation is for ({@code EventApplier.over} for
-     *                one built aside)
-     * @param hub     that state's hub, to count the bets refunded
-     */
+    /** {@link #cancel(EventApplier, EngineHub, Market, RoundWindow, String, long, AtomicBoolean)} for a caller
+     *  that recovers from any failure the same way. */
     public Rounds.CancellationDto cancel(EventApplier applier, EngineHub hub, Market market, RoundWindow window,
                                          String reason, long nowMs) {
+        return cancel(applier, hub, market, window, reason, nowMs, new AtomicBoolean());
+    }
+
+    /**
+     * @param applier      the applier of the state the cancellation is for ({@code EventApplier.over} for
+     *                     one built aside)
+     * @param hub          that state's hub, to count the bets refunded
+     * @param touchedState set to {@code true} the moment the event has been written and is about to be applied
+     *                     to the state: a failure that comes while it is still {@code false} cannot have
+     *                     changed that state (the event could not be written, no connection could be had),
+     *                     so there is nothing to rebuild; one that comes after it may have
+     */
+    public Rounds.CancellationDto cancel(EventApplier applier, EngineHub hub, Market market, RoundWindow window,
+                                         String reason, long nowMs, AtomicBoolean touchedState) {
         int refundedBetCount = hub.engine(market.id(), window.interval()).betBook().betsFor(window.roundId()).size();
         GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
                 window.endMs(), reason, nowMs, market.id());
@@ -77,11 +103,13 @@ public class RoundCancellations {
                 null, null, List.of(), null);
         db.tx(c -> {
             eventStore.append(c, event, nowMs);
+            touchedState.set(true);
             applier.apply(event); // refunds every pending bet and clears the round's BetBook entry
             roundResults.insertCancelled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
                     window.endMs(), reason, nowMs, refundedBetCount, canonical.hash(), canonical.json());
             return null;
         });
-        return new Rounds.CancellationDto(window.roundId(), reason, nowMs, refundedBetCount);
+        return new Rounds.CancellationDto(window.roundId(), market.id(), market.symbol(), reason, nowMs,
+                refundedBetCount);
     }
 }

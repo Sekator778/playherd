@@ -1,0 +1,43 @@
+{
+  "method": "cancellations",
+  "args": [
+    null
+  ],
+  "response": {
+    "items": [
+      {
+        "roundId": "T_WIRE_GAME-1d-1790919120000",
+        "marketId": "T_WIRE_GAME",
+        "asset": "GER",
+        "reason": "market closed: The source market ended",
+        "cancelledAtMs": 1790919586402,
+        "refundedBetCount": 0
+      },
+      {
+        "roundId": "T_WIRE_GAME-1d-1790919240000",
+        "marketId": "T_WIRE_GAME",
+        "asset": "GER",
+        "reason": "market closed: The source market ended",
+        "cancelledAtMs": 1790919586402,
+        "refundedBetCount": 0
+      },
+      {
+        "roundId": "T_WIRE_GAME-1h-1790919120000",
+        "marketId": "T_WIRE_GAME",
+        "asset": "GER",
+        "reason": "market closed: The source market ended",
+        "cancelledAtMs": 1790919586402,
+        "refundedBetCount": 0
+      },
+      {
+        "roundId": "T_WIRE_GAME-1h-1790919180000",
+        "marketId": "T_WIRE_GAME",
+        "asset": "GER",
+        "reason": "market closed: The source market ended",
+        "cancelledAtMs": 1790919586402,
+        "refundedBetCount": 1
+      }
+    ],
+    "hasMore": false
+  }
+}
