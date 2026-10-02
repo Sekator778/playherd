@@ -12,7 +12,7 @@ import type {
 } from "../api/contract";
 import { LONG, SHORT, percentToLiquidation, sizeForMargin, unrealizedPnl, type Side } from "../api/liquidation";
 import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
-import { formatPercent, formatPlayAmount, formatPrice, formatUsd } from "../format";
+import { formatPercent, formatPlayAmount, formatPrice, formatUsd, type PriceFormatMarket } from "../format";
 import { Avatar } from "./Avatar";
 import { BotBadge, EmptyState, ResultsHashLine, RoundStatusBadge } from "./Common";
 import { DirectionGlyph } from "./icons";
@@ -188,10 +188,14 @@ interface CrowdPositionCardProps {
   referencePrice?: MarketReferenceDto | null;
   /** The market of the round — price scale and display format (BTC / plain USD when omitted). */
   market?: MarketDto;
+  /** How to print prices when `format` is better known than `market` (a round page: the round's own `kind` and
+   *  `priceDecimals`, which are right even when the market has left the list). Wins over `market`'s. */
+  format?: PriceFormatMarket;
 }
 
-export function CrowdPositionCard({ phase, crowd, referencePrice, market }: CrowdPositionCardProps) {
-  const price = (p: string) => (market ? formatPrice(p, market) : formatUsd(p));
+export function CrowdPositionCard({ phase, crowd, referencePrice, market, format }: CrowdPositionCardProps) {
+  const printer = format ?? market;
+  const price = (p: string) => (printer ? formatPrice(p, printer) : formatUsd(p));
   if (!crowd || (phase === "SETTLED" && "traded" in crowd && !crowd.traded)) {
     return (
       <div className="card">
@@ -236,6 +240,9 @@ export function CrowdPositionCard({ phase, crowd, referencePrice, market }: Crow
 
   const c = crowd as CrowdRoundResultDto;
   const net = Number(c.capitalAfter) - Number(c.capitalBefore);
+  // Traded, but the price closed where it opened: neither a win nor a loss (`MarketCrowdBriefDto.roundsWon`/`lastOutcome`
+  // FLAT) — said in words, so a zero is never mistaken for a missing number.
+  const flat = !c.liquidated && Math.round(net * 100) === 0;
   return (
     <div className="card">
       <h3>Crowd account's position</h3>
@@ -249,7 +256,9 @@ export function CrowdPositionCard({ phase, crowd, referencePrice, market }: Crow
         <span className={c.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(net))}>
           {formatUsd(net, { sign: true })}
         </span>
+        {flat && <span className="net-result__secondary"> flat</span>}
       </div>
+      {flat && <p className="muted">The price closed where it opened — neither a win nor a loss for the crowd account.</p>}
       <p className="mono muted">Capital before: {formatUsd(c.capitalBefore)}</p>
       <p className="mono muted">Capital after: {formatUsd(c.capitalAfter)}</p>
     </div>

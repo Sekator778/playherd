@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useApi } from "../api/ApiContext";
+import { isEngineNotReady } from "../api/apiErrors";
 import { useClock } from "../api/useClock";
 import { useMarket, useMarkets } from "../api/useMarkets";
 import type { CrowdAccountDto, CrowdOverviewDto, MarketDto } from "../api/contract";
@@ -24,6 +25,7 @@ import { LazyCrowdChart } from "../components/LazyCrowdChart";
 import { MarketIcon } from "../components/MarketIcon";
 import { LiveStatTile } from "../components/RoundParts";
 import { bestAndWorst, marketGroups, rankedByReturn, type OverviewRow } from "../components/crowdModel";
+import { subtitleOf } from "../components/marketModel";
 import { lastMarket, rememberMarket } from "../components/lastMarket";
 import { trend, TREND_GLYPH } from "../components/marketFormat";
 import { formatPercent, formatUpdatedAtUtc, formatUsd } from "../format";
@@ -157,7 +159,11 @@ function CrowdAccount({ market }: { market: AccountMarket }) {
         setError(false);
         setUpdatedAt(Date.now());
       })
-      .catch(() => setError(true));
+      // A restarting server (503) is not a failure of this account: the skeleton (or the numbers shown) stay and the
+      // next tick (5 s) asks again; the banner says why.
+      .catch((err) => {
+        if (!isEngineNotReady(err)) setError(true);
+      });
   }, [api, marketId]);
 
   useEffect(() => {
@@ -292,7 +298,7 @@ export function CrowdPage() {
               <optgroup key={g.id} label={g.title}>
                 {g.markets.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.symbol} · {m.kind === "ODDS" ? (m.subtitle ?? m.title) : m.title}
+                    {m.symbol} · {m.kind === "ODDS" ? (subtitleOf(m) ?? m.title) : m.title}
                     {m.status === "CLOSED" ? " (closed)" : ""}
                   </option>
                 ))}

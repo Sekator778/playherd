@@ -69,10 +69,12 @@ describe("Lobby — the ribbon of categories (Р-69)", () => {
     expect(screen.getByRole("tab", { name: /^Sports/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: /^All/ })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByTestId("location")).toHaveTextContent("/?c=sports");
-    expect(screen.getByText("2 markets")).toBeInTheDocument();
+    // the ribbon's chip counts OPEN markets (1 here); the line under it says how many of the cards are open and how many closed
+    expect(screen.getByText("1 market · 1 closed")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /^All/ }));
     expect(tickers()).toHaveLength(6);
+    expect(screen.getByText("5 markets · 1 closed")).toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
   });
 

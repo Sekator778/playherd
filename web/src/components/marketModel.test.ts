@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, marketPool, nextCloseMs } from "./marketModel";
+import { crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, marketPool, nextCloseMs, roundPriceInfo, subtitleOf } from "./marketModel";
 import { NOW, catalogue, market, seriesDto } from "./testFixtures";
 
 describe("crowdSplitOf", () => {
@@ -67,5 +67,67 @@ describe("kickoffOf — a sports game against its kick-off (MarketDto.eventStart
   });
   it("nothing for a closed market: a card that is closed does not say the game is live", () => {
     expect(kickoffOf({ status: "CLOSED", eventStartsAtMs: NOW - 60_000 }, NOW)).toBeNull();
+  });
+});
+
+describe("roundPriceInfo — a round prints its prices from ITS OWN fields, so a departed market reads right", () => {
+  it("the round's own kind, price scale and source win over the market's", () => {
+    expect(roundPriceInfo({ kind: "ODDS", priceDecimals: 6, source: "polymarket" }, { kind: "PERP", priceDecimals: 2, source: "hyperliquid" })).toEqual({
+      format: { kind: "ODDS", priceDecimals: 6 },
+      source: "polymarket",
+    });
+  });
+
+  it("needs no market: that is the point (the market left markets() ten minutes after it closed)", () => {
+    expect(roundPriceInfo({ kind: "PERP", priceDecimals: 7, source: "hyperliquid" })).toEqual({ format: { kind: "PERP", priceDecimals: 7 }, source: "hyperliquid" });
+  });
+
+  it("a server that does not send the fields yet: the market's, when it is still listed", () => {
+    expect(roundPriceInfo({}, { kind: "ODDS", priceDecimals: 6, source: "polymarket" })).toEqual({ format: { kind: "ODDS", priceDecimals: 6 }, source: "polymarket" });
+  });
+
+  it("…and with no market either, the price scale is read off the price strings — and the source stays UNSAID, never 'Hyperliquid'", () => {
+    expect(roundPriceInfo({ openPrice: "0.523000", closePrice: "0.534000" })).toEqual({ format: { kind: "PERP", priceDecimals: 6 }, source: undefined });
+    expect(roundPriceInfo({ openPrice: null, closePrice: "84910.00" }).format.priceDecimals).toBe(2);
+    expect(roundPriceInfo({}).format.priceDecimals).toBe(2); // nothing at all to read: cents
+    expect(roundPriceInfo({}).source).toBeUndefined();
+  });
+
+  it("a garbage price scale is not used", () => {
+    expect(roundPriceInfo({ priceDecimals: Number.NaN, openPrice: "1.5000" }).format.priceDecimals).toBe(4);
+    expect(roundPriceInfo({ priceDecimals: -1 }, { kind: "PERP", priceDecimals: 3, source: "hyperliquid" }).format.priceDecimals).toBe(3);
+    expect(roundPriceInfo({ priceDecimals: 2.5 }).format.priceDecimals).toBe(2);
+  });
+});
+
+describe("subtitleOf — a subtitle that repeats its title says only the outcome", () => {
+  const sub = (category: "sports" | "politics" | "crypto", title: string, subtitle: string | null) => subtitleOf({ category, title, subtitle });
+
+  it("a team of a sports game: '<team> to win' — the real Steelers market of the live stand", () => {
+    expect(sub("sports", "Steelers vs. Browns", "Steelers · Steelers vs. Browns")).toBe("Steelers to win");
+    expect(sub("sports", "Philadelphia Phillies vs. Atlanta Braves", "Philadelphia Phillies · Philadelphia Phillies vs. Atlanta Braves")).toBe("Philadelphia Phillies to win");
+  });
+
+  it("a yes/no or draw/over/under outcome is never made 'to win'", () => {
+    expect(sub("sports", "Will the Steelers win?", "Yes · Will the Steelers win?")).toBe("Yes");
+    expect(sub("sports", "Germany vs. Serbia", "Draw · Germany vs. Serbia")).toBe("Draw");
+    expect(sub("sports", "Germany vs. Serbia", "Over · Germany vs. Serbia")).toBe("Over");
+  });
+
+  it("a politics market that repeats its question: the outcome alone ('Yes'), the question stays under it", () => {
+    expect(sub("politics", "Will the U.S. invade Iran before 2027?", "Yes · Will the U.S. invade Iran before 2027?")).toBe("Yes");
+  });
+
+  it("compares ignoring case and spacing; anything that is NOT the title is shown as the server sent it", () => {
+    expect(sub("sports", " steelers vs. browns ", "Steelers ·  STEELERS VS. BROWNS")).toBe("Steelers to win");
+    expect(sub("politics", "Will Lula win the 2026 Brazilian presidential election?", "Yes · Brazil Presidential Election")).toBe("Yes · Brazil Presidential Election");
+    expect(sub("sports", "Philadelphia Phillies vs. Atlanta Braves: O/U 8.5", "Over · Philadelphia Phillies vs. Atlanta Braves")).toBe("Over · Philadelphia Phillies vs. Atlanta Braves");
+    expect(sub("sports", "Germany vs. Serbia", "Germany · UEFA Nations League")).toBe("Germany · UEFA Nations League");
+  });
+
+  it("no subtitle (a perp), a blank one, or one with no context part: as is, or null", () => {
+    expect(sub("crypto", "Bitcoin", null)).toBeNull();
+    expect(sub("sports", "X vs. Y", "   ")).toBeNull();
+    expect(sub("sports", "X vs. Y", "Draw")).toBe("Draw");
   });
 });

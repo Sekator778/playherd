@@ -15,6 +15,7 @@ import {
   sizeForMargin,
 } from "./liquidation";
 import { mockApi } from "./mockApi";
+import { crowdOutcomeOf } from "./mockCrowdHistory";
 import { CLOSED_LISTING_MS, MOCK_CLOSING_AT_MS, MOCK_MARKETS, MOCK_NEW_LISTING_ID, mockMarketById } from "./mockMarkets";
 import { priceStrAt, TICK_MS } from "./mockPrices";
 
@@ -924,5 +925,78 @@ describe("the player's own positions and history carry their round's real length
   it("NPC histories carry it too", async () => {
     const profile = await mockApi.publicProfile("npc-3");
     for (const entry of profile.history) expect(entry.durationSec).toBe(entry.interval === "HOURLY" ? 3600 : 86_400);
+  });
+});
+
+describe("the contract's round fields: every round carries its market's kind, price scale and source", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    await signIn();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each(MOCK_MARKETS.map((m) => m.id))("%s: running, betting and a settled round all say so", async (marketId) => {
+    const spec = mockMarketById(marketId)!;
+    const pair = await mockApi.rounds("HOURLY", marketId);
+    const settled = await mockApi.round(buildRoundId(marketId, "HOURLY", pair.running.window.startMs - 3_600_000));
+    for (const round of [pair.running, pair.betting, settled]) {
+      expect(round).toMatchObject({ kind: spec.kind, priceDecimals: spec.priceDecimals, source: spec.source });
+    }
+  });
+
+  it("a cancelled round says so too, and its cancellation names the market (and its symbol)", async () => {
+    await advanceSimClockTo(MOCK_CLOSING_AT_MS + 60_000);
+    const pair = await mockApi.rounds("HOURLY", CLOSING.id);
+    if (pair.betting.phase !== "CANCELLED") throw new Error("expected CANCELLED");
+    expect(pair.betting).toMatchObject({ kind: "ODDS", priceDecimals: 6, source: "polymarket" });
+    expect(pair.betting.cancellation).toMatchObject({ marketId: CLOSING.id, asset: CLOSING.symbol });
+    const btc = (await mockApi.cancellations({ limit: 50 })).items.find((c) => c.reason.startsWith("Automatic cancellation"))!;
+    expect(btc).toMatchObject({ marketId: "BTC", asset: "BTC" });
+    // every row of the log names its market
+    for (const row of (await mockApi.cancellations({ limit: 50 })).items) expect(row.asset).toBeTruthy();
+  });
+
+  it("a settled bet's history row names its market's kind", async () => {
+    const odds = await bettingRoundOf("PM900101");
+    await mockApi.placeBet({ roundId: odds.roundId, direction: "UP", leverage: 3, stake: "200.000" });
+    await advanceSimClockTo(odds.window.endMs + 60_000);
+    const [row] = (await mockApi.myProfile()).history;
+    expect(row).toMatchObject({ marketId: "PM900101", kind: "ODDS" });
+  });
+});
+
+describe("'not found' is the contract's code NOT_FOUND — the web never has to read the message", () => {
+  beforeEach(async () => {
+    await signIn();
+  });
+
+  it("an unknown or off-grid round, an unknown player, an unknown withdrawal", async () => {
+    await expectApiError(mockApi.round("garbage"), "NOT_FOUND");
+    await expectApiError(mockApi.round("ETH-1h-3600001"), "NOT_FOUND");
+    await expectApiError(mockApi.betFeed!("garbage"), "NOT_FOUND");
+    await expectApiError(mockApi.publicProfile("no-such-player"), "NOT_FOUND");
+    await expectApiError(mockApi.withdrawal("nope"), "NOT_FOUND");
+  });
+
+  it("an unknown MARKET stays MARKET_NOT_FOUND", async () => {
+    await expectApiError(mockApi.round("NOPE-1h-3600000"), "MARKET_NOT_FOUND");
+  });
+});
+
+describe("the crowd's last outcome: a flat round is FLAT, not a loss (MarketCrowdBriefDto.lastOutcome)", () => {
+  it("a liquidation first, then flat, then won, else lost", () => {
+    expect(crowdOutcomeOf({ liquidated: true, flat: false, won: false })).toBe("LIQUIDATED");
+    expect(crowdOutcomeOf({ liquidated: false, flat: true, won: false })).toBe("FLAT");
+    expect(crowdOutcomeOf({ liquidated: false, flat: false, won: true })).toBe("WIN");
+    expect(crowdOutcomeOf({ liquidated: false, flat: false, won: false })).toBe("LOSS");
+  });
+
+  it("every market's brief has a last outcome from the contract's set, and wins never exceed the rounds traded", async () => {
+    for (const m of (await mockApi.markets()).markets) {
+      expect([null, "WIN", "LOSS", "LIQUIDATED", "FLAT"]).toContain(m.crowd.lastOutcome);
+      expect(m.crowd.roundsWon).toBeLessThanOrEqual(m.crowd.roundsTraded);
+    }
   });
 });

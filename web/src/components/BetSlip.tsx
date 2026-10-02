@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
+import { mutationErrorText } from "../api/apiErrors";
 import { nextRoundId } from "../api/clock";
+import { useEngineEpoch } from "../api/engineState";
 import {
-  ApiRequestError,
   LEVERAGE_MAX,
   LEVERAGE_MIN,
   MIN_STAKE_PLAY,
@@ -464,20 +465,41 @@ function BetSlipForm({
     if (existingDirection && onDirectionChange) onDirectionChange(existingDirection);
   }, [round.roundId, existingDirection, onDirectionChange]);
 
+  // The balance the slip checks the stake against: `null` until it is KNOWN. Unknown is not zero — while it loads (or
+  // after it failed) no "not enough PLAY" is ever shown, and a failed load is retried by itself and says so.
   const [balance, setBalance] = useState<number | null>(null);
+  const [balanceFailed, setBalanceFailed] = useState(false);
+  const [balanceAttempt, setBalanceAttempt] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const preview = useLiquidationPreview(round.marketId, direction, leverage, stake);
 
+  // Reads the balance on every new round, after the player's own bet changes (placing or editing one moves it) and
+  // when the server comes back from a restart; a failed read tries again in 3 s, until it works.
+  const engineEpoch = useEngineEpoch();
+  const existingStake = existing?.stake;
   useEffect(() => {
     let cancelled = false;
-    api.myAccount().then((acc) => {
-      if (!cancelled) setBalance(Number(acc.balance));
-    });
+    let retry: number | undefined;
+    api
+      .myAccount()
+      .then((acc) => {
+        if (cancelled) return;
+        setBalance(Number(acc.balance));
+        setBalanceFailed(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setBalanceFailed(true);
+        retry = window.setTimeout(() => setBalanceAttempt((n) => n + 1), 3000);
+      });
     return () => {
       cancelled = true;
+      window.clearTimeout(retry);
     };
-  }, [api, round.roundId]);
+  }, [api, round.roundId, existingStake, engineEpoch, balanceAttempt]);
 
   if (!formOpen && existing) {
     return (
@@ -492,14 +514,24 @@ function BetSlipForm({
               <button
                 type="button"
                 className="btn btn--danger"
+                disabled={cancelling}
                 onClick={async () => {
-                  await api.cancelBet(round.roundId);
-                  onChanged();
+                  setCancelling(true);
+                  setCancelError(null);
+                  try {
+                    await api.cancelBet(round.roundId);
+                    onChanged();
+                  } catch (err) {
+                    setCancelError(mutationErrorText(err, "Couldn't cancel the bet — try again."));
+                  } finally {
+                    setCancelling(false);
+                  }
                 }}
               >
-                CANCEL BET
+                {cancelling ? "CANCELLING…" : "CANCEL BET"}
               </button>
             </div>
+            {cancelError && <p className="field-error">{cancelError}</p>}
           </>
         ) : (
           <>
@@ -523,8 +555,10 @@ function BetSlipForm({
 
   const stakeNum = Number(stake) || 0;
   const belowMin = stakeNum < Number(MIN_STAKE_PLAY);
+  // The slip may spend what is free plus what it already has on this round (an edit refunds it first). Only a KNOWN
+  // balance can say "not enough": while it is unknown the server stays the judge of the bet.
   const effectiveBalance = (balance ?? 0) + (existing ? Number(existing.stake) : 0);
-  const overBalance = stakeNum > effectiveBalance;
+  const overBalance = balance !== null && stakeNum > effectiveBalance;
   const disabled = submitting || !stake || belowMin || overBalance;
 
   const submit = async () => {
@@ -534,7 +568,7 @@ function BetSlipForm({
       await api.placeBet({ roundId: round.roundId, direction, leverage, stake: stakeNum.toFixed(3) });
       onChanged();
     } catch (err) {
-      setErrorMessage(err instanceof ApiRequestError ? err.message : "Something went wrong.");
+      setErrorMessage(mutationErrorText(err, "Something went wrong."));
     } finally {
       setSubmitting(false);
     }
@@ -560,6 +594,16 @@ function BetSlipForm({
 
       <StakeField inputId="stake-input" label="Stake (PLAY)" value={stake} onChange={setStake} balance={balance === null ? undefined : effectiveBalance} />
       {belowMin && <p className="field-error">Minimum stake is 100 PLAY.</p>}
+      {balance === null && balanceFailed && (
+        <div className="stack" style={{ gap: 8 }} role="status">
+          <p className="field-hint" style={{ margin: 0 }}>
+            Couldn't load your balance yet — trying again.
+          </p>
+          <button type="button" className="btn btn--secondary" onClick={() => setBalanceAttempt((n) => n + 1)}>
+            Try now
+          </button>
+        </div>
+      )}
       {!belowMin && overBalance && (
         <p className="field-error">
           Not enough PLAY — you have {formatPlayAmount(effectiveBalance)} PLAY, this bet needs {formatPlayAmount(stakeNum)} PLAY.

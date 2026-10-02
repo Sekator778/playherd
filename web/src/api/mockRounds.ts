@@ -58,6 +58,12 @@ function directionSide(direction: Direction): Side {
   return direction === "UP" ? LONG : SHORT;
 }
 
+/** What every round carries of its market (`RoundBase`): the id and symbol, and the kind, price scale and source a
+ *  round page needs to print the round's prices and name their origin once the market has left `markets()`. */
+function roundBase(spec: MockMarketSpec) {
+  return { marketId: spec.id, asset: spec.symbol, kind: spec.kind, priceDecimals: spec.priceDecimals, source: spec.source };
+}
+
 /** One round's bots (Т-8, mock version): a seeded number of NPCs — the market's `bots` range, BTC
  *  12–32 as it always was — each with a direction, leverage within the market's cap, and stake.
  *  Seeded by the round id, so the same round always has the same crowd. */
@@ -310,8 +316,7 @@ export function buildBettingRound(spec: MockMarketSpec, window: RoundWindowDto, 
   return {
     roundId,
     window,
-    marketId: spec.id,
-    asset: spec.symbol,
+    ...roundBase(spec),
     phase: "BETTING",
     participantCount: bets.length,
     myBet: own && own.bet.roundId === roundId ? own.bet : null,
@@ -336,15 +341,14 @@ export function buildRunningRound(
   if (!openingPriceKnown(spec, window.startMs)) {
     // The round started before the mock had a price for this market (a market listed moments ago): no
     // opening price yet, so — as the contract says — no positions are opened and the crowd has none.
-    return { roundId, window, marketId: spec.id, asset: spec.symbol, phase: "RUNNING", openPrice: null, positions: [], crowd: null };
+    return { roundId, window, ...roundBase(spec), phase: "RUNNING", openPrice: null, positions: [], crowd: null };
   }
   const bets = roundBets(spec, roundId, own);
   const ohlc = ohlcFor(spec, window, nowMs);
   return {
     roundId,
     window,
-    marketId: spec.id,
-    asset: spec.symbol,
+    ...roundBase(spec),
     phase: "RUNNING",
     openPrice: ohlc.open,
     positions: bets.map((b) => toPublicPosition(spec, b, ohlc, false, own)),
@@ -364,8 +368,7 @@ export function buildSettledRound(
   return {
     roundId,
     window,
-    marketId: spec.id,
-    asset: spec.symbol,
+    ...roundBase(spec),
     phase: "SETTLED",
     openPrice: ohlc.open,
     closePrice: ohlc.close,
@@ -382,8 +385,8 @@ export function buildCancelledRound(
   cancelledAtMs: number,
 ): RoundCancelled {
   const roundId = roundIdForWindow(spec.id, window);
-  const cancellation: CancellationDto = { roundId, reason, cancelledAtMs, refundedBetCount };
-  return { roundId, window, marketId: spec.id, asset: spec.symbol, phase: "CANCELLED", cancellation };
+  const cancellation: CancellationDto = { roundId, marketId: spec.id, asset: spec.symbol, reason, cancelledAtMs, refundedBetCount };
+  return { roundId, window, ...roundBase(spec), phase: "CANCELLED", cancellation };
 }
 
 /** Own settlement outcome for a round that has fully closed — used by `mockApi.ts` to post the

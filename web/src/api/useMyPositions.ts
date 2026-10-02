@@ -8,6 +8,7 @@
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useApi, useSession } from "./ApiContext";
+import { isEngineNotReady } from "./apiErrors";
 import type { Api, MyPositionDto } from "./contract";
 import { createPolledStore, storeFor, type PolledStore } from "./polledStore";
 
@@ -32,7 +33,9 @@ function getMyPositionsStore(api: Api, playerId: string): PolledStore<PositionsS
         if (current.loaded && !current.error && JSON.stringify(current.positions) === JSON.stringify(positions)) return current;
         return { positions, loaded: true, error: false };
       },
-      onError: (current) => (current.error ? current : { ...current, error: true }),
+      // A restarting server (503 `ENGINE_NOT_READY`) is not an error of the list: the positions held stay, the next
+      // tick asks again (see `useMarkets`).
+      onError: (current, error) => (current.error || isEngineNotReady(error) ? current : { ...current, error: true }),
       onIdle: () => INITIAL,
     }),
   );

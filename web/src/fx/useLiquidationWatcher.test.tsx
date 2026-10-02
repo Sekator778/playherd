@@ -13,7 +13,7 @@ import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiInstanceContext, SessionContext, type SessionState } from "../api/ApiContext";
 import { fakeApi } from "../api/apiTestUtils";
-import type { Api, MyPositionDto, PlayerSummaryDto, ProfileRoundEntryDto, RoundId } from "../api/contract";
+import { ApiRequestError, type Api, type MyPositionDto, type PlayerSummaryDto, type ProfileRoundEntryDto, type RoundCancelled, type RoundDto, type RoundId } from "../api/contract";
 import { catalogue, marketsOf } from "../components/testFixtures";
 import {
   claimLiquidationMoment,
@@ -78,6 +78,11 @@ class World {
   unseen: ProfileRoundEntryDto[] = [];
   acked = new Set<RoundId>();
   positionsCalls = 0;
+  /** What `round(id)` answers; an id with no entry is "unknown round". */
+  rounds = new Map<RoundId, RoundDto>();
+  roundCalls: RoundId[] = [];
+  /** Makes the next `round()` calls fail with this (a server that is restarting). */
+  roundFailure: Error | null = null;
 }
 
 function makeApi(world: World, opts: { withUnseen?: boolean } = {}): Api {
@@ -89,6 +94,13 @@ function makeApi(world: World, opts: { withUnseen?: boolean } = {}): Api {
       return world.positions;
     }),
     myAccount: vi.fn(async () => ({ playerId: PLAYER_ID, balance: "9900.000", currentSeason: "2026-10" })),
+    round: vi.fn(async (id: RoundId) => {
+      world.roundCalls.push(id);
+      if (world.roundFailure) throw world.roundFailure;
+      const round = world.rounds.get(id);
+      if (!round) throw new ApiRequestError("NOT_FOUND", `unknown round ${id}`);
+      return round;
+    }),
     ...(withUnseen
       ? {
           unseenResults: vi.fn(async () => world.unseen.filter((e) => !world.acked.has(e.roundId))),
@@ -446,16 +458,16 @@ describe("what does not fire it", () => {
 });
 
 describe("liquidationMoment.ts on its own", () => {
-  it("the first claim wins, every later one loses — for a round, per player", () => {
+  it("the first claim wins, every later one loses — for a round, per player", async () => {
     expect(liquidationMomentShown("p", "r")).toBe(false);
-    expect(claimLiquidationMoment("p", "r")).toBe(true);
-    expect(claimLiquidationMoment("p", "r")).toBe(false);
+    expect(await claimLiquidationMoment("p", "r")).toBe(true);
+    expect(await claimLiquidationMoment("p", "r")).toBe(false);
     expect(liquidationMomentShown("p", "r")).toBe(true);
-    expect(claimLiquidationMoment("p", "r2")).toBe(true);
-    expect(claimLiquidationMoment("q", "r")).toBe(true);
+    expect(await claimLiquidationMoment("p", "r2")).toBe(true);
+    expect(await claimLiquidationMoment("q", "r")).toBe(true);
   });
 
-  it("claims older than a week are dropped, so the storage does not grow for ever", () => {
+  it("claims older than a week are dropped, so the storage does not grow for ever", async () => {
     const old = Date.now() - 8 * 24 * 3_600_000;
     window.localStorage.setItem("herd.liqMoment.p:old-round", JSON.stringify({ at: old, token: "t" }));
     window.localStorage.setItem("herd.liqMoment.p:fresh-round", JSON.stringify({ at: Date.now(), token: "t" }));
@@ -467,7 +479,7 @@ describe("liquidationMoment.ts on its own", () => {
     window.localStorage.setItem("herd.liqMoment.p:garbage", "not json");
     window.localStorage.setItem("unrelated.key", "keep me");
 
-    expect(claimLiquidationMoment("p", "new-round")).toBe(true);
+    expect(await claimLiquidationMoment("p", "new-round")).toBe(true);
 
     expect(window.localStorage.getItem("herd.liqMoment.p:old-round")).toBeNull();
     expect(window.localStorage.getItem("herd.liqMoment.p:garbage")).toBeNull();
@@ -481,5 +493,246 @@ describe("liquidationMoment.ts on its own", () => {
     const quiet = quietSummaryOf(event);
     expect(quiet).toMatchObject({ kind: "LIQUIDATION", quiet: true, netPlay: -250, id: event.id });
     expect(quiet.midRound).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The claim across tabs: atomic under Web Locks, and honest about storage that cannot be trusted
+// ---------------------------------------------------------------------------------------------------------------
+
+/** A stand-in for `navigator.locks` with the one rule the claim relies on: `ifAvailable` while another holder is still
+ *  inside its callback hands the callback `null`. `held` is public so a test can be "another tab, mid-claim". */
+function installFakeLocks() {
+  const held = new Set<string>();
+  const request = vi.fn(async (name: string, _options: { ifAvailable?: boolean }, callback: (lock: { name: string } | null) => Promise<unknown>) => {
+    if (held.has(name)) return callback(null);
+    held.add(name);
+    try {
+      return await callback({ name });
+    } finally {
+      held.delete(name);
+    }
+  });
+  Object.defineProperty(navigator, "locks", { value: { request }, configurable: true });
+  return { held, request, uninstall: () => void Reflect.deleteProperty(navigator, "locks") };
+}
+
+describe("the claim is atomic across tabs where the browser has Web Locks", () => {
+  let locks: ReturnType<typeof installFakeLocks>;
+  beforeEach(() => {
+    locks = installFakeLocks();
+  });
+  afterEach(() => locks.uninstall());
+
+  it("is taken under a lock named for the round, once: the first caller wins, the next one loses", async () => {
+    expect(await claimLiquidationMoment("p", "r")).toBe(true);
+    expect(await claimLiquidationMoment("p", "r")).toBe(false);
+    expect(locks.request).toHaveBeenCalledWith("herd:herd.liqMoment.p:r", { ifAvailable: true }, expect.any(Function));
+    expect(window.localStorage.getItem("herd.liqMoment.p:r")).not.toBeNull();
+  });
+
+  it("a tab that finds the lock held — another tab is claiming this very instant — stays silent and writes nothing", async () => {
+    locks.held.add("herd:herd.liqMoment.p:r"); // the other tab is inside its claim
+    expect(await claimLiquidationMoment("p", "r")).toBe(false);
+    expect(window.localStorage.getItem("herd.liqMoment.p:r")).toBeNull();
+    // the other tab leaves; it wrote its claim — and a later caller still loses to it
+    locks.held.delete("herd:herd.liqMoment.p:r");
+    expect(await claimLiquidationMoment("p", "r")).toBe(true); // (nothing was written by the tab that was only imagined)
+    expect(await claimLiquidationMoment("p", "r")).toBe(false);
+  });
+
+  it("two claims in the same instant: exactly one of them wins", async () => {
+    const results = await Promise.all([claimLiquidationMoment("p", "r"), claimLiquidationMoment("p", "r")]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("different rounds do not wait for each other", async () => {
+    locks.held.add("herd:herd.liqMoment.p:other-round");
+    expect(await claimLiquidationMoment("p", "r")).toBe(true);
+  });
+
+  it("a lock manager that refuses falls back to the plain claim instead of losing the moment", async () => {
+    locks.request.mockRejectedValueOnce(new Error("the document is sandboxed"));
+    expect(await claimLiquidationMoment("p", "r")).toBe(true);
+    expect(await claimLiquidationMoment("p", "r")).toBe(false);
+  });
+});
+
+describe("a storage that silently drops writes", () => {
+  it("is not trusted: the claim falls back to the page, so the moment fires once instead of never", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {}); // no throw, nothing stored
+    try {
+      expect(await claimLiquidationMoment("p", "r")).toBe(true);
+      expect(await claimLiquidationMoment("p", "r")).toBe(false);
+      expect(liquidationMomentShown("p", "r")).toBe(true);
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  it("the moment itself fires once on such a page, however many polls report the position", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {});
+    try {
+      const world = new World();
+      world.positions = [position({ liquidated: true })];
+      const events = collectEvents();
+      renderHarness(makeApi(world));
+      await tick(0);
+      for (let i = 0; i < 4; i++) await tick();
+      expect(events.filter((e) => e.midRound)).toHaveLength(1);
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// A liquidated bet whose round is later CANCELLED: the stake comes back (Р-23), and the player is told once, quietly
+// ---------------------------------------------------------------------------------------------------------------
+
+function cancelledRound(over: Partial<RoundCancelled> = {}): RoundCancelled {
+  return {
+    phase: "CANCELLED",
+    roundId: "1h-3600000",
+    window: { interval: "HOURLY", startMs: 3_600_000, endMs: 3_780_000 },
+    marketId: "BTC",
+    asset: "BTC",
+    kind: "PERP",
+    priceDecimals: 2,
+    source: "hyperliquid",
+    cancellation: { roundId: "1h-3600000", marketId: "BTC", asset: "BTC", reason: "No reliable price for an hour", cancelledAtMs: 4_000_000, refundedBetCount: 3 },
+    ...over,
+  };
+}
+
+describe("a liquidated bet whose round is later cancelled — the stake is refunded and the player hears it", () => {
+  /** The moment fires, its card goes away, and the round is then cancelled: the position is gone, and so is any history row. */
+  async function liquidatedThenGone(world: World) {
+    world.positions = [position({ liquidated: true, stake: "250.000" })];
+    renderHarness(makeApi(world));
+    await tick(0);
+    await tick(3000); // the LIQUIDATED card leaves
+    world.positions = [];
+  }
+
+  it("one quiet note — round cancelled, stake refunded — naming the market, the length and the stake, linking to the round", async () => {
+    const world = new World();
+    const events = collectEvents();
+    await liquidatedThenGone(world);
+    world.rounds.set("1h-3600000", cancelledRound());
+    await tick();
+    await tick(0);
+
+    const notes = quietNotes();
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveTextContent("BTC · 3 MIN round cancelled");
+    expect(notes[0]).toHaveTextContent("Your stake of 250 PLAY is refunded");
+    expect(notes[0]).toHaveTextContent(/liquidated ones too/);
+    expect(notes[0].querySelector('a[href="/round/1h-3600000"]')).not.toBeNull();
+    expect(events.at(-1)).toMatchObject({ kind: "LIQUIDATION", quiet: true, refunded: true, stakePlay: 250, netPlay: 0, roundId: "1h-3600000" });
+    // not a second loss: nothing says "-250" or "liquidated bet: …"
+    expect(notes[0].textContent).not.toMatch(/-250|Your liquidated bet:/);
+    expect(stampText()).toBeNull(); // quiet: no overlay, no stamp
+  });
+
+  it("only once — more polls, and a reload, do not repeat it (the follow-up is closed across reloads)", async () => {
+    const world = new World();
+    const events = collectEvents();
+    await liquidatedThenGone(world);
+    world.rounds.set("1h-3600000", cancelledRound());
+    await tick();
+    for (let i = 0; i < 3; i++) await tick();
+    expect(events.filter((e) => e.refunded)).toHaveLength(1);
+
+    document.body.innerHTML = ""; // "reload": a new page over the same storage
+    renderHarness(makeApi(world));
+    await tick(0);
+    await tick();
+    expect(events.filter((e) => e.refunded)).toHaveLength(1);
+  });
+
+  it("a player who was AWAY when it happened is told when the app opens: the claim outlives the page", async () => {
+    const world = new World();
+    window.localStorage.setItem(
+      `herd.liqMoment.${PLAYER_ID}:1h-3600000`,
+      JSON.stringify({ at: Date.now(), token: "an-earlier-page", info: { stake: 100, symbol: "BTC", marketId: "BTC", interval: "HOURLY", durationSec: 180, leverage: 25 } }),
+    );
+    world.rounds.set("1h-3600000", cancelledRound());
+    const events = collectEvents();
+    renderHarness(makeApi(world)); // the position is not among myPositions(): its round is long cancelled
+    await tick(0);
+    await tick(0);
+    expect(events.filter((e) => e.refunded)).toHaveLength(1);
+    expect(quietNotes()[0]).toHaveTextContent("Your stake of 100 PLAY is refunded");
+  });
+
+  it("a claim an older build wrote (it remembered no stake) still tells the player, without inventing a figure", async () => {
+    const world = new World();
+    window.localStorage.setItem(`herd.liqMoment.${PLAYER_ID}:1h-3600000`, JSON.stringify({ at: Date.now(), token: "an-older-build" }));
+    world.rounds.set("1h-3600000", cancelledRound());
+    renderHarness(makeApi(world));
+    await tick(0);
+    await tick(0);
+    const note = quietNotes()[0];
+    expect(note).toHaveTextContent("Your stake is refunded");
+    expect(note.textContent).not.toMatch(/\d+ PLAY|NaN/);
+  });
+
+  it("a round that SETTLED is not a cancellation: no refund note — its own quiet summary comes from the settlement", async () => {
+    const world = new World();
+    const events = collectEvents();
+    await liquidatedThenGone(world);
+    world.rounds.set("1h-3600000", { ...cancelledRound(), phase: "SETTLED", openPrice: "1", closePrice: "2", positions: [], crowd: null } as unknown as RoundDto);
+    world.unseen = [historyEntry()];
+    await tick();
+    await tick(0);
+    expect(events.filter((e) => e.refunded)).toHaveLength(0);
+    expect(events.filter((e) => e.quiet && !e.refunded)).toHaveLength(1);
+    expect(quietNotes()).toHaveLength(1);
+    expect(quietNotes()[0]).toHaveTextContent("round ended");
+    const calls = world.roundCalls.length;
+    for (let i = 0; i < 3; i++) await tick();
+    expect(world.roundCalls.length).toBe(calls); // closed: it is not asked about again
+  });
+
+  it("a round whose fate is not known yet is asked again later; a restarting server too — until it answers", async () => {
+    const world = new World();
+    const events = collectEvents();
+    await liquidatedThenGone(world);
+    world.roundFailure = new ApiRequestError("ENGINE_NOT_READY", "the game engine is recovering");
+    await tick();
+    await tick(0);
+    expect(events.filter((e) => e.refunded)).toHaveLength(0);
+    const firstAttempts = world.roundCalls.length;
+    expect(firstAttempts).toBeGreaterThan(0);
+
+    world.roundFailure = null;
+    world.rounds.set("1h-3600000", cancelledRound());
+    await tick(10_000);
+    await tick(0);
+    expect(world.roundCalls.length).toBeGreaterThan(firstAttempts);
+    expect(events.filter((e) => e.refunded)).toHaveLength(1);
+  });
+
+  it("nothing is asked while the positions are still loading, or while the position is in myPositions()", async () => {
+    const world = new World();
+    world.positions = [position({ liquidated: true })]; // still running, still the player's: its round is not over
+    renderHarness(makeApi(world));
+    await tick(0);
+    await tick();
+    await tick();
+    expect(world.roundCalls).toHaveLength(0);
+  });
+
+  it("a round the server has never heard of is closed, not asked about for ever", async () => {
+    const world = new World();
+    await liquidatedThenGone(world); // no entry in world.rounds: NOT_FOUND
+    await tick();
+    await tick(0);
+    const calls = world.roundCalls.length;
+    expect(calls).toBeGreaterThan(0);
+    for (let i = 0; i < 4; i++) await tick();
+    expect(world.roundCalls.length).toBe(calls);
+    expect(quietNotes()).toHaveLength(0);
   });
 });

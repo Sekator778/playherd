@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
+import { isEngineNotReady, isNotFound } from "../api/apiErrors";
 import type { MarketDto, ProfileRoundEntryDto, PublicProfileDto } from "../api/contract";
+import { useEngineEpoch } from "../api/engineState";
 import { netFromPayoutAndStake } from "../api/outcome";
 import { seasonHistory } from "../api/seasonStats";
 import { useMarkets } from "../api/useMarkets";
@@ -56,14 +58,24 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
   const load = useCallback(() => {
     const request = mine ? api.myProfile() : api.publicProfile(playerId!);
     request
-      .then(setProfile)
-      .catch((err) => setError(err instanceof Error && err.message === "Player not found." ? "not-found" : "generic"));
+      .then((loaded) => {
+        setProfile(loaded);
+        setError(null);
+      })
+      .catch((err) => {
+        // A server restarting (503 `ENGINE_NOT_READY`) is not a failure of this page: the skeleton (or the profile
+        // already shown) stays, the banner says why, and the epoch below loads it again when the server is back.
+        if (isEngineNotReady(err)) return;
+        // "No such player" is the server's code (404 `NOT_FOUND`), never its wording.
+        setError(isNotFound(err) ? "not-found" : "generic");
+      });
   }, [api, mine, playerId]);
 
+  const engineEpoch = useEngineEpoch();
   useEffect(() => {
     if (mine && !player) return;
     load();
-  }, [load, mine, player]);
+  }, [load, mine, player, engineEpoch]);
 
   if (mine && !player) {
     // Signing in works from any device now (Р-48 replaces Р-31's desktop-only Sage
@@ -146,6 +158,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
               net={netFromPayoutAndStake(h.payout, h.stake)}
               liquidated={h.liquidated}
               dateLabel={formatDateTimeUtc(h.settledAtMs)}
+              odds={(h.kind ?? byId.get(h.marketId)?.kind) === "ODDS"}
             />
           ))}
         </div>

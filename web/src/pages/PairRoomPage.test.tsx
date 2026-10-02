@@ -492,6 +492,22 @@ describe("Room — a running round with no opening price yet (RoundRunning.openP
   });
 });
 
+describe("Room — an open market asks for its live price", () => {
+  it("polls referencePrice for the room's market", async () => {
+    const { api } = roomApi();
+    render(
+      <MemoryRouter initialEntries={["/play/BTC"]}>
+        <Routes>
+          <Route path="/play/:marketId" element={<PairRoomPage />} />
+        </Routes>
+      </MemoryRouter>,
+      { wrapper: apiWrapper(api, null) },
+    );
+    await screen.findByText("BTC/USD");
+    expect(api.referencePrice).toHaveBeenCalledWith("BTC");
+  });
+});
+
 describe("Room — a closed market", () => {
   const closedBtc: MarketDto = { ...BTC, status: "CLOSED", series: [seriesDto(), seriesDto({ interval: "DAILY", durationSec: 900 })] };
 
@@ -506,6 +522,15 @@ describe("Room — a closed market", () => {
     expect(screen.queryByRole("button", { name: "CONNECT WALLET" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open markets in this panel" })).toHaveAttribute("href", "/?c=sports");
     expect(screen.getByRole("link", { name: "How the herd did here" })).toHaveAttribute("href", "/stats?m=PM900199");
+  });
+
+  it("asks for no price: a closed market has none to give (503 PRICE_UNAVAILABLE, every two seconds, was a console error)", async () => {
+    const referencePrice = vi.fn(async () => {
+      throw new Error("no price for market PM900199 yet");
+    });
+    renderRoom("/play/PM900199", { markets: [...MARKETS], methods: { referencePrice } });
+    await screen.findByRole("heading", { name: "This market is closed" });
+    expect(referencePrice).not.toHaveBeenCalled();
   });
 
   it("shows the server's own cancellation reason as it is", async () => {

@@ -38,6 +38,9 @@ function makeRunning(positions: PublicPositionDto[], roundId = "1h-0"): RoundRun
     window: WINDOW,
     marketId: "BTC",
     asset: "BTC",
+    kind: "PERP",
+    priceDecimals: 2,
+    source: "hyperliquid",
     phase: "RUNNING",
     openPrice: "83451.00",
     positions: positions.map((p) => ({ ...p, roundId })),
@@ -51,6 +54,9 @@ function makeSettled(positions: PublicPositionDto[], roundId = "1h-0"): RoundSet
     window: WINDOW,
     marketId: "BTC",
     asset: "BTC",
+    kind: "PERP",
+    priceDecimals: 2,
+    source: "hyperliquid",
     phase: "SETTLED",
     openPrice: "83451.00",
     closePrice: "84000.00",
@@ -60,7 +66,7 @@ function makeSettled(positions: PublicPositionDto[], roundId = "1h-0"): RoundSet
 }
 
 function makeBetting(myBet: RoundBetting["myBet"] = null, roundId = "1h-1"): RoundBetting {
-  return { roundId, window: WINDOW, marketId: "BTC", asset: "BTC", phase: "BETTING", participantCount: 1, myBet };
+  return { roundId, window: WINDOW, marketId: "BTC", asset: "BTC", kind: "PERP", priceDecimals: 2, source: "hyperliquid", phase: "BETTING", participantCount: 1, myBet };
 }
 
 describe("winTier boundaries (result-moment.md §2)", () => {

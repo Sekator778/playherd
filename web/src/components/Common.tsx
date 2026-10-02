@@ -135,17 +135,25 @@ export function OracleStatusLine() {
   );
 }
 
-/** Р-33/§2 ("Про управляемый оракул"): shown wherever the outcome depends on the oracle. The first
- *  half names where the number really comes from — a Polymarket odds market is not "a price from
- *  Hyperliquid" (Р-69); the second half is the same for every source: it is OUR key that publishes it. */
-export function OracleDisclosureLine({ source = "hyperliquid" }: { source?: MarketDto["source"] }) {
+/** Р-33/§2 ("Про управляемый оракул"): shown wherever the outcome depends on the oracle. The first half names where the
+ *  number really comes from — a Polymarket odds market is not "a price from Hyperliquid" (Р-69); the second half is the
+ *  same for every source: it is OUR key that publishes it. A caller that does not know the source passes none and the
+ *  line says nothing about it — it never assumes one (a round of a market that has left `markets()` once claimed
+ *  "Price from Hyperliquid" for an odds round). */
+export function OracleDisclosureLine({ source }: { source?: MarketDto["source"] }) {
   const origin =
     source === "polymarket"
       ? "Odds from Polymarket"
       : source === "synthetic"
         ? "Simulated demo prices (no live source)"
-        : "Price from Hyperliquid";
-  return <p className="disclaimer-line">{origin}, published by our team's key — not a decentralized oracle.</p>;
+        : source === "hyperliquid"
+          ? "Price from Hyperliquid"
+          : null;
+  return (
+    <p className="disclaimer-line">
+      {origin ? `${origin}, published by our team's key` : "Published by our team's key"} — not a decentralized oracle.
+    </p>
+  );
 }
 
 /** §2 ("Про отсутствие защиты от мультиаккаунтов"). */

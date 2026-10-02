@@ -20,8 +20,19 @@ const NOTIFICATION_PATTERN: Record<NotificationType, number[]> = {
   error: [40, 30, 40, 30, 40],
 };
 
+/**
+ * A browser lets a page vibrate only after the player has touched it once (Chrome: "Blocked call to navigator.vibrate because
+ * user hasn't tapped on the frame" — an ERROR-level console line, on every result moment of a page nobody has tapped yet, as
+ * a settlement arriving while the player just watches). Where the page can tell (`navigator.userActivation`), it does not
+ * call at all until then; where it cannot (an older WebView), it calls as before.
+ */
+function mayVibrate(): boolean {
+  const activation = (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation;
+  return activation === undefined || activation.hasBeenActive;
+}
+
 function vibrateNow(pattern: number | number[]): void {
-  if (!getHapticsEnabled()) return;
+  if (!getHapticsEnabled() || !mayVibrate()) return;
   try {
     navigator.vibrate?.(pattern);
   } catch {

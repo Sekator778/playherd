@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError } from "./contract";
+import { resetEngineStateForTests, useEngineState } from "./engineState";
 import { realApi } from "./realApi";
+import { renderHook } from "@testing-library/react";
 
 /** What `rpc()` sent: `[url, {method, body}]` of the last `fetch` call, with the body decoded. */
 function lastCall(fetchMock: ReturnType<typeof vi.fn>): { url: string; init: RequestInit; args: unknown[] } {
@@ -21,6 +23,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchMock = vi.fn().mockResolvedValue(okResponse({}));
   vi.stubGlobal("fetch", fetchMock);
+  resetEngineStateForTests();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -111,6 +114,9 @@ describe("RealApi — error mapping", () => {
     "MARKET_CLOSED",
     "PRICE_UNAVAILABLE",
     "RATE_LIMITED",
+    "ENGINE_NOT_READY",
+    "NOT_FOUND",
+    "INVALID_NICKNAME",
   ])("a known server code (%s) is an ApiRequestError carrying that code and the server's text", async (code) => {
     fetchMock.mockResolvedValueOnce(errorResponse(400, code, `server says ${code}`));
     const err = await realApi.placeBet({ roundId: "1h-0", direction: "UP", leverage: 2, stake: "100.000" }).catch((e) => e);
@@ -152,5 +158,94 @@ describe("RealApi — error mapping", () => {
     expect(proxy).toBeInstanceOf(Error);
     expect(proxy).not.toBeInstanceOf(ApiRequestError);
     expect(proxy.message).toBe("Request failed (502).");
+  });
+});
+
+describe("RealApi — HTTP 429", () => {
+  it("with the server's envelope: RATE_LIMITED, the code the UI words in its own plain sentence", async () => {
+    fetchMock.mockResolvedValueOnce(errorResponse(429, "RATE_LIMITED", "too many requests — please slow down and try again shortly"));
+    const err = await realApi.placeBet({ roundId: "1h-0", direction: "UP", leverage: 2, stake: "100.000" }).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiRequestError);
+    expect(err.code).toBe("RATE_LIMITED");
+  });
+
+  it("without any envelope (a proxy's own limit, an HTML page): still RATE_LIMITED — not a plain 'Request failed (429)'", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429, text: async () => "<html>Too Many Requests</html>" });
+    const err = await realApi.authChallenge({}).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiRequestError);
+    expect(err.code).toBe("RATE_LIMITED");
+    expect(err.message).toBe("Too many requests just now — wait a few seconds and try again.");
+  });
+
+  it("other statuses with no envelope stay plain Errors", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, text: async () => "<html>Service Unavailable</html>" });
+    const err = await realApi.markets().catch((e) => e);
+    expect(err).not.toBeInstanceOf(ApiRequestError);
+    expect(err.message).toBe("Request failed (503).");
+  });
+});
+
+describe("RealApi — what it tells the engine state (api/engineState.ts)", () => {
+  const state = () => renderHook(() => useEngineState()).result.current;
+
+  it("a 503 ENGINE_NOT_READY from any call marks the engine not ready", async () => {
+    fetchMock.mockResolvedValueOnce(errorResponse(503, "ENGINE_NOT_READY", "the game engine is recovering"));
+    await realApi.myAccount().catch(() => {});
+    expect(state()).toEqual({ notReady: true, epoch: 0 });
+  });
+
+  it("a success of a read that NEEDS the engine marks it ready again — and counts the recovery", async () => {
+    fetchMock.mockResolvedValueOnce(errorResponse(503, "ENGINE_NOT_READY", "x"));
+    await realApi.rounds("HOURLY").catch(() => {});
+    fetchMock.mockResolvedValueOnce(okResponse({ serverTimeMs: 1, categories: [], markets: [] }));
+    await realApi.markets();
+    expect(state()).toEqual({ notReady: false, epoch: 1 });
+  });
+
+  it.each([
+    ["cancellations", () => realApi.cancellations()],
+    ["referencePrice", () => realApi.referencePrice("BTC")],
+    ["priceSeries", () => realApi.priceSeries("BTC")],
+    ["currentPlayer", () => realApi.currentPlayer()],
+    ["round", () => realApi.round("BTC-1h-0")],
+  ])("a success of %s proves nothing about the engine (the server answers it from the database): the state stays", async (_name, call) => {
+    fetchMock.mockResolvedValueOnce(errorResponse(503, "ENGINE_NOT_READY", "x"));
+    await realApi.myAccount().catch(() => {});
+    fetchMock.mockResolvedValueOnce(okResponse({}));
+    await call();
+    expect(state().notReady).toBe(true);
+  });
+
+  it("serverInfo() saying engineReady: false marks it not ready; true — or no flag at all — marks it ready", async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({ mode: "live", engineReady: false }));
+    await realApi.serverInfo!();
+    expect(state().notReady).toBe(true);
+    fetchMock.mockResolvedValueOnce(okResponse({ mode: "live" }));
+    await realApi.serverInfo!();
+    expect(state()).toEqual({ notReady: false, epoch: 1 });
+    fetchMock.mockResolvedValueOnce(okResponse({ mode: "live", engineReady: false }));
+    await realApi.serverInfo!();
+    fetchMock.mockResolvedValueOnce(okResponse({ mode: "live", engineReady: true }));
+    await realApi.serverInfo!();
+    expect(state()).toEqual({ notReady: false, epoch: 2 });
+  });
+
+  it("an answer that was already on its way when the engine went down does not clear it (no flicker)", async () => {
+    vi.useFakeTimers();
+    try {
+      let answerOld: (r: unknown) => void = () => {};
+      fetchMock.mockImplementationOnce(() => new Promise((resolve) => (answerOld = resolve))); // a markets() sent while all was well
+      const old = realApi.markets();
+      vi.advanceTimersByTime(50);
+      fetchMock.mockResolvedValueOnce(errorResponse(503, "ENGINE_NOT_READY", "x")); // then the engine goes down
+      await realApi.myAccount().catch(() => {});
+      expect(state().notReady).toBe(true);
+      vi.advanceTimersByTime(50);
+      answerOld(okResponse({ serverTimeMs: 1, categories: [], markets: [] })); // the old answer lands late
+      await old;
+      expect(state().notReady).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -351,6 +351,13 @@
   height: 22px;
   color: var(--liq-magenta);
 }
+/* A liquidated bet whose round was cancelled: the stake is back, so nothing here is magenta. */
+.quiet-note--refunded {
+  border-left-color: var(--text-faint);
+}
+.quiet-note--refunded .quiet-note__icon {
+  color: var(--text-muted);
+}
 .quiet-note__body p {
   margin: 0;
 }

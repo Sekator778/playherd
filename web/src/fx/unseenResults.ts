@@ -23,7 +23,7 @@
  */
 import type { Api, ProfileRoundEntryDto, RoundId } from "../api/contract";
 import { netFromPayoutAndStake } from "../api/outcome";
-import { liquidationMomentShown, quietSummaryOf } from "./liquidationMoment";
+import { closeFollowUp, liquidationMomentShown, quietSummaryOf } from "./liquidationMoment";
 import { resultEventFromHistoryEntry, type ResultEvent } from "./resultEvent";
 import { publish } from "./resultEventBus";
 
@@ -111,7 +111,13 @@ async function doPublish(api: Api, playerId: string, isCurrent: () => boolean): 
       shown.add(event.id);
       // A liquidation the player was already shown while its round was running (`useLiquidationWatcher`) is not
       // flashed, stamped and shaken a second time at settlement: a quiet summary says it ended, the loss signed.
-      publish(event.kind === "LIQUIDATION" && liquidationMomentShown(playerId, event.roundId) ? quietSummaryOf(event) : event);
+      if (event.kind === "LIQUIDATION" && liquidationMomentShown(playerId, event.roundId)) {
+        publish(quietSummaryOf(event));
+        // The round settled — the liquidation stood, so there is no cancellation left to follow up (`liquidationFollowUp.ts`).
+        void closeFollowUp(playerId, event.roundId);
+      } else {
+        publish(event);
+      }
     }
   }
   // Everything the server still lists is on screen now (or was, in an earlier tick whose ack failed).

@@ -1,8 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
-import type { ProfileRoundEntryDto, PublicProfileDto } from "../api/contract";
+import { ApiRequestError, type ProfileRoundEntryDto, type PublicProfileDto } from "../api/contract";
+import { reportEngineNotReady, reportEngineReady, resetEngineStateForTests } from "../api/engineState";
 import { catalogue, marketsOf } from "../components/testFixtures";
 import { ProfilePage } from "./ProfilePage";
 
@@ -132,5 +133,104 @@ describe("Profile — history rows name the market", () => {
   it("an empty history says so", async () => {
     renderProfile(profile());
     expect(await screen.findByText("No rounds played yet.")).toBeInTheDocument();
+  });
+});
+
+describe("Profile — odds rows are worded as odds (ProfileRoundEntryDto.kind)", () => {
+  it("an ODDS row wears the ODDS tag, a perp row does not", async () => {
+    renderProfile(
+      profile({
+        history: [
+          entry({ roundId: "PM900104-1h-1", marketId: "PM900104", asset: "GER", kind: "ODDS", durationSec: 180 }),
+          entry({ roundId: "1h-1", kind: "PERP" }),
+        ],
+      }),
+    );
+    const rows = await screen.findAllByRole("link", { name: /PLAY/ });
+    expect(within(rows[0]).getByText("ODDS")).toBeInTheDocument();
+    expect(rows[0].querySelector(".result-tile__title")).toHaveTextContent("GER ODDS · 3 MIN");
+    expect(within(rows[1]).queryByText("ODDS")).not.toBeInTheDocument();
+  });
+
+  it("a row from a server that sends no kind still reads as odds when its market is on the list as one", async () => {
+    renderProfile(profile({ history: [entry({ roundId: "PM900104-1h-1", marketId: "PM900104", asset: "GER" })] }));
+    const row = await screen.findByRole("link", { name: /PLAY/ });
+    expect(await within(row).findByText("ODDS")).toBeInTheDocument();
+  });
+});
+
+describe("Profile — 'player not found' is the server's code (404 NOT_FOUND), not its wording", () => {
+  function renderFailing(error: Error) {
+    const api = fakeApi({
+      publicProfile: vi.fn(async () => {
+        throw error;
+      }),
+      markets: vi.fn(async () => marketsOf(catalogue())),
+    });
+    render(
+      <MemoryRouter initialEntries={["/profile/nobody"]}>
+        <Routes>
+          <Route path="/profile/:playerId" element={<ProfilePage />} />
+        </Routes>
+      </MemoryRouter>,
+      { wrapper: apiWrapper(api, TEST_PLAYER) },
+    );
+  }
+
+  it("the real server's 404 — whatever its message says — is 'Player not found.'", async () => {
+    renderFailing(new ApiRequestError("NOT_FOUND", "unknown player nobody"));
+    expect(await screen.findByText("Player not found.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  it("a plain Error that merely SAYS 'Player not found.' is not trusted: it is a failure with a retry", async () => {
+    renderFailing(new Error("Player not found."));
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("any other server error is the generic failure with a retry", async () => {
+    renderFailing(new ApiRequestError("OTHER", "boom"));
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+  });
+});
+
+describe("Profile — a server that is restarting (503 ENGINE_NOT_READY)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    resetEngineStateForTests();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    resetEngineStateForTests();
+  });
+
+  it("is not an error: the skeleton stays, and the profile loads by itself the moment the engine is back", async () => {
+    let up = false;
+    const publicProfile = vi.fn(async () => {
+      if (!up) throw new ApiRequestError("ENGINE_NOT_READY", "the game engine is recovering");
+      return profile({ history: [entry()] });
+    });
+    const api = fakeApi({ publicProfile, markets: vi.fn(async () => marketsOf(catalogue())) });
+    render(
+      <MemoryRouter initialEntries={["/profile/npc-1"]}>
+        <Routes>
+          <Route path="/profile/:playerId" element={<ProfilePage />} />
+        </Routes>
+      </MemoryRouter>,
+      { wrapper: apiWrapper(api, TEST_PLAYER) },
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(screen.queryByText("Something went wrong.")).not.toBeInTheDocument();
+    expect(publicProfile).toHaveBeenCalledTimes(1);
+
+    // what the transport does while the engine is down, and when an engine-backed read works again
+    act(() => reportEngineNotReady());
+    up = true;
+    act(() => reportEngineReady(Date.now() + 1));
+    expect(await screen.findByText("Round history")).toBeInTheDocument();
+    expect(publicProfile).toHaveBeenCalledTimes(2);
   });
 });

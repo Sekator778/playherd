@@ -36,6 +36,7 @@ export function ResultTile({
   net,
   liquidated,
   dateLabel,
+  odds = false,
 }: {
   roundId: RoundId;
   /** The market's ticker ("BTC", "NVDA", "GER") — which market the round was played in (Р-69). */
@@ -51,6 +52,9 @@ export function ResultTile({
   /** Optional formatted settlement date/time — `ProfilePage` shows it, `HomePage`'s condensed
    *  "last results" list doesn't need it (the round is always the player's own most recent). */
   dateLabel?: string;
+  /** The round was in an `ODDS` market (`ProfileRoundEntryDto.kind`): the tile says so — the result is about how the
+   *  odds moved, not about who won. */
+  odds?: boolean;
 }) {
   const kind = resultKind(net, liquidated);
   return (
@@ -68,6 +72,14 @@ export function ResultTile({
           {symbol ? (
             <>
               <strong className="result-tile__symbol">{symbol}</strong>
+              {odds && (
+                <>
+                  {" "}
+                  <span className="mk-tag mk-tag--odds" title="A Polymarket odds market: the result is how the odds moved">
+                    ODDS
+                  </span>
+                </>
+              )}
               {seriesLabel && ` · ${seriesLabel}`}
             </>
           ) : (

@@ -6,6 +6,7 @@
  */
 import { useMemo } from "react";
 import { useApi } from "./ApiContext";
+import { isEngineNotReady } from "./apiErrors";
 import type { Api, CategoryDto, EpochMs, MarketDto, MarketId, MarketsDto } from "./contract";
 import { createPolledStore, storeFor, usePolledStore, type PolledStore } from "./polledStore";
 import { clientNowMs } from "./useClock";
@@ -43,7 +44,9 @@ function getMarketsStore(api: Api): PolledStore<MarketsSnapshot> {
           byLowerId: new Map(data.markets.map((m) => [m.id.toLowerCase(), m] as const)),
         };
       },
-      onError: (current) => (current.error ? current : { ...current, error: true }),
+      // The server rebuilding its state (503 `ENGINE_NOT_READY`) is not an error of the list: what is held stays, an empty
+      // list stays "loading" (a skeleton, not an error card), the next tick asks again and the banner says why.
+      onError: (current, error) => (current.error || isEngineNotReady(error) ? current : { ...current, error: true }),
       onIdle: (current) => (current.data ? current : EMPTY),
     }),
   );

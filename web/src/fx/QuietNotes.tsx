@@ -4,13 +4,16 @@
  * ends — one line says the round ended and what it meant, and goes away on its own. It is still signed and still
  * names the loss (a loss is as visible as a win), only not loud: no overlay, no flash, no particles, no sound,
  * no vibration; it sits above the tab bar and blocks nothing; the next bet is one tap away.
+ *
+ * The same quiet line also tells a liquidated bet's other possible end: its round was CANCELLED, so the stake is
+ * refunded (`ResultEvent.refunded`, Р-23) — the moment said the stake was lost, and a refund must not arrive unsaid.
  */
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import type { ResultEvent } from "./resultEvent";
 import { useMarkets } from "../api/useMarkets";
 import { formatDuration, formatPlayAmount } from "../format";
-import { CloseIcon, CrackIcon } from "../components/icons";
+import { CloseIcon, CrackIcon, RefundIcon } from "../components/icons";
 
 /** How long a note stays: long enough to read one line, short enough not to pile up. */
 export const QUIET_NOTE_MS = 7000;
@@ -32,18 +35,26 @@ function QuietNote({ event, onDismiss }: { event: ResultEvent; onDismiss: (id: s
           return series ? formatDuration(series.durationSec) : null;
         })();
 
+  const refunded = event.refunded === true;
   return (
-    <li className="quiet-note">
-      <CrackIcon className="quiet-note__icon" />
+    <li className={`quiet-note ${refunded ? "quiet-note--refunded" : ""}`}>
+      {refunded ? <RefundIcon className="quiet-note__icon" /> : <CrackIcon className="quiet-note__icon" />}
       <div className="quiet-note__body">
         <p className="quiet-note__title">
           <strong>{event.symbol}</strong>
-          {length ? ` · ${length}` : ""} round ended
+          {length ? ` · ${length}` : ""} {refunded ? "round cancelled" : "round ended"}
         </p>
-        <p className="quiet-note__text">
-          Your liquidated bet: <span className="outcome-lost">{formatPlayAmount(event.netPlay, { sign: true })} PLAY</span>. Your balance doesn't
-          change now — the stake was lost when you were liquidated.
-        </p>
+        {refunded ? (
+          <p className="quiet-note__text">
+            {event.stakePlay > 0 ? `Your stake of ${formatPlayAmount(event.stakePlay)} PLAY is refunded` : "Your stake is refunded"} — a cancelled round returns every bet in
+            it, liquidated ones too.
+          </p>
+        ) : (
+          <p className="quiet-note__text">
+            Your liquidated bet: <span className="outcome-lost">{formatPlayAmount(event.netPlay, { sign: true })} PLAY</span>. Your balance doesn't
+            change now — the stake was lost when you were liquidated.
+          </p>
+        )}
       </div>
       <Link to={`/round/${event.roundId}`} className="quiet-note__link" onClick={() => onDismiss(event.id)}>
         View round

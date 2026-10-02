@@ -85,14 +85,7 @@
   padding: 0 14px;
 }
 
-.status-note {
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--warning);
-  background: var(--warning-bg);
-  color: var(--text);
-  font-size: 13px;
-}
+/* `.status-note` (the quiet "couldn't refresh — this is what we had" line) is shared with the wallet: see index.css. */
 .status-fine {
   font-size: 12.5px;
 }
@@ -259,6 +252,15 @@
   justify-content: space-between;
   gap: 4px 10px;
   font-size: 13px;
+}
+.status-cancel__when {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.status-cancel__market {
+  font-size: 14px;
 }
 .status-cancel .status-cancel__reason {
   margin-top: 4px;

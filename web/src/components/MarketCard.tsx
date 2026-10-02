@@ -7,7 +7,7 @@ import { Countdown, Skeleton } from "./Common";
 import { FlameIcon, LockIcon, StarIcon } from "./icons";
 import { MarketIcon } from "./MarketIcon";
 import { formatAgo, formatStartsIn, formatTimeLeft, trend, TREND_GLYPH } from "./marketFormat";
-import { crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries } from "./marketModel";
+import { crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, subtitleOf } from "./marketModel";
 import "./MarketCard.css";
 
 /** The live crowd split (Р-62) as a slim UP/DOWN bar with its percentages and the player count — the
@@ -170,7 +170,7 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
               </span>
             )}
           </div>
-          <p className="mk-card__title">{odds ? (market.subtitle ?? market.title) : market.title}</p>
+          <p className="mk-card__title">{odds ? (subtitleOf(market) ?? market.title) : market.title}</p>
         </div>
         <div className="mk-card__price">
           {price ? (

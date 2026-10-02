@@ -44,8 +44,24 @@ interface DailyStep {
   antiCrowdCapital: number;
   /** The crowd opened a position (false on a tie / empty round, Р-5). */
   traded: boolean;
+  /** Ended with more capital than it started with. */
   won: boolean;
+  /** Closed where it opened: traded, neither won nor lost (`MarketCrowdBriefDto.roundsWon`). */
+  flat: boolean;
   liquidated: boolean;
+}
+
+/** `MarketCrowdBriefDto.lastOutcome` of a traded round: a liquidation first, then flat (capital unchanged to the
+ *  cent — NOT a loss), then won, else lost. */
+export function crowdOutcomeOf(step: Pick<DailyStep, "liquidated" | "flat" | "won">): NonNullable<MarketCrowdBriefDto["lastOutcome"]> {
+  if (step.liquidated) return "LIQUIDATED";
+  if (step.flat) return "FLAT";
+  return step.won ? "WIN" : "LOSS";
+}
+
+/** Capital to whole cents, so "unchanged" is not at the mercy of float noise (`capital − margin + payout`). */
+function cents(capital: number): number {
+  return Math.round(capital * 100);
 }
 
 function stepAccount(
@@ -113,6 +129,7 @@ function stepsUntil(spec: MockMarketSpec, asOfMs: EpochMs): DailyStep[] {
         antiCrowdCapital: antiBefore,
         traded: false,
         won: false,
+        flat: false,
         liquidated: false,
       });
     } else {
@@ -124,7 +141,8 @@ function stepsUntil(spec: MockMarketSpec, asOfMs: EpochMs): DailyStep[] {
         holdCapital,
         antiCrowdCapital: anti.capital,
         traded: true,
-        won: crowd.capital > crowdBefore,
+        won: cents(crowd.capital) > cents(crowdBefore),
+        flat: !crowd.liquidated && cents(crowd.capital) === cents(crowdBefore),
         liquidated: crowd.liquidated,
       });
     }
@@ -188,6 +206,6 @@ export function crowdBrief(spec: MockMarketSpec, asOfMs: EpochMs): MarketCrowdBr
     returnPct: capital / Number(CROWD_STARTING_CAPITAL_USD) - 1,
     roundsTraded: traded.length,
     roundsWon: traded.filter((s) => s.won).length,
-    lastOutcome: last ? (last.liquidated ? "LIQUIDATED" : last.won ? "WIN" : "LOSS") : null,
+    lastOutcome: last ? crowdOutcomeOf(last) : null,
   };
 }

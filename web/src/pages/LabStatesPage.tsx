@@ -10,16 +10,19 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Direction, MarketDto, MyPositionDto } from "../api/contract";
+import { reportEngineNotReady, reportEngineReady } from "../api/engineState";
 import { AnchorLine } from "../components/AnchorLine";
 import { HerdPicker } from "../components/BetSlip";
+import { EngineNotice } from "../components/EngineBanner";
 import { LazyCrowdChart } from "../components/LazyCrowdChart";
 import { MarketCard } from "../components/MarketCard";
 import { PositionCard } from "../components/PositionsStrip";
 import { PriceChart } from "../components/PriceChart";
 import { buildChartLines } from "../components/priceChartModel";
+import { CrowdPositionCard } from "../components/RoundParts";
 import { StreakBadge } from "../components/StreakBadge";
 import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
-import { liquidationMomentEvent, quietSummaryOf } from "../fx/liquidationMoment";
+import { liquidationInfoOf, liquidationMomentEvent, quietSummaryOf, refundedNoteEvent } from "../fx/liquidationMoment";
 import { publish } from "../fx/resultEventBus";
 
 /** A fixed "now" so every countdown on the page reads the same and the page does not tick. */
@@ -316,6 +319,70 @@ export function LabStatesPage() {
         <p className="faint">
           Also: <Link to="/status">the Status page</Link> (public) and <Link to="/lab">every result moment ×tier</Link>.
         </p>
+      </section>
+
+      <section className="lab-section">
+        <h2>A liquidated bet whose round was cancelled — the stake is refunded</h2>
+        <p className="faint">
+          The moment said "your whole stake is lost… if it is cancelled, every bet in it is refunded". When that happens the position just
+          leaves the strip and the balance goes up — so one quiet line says it (and a player who was away is told when the app opens).
+        </p>
+        <div className="lab-row">
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() =>
+              publish(
+                refundedNoteEvent(
+                  { roundId: "lab-cancelled", marketId: "BTC", asset: "BTC", window: { interval: "HOURLY", startMs: NOW - 180_000, endMs: NOW } },
+                  `lab-${Date.now()}`,
+                  liquidationInfoOf(LIQUIDATED_POSITION),
+                  Date.now(),
+                ),
+              )
+            }
+          >
+            Fire: round cancelled — stake refunded
+          </button>
+        </div>
+      </section>
+
+      <section className="lab-section">
+        <h2>The server is restarting (503 ENGINE_NOT_READY) — a notice, not an error</h2>
+        <p className="faint">
+          Every screen keeps what it shows and loads again by itself; a button that needs the server says so. Below: the notice as it sits
+          under the header, and the switch that turns the real one on for this page (it clears itself when the server answers).
+        </p>
+        <EngineNotice />
+        <div className="lab-row">
+          <button type="button" className="btn btn--secondary" onClick={() => reportEngineNotReady()}>
+            Show the banner on this page
+          </button>
+          <button type="button" className="btn btn--secondary" onClick={() => reportEngineReady(Date.now() + 1)}>
+            Back to normal
+          </button>
+        </div>
+      </section>
+
+      <section className="lab-section">
+        <h2>The crowd's round that closed where it opened — flat, neither a win nor a loss</h2>
+        <div className="stack" style={{ gap: 10, maxWidth: 420 }}>
+          <CrowdPositionCard
+            phase="SETTLED"
+            crowd={{
+              roundId: "lab-flat",
+              traded: true,
+              direction: "UP",
+              leverage: 7,
+              margin: "10000.00",
+              entryPrice: "83451.00",
+              liquidated: false,
+              capitalBefore: "103400.00",
+              capitalAfter: "103400.00",
+            }}
+            market={market("BTC")}
+          />
+        </div>
       </section>
 
       <section className="lab-section">

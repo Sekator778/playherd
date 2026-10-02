@@ -10,7 +10,7 @@ import {
   mergeCancellations,
   nextCancellationsParams,
   priceSourceOf,
-  refreshCancellations,
+  roundLengthsOf,
   sourceName,
   summarizeMarkets,
   verifierCommand,
@@ -153,10 +153,22 @@ describe("paging the cancellations log (newest first, cursor = a timestamp, stri
     expect(merged.map((x) => x.roundId)).toEqual(["a", "b", "c", "d"]);
     expect(mergeCancellations(known, known)).toEqual(known);
   });
+});
 
-  it("a refreshed first page puts new rounds on top and loses nothing loaded earlier", () => {
-    const known = [c("b", 200), c("c", 100), c("old", 10)];
-    const refreshed = refreshCancellations(known, { items: [c("new", 400), c("b", 200)], hasMore: true });
-    expect(refreshed.map((x) => x.roundId)).toEqual(["new", "b", "c", "old"]);
+describe("roundLengthsOf — the 'Round lengths' row is printed only when both numbers can be read", () => {
+  it("the contract's HOURLY / DAILY keys, in the words of the round chips", () => {
+    expect(roundLengthsOf({ roundDurationsSec: { HOURLY: 180, DAILY: 900 } })).toEqual({ short: "3 MIN", long: "15 MIN" });
+    expect(roundLengthsOf({ roundDurationsSec: { HOURLY: 3600, DAILY: 86_400 } })).toEqual({ short: "1 HOUR", long: "1 DAY" });
+  });
+
+  it("anything else is null — never 'NaN SEC' (the lowercase keys of a server that disagrees with the contract, a null, zero)", () => {
+    const lowercase = { hourly: 180, daily: 900 } as unknown as { HOURLY: number; DAILY: number };
+    expect(roundLengthsOf({ roundDurationsSec: lowercase })).toBeNull();
+    expect(roundLengthsOf({ roundDurationsSec: { HOURLY: 180 } as unknown as { HOURLY: number; DAILY: number } })).toBeNull();
+    expect(roundLengthsOf({ roundDurationsSec: { HOURLY: Number.NaN, DAILY: 900 } })).toBeNull();
+    expect(roundLengthsOf({ roundDurationsSec: { HOURLY: 180, DAILY: 0 } })).toBeNull();
+    expect(roundLengthsOf({ roundDurationsSec: { HOURLY: -1, DAILY: 900 } })).toBeNull();
+    expect(roundLengthsOf({ roundDurationsSec: null as unknown as { HOURLY: number; DAILY: number } })).toBeNull();
+    expect(roundLengthsOf({ roundDurationsSec: "180" as unknown as { HOURLY: number; DAILY: number } })).toBeNull();
   });
 });

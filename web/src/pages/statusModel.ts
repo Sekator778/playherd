@@ -3,7 +3,9 @@
  * plain words, how old each market's price is and whether it counts as stale, the oracle's balance in TXCH, and
  * how a "load older" page of the cancellations log is asked for. No React here, so every sentence has a test.
  */
-import type { CancellationDto, MarketDto, PageParams, Page, ServerInfoDto } from "../api/contract";
+import type { CancellationDto, MarketDto, PageParams, ServerInfoDto } from "../api/contract";
+import { mergeNewestFirst, nextPageParams, type PageOps } from "../api/paging";
+import { formatDuration } from "../format";
 
 export type PriceSourceKind = "live" | "synthetic" | "replay";
 
@@ -52,6 +54,20 @@ export function describePriceSource(info: Pick<ServerInfoDto, "mode" | "priceSou
           : "Recorded prices replayed faster than they happened — not today's prices.",
       };
   }
+}
+
+/**
+ * The two round lengths the server reports (`ServerInfoDto.roundDurationsSec`, keyed `HOURLY` / `DAILY` whatever their
+ * real length) as the words the page prints: `{ short: "3 MIN", long: "15 MIN" }`. `null` unless BOTH are real,
+ * positive, finite numbers — a server that spells the keys otherwise, or sends a null, gets no "Round lengths" row at
+ * all rather than "NaN SEC" (a row that cannot be read is left out, never printed broken).
+ */
+export function roundLengthsOf(info: Pick<ServerInfoDto, "roundDurationsSec">): { short: string; long: string } | null {
+  const durations: Partial<ServerInfoDto["roundDurationsSec"]> | null | undefined = info.roundDurationsSec;
+  const short = durations?.HOURLY;
+  const long = durations?.DAILY;
+  const usable = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
+  return usable(short) && usable(long) ? { short: formatDuration(short), long: formatDuration(long) } : null;
 }
 
 /** How old a price is, to the second while it is young: `4 s ago`, `2 min ago`, `1 h 5 min ago`. Never negative. */
@@ -139,27 +155,26 @@ export function verifierCommand(launcherId: string | null | undefined, origin: s
 
 export const CANCELLATIONS_PAGE = 10;
 
+/** How the cancellations log pages (`api/paging.ts`): by round id, by `cancelledAtMs`, newest first. */
+export const CANCELLATION_OPS: PageOps<CancellationDto> = {
+  keyOf: (c) => c.roundId,
+  atMsOf: (c) => c.cancelledAtMs,
+  compare: (a, b) => b.cancelledAtMs - a.cancelledAtMs,
+};
+
 /**
  * The parameters of the page after `known` (newest first): `PageParams.before` is "items strictly before this
  * timestamp", and a market that closes cancels several rounds at one instant — so a cursor of exactly the oldest
  * timestamp would skip the rest of that instant. One millisecond later asks for it again; the caller drops what it
- * already holds (`mergeCancellations`). `limit` grows when a whole page turned out to be repeats.
+ * already holds (`mergeCancellations`). `limit` grows when a whole page turned out to be repeats (`api/paging.ts`).
  */
 export function nextCancellationsParams(known: readonly CancellationDto[], limit: number): PageParams {
-  const oldest = known[known.length - 1];
-  return oldest ? { limit, before: oldest.cancelledAtMs + 1 } : { limit };
+  return nextPageParams(known, limit, CANCELLATION_OPS);
 }
 
 /** `known` followed by whatever of `incoming` it does not hold yet (by round id), newest first. */
 export function mergeCancellations(known: readonly CancellationDto[], incoming: readonly CancellationDto[]): CancellationDto[] {
-  const seen = new Set(known.map((c) => c.roundId));
-  const fresh = incoming.filter((c) => !seen.has(c.roundId));
-  return [...known, ...fresh].sort((a, b) => b.cancelledAtMs - a.cancelledAtMs);
-}
-
-/** Folds a refreshed first page into what is already shown: new rounds go on top, nothing loaded earlier is lost. */
-export function refreshCancellations(known: readonly CancellationDto[], firstPage: Page<CancellationDto>): CancellationDto[] {
-  return mergeCancellations(known, firstPage.items);
+  return mergeNewestFirst(known, incoming, CANCELLATION_OPS);
 }
 
 /** "1 bet" / "4 bets". */

@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useApi, useSession } from "../api/ApiContext";
 import { checkPlayAmount, PLAY_DECIMALS } from "../api/amountInput";
+import { isEngineNotReady, mutationErrorText } from "../api/apiErrors";
+import { useEngineEpoch } from "../api/engineState";
+import { loadOlder, refreshNewest, type PageOps, type PagedList } from "../api/paging";
+import { outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { usePoll } from "../api/usePoll";
 import { MIN_WITHDRAWAL_PLAY, type LedgerEntryDto, type LedgerEntryType, type PlayerAccountDto, type WithdrawalRequestDto } from "../api/contract";
 import { CopyButton, EmptyState, ErrorState, ServerInfoBanner, Skeleton } from "../components/Common";
 import { formatDateTimeUtc, formatPlayAmount, shortenAddress } from "../format";
+import { settlementNets } from "./walletModel";
 import { RollingDigits } from "../fx/RollingDigits";
 import { useFxSettings } from "../fx/fxSettings";
 import { primeAudioContext } from "../fx/sound";
@@ -14,6 +19,7 @@ import {
   ArrowDownTrayIcon,
   ArrowUpTrayIcon,
   ChipIcon,
+  CoinIcon,
   EqualsDiscIcon,
   GiftIcon,
   MinusDiscIcon,
@@ -33,13 +39,34 @@ const LEDGER_LABEL: Record<LedgerEntryType, string> = {
   DEPOSIT: "Deposit confirmed",
   WITHDRAWAL: "Withdrawal requested",
   WITHDRAWAL_REFUND: "Withdrawal refunded",
+  // A signed credit or debit the operator booked to reverse a wrong deposit or withdrawal (`contract.ts`).
+  OPERATOR_CORRECTION: "Operator correction",
+};
+
+/** The row's label: the table's, else — a type this build has not heard of yet — the server's word made readable
+ *  ("SOME_NEW_TYPE" → "Some new type"), never a row with an amount and no name. */
+function ledgerLabel(type: string): string {
+  const known: Record<string, string> = LEDGER_LABEL;
+  if (known[type]) return known[type];
+  const words = type.toLowerCase().replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Balance change";
+}
+
+/** How the wallet history pages (`api/paging.ts`): by `sequence`, newest first (`atMs`, then `sequence` — rows of
+ *  rounds that end at one boundary share a millisecond). */
+const LEDGER_PAGE = 20;
+const LEDGER_OPS: PageOps<LedgerEntryDto> = {
+  keyOf: (e) => e.sequence,
+  atMsOf: (e) => e.atMs,
+  compare: (a, b) => b.atMs - a.atMs || b.sequence - a.sequence,
 };
 
 /** direction.md §3's icon pattern, applied per ledger-entry-type (§4 names Wallet's ledger as one
  *  of the "long list" screens it targets) — was plain text-only rows, indistinguishable from a
- *  bank statement. `SETTLEMENT` has no fixed glyph of its own: it reuses the same win/loss/even
- *  icons as the result-moment card, keyed off the entry's own signed `delta`. */
-function ledgerIcon(entry: LedgerEntryDto): ReactNode {
+ *  bank statement. `SETTLEMENT` is a PAYOUT (a credit): it shows the round's win/loss/even icon only when the
+ *  round's NET is known (`net`, from `settlementNets`) — never the sign of the payout, which dressed a loss that paid back
+ *  99.83 of 100 as a trophy; with no net to go on (the round's stake is on an older page) it is the neutral PLAY coin. */
+function ledgerIcon(entry: LedgerEntryDto, net: number | undefined): ReactNode {
   switch (entry.type) {
     case "STARTER_PACK":
       return <GiftIcon />;
@@ -52,9 +79,11 @@ function ledgerIcon(entry: LedgerEntryDto): ReactNode {
       return <ArrowDownTrayIcon />;
     case "WITHDRAWAL":
       return <ArrowUpTrayIcon />;
+    case "OPERATOR_CORRECTION":
+      return <EqualsDiscIcon />; // an adjustment, not a win or a loss — the signed amount says which way
     case "SETTLEMENT": {
-      const delta = Number(entry.delta);
-      return delta > 0 ? <TrophyIcon /> : delta < 0 ? <MinusDiscIcon /> : <EqualsDiscIcon />;
+      if (net === undefined) return <CoinIcon />;
+      return net > 0 ? <TrophyIcon /> : net < 0 ? <MinusDiscIcon /> : <EqualsDiscIcon />;
     }
     default:
       return null;
@@ -118,12 +147,14 @@ function DepositCard() {
         setAddress(r.address);
         setErrorMessage(null);
       })
-      .catch((err) => setErrorMessage(err instanceof Error ? err.message : "Couldn't load your deposit address."));
+      .catch((err) => setErrorMessage(mutationErrorText(err, "Couldn't load your deposit address.")));
   }, [api]);
 
+  // Loads once — and again when the server comes back from a restart (`api/engineState.ts`).
+  const engineEpoch = useEngineEpoch();
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, engineEpoch]);
 
   return (
     <div className="card">
@@ -268,7 +299,7 @@ function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; 
       onBalanceChange();
       pollUntilSettled(record.requestId);
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "Something went wrong requesting the withdrawal.");
+      setErrorMessage(mutationErrorText(err, "Something went wrong requesting the withdrawal."));
     } finally {
       setSubmitting(false);
     }
@@ -378,20 +409,38 @@ export function WalletContent() {
   const api = useApi();
   const { player } = useSession();
   const [account, setAccount] = useState<PlayerAccountDto | null>(null);
-  const [ledger, setLedger] = useState<LedgerEntryDto[] | null>(null);
-  const [hasMore, setHasMore] = useState(false);
+  const [ledger, setLedger] = useState<PagedList<LedgerEntryDto> | null>(null);
   const [error, setError] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
+  // What is on screen, for a refresh that may page for a while — and one read or paging step at a time.
+  const shown = useRef<PagedList<LedgerEntryDto> | null>(null);
+  const busy = useRef(false);
+  const fetchLedger = useCallback((params: Parameters<typeof api.myLedger>[0]) => api.myLedger(params), [api]);
+  // The result of each settled round whose rows are all loaded — what the settlement rows say, instead of their payout's sign.
+  const nets = useMemo(() => settlementNets(ledger?.items ?? []), [ledger]);
 
   const load = useCallback(() => {
+    if (busy.current) return;
+    busy.current = true;
     Promise.all([api.myAccount(), api.myLedger()])
-      .then(([acc, page]) => {
+      // The poll brings the NEWEST page: it is folded into what is already loaded (new rows on top, the pages of
+      // "Load more" kept, a burst of more than a page walked until it meets the loaded rows), never swapped in.
+      .then(async ([acc, page]) => {
+        const next = await refreshNewest(fetchLedger, shown.current, page, LEDGER_PAGE, LEDGER_OPS);
+        shown.current = next;
         setAccount(acc);
-        setLedger(page.items);
-        setHasMore(page.hasMore);
+        setLedger(next);
         setError(false);
       })
-      .catch(() => setError(true));
-  }, [api]);
+      .catch((err) => {
+        // A server restarting (503) is not a failure of this page: what is shown stays, the poll asks again.
+        if (!isEngineNotReady(err)) setError(true);
+      })
+      .finally(() => {
+        busy.current = false;
+      });
+  }, [api, fetchLedger]);
 
   // Polls while this tab is visible (`usePoll`'s own contract) so an incoming deposit's `DEPOSIT`
   // ledger entry — credited automatically by the server once chainsvc reports it confirmed,
@@ -400,13 +449,29 @@ export function WalletContent() {
   usePoll(load, 5000, []);
 
   const loadMore = async () => {
-    if (!ledger || ledger.length === 0) return;
-    const page = await api.myLedger({ before: ledger[ledger.length - 1].atMs });
-    setLedger([...ledger, ...page.items]);
-    setHasMore(page.hasMore);
+    if (!ledger || ledger.items.length === 0 || busy.current) return;
+    busy.current = true;
+    setLoadingMore(true);
+    setMoreFailed(false);
+    try {
+      const next = await loadOlder(fetchLedger, ledger, LEDGER_PAGE, LEDGER_OPS);
+      if (next) {
+        shown.current = next;
+        setLedger(next);
+      } else {
+        setMoreFailed(true);
+      }
+    } catch {
+      setMoreFailed(true);
+    } finally {
+      busy.current = false;
+      setLoadingMore(false);
+    }
   };
 
-  if (error) return <ErrorState onRetry={load} />;
+  // Nothing to show yet and the read failed: an error with a retry. With the numbers on screen a failed poll never
+  // replaces them (a restart of the server shows the banner and nothing else) — a quiet line says they may be old.
+  if (error && (!account || !ledger)) return <ErrorState onRetry={load} />;
   if (!account || !ledger) {
     return (
       <div className="stack" style={{ gap: 16 }}>
@@ -420,34 +485,55 @@ export function WalletContent() {
     <div className="two-col">
       <div className="stack" style={{ gap: 16 }}>
         <BalanceCard balance={account.balance} />
+        {error && (
+          <p className="status-note" role="status">
+            Couldn't refresh — these are the last numbers we had.
+          </p>
+        )}
         <h3>Activity</h3>
-        {ledger.length === 0 ? (
+        {ledger.items.length === 0 ? (
           <EmptyState>No activity yet — your starter pack will appear here once you sign in.</EmptyState>
         ) : (
           <>
             <ul className="list-card">
-              {ledger.map((e) => (
-                <li key={e.sequence} className="list-row">
-                  <span className="list-row__main">
-                    <span className="list-row__icon" aria-hidden="true" style={{ color: Number(e.delta) >= 0 ? "var(--up)" : "var(--down)" }}>
-                      {ledgerIcon(e)}
+              {ledger.items.map((e) => {
+                // A settlement is a payout; whether the ROUND was won or lost is its net (see `walletModel.ts`).
+                const net = e.type === "SETTLEMENT" && e.roundId !== null ? nets.get(e.roundId) : undefined;
+                const iconColor =
+                  e.type === "SETTLEMENT" ? (net === undefined ? "var(--text-muted)" : net > 0 ? "var(--up)" : net < 0 ? "var(--down)" : "var(--text-muted)") : Number(e.delta) >= 0 ? "var(--up)" : "var(--down)";
+                return (
+                  <li key={e.sequence} className="list-row">
+                    <span className="list-row__main">
+                      <span className="list-row__icon" aria-hidden="true" style={{ color: iconColor }}>
+                        {ledgerIcon(e, net)}
+                      </span>
+                      <span>
+                        {ledgerLabel(e.type)}
+                        <br />
+                        <span className="faint">{formatDateTimeUtc(e.atMs)}</span>
+                        {net !== undefined && (
+                          <span className={`ledger-result ${outcomeClassName(outcomeFromNet(net))}`}>
+                            {net > 0 ? "won" : net < 0 ? "lost" : "even"} {formatPlayAmount(net, { sign: true })} PLAY
+                          </span>
+                        )}
+                      </span>
                     </span>
-                    <span>
-                      {LEDGER_LABEL[e.type]}
-                      <br />
-                      <span className="faint">{formatDateTimeUtc(e.atMs)}</span>
+                    <span className="mono list-row__amount" style={{ color: Number(e.delta) >= 0 ? "var(--up)" : "var(--down)" }}>
+                      {formatPlayAmount(e.delta, { sign: true })} PLAY
                     </span>
-                  </span>
-                  <span className="mono" style={{ color: Number(e.delta) >= 0 ? "var(--up)" : "var(--down)" }}>
-                    {formatPlayAmount(e.delta, { sign: true })} PLAY
-                  </span>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
-            {hasMore && (
-              <button type="button" className="btn btn--secondary" onClick={() => void loadMore()}>
-                Load more
+            {ledger.hasMore && (
+              <button type="button" className="btn btn--secondary" onClick={() => void loadMore()} disabled={loadingMore}>
+                {loadingMore ? "Loading…" : "Load more"}
               </button>
+            )}
+            {moreFailed && (
+              <p className="status-note" role="alert">
+                Couldn't load older activity. Try again.
+              </p>
             )}
           </>
         )}

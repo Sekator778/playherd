@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApi, useSession } from "../api/ApiContext";
+import { isEngineNotReady } from "../api/apiErrors";
 import type { CrowdAccountDto, PublicProfileDto, RatingsDto, SeasonId } from "../api/contract";
+import { useEngineEpoch } from "../api/engineState";
 import { ErrorState, MultiAccountDisclosureLine, Skeleton } from "../components/Common";
 import { LeaderboardList, LeaderboardHighlights, type LeaderboardEntry, type LeaderboardHighlight } from "../components/Leaderboard";
 import { outcomeClassName, outcomeFromNet } from "../api/outcome";
@@ -76,22 +78,32 @@ export function RatingsPage() {
   const [crowd, setCrowd] = useState<CrowdAccountDto | null>(null);
   const [myProfile, setMyProfile] = useState<PublicProfileDto | null>(null);
 
+  // Every read here loads again when the server comes back from a restart (`api/engineState.ts`); the three extras
+  // (the crowd's seasons, the player's own profile and season record) only decorate the lists, so a failed one just
+  // leaves its strip out rather than raising an error over the ratings.
+  const engineEpoch = useEngineEpoch();
   useEffect(() => {
-    api.crowdAccount().then((acc) => {
-      setCrowd(acc);
-      const ids = new Set(acc.seasonReturns.map((r) => r.season));
-      ids.add(current);
-      setSeasons([...ids].sort().reverse());
-    });
-  }, [api, current]);
+    api
+      .crowdAccount()
+      .then((acc) => {
+        setCrowd(acc);
+        const ids = new Set(acc.seasonReturns.map((r) => r.season));
+        ids.add(current);
+        setSeasons([...ids].sort().reverse());
+      })
+      .catch(() => {});
+  }, [api, current, engineEpoch]);
 
   useEffect(() => {
     // No `player` → simply don't fetch, same reasoning as `myRoundsPlayed` below: the render call
     // site guards on `player` too, so a stale `myProfile` from a previous session is never shown
     // after sign-out.
     if (!player) return;
-    api.myProfile().then(setMyProfile);
-  }, [api, player]);
+    api
+      .myProfile()
+      .then(setMyProfile)
+      .catch(() => {});
+  }, [api, player, engineEpoch]);
 
   const load = useCallback(() => {
     api
@@ -100,20 +112,27 @@ export function RatingsPage() {
         setRatings(r);
         setError(false);
       })
-      .catch(() => setError(true));
+      // A restarting server (503) is not a failure of this page: the skeleton (or the lists shown) stay, and the
+      // epoch above loads them again when it is back.
+      .catch((err) => {
+        if (!isEngineNotReady(err)) setError(true);
+      });
   }, [api, season]);
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, engineEpoch]);
 
   useEffect(() => {
     // No `player` → simply don't fetch; every render already gates the "below threshold" banner
     // on `player` being truthy too, so a stale `myRoundsPlayed` from a previous session can't
     // leak into view after sign-out.
     if (!player) return;
-    api.mySeasonRecord(season).then((r) => setMyRoundsPlayed(r.roundsPlayed));
-  }, [api, player, season]);
+    api
+      .mySeasonRecord(season)
+      .then((r) => setMyRoundsPlayed(r.roundsPlayed))
+      .catch(() => {});
+  }, [api, player, season, engineEpoch]);
 
   if (error && !ratings) return <ErrorState onRetry={load} />;
 

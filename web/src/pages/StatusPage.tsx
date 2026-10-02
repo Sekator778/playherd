@@ -6,36 +6,37 @@
  * PLAY, журнал отмен"; Р-71: the extras that earn trust).
  *
  * Four sections, each with its own loading / empty / error state so one failing source never blanks the page:
- * - mode and price source (`serverInfo()`: `mode`, `priceSource`, `replay`, `bots`, `roundDurationsSec`);
+ * - mode and price source (`serverInfo()`: `mode`, `priceSource`, `replay`, `bots`, `roundDurationsSec`, `engineReady`);
  * - the markets, one row each: source, last price, how old it is, stale / no price / closed (`markets()`);
  * - the oracle (`serverInfo().oracle`): network, launcher id, last confirmed record, records waiting, the
  *   lowest record this database knows, the operator's balance — and how to check it yourself;
- * - the cancellations log (`cancellations()`, paged): when, why, how many bets were refunded.
+ * - the cancellations log (`cancellations()`, paged): which market, when, why, how many bets were refunded. A refresh
+ *   that finds more new rows than one page keeps paging until it meets what is shown (`api/paging.ts`) — no silent gap.
  *
  * A mock build has no `serverInfo()` at all (`contract.ts`): that is said as it is — demo data, nothing anchored —
  * and the markets and the cancellations (which the mock does serve) still show.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi } from "../api/ApiContext";
 import type { CancellationDto } from "../api/contract";
+import { loadOlder, refreshNewest, type PagedList } from "../api/paging";
 import { useMarkets } from "../api/useMarkets";
 import { usePoll } from "../api/usePoll";
 import { useServerInfo } from "../api/useServerInfo";
 import { CopyButton, ErrorState, Skeleton } from "../components/Common";
 import { MarketIcon } from "../components/MarketIcon";
 import { useServerNow } from "../components/useServerNow";
-import { formatDateTimeUtc, formatDuration, formatPrice } from "../format";
+import { formatDateTimeUtc, formatPrice } from "../format";
 import {
   ageText,
   betsCount,
+  CANCELLATION_OPS,
   CANCELLATIONS_PAGE,
   describePriceSource,
   formatOperatorBalance,
   freshnessOf,
-  mergeCancellations,
-  nextCancellationsParams,
-  refreshCancellations,
+  roundLengthsOf,
   sourceName,
   summarizeMarkets,
   verifierCommand,
@@ -57,6 +58,8 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 
 function ServerSection() {
   const { status, info, refreshFailed, refresh } = useServerInfo();
+  // A row whose numbers cannot be read is left out, never printed as "NaN SEC".
+  const lengths = info ? roundLengthsOf(info) : null;
   return (
     <section className="card status-card" aria-labelledby="status-server-title">
       <h2 id="status-server-title" className="section-title">
@@ -77,11 +80,23 @@ function ServerSection() {
             <Fact label="Prices">
               <strong>{describePriceSource(info).title}.</strong> {describePriceSource(info).detail}
             </Fact>
-            {info.roundDurationsSec && (
+            {lengths && (
               <Fact label="Round lengths">
-                Every market has two series of rounds: {formatDuration(info.roundDurationsSec.HOURLY)} and {formatDuration(info.roundDurationsSec.DAILY)}.
+                Every market has two series of rounds: {lengths.short} and {lengths.long}.
               </Fact>
             )}
+            <Fact label="Game engine">
+              {info.engineReady === false ? (
+                <>
+                  <strong>Not ready.</strong> The server is rebuilding its state after a failure: rounds, bets and balances are refused for a
+                  moment and answer again by themselves — the app keeps what it shows and asks again.
+                </>
+              ) : (
+                <>
+                  <strong>Ready.</strong> Rounds, bets and balances are being served.
+                </>
+              )}
+            </Fact>
             {info.bots > 0 && (
               <Fact label="Players">
                 {info.bots} labelled test bots play next to real players — they are marked BOT wherever a player is shown, and their bets are
@@ -271,9 +286,27 @@ function OracleSection() {
 // Cancellations log
 // ---------------------------------------------------------------------------
 
-interface LogState {
-  items: CancellationDto[];
-  hasMore: boolean;
+type LogState = PagedList<CancellationDto>;
+
+/** One row's market, when the server names it (`CancellationDto.asset`): "GER" — an older server sends none. */
+function CancellationRow({ c }: { c: CancellationDto }) {
+  return (
+    <li className="status-cancel">
+      <p className="status-cancel__head">
+        <span className="status-cancel__when">
+          {c.asset && <strong className="status-cancel__market">{c.asset}</strong>}
+          <span className="mono">{formatDateTimeUtc(c.cancelledAtMs)}</span>
+        </span>
+        <span className="status-chip status-chip--none">{betsCount(c.refundedBetCount)} refunded</span>
+      </p>
+      <p className="status-cancel__reason">{c.reason}</p>
+      <p className="faint status-cancel__round">
+        <Link to={`/round/${encodeURIComponent(c.roundId)}`} className="mono">
+          {c.roundId}
+        </Link>
+      </p>
+    </li>
+  );
 }
 
 function CancellationsSection() {
@@ -282,42 +315,48 @@ function CancellationsSection() {
   const [failed, setFailed] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreFailed, setMoreFailed] = useState(false);
+  // What is shown, for a refresh that may page for a while: and one thing at a time reads or changes it.
+  const shown = useRef<LogState | null>(null);
+  const busy = useRef(false);
+  const show = (next: LogState) => {
+    shown.current = next;
+    setLog(next);
+  };
+  const fetchPage = useCallback((params: Parameters<typeof api.cancellations>[0]) => api.cancellations(params), [api]);
 
-  // First page now, and again every half minute: a new cancellation joins the top, nothing loaded earlier is lost.
+  // First page now, and again every half minute: a new cancellation joins the top, nothing loaded earlier is lost —
+  // and a burst of more new rows than one page is walked until it meets what is shown, so there is no silent hole.
   const load = useCallback(() => {
+    if (busy.current) return;
+    busy.current = true;
     api
       .cancellations({ limit: CANCELLATIONS_PAGE })
-      .then((page) => {
+      .then((page) => refreshNewest(fetchPage, shown.current, page, CANCELLATIONS_PAGE, CANCELLATION_OPS))
+      .then((next) => {
         setFailed(false);
-        setLog((current) =>
-          current ? { items: refreshCancellations(current.items, page), hasMore: current.hasMore } : { items: page.items, hasMore: page.hasMore },
-        );
+        shown.current = next;
+        setLog(next);
       })
-      .catch(() => setFailed(true));
-  }, [api]);
+      .catch(() => setFailed(true))
+      .finally(() => {
+        busy.current = false;
+      });
+  }, [api, fetchPage]);
   usePoll(load, 30_000, [load]);
 
   const loadMore = async () => {
-    if (!log) return;
+    if (!log || busy.current) return;
+    busy.current = true;
     setLoadingMore(true);
     setMoreFailed(false);
     try {
-      // The cursor is a timestamp and several rounds can be cancelled at one instant, so a page can be all repeats:
-      // ask again for more of them rather than stopping short of rounds that are really there.
-      let limit = CANCELLATIONS_PAGE;
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const page = await api.cancellations(nextCancellationsParams(log.items, limit));
-        const merged = mergeCancellations(log.items, page.items);
-        if (merged.length > log.items.length || !page.hasMore) {
-          setLog({ items: merged, hasMore: page.hasMore });
-          return;
-        }
-        limit *= 2;
-      }
-      setMoreFailed(true);
+      const next = await loadOlder(fetchPage, log, CANCELLATIONS_PAGE, CANCELLATION_OPS);
+      if (next) show(next);
+      else setMoreFailed(true);
     } catch {
       setMoreFailed(true);
     } finally {
+      busy.current = false;
       setLoadingMore(false);
     }
   };
@@ -343,18 +382,7 @@ function CancellationsSection() {
         <>
           <ul className="status-cancels">
             {log.items.map((c) => (
-              <li key={c.roundId} className="status-cancel">
-                <p className="status-cancel__head">
-                  <span className="mono">{formatDateTimeUtc(c.cancelledAtMs)}</span>
-                  <span className="status-chip status-chip--none">{betsCount(c.refundedBetCount)} refunded</span>
-                </p>
-                <p className="status-cancel__reason">{c.reason}</p>
-                <p className="faint status-cancel__round">
-                  <Link to={`/round/${encodeURIComponent(c.roundId)}`} className="mono">
-                    {c.roundId}
-                  </Link>
-                </p>
-              </li>
+              <CancellationRow key={c.roundId} c={c} />
             ))}
           </ul>
           {log.hasMore && (

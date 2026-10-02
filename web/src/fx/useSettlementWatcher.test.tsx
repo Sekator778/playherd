@@ -79,6 +79,9 @@ function makeRunning(roundId: string, positions: PublicPositionDto[]): RoundRunn
     window: HOURLY_WINDOW,
     marketId: "BTC",
     asset: "BTC",
+    kind: "PERP",
+    priceDecimals: 2,
+    source: "hyperliquid",
     phase: "RUNNING",
     openPrice: "83451.00",
     positions: positions.map((p) => ({ ...p, roundId })),
@@ -91,6 +94,9 @@ function makeSettled(roundId: string, positions: PublicPositionDto[]): RoundSett
     window: HOURLY_WINDOW,
     marketId: "BTC",
     asset: "BTC",
+    kind: "PERP",
+    priceDecimals: 2,
+    source: "hyperliquid",
     phase: "SETTLED",
     openPrice: "83451.00",
     closePrice: "84000.00",
@@ -99,13 +105,13 @@ function makeSettled(roundId: string, positions: PublicPositionDto[]): RoundSett
   };
 }
 function makeBetting(roundId: string): RoundBetting {
-  return { roundId, window: HOURLY_WINDOW, marketId: "BTC", asset: "BTC", phase: "BETTING", participantCount: 1, myBet: null };
+  return { roundId, window: HOURLY_WINDOW, marketId: "BTC", asset: "BTC", kind: "PERP", priceDecimals: 2, source: "hyperliquid", phase: "BETTING", participantCount: 1, myBet: null };
 }
 function noStakeDaily(roundId = "1d-0"): RoundsPairDto {
   return {
     interval: "DAILY",
-    running: { roundId, window: DAILY_WINDOW, marketId: "BTC", asset: "BTC", phase: "RUNNING", openPrice: "83451.00", positions: [], crowd: null },
-    betting: { roundId: "1d-1", window: DAILY_WINDOW, marketId: "BTC", asset: "BTC", phase: "BETTING", participantCount: 0, myBet: null },
+    running: { roundId, window: DAILY_WINDOW, marketId: "BTC", asset: "BTC", kind: "PERP", priceDecimals: 2, source: "hyperliquid", phase: "RUNNING", openPrice: "83451.00", positions: [], crowd: null },
+    betting: { roundId: "1d-1", window: DAILY_WINDOW, marketId: "BTC", asset: "BTC", kind: "PERP", priceDecimals: 2, source: "hyperliquid", phase: "BETTING", participantCount: 0, myBet: null },
   };
 }
 

@@ -14,7 +14,7 @@ import {
 import type { DotItemDotProps } from "recharts/types/util/types";
 import type { CrowdHistoryPointDto } from "../api/contract";
 import { formatUsd } from "../format";
-import { crowdRanges, defaultCrowdRange, formatAxisTick, formatAxisTooltip } from "./crowdModel";
+import { crowdRanges, dedupeByTime, defaultCrowdRange, formatAxisTick, formatAxisTooltip } from "./crowdModel";
 
 const COLOR_CROWD = "#9147ff";
 const COLOR_HOLD = "#8b93a8";
@@ -62,7 +62,9 @@ interface CrowdChartProps {
  * months it ticks with dates and keeps 1M · 3M · 1Y · All — the open critique item "the chart's x axis must
  * show time of day when the data span is short".
  */
-export function CrowdChart({ history, variant = "full", symbol }: CrowdChartProps) {
+export function CrowdChart({ history: rawHistory, variant = "full", symbol }: CrowdChartProps) {
+  // One point per instant (the rounds of two series that end together share a millisecond — see `dedupeByTime`).
+  const history = useMemo(() => dedupeByTime(rawHistory), [rawHistory]);
   const [picked, setPicked] = useState<string | null>(null);
   const [compactShowAll, setCompactShowAll] = useState(false);
 

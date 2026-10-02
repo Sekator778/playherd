@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { apiWrapper, fakeApi } from "../api/apiTestUtils";
 import { ResultMomentHost } from "../fx/ResultMomentHost";
+import { resetEngineStateForTests } from "../api/engineState";
 import { setForcedReducedMotion } from "../fx/reducedMotion";
 import { LabStatesPage } from "./LabStatesPage";
 
@@ -54,5 +55,41 @@ describe("/lab/states — the designed states are all drawn", () => {
     } finally {
       setForcedReducedMotion(null);
     }
+  });
+});
+
+describe("/lab/states — the states of the fix round", () => {
+  it("the refund note: round cancelled, stake refunded, fired through the same bus", async () => {
+    setForcedReducedMotion(true);
+    try {
+      const user = userEvent.setup();
+      renderLab();
+      await act(async () => {
+        await user.click(screen.getByRole("button", { name: "Fire: round cancelled — stake refunded" }));
+      });
+      const note = document.querySelector(".quiet-note--refunded");
+      expect(note).toHaveTextContent("BTC · 3 MIN round cancelled");
+      expect(note).toHaveTextContent("Your stake of 300 PLAY is refunded");
+    } finally {
+      setForcedReducedMotion(null);
+    }
+  });
+
+  it("the restart notice is drawn, and the switch drives the real shared state", async () => {
+    resetEngineStateForTests();
+    const user = userEvent.setup();
+    renderLab();
+    expect(screen.getByText("The server is restarting.")).toBeInTheDocument();
+    await act(async () => {
+      await user.click(screen.getByRole("button", { name: "Show the banner on this page" }));
+      await user.click(screen.getByRole("button", { name: "Back to normal" }));
+    });
+    resetEngineStateForTests();
+  });
+
+  it("the flat crowd round says flat in words", () => {
+    renderLab();
+    expect(screen.getByText("flat")).toBeInTheDocument();
+    expect(screen.getByText(/neither a win nor a loss for the crowd account/)).toBeInTheDocument();
   });
 });

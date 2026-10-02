@@ -76,7 +76,7 @@ export function HowItWorksPage() {
           opposite side of the majority. Capital never resets between seasons — only the season markers on the
           chart do.
         </p>
-        <OracleDisclosureLine />
+        <OracleDisclosureLine source="hyperliquid" />
         <OracleDisclosureLine source="polymarket" />
       </section>
 

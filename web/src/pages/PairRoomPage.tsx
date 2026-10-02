@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
+import { isEngineNotReady } from "../api/apiErrors";
 import { usePoll } from "../api/usePoll";
 import { useReferencePrice } from "../api/useReferencePrice";
 import { useMarket } from "../api/useMarkets";
@@ -55,7 +56,7 @@ import { PriceChart } from "../components/PriceChart";
 import { buildChartLines } from "../components/priceChartModel";
 import { formatStartsIn, trend, TREND_GLYPH } from "../components/marketFormat";
 import { rememberMarket } from "../components/lastMarket";
-import { crowdSplitOf, isOpenMarket, kickoffOf, type CrowdSplit } from "../components/marketModel";
+import { crowdSplitOf, isOpenMarket, kickoffOf, subtitleOf, type CrowdSplit } from "../components/marketModel";
 import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
 import { useServerNow } from "../components/useServerNow";
 import { RollingDigits } from "../fx/RollingDigits";
@@ -269,7 +270,9 @@ function Room({ market }: { market: MarketDto }) {
   }
   const [pairData, setPairData] = useState<RoundsPairDto | null>(null);
   const [error, setError] = useState(false);
-  const referencePrice = useReferencePrice(marketId, POLL_MS);
+  // A closed market has no price to read (the server answers 503 `PRICE_UNAVAILABLE` for it, every two seconds, in the console):
+  // its room shows the last price from the list and asks for nothing.
+  const referencePrice = useReferencePrice(isOpenMarket(market) ? marketId : null, POLL_MS);
   const series = usePriceSeries(marketId);
   const { positions: myPositions } = useMyPositions();
 
@@ -298,7 +301,11 @@ function Room({ market }: { market: MarketDto }) {
         setPairData(p);
         setError(false);
       })
-      .catch(() => setError(true));
+      // A restarting server (503) is not a failure of the room: the rounds shown stay (or the skeleton does), the poll
+      // asks again in two seconds and the banner says why.
+      .catch((err) => {
+        if (!isEngineNotReady(err)) setError(true);
+      });
   }, [api, interval, marketId]);
 
   usePoll(load, POLL_MS, [load]);
@@ -391,7 +398,7 @@ function Room({ market }: { market: MarketDto }) {
             {!open && <span className="mk-tag">CLOSED</span>}
           </div>
           <p className="room-head__title">{market.title}</p>
-          {market.subtitle && <p className="room-head__sub">{market.subtitle}</p>}
+          {subtitleOf(market) && <p className="room-head__sub">{subtitleOf(market)}</p>}
           {kickoff?.state === "upcoming" && (
             <p className="room-head__sub room-head__kickoff">
               Starts in <span className="mono">{formatStartsIn(kickoff.inMs)}</span>

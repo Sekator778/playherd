@@ -91,7 +91,9 @@ Vite/React/TS(strict)/react-router заданы условием задачи. �
 дополнения 2026-10-02 (`RoundRunning.openPrice` может быть `null`, `MyPositionDto.durationSec`/`size`,
 `ProfileRoundEntryDto.durationSec`, `MarketDto.eventStartsAtMs`/`closedAtMs`/`closeReason`/`oracleIndex`,
 `title` и `status` в строках `CrowdOverviewDto`, `ServerInfoDto.playAssetId`/`testWallet`, точная формулировка
-`priceSeries(sinceMs)`).
+`priceSeries(sinceMs)`) и ночные дополнения 2026-10-02 (`RoundBase.kind`/`priceDecimals`/`source` — цены раунда печатаются по нему,
+а не по списку рынков; `CancellationDto.marketId`/`asset`; `lastOutcome: "FLAT"`; коды `ENGINE_NOT_READY`, `NOT_FOUND`, `INVALID_NICKNAME`;
+`LedgerEntryType.OPERATOR_CORRECTION`; `ServerInfoDto.engineReady`; `ProfileRoundEntryDto.kind`).
 
 ## Архитектура
 
@@ -100,7 +102,12 @@ src/api/
   contract.ts                 — контракт (только читается)
   Api-слой для экранов:       ApiContext.tsx (Api и сессия), polledStore.ts (общий опрос на Api),
                               useMarkets.ts, useMyPositions.ts, usePriceSeries.ts, useReferencePrice.ts,
-                              useServerInfo.ts (ServerInfoDto, опрос раз в 15 с), usePoll.ts, useClock.ts
+                              useServerInfo.ts (ServerInfoDto, опрос раз в 15 с), usePoll.ts, useClock.ts;
+                              engineState.ts (сервер пересобирает память — 503 `ENGINE_NOT_READY` — одним общим
+                              фактом: баннер и перезагрузка того, что не опрашивается), apiErrors.ts (как называется
+                              упавший вызов: 503 / 429 / NOT_FOUND — по коду, не по тексту), paging.ts (страницы
+                              «newest first» с курсором-временем без пропусков и повторов; история кошелька и журнал
+                              отмен), nickname.ts (правило ника сервера)
   realApi.ts                  — RealApi
   mockApi.ts                  — MockApi: единственное реальное состояние — сессия вошедшего игрока
                                 (баланс, леджер, свои ставки); мир — 19 рынков в 6 категориях
@@ -109,6 +116,9 @@ src/api/
   mockPrices.ts               — детерминированный путь цены каждого рынка как чистая функция времени
                                 (`priceAt`), открытие/закрытие/экстремумы раунда (`ohlcFor`), `priceSeries`
   mockRounds.ts, mockPlayers.ts, mockCrowdHistory.ts, clock.ts, rng.ts, season.ts
+  wireSource.ts, wireSchema.ts — (только тесты) настоящие ответы сервера `api/wire/<имя>.json` (пишут серверные тесты) и
+                              контракт как проверки времени выполнения; `wireContract.test.ts` и `wirePages.test.tsx`
+                              гоняют по ним `RealApi` и все экраны (см. «Тест-стык» ниже)
   liquidation.ts              — точный TS-порт LiquidationCalculator/PositionSizing + золотые векторы
   inPlay.ts, outcome.ts, favorites.ts, marketMeta.ts, amountInput.ts, seasonStats.ts
 src/components/               — общие компоненты и «модели» без React рядом с ними (`*Model.ts`,
@@ -204,12 +214,26 @@ npm run build        # tsc -b && vite build
 npm run preview       # собранный dist/
 ```
 
-Все пять команд (`typecheck`/`lint`/`test`/`build`, плюс сам `install`) проходят чисто на момент последней
-сдачи (2026-10-02): 57 файлов, 1331 тест; typecheck без ошибок; lint — 0 ошибок и 10 некритичных
+Состояние на 2026-10-02 (раунд исправлений после парити-ревью): typecheck без ошибок; lint — 0 ошибок и 10 некритичных
 предупреждений fast-refresh (файлы с несколькими экспортами — контекст или константы рядом с компонентом);
-сборка — несколько чанков. Самые большие (gzip): `chia_wallet_sdk_wasm` (~2,0 МБ, тестовый кошелёк) и
+`npm test -- --run` — 69 файлов, 1618 тестов, из них **95 (два файла: `api/wireContract.test.ts`, `wirePages.test.tsx`) читают
+`src/api/wire/*.json` и падают с именем недостающего файла, пока серверные тесты их не записали**; остальные 1523 зелёные, а при
+`HERD_WIRE_DIR=<папка с ответами>` проходят все 1618 (проверено на ответах, снятых с запущенного стенда и дополненных тем, что меняет серверный раунд
+исправлений); сборка — несколько чанков. Самые большие (gzip): `chia_wallet_sdk_wasm` (~2,0 МБ, тестовый кошелёк) и
 WalletConnect — оба вынесены отдельно и грузятся только при реальном открытии окна входа; график счёта
 толпы (recharts, ~116 КБ gzip) — ленивый чанк; главный чанк `index-*.js` ~172 КБ gzip.
+
+## Тест-стык с настоящим сервером (`src/api/wire/`)
+
+Каждый другой тест строит данные по `contract.ts`, поэтому сервер, написавший поле иначе (`roundDurationsSec` в нижнем регистре), проходил
+весь набор, а публичная страница Status печатала «NaN SEC» (разбор — `docs/product/design/markets-lobby.md` §13). Тест-стык читает **настоящие ответы
+сервера**: файлы `src/api/wire/<имя>.json` вида `{"method", "args", "response"}` (у `error.*` ещё `"status"`) пишут серверные тесты — список имён
+в `src/api/wireSource.ts` (`WIRE_NAMES`, 26 штук). `wireContract.test.ts` прогоняет каждый ответ через `RealApi` и сверяет с контрактом по полям
+(`wireSchema.ts`: список ключей исчерпывающий на этапе компиляции — добавили поле в `contract.ts`, проверка не соберётся, пока его не опишут), цены — со
+шкалой своего рынка, ошибки — с кодом, в который их превращает `RealApi`; `wirePages.test.tsx` рисует настоящий `App` на этих ответах и требует на каждом экране
+(лобби, комната во всех фазах, раунд во всех фазах, «Your bets», Status, Stats, профиль, кошелёк): ни «NaN», «undefined», «Invalid Date», «null», ни безымянной кнопки или заголовка,
+ни `console.error`, а ключевые числа — в шкале своего рынка. **Нет файла — тест падает с именем файла и тем, что запускать**, а не проходит мимо. `HERD_WIRE_DIR=<папка>` направляет
+тесты на другую папку с теми же файлами (так проверялись ответы, снятые с запущенного стенда).
 
 ## Доступность
 

@@ -4,7 +4,7 @@
  * unit-тестов") — `useSettlementWatcher.ts` and `unseenResults.ts` are the callers, and own the
  * dedup `Set` and the previous-round `Map` this module treats as inputs, not state.
  */
-import type { Interval, MarketId, ProfileRoundEntryDto, PublicPositionDto, RoundDto, RoundId } from "../api/contract";
+import type { Interval, MarketId, MarketKind, ProfileRoundEntryDto, PublicPositionDto, RoundDto, RoundId } from "../api/contract";
 import { BTC_MARKET_ID } from "../api/clock";
 import { netFromPayoutAndStake, positionStakeStr } from "../api/outcome";
 
@@ -20,6 +20,9 @@ export interface ResultEvent {
    *  "GER") as the server reported it at settlement, for any text that names the market. */
   marketId: MarketId;
   symbol: string;
+  /** The market's kind when the source of the event knows it (`ProfileRoundEntryDto.kind`, a round's own `kind`): an
+   *  `ODDS` result is worded as odds ("GER odds"). Absent → the card reads it off the market list, if the market is on it. */
+  marketKind?: MarketKind;
   interval: Interval;
   /** The real length of the round in seconds (`ProfileRoundEntryDto.durationSec`, or the live round's own window):
    *  the card names the series by it ("3 MIN" — never "Hourly"/"Daily"). Absent from a server that predates it:
@@ -41,6 +44,10 @@ export interface ResultEvent {
    *  nothing new to celebrate or mourn, so it is a quiet one-line summary (`QuietNotes`) — no flash, no stamp,
    *  no sound, no vibration — and it still says the loss, signed. */
   quiet?: boolean;
+  /** A quiet note for a liquidated bet whose round was CANCELLED after the player was told it was lost: every bet in a
+   *  cancelled round is refunded, liquidated ones too (Р-23), so the stake is back (`stakePlay`; 0 when this build does
+   *  not know it). Never a win or a loss — `netPlay` is 0. */
+  refunded?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +128,7 @@ export function resultEventFromHistoryEntry(
     roundId: entry.roundId,
     marketId: entry.marketId ?? BTC_MARKET_ID, // a server that predates markets sends no marketId: it is BTC's
     symbol: entry.asset,
+    marketKind: entry.kind,
     interval: entry.interval,
     durationSec: entry.durationSec,
     stakePlay: stake,
@@ -199,6 +207,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       roundId: curr.roundId,
       marketId: curr.marketId ?? BTC_MARKET_ID, // see resultEventFromHistoryEntry
       symbol: curr.asset,
+      marketKind: curr.kind,
       interval,
       durationSec: (curr.window.endMs - curr.window.startMs) / 1000,
       netPlay: -stake,
@@ -226,6 +235,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       roundId: curr.roundId,
       marketId: curr.marketId ?? BTC_MARKET_ID, // see resultEventFromHistoryEntry
       symbol: curr.asset,
+      marketKind: curr.kind,
       interval,
       durationSec: (curr.window.endMs - curr.window.startMs) / 1000,
       netPlay: net,

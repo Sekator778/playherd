@@ -1,0 +1,48 @@
+/* "The server is restarting" (`EngineBanner.tsx`) — a calm amber strip in the page flow: no alarm colours (nothing is
+   lost, the server is coming back), a slow pulse that stops under reduced motion; the words carry the state. Tokens only. */
+
+.engine-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.engine-banner p {
+  margin: 0;
+  color: inherit;
+}
+.engine-banner__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: engine-banner-pulse 1.8s ease-in-out infinite;
+}
+@keyframes engine-banner-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .engine-banner__dot {
+    animation: none;
+  }
+}
+html[data-reduced-motion="true"] .engine-banner__dot {
+  animation: none;
+}

@@ -27,19 +27,20 @@
 
 .pchart__bar {
   display: flex;
+  flex-wrap: wrap; /* at 320px the range chips and "vs round open" do not fit one row: the move wraps under the chips */
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 6px 10px;
   min-height: 32px;
 }
 .pchart__chips {
-  flex: 0 1 auto;
+  flex: 0 0 auto; /* the chips keep their full size — they used to be squeezed until the last one was clipped */
 }
 .pchart__live {
   padding: 0 4px;
 }
 .pchart__move {
-  margin: 0;
+  margin: 0 0 0 auto;
   font-size: 13px;
   font-weight: 800;
   white-space: nowrap;

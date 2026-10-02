@@ -6,6 +6,7 @@ import { inPlayExcludingLiquidated, loadInPlay } from "../api/inPlay";
 import { useMyPositions } from "../api/useMyPositions";
 import { formatPlayAmount } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
+import { EngineBanner } from "./EngineBanner";
 import { PositionsStrip } from "./PositionsStrip";
 import { ScrollManager } from "./ScrollManager";
 import { CoinIcon, SpeakerOnIcon, SpeakerMuteIcon, VibrationOnIcon, VibrationOffIcon, LobbyTabIcon, StatsTabIcon, ProfileTabIcon } from "./icons";
@@ -285,6 +286,9 @@ export function Layout() {
       <Header />
       <main id="main-content" className="main-content">
         <div className="container">
+          {/* The server rebuilding its state (503 `ENGINE_NOT_READY`) — a notice, not an error: the screens below keep
+           *  what they show and load again by themselves. */}
+          <EngineBanner />
           {/* "Your bets" across every market (Р-71) — in the page flow, never fixed to the screen. */}
           <PositionsStrip />
           <Outlet />

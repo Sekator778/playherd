@@ -296,7 +296,10 @@
   color: white;
   transition: flex-basis 0.4s var(--ease-out-expo, ease);
   cursor: pointer;
-  min-width: 64px;
+  /* The side with (almost) no stake is as wide as its own label and percentage — never narrower: a fixed 64px clipped
+     "DOWN" (68px at this size) on a 100% / 0% split at every phone width. `min-content` follows the font, not a guess. */
+  min-width: min-content;
+  padding: 0 12px;
 }
 .room-arena__side--up {
   background: linear-gradient(180deg, var(--up) 0%, var(--up-strong) 100%);

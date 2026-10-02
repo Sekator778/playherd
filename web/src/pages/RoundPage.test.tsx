@@ -1,8 +1,8 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
-import type { MyPositionDto, RoundCancelled, RoundDto, RoundSettled } from "../api/contract";
+import { ApiRequestError, type CrowdRoundResultDto, type MyPositionDto, type RoundCancelled, type RoundDto, type RoundSettled } from "../api/contract";
 import { NOW, bettingRoundOf, catalogue, crowdPosition, marketsOf, publicPosition, runningRoundOf } from "../components/testFixtures";
 import { RoundPage } from "./RoundPage";
 
@@ -16,6 +16,9 @@ function settled(over: Partial<RoundSettled> = {}): RoundSettled {
     window: window3min,
     marketId: "BTC",
     asset: "BTC",
+    kind: "PERP",
+    priceDecimals: 2,
+    source: "hyperliquid",
     openPrice: "100.00",
     closePrice: "101.00",
     positions: [],
@@ -62,7 +65,16 @@ describe("Round page — names the market and the series (S6)", () => {
 
   it("an odds round reads in percent and says whose odds they are", async () => {
     renderRound(
-      settled({ roundId: "PM900104-1h-0", marketId: "PM900104", asset: "GER", openPrice: "0.620000", closePrice: "0.640000" }),
+      settled({
+        roundId: "PM900104-1h-0",
+        marketId: "PM900104",
+        asset: "GER",
+        kind: "ODDS",
+        priceDecimals: 6,
+        source: "polymarket",
+        openPrice: "0.620000",
+        closePrice: "0.640000",
+      }),
     );
     expect(await screen.findByText(/GER closed UP — 62\.0% → 64\.0%/)).toBeInTheDocument();
     expect(screen.getByText(/Odds from Polymarket, published by our team's key — not a decentralized oracle/)).toBeInTheDocument();
@@ -216,6 +228,9 @@ describe("Round page — the other phases", () => {
       window: window3min,
       marketId: "PM900104",
       asset: "GER",
+      kind: "ODDS",
+      priceDecimals: 6,
+      source: "polymarket",
       cancellation: { roundId: "PM900104-1h-0", reason: "Market closed: the underlying market ended.", cancelledAtMs: NOW, refundedBetCount: 4 },
     };
     renderRound(cancelled);
@@ -232,5 +247,201 @@ describe("Round page — the other phases", () => {
     expect(screen.getByText("75% UP · 25% DOWN")).toBeInTheDocument();
     expect(screen.getByText("The crowd's position is revealed when this round starts.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "BTC, 1 HOUR round — open the market" })).toBeInTheDocument();
+  });
+});
+
+describe("Round page — prices and source from the ROUND's own fields: the market may have left markets()", () => {
+  // `PM999999` / `DOGE9` are in no catalogue: their market is gone, the round page is all there is.
+  const odds = (over: Partial<RoundSettled> = {}) =>
+    settled({ roundId: "PM999999-1h-0", marketId: "PM999999", asset: "GER", kind: "ODDS", priceDecimals: 6, source: "polymarket", openPrice: "0.523000", closePrice: "0.534000", ...over });
+
+  it("an odds round of a departed market reads in percent and names Polymarket — not '$0.52' and not Hyperliquid", async () => {
+    renderRound(odds());
+    expect(await screen.findByText(/GER closed UP — 52\.3% → 53\.4%/)).toBeInTheDocument();
+    expect(screen.getByText("Open price: 52.3%")).toBeInTheDocument();
+    expect(screen.getByText(/Odds from Polymarket, published by our team's key — not a decentralized oracle/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\$0\.5|Hyperliquid/);
+  });
+
+  it("a 7-digit perp of a departed market keeps its five significant digits", async () => {
+    renderRound(
+      settled({ roundId: "DOGE9-1h-0", marketId: "DOGE9", asset: "DOGE", priceDecimals: 7, openPrice: "0.0945340", closePrice: "0.0951120" }),
+    );
+    expect(await screen.findByText(/DOGE closed UP — \$0\.094534 → \$0\.095112/)).toBeInTheDocument();
+    expect(screen.getByText("Open price: $0.094534")).toBeInTheDocument();
+    expect(screen.getByText(/Price from Hyperliquid, published by our team's key/)).toBeInTheDocument();
+  });
+
+  it("a simulated round says so", async () => {
+    renderRound(settled({ source: "synthetic" }));
+    expect(await screen.findByText(/Simulated demo prices \(no live source\), published by our team's key/)).toBeInTheDocument();
+  });
+
+  it("a round that names no source (an older server) and whose market is gone claims NO source — never 'Hyperliquid' by default", async () => {
+    const unnamed = { ...odds(), source: undefined, kind: undefined, priceDecimals: undefined } as unknown as RoundSettled;
+    renderRound(unnamed);
+    expect(await screen.findByText("Published by our team's key — not a decentralized oracle.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Hyperliquid|Polymarket/);
+    // …and its price scale is read off the price strings rather than guessed as cents (an unnamed kind reads as a perp)
+    expect(screen.getByText(/GER closed UP — \$0\.52300 → \$0\.53400/)).toBeInTheDocument();
+  });
+
+  it("a round of a market still on the list agrees with the list", async () => {
+    renderRound(settled({ roundId: "PM900104-1h-0", marketId: "PM900104", asset: "GER", kind: "ODDS", priceDecimals: 6, source: "polymarket", openPrice: "0.620000", closePrice: "0.640000" }));
+    expect(await screen.findByText(/GER closed UP — 62\.0% → 64\.0%/)).toBeInTheDocument();
+  });
+});
+
+describe("Round page — the crowd's round that closed where it opened is flat, neither a win nor a loss", () => {
+  const crowd = (over: Partial<CrowdRoundResultDto>): CrowdRoundResultDto => ({
+    roundId: "BTC-1h-0",
+    traded: true,
+    direction: "UP",
+    leverage: 5,
+    margin: "10000.00",
+    entryPrice: "100.00",
+    liquidated: false,
+    capitalBefore: "100000.00",
+    capitalAfter: "100000.00",
+    ...over,
+  });
+
+  it("says flat in words, with the zero", async () => {
+    renderRound(settled({ crowd: crowd({}) }));
+    expect(await screen.findByText("flat")).toBeInTheDocument();
+    expect(screen.getByText(/neither a win nor a loss for the crowd account/)).toBeInTheDocument();
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["a win", { capitalAfter: "100250.00" }],
+    ["a loss", { capitalAfter: "99700.00" }],
+    ["a liquidation", { capitalAfter: "90000.00", liquidated: true }],
+  ])("%s is not called flat", async (_name, over) => {
+    renderRound(settled({ crowd: crowd(over) }));
+    await screen.findByText("Capital before: $100,000.00");
+    expect(screen.queryByText("flat")).not.toBeInTheDocument();
+    expect(screen.queryByText(/neither a win nor a loss/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Round page — the live reference price is asked for only while a round RUNS", () => {
+  function referenceCalls(round: RoundDto) {
+    const referencePrice = vi.fn(async () => ({ price: "100.50", asOfMs: NOW }));
+    const api = fakeApi({
+      round: vi.fn(async () => round),
+      markets: vi.fn(async () => marketsOf(catalogue())),
+      myPositions: vi.fn(async () => []),
+      referencePrice,
+      previewLiquidation: vi.fn(async () => ({ entryPriceUsed: "100.00", liquidationPrice: "92.00", percentToLiquidation: 0.08 })),
+    });
+    render(
+      <MemoryRouter initialEntries={[`/round/${round.roundId}`]}>
+        <Routes>
+          <Route path="/round/:roundId" element={<RoundPage />} />
+        </Routes>
+      </MemoryRouter>,
+      { wrapper: apiWrapper(api, null) },
+    );
+    return referencePrice;
+  }
+
+  it("a settled round asks for none (its market may have closed, and then has no price: a 503 in the console every two seconds)", async () => {
+    const referencePrice = referenceCalls(settled());
+    await screen.findByText("SETTLED");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    expect(referencePrice).not.toHaveBeenCalled();
+  });
+
+  it("a running round does", async () => {
+    const referencePrice = referenceCalls(runningRoundOf("BTC", "BTC"));
+    await screen.findByText("LIVE");
+    expect(referencePrice).toHaveBeenCalledWith("BTC");
+  });
+});
+
+describe("Round page — the SERVER's clock decides when betting is closed, not the phone's", () => {
+  it("a betting round opens against the server's now: the slip and the countdown are there (the client clock is years ahead of this fixture)", async () => {
+    renderRound(bettingRoundOf("BTC", "BTC"));
+    expect(await screen.findByText("PREVIEW — not signed in")).toBeInTheDocument();
+    expect(screen.queryByText("Betting just closed for this round.")).not.toBeInTheDocument();
+    // ten hours on the server's clock (the offset is read to a quarter second, so it may already show 9:59:5x)
+    expect(screen.getByText(/Closes in (10:00:0\d|9:59:5\d)/)).toBeInTheDocument();
+  });
+});
+
+describe("Round page — a failed read", () => {
+  const engineNotReady = () => new ApiRequestError("ENGINE_NOT_READY", "the game engine is recovering — nothing was changed, please try again in a moment");
+
+  function renderWith(round: (id: string) => Promise<RoundDto>) {
+    const api = fakeApi({
+      round: vi.fn(round),
+      markets: vi.fn(async () => marketsOf(catalogue())),
+      referencePrice: vi.fn(async () => ({ price: "100.50", asOfMs: NOW })),
+      myPositions: vi.fn(async () => []),
+    });
+    render(
+      <MemoryRouter initialEntries={["/round/BTC-1h-0"]}>
+        <Routes>
+          <Route path="/round/:roundId" element={<RoundPage />} />
+        </Routes>
+      </MemoryRouter>,
+      { wrapper: apiWrapper(api, null) },
+    );
+    return api;
+  }
+
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  afterEach(() => vi.useRealTimers());
+
+  it("a server that is restarting (503) is not an error: the skeleton stays, no error card, and the page loads by itself when it is back", async () => {
+    let up = false;
+    renderWith(async () => {
+      if (!up) throw engineNotReady();
+      return settled();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong.")).not.toBeInTheDocument();
+    up = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(await screen.findByText("SETTLED")).toBeInTheDocument();
+  });
+
+  it("…and a round already on screen stays on screen while the server restarts", async () => {
+    let down = false;
+    renderWith(async () => {
+      if (down) throw engineNotReady();
+      return settled();
+    });
+    expect(await screen.findByText("SETTLED")).toBeInTheDocument();
+    down = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4200);
+    });
+    expect(screen.getByText("SETTLED")).toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong.")).not.toBeInTheDocument();
+  });
+
+  it("an unknown round (404 NOT_FOUND) says so instead of 'Something went wrong'", async () => {
+    renderWith(async () => {
+      throw new ApiRequestError("NOT_FOUND", "unknown round BTC-1h-0");
+    });
+    expect(await screen.findByText("This round doesn't exist.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  it("any other failure keeps the generic error with a retry", async () => {
+    renderWith(async () => {
+      throw new Error("Network error — check your connection and try again.");
+    });
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

@@ -77,12 +77,30 @@ export function ApiProvider({ children, api = apiInstance }: { children: ReactNo
   // Inlined rather than calling `refresh()` (which the lint rule can't see is safe): the
   // linter only recognizes a bare promise chain with no synchronous setState before it as a
   // safe effect body.
+  //
+  // A failed read (the server restarting, a dropped connection) must not leave the page looking signed out for good:
+  // it is asked again — in 3 s, then 6, then every 15 — until the server answers.
+  const [sessionFailures, setSessionFailures] = useState(0);
   useEffect(() => {
-    api.currentPlayer().then((current) => {
-      setPlayer(current);
-      setLoading(false);
-    });
-  }, [api]);
+    let cancelled = false;
+    let retry: number | undefined;
+    api
+      .currentPlayer()
+      .then((current) => {
+        if (cancelled) return;
+        setPlayer(current);
+        setLoading(false);
+        setSessionFailures(0);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        retry = window.setTimeout(() => setSessionFailures((n) => n + 1), Math.min(15_000, 3_000 * 2 ** sessionFailures));
+      });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retry);
+    };
+  }, [api, sessionFailures]);
 
   const session: SessionState = {
     player,

@@ -112,3 +112,16 @@ export function formatAxisTooltip(ms: number, spanMs: number): string {
   const iso = new Date(ms).toISOString();
   return isShortSpan(spanMs) ? `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC` : iso.slice(0, 10);
 }
+
+/**
+ * One point per instant. The real server writes the crowd account's capital once per settled ROUND, and the rounds of both
+ * series that end at one boundary (a 3-minute and a 15-minute round, an hour and a day) end in the same millisecond: the
+ * history then holds several points with one `atMs`. On a time axis that is two x values at one place — Recharts keys its ticks
+ * by position, so it warned of duplicate keys and could drop or double a tick. The last point of an instant is the account
+ * after every round that ended then, so it is the one that stays; order is kept.
+ */
+export function dedupeByTime<T extends { atMs: number }>(history: readonly T[]): T[] {
+  const lastAt = new Map<number, number>();
+  history.forEach((point, index) => lastAt.set(point.atMs, index));
+  return history.filter((point, index) => lastAt.get(point.atMs) === index);
+}

@@ -367,6 +367,17 @@ ol {
   margin: 8px 0 0;
 }
 
+/* A quiet line that says what is on screen may be old ("Couldn't refresh — these are the last numbers we had."): the
+   Status page and the wallet share it. Amber, as a notice and never an alarm; the words carry the meaning. */
+.status-note {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--warning);
+  background: var(--warning-bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
 /* Replay-mode banner (task item 4 — ServerInfoDto) -------------------------- */
 
 .replay-banner {
@@ -1349,6 +1360,18 @@ ol {
   display: flex;
   flex: none;
 }
+/* The result of the round a settlement row belongs to ("won +4.96 PLAY" / "lost -0.17 PLAY"): a word AND a sign, never colour alone;
+   on its own line under the date, so it never breaks in the middle of "0 PLAY" beside the amount. */
+.ledger-result {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+}
+/* The ledger amount keeps its line: it is the label's text that wraps, never "+150 / PLAY". */
+.list-row__amount {
+  flex: none;
+  white-space: nowrap;
+}
 
 /* QR code (Р-53 deposit address, Р-55 WalletConnect pairing — `wallet/QrCode.tsx`) --------------
    Deliberately hardcoded black-on-white rather than themed with `--text`/`--bg-elevated-2`: a
@@ -1879,14 +1902,17 @@ footer.app-footer a {
 /* Round "stage" — split camp (direction.md §4 "Stage/split-camp"; audit.md's Round section) ---- */
 /* UP and DOWN are always two visually separated zones, even when one side is empty — never one
    merged grey list of who bet which way. */
+/* `minmax(0, 1fr)`, not `1fr`: a plain `1fr` track cannot shrink below the min-content of what is in it, and the players'
+   names are `nowrap` — a bot called "Bot 4 (Wildcard) (txbot1…b735)" pushed the whole round page 55px wider than a 390px
+   phone (first live run, real names). With a zero minimum the name takes the room that is left and ends in an ellipsis. */
 .stage {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 @media (min-width: 560px) {
   .stage {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 .stage__panel {

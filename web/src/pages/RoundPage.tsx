@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
+import { isEngineNotReady, isNotFound } from "../api/apiErrors";
 import { usePoll } from "../api/usePoll";
-import { useClock } from "../api/useClock";
 import { useReferencePrice } from "../api/useReferencePrice";
 import { useMarket } from "../api/useMarkets";
 import { useMyPositions } from "../api/useMyPositions";
@@ -12,33 +12,34 @@ import { AnchorLine } from "../components/AnchorLine";
 import { BetSlip } from "../components/BetSlip";
 import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton } from "../components/Common";
 import { MarketIcon } from "../components/MarketIcon";
+import { roundPriceInfo } from "../components/marketModel";
 import { OwnPositionCard } from "../components/OwnPositionCard";
 import { CancellationNotice, CrowdPositionCard, PositionsList } from "../components/RoundParts";
+import { useServerNow } from "../components/useServerNow";
 import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
-import { formatDuration, formatPlayAmount, formatPrice, type PriceFormatMarket } from "../format";
+import { formatDuration, formatPlayAmount, formatPrice } from "../format";
 import "./RoundPage.css";
 
 const POLL_MS = 2000;
-
-/** Shown while the market list has not arrived: plain USD, as for BTC. */
-const FALLBACK_PRICE_MARKET: PriceFormatMarket = { kind: "PERP", priceDecimals: 2 };
 
 export function RoundPage() {
   const { roundId } = useParams<{ roundId: string }>();
   const api = useApi();
   const { player } = useSession();
-  const nowMs = useClock(1000);
+  // The SERVER's clock, like the room's: a phone whose own clock is off must not close betting early or late here.
+  const nowMs = useServerNow(1000);
   const [round, setRound] = useState<RoundDto | null>(null);
-  const [error, setError] = useState(false);
-  // The round's market: its price scale drives every price and P&L figure below.
+  const [error, setError] = useState<"failed" | "not-found" | null>(null);
+  // The round's market, while it is still on the list: its icon, its oracle index, its leverage cap for the live math.
+  // What prints the round's prices and names their source is the round's own (`roundPriceInfo`), not this.
   const { market } = useMarket(round?.marketId);
   // Live reference price for the RUNNING phase's unrealized P&L / % to liquidation (task: "live
-  // unrealized P&L ... updating every poll") — same interval as the round poll below.
-  const referencePrice = useReferencePrice(round?.marketId, POLL_MS);
+  // unrealized P&L ... updating every poll") — same interval as the round poll below. Only a RUNNING round has any use for
+  // it: a settled or cancelled one (of a market that may have closed, and then has no price) asks for nothing.
+  const referencePrice = useReferencePrice(round?.phase === "RUNNING" ? round.marketId : null, POLL_MS);
   // The player's own bets: while a round has no opening price yet its public `positions` list is empty, and
   // `myPositions()` is the only place that still knows the player is in it.
   const { positions: myPositions } = useMyPositions();
-  const priceText = (price: string) => formatPrice(price, market ?? FALLBACK_PRICE_MARKET);
 
   // Reset to loading only when navigating to a *different* round (during render, not in an
   // effect) — not on every tick's refetch of the same round, which would flash the skeleton
@@ -47,7 +48,7 @@ export function RoundPage() {
   if (roundId !== lastRoundId) {
     setLastRoundId(roundId);
     setRound(null);
-    setError(false);
+    setError(null);
   }
 
   const load = useCallback(() => {
@@ -56,13 +57,19 @@ export function RoundPage() {
       .round(roundId)
       .then((r) => {
         setRound(r);
-        setError(false);
+        setError(null);
       })
-      .catch(() => setError(true));
+      .catch((err) => {
+        // The server rebuilding its state (503) is not a failure: keep what is on screen (or the skeleton) — the
+        // poll asks again in two seconds and the banner says why nothing moves.
+        if (isEngineNotReady(err)) return;
+        setError(isNotFound(err) ? "not-found" : "failed");
+      });
   }, [api, roundId]);
 
   usePoll(load, POLL_MS, [load]);
 
+  if (error === "not-found" && !round) return <ErrorState message="This round doesn't exist." />;
   if (error && !round) return <ErrorState onRetry={load} />;
   if (!round) {
     return (
@@ -75,6 +82,10 @@ export function RoundPage() {
 
   // Which market and how long a round: the round's own window says the length (never "Hourly"/"Daily").
   const length = formatDuration((round.window.endMs - round.window.startMs) / 1000);
+  // The prices of this round are printed in ITS price scale and its source is named from ITS fields: a market that
+  // has left `markets()` (an odds market closes often) still has rounds that must read right.
+  const { format: priceFormat, source } = roundPriceInfo(round, market);
+  const priceText = (price: string) => formatPrice(price, priceFormat);
 
   if (round.phase === "CANCELLED") {
     return (
@@ -151,7 +162,7 @@ export function RoundPage() {
         ) : (
           // RUNNING: live unrealized P&L, the room left before liquidation (pulsing as it closes in); a
           // liquidated position (running or settled) reads as the whole stake gone (Р-7).
-          <OwnPositionCard position={ownPosition} referencePrice={referencePrice} market={market} hero />
+          <OwnPositionCard position={ownPosition} referencePrice={referencePrice} market={market} format={priceFormat} hero />
         ))}
 
       <div className="two-col">
@@ -180,13 +191,13 @@ export function RoundPage() {
             <div className="stack" style={{ gap: 16 }}>
               {/* The player's own bet (above) already says it; one notice is enough. */}
               {!ownWaiting && <WaitingForOpenCard symbol={round.asset} length={length} />}
-              <OracleDisclosureLine source={market?.source} />
+              <OracleDisclosureLine source={source} />
             </div>
           )}
           {(round.phase === "SETTLED" || (round.phase === "RUNNING" && !waitingOpen)) && (
             <div className="stack reveal-flip-in" style={{ gap: 16 }}>
               {round.openPrice !== null && <p className="mono">Open price: {priceText(round.openPrice)}</p>}
-              <OracleDisclosureLine source={market?.source} />
+              <OracleDisclosureLine source={source} />
               {round.phase === "SETTLED" && (
                 <AnchorLine
                   roundId={round.roundId}
@@ -208,7 +219,7 @@ export function RoundPage() {
         </div>
         <div className="stack" style={{ gap: 16 }}>
           {round.phase !== "BETTING" && !waitingOpen && (
-            <CrowdPositionCard phase={round.phase} crowd={round.crowd} referencePrice={referencePrice} market={market} />
+            <CrowdPositionCard phase={round.phase} crowd={round.crowd} referencePrice={referencePrice} market={market} format={priceFormat} />
           )}
           {round.phase === "BETTING" && (
             <div className="card">

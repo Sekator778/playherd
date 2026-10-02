@@ -17,11 +17,14 @@ export function OwnPositionCard({
   position,
   referencePrice,
   market,
+  format,
   hero = false,
 }: {
   position: PublicPositionDto;
   referencePrice: MarketReferenceDto | null;
   market: MarketDto | undefined;
+  /** How to print the prices when `market` is not known (a round page: the round's own `kind`/`priceDecimals`). */
+  format?: PriceFormatMarket;
   /** `card--hero`: the round page's own-position card is the top of that screen. */
   hero?: boolean;
 }) {
@@ -37,7 +40,7 @@ export function OwnPositionCard({
     );
   }
   const read = referencePrice && market ? liveRead(position, referencePrice.price, market) : null;
-  const priceText = (price: string) => formatPrice(price, (market ?? FALLBACK) as PriceFormatMarket);
+  const priceText = (price: string) => formatPrice(price, market ?? format ?? FALLBACK);
   return (
     <div className={`card ${heroClass} own-outcome ${read ? liquidationLiveCardClass(read.roomFraction) : ""}`}>
       <p className="faint">

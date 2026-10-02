@@ -18,6 +18,7 @@ import { useFavorites } from "../api/favorites";
 import { BotsNote, ErrorState, Skeleton } from "../components/Common";
 import { ClockIcon, CloseIcon, FlameIcon, SearchIcon, StarIcon } from "../components/icons";
 import { MarketCard, MarketCardSkeleton } from "../components/MarketCard";
+import { isOpenMarket } from "../components/marketModel";
 import { useServerNow } from "../components/useServerNow";
 import { hottestIds, lobbyParams, parseLobbyParams, ribbonTabs, visibleMarkets, type LobbyState } from "./lobbyModel";
 import "./LobbyPage.css";
@@ -77,6 +78,8 @@ export function LobbyPage() {
   }, [category, tabs.length]);
 
   const visible = useMemo(() => visibleMarkets(markets, effective, favorites), [markets, effective, favorites]);
+  const closedCount = visible.filter((m) => !isOpenMarket(m)).length;
+  const openCount = visible.length - closedCount;
   const hot = useMemo(() => (effective.sort === "hot" ? hottestIds(visible) : new Set<string>()), [effective.sort, visible]);
   const favoriteCount = markets.filter((m) => favorites.has(m.id)).length;
 
@@ -180,7 +183,10 @@ export function LobbyPage() {
           {effective.favoritesOnly ? " · Favorites" : ""}
         </strong>
         <span>
-          {visible.length} {visible.length === 1 ? "market" : "markets"}
+          {/* The ribbon's chips count OPEN markets; a market that closed in the last ten minutes keeps its card, so the line
+           *  says how many of the cards are open and how many are closed — the two numbers on the screen agree. */}
+          {openCount} {openCount === 1 ? "market" : "markets"}
+          {closedCount > 0 ? ` · ${closedCount} closed` : ""}
           {SORT_NOTE[effective.sort] ? ` · ${SORT_NOTE[effective.sort]}` : ""}
         </span>
       </p>

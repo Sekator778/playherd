@@ -202,6 +202,7 @@ class MockApi implements Api {
         marketId: spec.id,
         asset: spec.symbol,
         durationSec: (window.endMs - window.startMs) / 1000,
+        kind: spec.kind,
         settledAtMs: window.endMs - 1,
         direction: bet.direction,
         leverage: bet.leverage,
@@ -247,13 +248,13 @@ class MockApi implements Api {
   }
 
   /** The round's id, window and market for an id that must be one of the mock's own; a malformed
-   *  id is a plain "not found", an id of a market this mock does not list is `MARKET_NOT_FOUND`. */
+   *  id is `NOT_FOUND`, an id of a market this mock does not list is `MARKET_NOT_FOUND`. */
   private resolveRoundId(roundId: RoundId): { spec: MockMarketSpec; window: RoundWindowDto } {
     const parsed = parseRoundId(roundId);
-    if (!parsed) throw new Error("Round not found.");
+    if (!parsed) throw new ApiRequestError("NOT_FOUND", "Round not found.");
     const spec = requireMarket(parsed.marketId);
     const window = windowFor(parsed.interval, parsed.startMs);
-    if (window.startMs !== parsed.startMs) throw new Error("Round not found."); // not on the series' grid
+    if (window.startMs !== parsed.startMs) throw new ApiRequestError("NOT_FOUND", "Round not found."); // not on the series' grid
     return { spec, window };
   }
 
@@ -720,7 +721,7 @@ class MockApi implements Api {
   async withdrawal(requestId: string): Promise<WithdrawalRequestDto> {
     this.requireSignedIn();
     const record = this.withdrawals.get(requestId);
-    if (!record) throw new Error("Withdrawal request not found.");
+    if (!record) throw new ApiRequestError("NOT_FOUND", "Withdrawal request not found.");
     return record;
   }
 
@@ -798,7 +799,7 @@ class MockApi implements Api {
     const npcIndex = findNpcIndexByPlayerId(playerId);
     if (npcIndex !== null) return npcPublicProfile(npcIndex);
     if (this.player && this.player.playerId === playerId) return this.ownProfile();
-    throw new Error("Player not found.");
+    throw new ApiRequestError("NOT_FOUND", "Player not found.");
   }
 
   async myProfile(): Promise<PublicProfileDto> {
@@ -842,6 +843,8 @@ class MockApi implements Api {
     all.sort((a, b) => b.cancelledAtMs - a.cancelledAtMs);
     all.push({
       roundId: CANCELLED_ROUND_ID,
+      marketId: MOCK_BTC.id,
+      asset: MOCK_BTC.symbol,
       reason: CANCELLED_REASON,
       cancelledAtMs: CANCELLED_AT_MS,
       refundedBetCount: CANCELLED_REFUNDED_COUNT,

@@ -4,6 +4,7 @@ import {
   SHORT_SPAN_MS,
   bestAndWorst,
   crowdRanges,
+  dedupeByTime,
   defaultCrowdRange,
   formatAxisTick,
   formatAxisTooltip,
@@ -111,5 +112,20 @@ describe("crowd chart ranges and axis follow the amount of history", () => {
     const at = Date.UTC(2026, 8, 25, 0, 5, 0);
     expect(formatAxisTooltip(at, 3 * HOUR)).toBe("2026-09-25 00:05 UTC");
     expect(formatAxisTooltip(at, 90 * DAY)).toBe("2026-09-25");
+  });
+});
+
+describe("dedupeByTime — one point per instant", () => {
+  const point = (atMs: number, capital: string, roundId = `r${atMs}`) => ({ atMs, crowdCapital: capital, roundId });
+
+  it("rounds of two series that end at one boundary share a millisecond: the last one stays, order is kept", () => {
+    const history = [point(100, "100000.00", "ETH-1d-0"), point(100, "100312.77", "ETH-1h-0"), point(200, "100286.76"), point(300, "100300.13", "a"), point(300, "100300.13", "b")];
+    expect(dedupeByTime(history).map((p) => `${p.atMs}:${p.roundId}`)).toEqual(["100:ETH-1h-0", "200:r200", "300:b"]);
+  });
+
+  it("a history with no repeats comes back unchanged (same points, same order), and an empty one stays empty", () => {
+    const history = [point(1, "1"), point(2, "2"), point(3, "3")];
+    expect(dedupeByTime(history)).toEqual(history);
+    expect(dedupeByTime([])).toEqual([]);
   });
 });

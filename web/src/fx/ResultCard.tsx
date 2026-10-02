@@ -59,10 +59,17 @@ function useSeriesLabel(event: Pick<ResultEvent, "marketId" | "interval" | "dura
   return series ? formatDuration(series.durationSec) : null;
 }
 
+/** An `ODDS` result is worded as odds: the event's own kind when it carries one, else the market's, if it is listed. */
+function useIsOdds(event: Pick<ResultEvent, "marketId" | "marketKind">): boolean {
+  const { byId } = useMarkets();
+  return (event.marketKind ?? byId.get(event.marketId)?.kind) === "ODDS";
+}
+
 function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss: () => void }) {
   const reducedMotion = usePrefersReducedMotion();
   const fx = useFxSettings();
   const seriesLabel = useSeriesLabel(event);
+  const odds = useIsOdds(event);
   const cardRef = useRef<HTMLDivElement>(null);
   // Coin-arc launch point for WIN (below) — deliberately the icon, not the whole card: the
   // card's own bounding-rect center used to be the arc's origin, which on a WIN sits at/just
@@ -236,13 +243,15 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
         {event.kind === "EVEN" && <p className="result-card__secondary">No gain, no loss</p>}
         {event.kind !== "EVEN" && (
           <p className="result-card__secondary">
-            <strong className="result-card__symbol">{event.symbol}</strong> · stake {formatPlayAmount(event.stakePlay)} PLAY · x{event.leverage}
+            <strong className="result-card__symbol">{event.symbol}</strong>
+            {odds ? " odds" : ""} · stake {formatPlayAmount(event.stakePlay)} PLAY · x{event.leverage}
             {seriesLabel ? ` · ${seriesLabel} round` : ""}
           </p>
         )}
         {event.kind === "EVEN" && (
           <p className="result-card__secondary">
             <strong className="result-card__symbol">{event.symbol}</strong>
+            {odds ? " odds" : ""}
             {seriesLabel ? ` · ${seriesLabel} round` : ""}
           </p>
         )}
@@ -321,9 +330,13 @@ function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss:
 
 export function ResultCard({ display, onDismiss }: { display: DisplayItem; onDismiss: () => void }) {
   const key = display.kind === "single" ? display.event.id : `overflow:${display.events.length}:${display.events[0]?.id}`;
+  // `key` on the element itself: the card that FOLLOWS another in the queue is a new card, not the old one with new props.
+  // Without it React kept the first card's component instance — so the second showed the first one's balance, played none
+  // of its own sound/vibration/particles, and (its dismiss timer is set on mount only) never left by itself: a full-screen
+  // overlay over the player's next bet until tapped (first live run, two bets settling at one boundary).
   const node = useMemo(() => {
-    if (display.kind === "single") return <SingleResultCard event={display.event} onDismiss={onDismiss} />;
-    return <OverflowCard events={display.events} onDismiss={onDismiss} />;
+    if (display.kind === "single") return <SingleResultCard key={key} event={display.event} onDismiss={onDismiss} />;
+    return <OverflowCard key={key} events={display.events} onDismiss={onDismiss} />;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return node;

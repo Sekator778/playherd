@@ -34,6 +34,15 @@ function getServerInfoStore(api: Api): PolledStore<ServerInfoSnapshot> {
   );
 }
 
+/**
+ * Asks for `serverInfo()` once, now, without starting the poll: the answer lands in the shared snapshot, so whoever
+ * subscribes next (the sign-in sheet, a moment after the app loads) already has it instead of waiting for it. A no-op
+ * for an `Api` without `serverInfo()`.
+ */
+export function prefetchServerInfo(api: Api): void {
+  if (typeof api.serverInfo === "function") getServerInfoStore(api).refresh();
+}
+
 /** A store that holds the initial snapshot and never fetches: what an `Api` without `serverInfo` watches. */
 const IDLE_STORE: PolledStore<ServerInfoSnapshot> = {
   subscribe: () => () => {},

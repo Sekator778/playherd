@@ -1,7 +1,7 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiWrapper, fakeApi, serverInfoDto } from "../api/apiTestUtils";
 import type { Api, CancellationDto, MarketDto, Page, PageParams, ServerInfoDto } from "../api/contract";
 import { NOW, catalogue, market, marketsOf } from "../components/testFixtures";
@@ -355,5 +355,124 @@ describe("Status — it is a plain public page", () => {
     renderStatus();
     await screen.findByText(/Every market has two series of rounds/);
     expect(document.body.textContent).not.toMatch(/guarantee|trustless|revolution|risk-free|100% safe|world-class|cutting-edge/i);
+  });
+});
+
+describe("Status — a row whose numbers cannot be read is left out, never printed as NaN", () => {
+  it("round lengths in the server's lowercase keys (hourly/daily) — the row is hidden, nothing says NaN", async () => {
+    renderStatus({ info: { roundDurationsSec: { hourly: 180, daily: 900 } as unknown as ServerInfoDto["roundDurationsSec"] } });
+    await screen.findByText("Mode");
+    const server = section("Mode and price source");
+    expect(within(server).queryByText("Round lengths")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/NaN|undefined/);
+  });
+
+  it("a null or half-filled roundDurationsSec is the same", async () => {
+    renderStatus({ info: { roundDurationsSec: { HOURLY: 180 } as unknown as ServerInfoDto["roundDurationsSec"] } });
+    await screen.findByText("Mode");
+    expect(screen.queryByText("Round lengths")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/NaN|undefined/);
+  });
+
+  it("the contract's keys print as before", async () => {
+    renderStatus({ info: { roundDurationsSec: { HOURLY: 180, DAILY: 900 } } });
+    expect(await screen.findByText("Every market has two series of rounds: 3 MIN and 15 MIN.")).toBeInTheDocument();
+  });
+});
+
+describe("Status — the game engine, from serverInfo().engineReady", () => {
+  it("ready — said plainly (and an absent flag means ready, as the contract has it)", async () => {
+    renderStatus({ info: { engineReady: true } });
+    const fact = (await screen.findByText("Game engine")).closest(".status-fact") as HTMLElement;
+    expect(fact).toHaveTextContent("Ready.");
+    expect(fact).not.toHaveTextContent("Not ready");
+  });
+
+  it("an absent flag reads as ready", async () => {
+    renderStatus({ info: {} });
+    const fact = (await screen.findByText("Game engine")).closest(".status-fact") as HTMLElement;
+    expect(fact).toHaveTextContent("Ready.");
+  });
+
+  it("false: not ready, why, and that it answers again by itself — no alarm, no promise of a time", async () => {
+    renderStatus({ info: { engineReady: false } });
+    const fact = (await screen.findByText("Game engine")).closest(".status-fact") as HTMLElement;
+    expect(fact).toHaveTextContent("Not ready.");
+    expect(fact).toHaveTextContent(/rebuilding its state after a failure/);
+    expect(fact).toHaveTextContent(/answer again by themselves/);
+    expect(fact).not.toHaveTextContent("Ready.");
+  });
+});
+
+describe("Status — cancelled rounds name the market", () => {
+  it("a row with the server's asset shows it before the time", async () => {
+    renderStatus({ log: [{ ...cancel("PM9-1h-1", Date.UTC(2026, 9, 1, 14, 5)), marketId: "PM9", asset: "GER" }] });
+    const row = (await waitFor(() => {
+      const el = document.querySelector(".status-cancel");
+      expect(el).not.toBeNull();
+      return el;
+    })) as HTMLElement;
+    expect(within(row).getByText("GER")).toBeInTheDocument();
+    expect(row.querySelector(".status-cancel__when")).toHaveTextContent("GER2026-10-01 14:05 UTC");
+  });
+
+  it("a row from a server that names no market shows none — and nothing like 'undefined'", async () => {
+    renderStatus({ log: [cancel("BTC-1h-1", 5_000)] });
+    await screen.findByText("4 bets refunded");
+    expect(document.querySelector(".status-cancel__market")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/undefined|null/);
+  });
+});
+
+describe("Status — the log's refresh leaves no silent hole after a burst", () => {
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  afterEach(() => vi.useRealTimers());
+
+  const rows = (from: number, count: number) => Array.from({ length: count }, (_, i) => cancel(`R${from + count - i}`, 100_000 + (from + count - i) * 1000, `reason ${from + count - i}`));
+  const shownIds = () => Array.from(document.querySelectorAll(".status-cancel__round a")).map((a) => a.textContent);
+
+  it("25 rounds cancelled between two refreshes (the page shows 10): the refresh pages until it meets what is shown — all 35, once each", async () => {
+    const all = rows(0, 10); // R10…R1
+    renderStatus({ methods: { cancellations: logOf(all) } });
+    await waitFor(() => expect(shownIds()).toHaveLength(10));
+
+    all.unshift(...rows(10, 25)); // an outage cancels 25 more: R35…R11 above R10…R1
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_500);
+    });
+    await waitFor(() => expect(shownIds()).toHaveLength(35));
+    expect(shownIds()).toEqual(all.map((c) => c.roundId)); // newest first, no hole, no repeat
+    expect(screen.queryByRole("button", { name: "Show older" })).not.toBeInTheDocument();
+  });
+
+  it("a burst bigger than a refresh will walk: the list starts over from the newest rows and 'Show older' brings the rest — never a gap with no hint", async () => {
+    const all = rows(0, 10);
+    renderStatus({ methods: { cancellations: logOf(all) } });
+    await waitFor(() => expect(shownIds()).toHaveLength(10));
+
+    all.unshift(...rows(10, 200));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_500);
+    });
+    await waitFor(() => expect(shownIds().length).toBeGreaterThan(10));
+    const shown = shownIds();
+    expect(shown).toEqual(all.slice(0, shown.length).map((c) => c.roundId)); // a contiguous run from the newest
+    expect(shown.length).toBeLessThan(all.length);
+    expect(screen.getByRole("button", { name: "Show older" })).toBeInTheDocument(); // and the rest is one tap away
+  });
+
+  it("a refresh with nothing new changes nothing (and 'Show older' loaded pages are kept)", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const all = rows(0, 25);
+    renderStatus({ methods: { cancellations: logOf(all) } });
+    await waitFor(() => expect(shownIds()).toHaveLength(10));
+    await user.click(screen.getByRole("button", { name: "Show older" }));
+    // (the next page is asked from one millisecond past the oldest row, so it repeats that row: 9 new ones, not 10)
+    await waitFor(() => expect(shownIds()).toHaveLength(19));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_500);
+    });
+    expect(shownIds()).toEqual(all.slice(0, 19).map((c) => c.roundId));
+    expect(screen.getByRole("button", { name: "Show older" })).toBeInTheDocument();
   });
 });
