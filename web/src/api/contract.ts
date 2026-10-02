@@ -156,6 +156,8 @@ export interface ProfileRoundEntryDto {
   /** Real length of the round in seconds — label the row by it ("3 MIN", "1 HOUR"), so the label
    *  survives the market leaving `markets()`. Optional: absent from a server that predates it. */
   durationSec?: number;
+  /** The market's kind, for the same reason (an `ODDS` row is worded as odds). */
+  kind?: MarketKind;
   settledAtMs: EpochMs;
   direction: Direction;
   leverage: Leverage;
@@ -310,6 +312,9 @@ export interface CrowdRoundResultDto {
  *  page, regardless of cause. */
 export interface CancellationDto {
   roundId: RoundId;
+  /** The round's market and its `symbol` — the cancellations log names the pair, not only the id. */
+  marketId?: MarketId;
+  asset?: string;
   reason: string;
   cancelledAtMs: EpochMs;
   /** Count of bets refunded, including any that would already have been liquidated (Р-23:
@@ -323,6 +328,12 @@ interface RoundBase {
   marketId: MarketId;
   /** The market's `symbol` ("BTC", "NVDA", "GER"). */
   asset: string;
+  /** What a round page needs to print this round's prices and name their source without
+   *  `markets()` — a market leaves that list ten minutes after it closes, its rounds stay
+   *  readable for good. Same values as the market's `MarketDto` fields. */
+  kind: MarketKind;
+  priceDecimals: number;
+  source: "hyperliquid" | "polymarket" | "synthetic";
 }
 
 export interface RoundBetting extends RoundBase {
@@ -549,7 +560,9 @@ export type LedgerEntryType =
   | "SETTLEMENT"
   | "DEPOSIT"
   | "WITHDRAWAL"
-  | "WITHDRAWAL_REFUND";
+  | "WITHDRAWAL_REFUND"
+  /** A signed correction booked by the operator (reversing a wrong deposit or withdrawal). */
+  | "OPERATOR_CORRECTION";
 
 /** LedgerEntry.java — one append-only ledger movement, as shown in the wallet's transaction
  *  history. */
@@ -722,10 +735,13 @@ export interface MarketCrowdBriefDto {
   capital: UsdStr;
   /** `capital / 100000 - 1`. */
   returnPct: number;
+  /** Rounds in which the crowd account opened a position (a tie opens none). */
   roundsTraded: number;
+  /** Traded rounds that ended with more capital than they started with. A flat round (the price
+   *  closed where it opened) is traded but neither won nor lost. */
   roundsWon: number;
-  /** The crowd's last traded round; null before the first one. */
-  lastOutcome: "WIN" | "LOSS" | "LIQUIDATED" | null;
+  /** The crowd's last traded round; null before the first one. `FLAT`: closed where it opened. */
+  lastOutcome: "WIN" | "LOSS" | "LIQUIDATED" | "FLAT" | null;
 }
 
 export interface MarketDto {
@@ -919,8 +935,8 @@ export interface ServerInfoDto {
     firstSeq?: number | null;
   };
   serverTimeMs: EpochMs;
-  /** PLAY CAT asset id ("0x" + 64 hex) on `oracle.network` — what a wallet needs to show PLAY and to
-   *  send a deposit. Absent when the server has no chain service configured. */
+  /** PLAY CAT asset id ("0x" + 64 hex) of this deployment's issuance on `oracle.network` — what a
+   *  wallet needs to show PLAY and to send a deposit. */
   playAssetId?: string;
   /** Whether the browser test wallet (Р-45) is offered on the sign-in sheet. Absent → offered. */
   testWallet?: boolean;
@@ -984,6 +1000,13 @@ export type ApiErrorCode =
   | "MARKET_CLOSED"
   | "PRICE_UNAVAILABLE"
   | "RATE_LIMITED"
+  /** HTTP 503: the server is rebuilding its state after a failure. Transient — keep what is on
+   *  screen, say "the server is restarting" and retry; never treat it as "no data". */
+  | "ENGINE_NOT_READY"
+  /** HTTP 404: no such player, round or request. */
+  | "NOT_FOUND"
+  /** HTTP 400: the nickname is not 3–24 characters of letters, digits, space, `_`, `.`, `-`. */
+  | "INVALID_NICKNAME"
   /** Any other server code: the message is still the server's own text and is shown as is. */
   | "OTHER";
 
