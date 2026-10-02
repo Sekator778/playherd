@@ -2447,3 +2447,7 @@ no-op идемпотентного повтора и в `conflictSeqs` не по
   отбрасывает молча (так `stuckReason`/`conflicts` когда-то остались непрочитанными — javadoc
   `ChainSvcContractFixturesTest`). Контрактный тест на Java падает, пока в зеркала не добавлены поля и новая
   фикстура; `ChainSvcClientImpl.oracleRecords` пока отдаёт наверх только `queued` и `acceptedSeqs`.
+
+### 18.5 Сторона Java-сервера (2026-10-02, коммит `407613f`)
+
+Дописано сессия после слияния: `ChainSvcRestClient.OracleRecordsResponse` читает `conflictSeqs`, `OracleRecordStateResponse` — `resultsHash`, `priceCents`, `asset`, `ts` (обёрточные типы: `null` = содержимого нет); `ChainSvcContractFixturesTest` проходит все 17 фикстур. `OraclePublisherService` помечает запись `conflict` (и больше её не отправляет), когда chainsvc назвал её `seq` в `conflictSeqs` или когда на пути «ответ потерян» сообщил под этим `seq` другое содержимое (`ChainSvcClient.OracleRecordState.holdsAnotherRecordThan`); запись с тем же содержимым, как и раньше, считается переданной. Тесты: `OraclePublisherCollisionTest` (три новых случая), `ChainSvcClientImplTest`. Живьём коллизия не воспроизводилась.
