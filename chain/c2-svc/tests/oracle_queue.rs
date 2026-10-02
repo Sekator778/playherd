@@ -45,6 +45,9 @@ struct FakeChainClientInner {
     /// coin_id -> confirmed/spent info the test controls directly.
     coin_records: HashMap<Bytes32, CoinRecordInfo>,
     fee_mojos: u64,
+    /// `fee_estimate_mojos` fails instead of answering `fee_mojos` ("Upstream request timed out",
+    /// the 2026-10-02 incident).
+    fee_estimate_fails: bool,
     funding_amount: u64,
     /// Extra funding-coin candidates a test registers explicitly (task fix,
     /// `docs/research/chain_service.md` §15: tests that need more than one
@@ -80,7 +83,12 @@ impl FakeChainClient {
     fn new() -> Self {
         Self(Mutex::new(FakeChainClientInner {
             coin_records: HashMap::new(),
-            fee_mojos: 0,
+            // A small, non-zero estimate: since `docs/research/chain_service.md` §17.2 an estimate of
+            // 0 (like a failed one) is replaced by the fallback rate, which for the 1,000,000-mojo
+            // wallet coin of this fake is too much for the bigger batches -- tests that care about
+            // the fee set their own estimate (`set_fee_estimate`).
+            fee_mojos: 1_000,
+            fee_estimate_fails: false,
             funding_amount: 1_000_000,
             extra_funding_coins: Vec::new(),
             push_calls: 0,
@@ -107,11 +115,22 @@ impl FakeChainClient {
     }
 
 
+    /// The amount of the default `[7u8; 32]`-parented wallet coin (1,000,000 unless set).
+    fn set_funding_amount(&self, amount: u64) {
+        self.0.lock().unwrap().funding_amount = amount;
+    }
+
     /// Controls what the *next* `fee_estimate_mojos` call returns (task
     /// instruction: "re-estimate with get_fee_estimate ... on each
     /// consecutive fee rejection").
     fn set_fee_estimate(&self, fee_mojos: u64) {
         self.0.lock().unwrap().fee_mojos = fee_mojos;
+    }
+
+    /// Makes `fee_estimate_mojos` fail (or answer again) -- "get_fee_estimate failed: Upstream
+    /// request timed out".
+    fn set_fee_estimate_fails(&self, fails: bool) {
+        self.0.lock().unwrap().fee_estimate_fails = fails;
     }
 
     /// Controls whether `in_mempool(tx_id)` reports `tx_id` present.
@@ -203,13 +222,16 @@ impl ChainClient for FakeChainClient {
     }
 
     fn fee_estimate_mojos(&self, _cost: u64, _target_time_secs: u32) -> impl Future<Output = Result<u64>> + Send {
-        let (fee, delay) = {
+        let (fee, fails, delay) = {
             let inner = self.0.lock().unwrap();
-            (inner.fee_mojos, inner.delay)
+            (inner.fee_mojos, inner.fee_estimate_fails, inner.delay)
         };
         async move {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
+            }
+            if fails {
+                anyhow::bail!("Upstream request timed out");
             }
             Ok(fee)
         }
@@ -354,6 +376,7 @@ fn set_up(retry_backoff: Duration) -> Result<Fixture> {
         max_retry_attempts: 3,
         max_fee_mojos: 50_000_000,
         fee_target_time_secs: 60,
+        mempool_replace_after: Duration::from_secs(180),
         balance_snapshot: tokio::sync::RwLock::new(None),
         queue_lock: tokio::sync::Mutex::new(()),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
@@ -409,6 +432,23 @@ fn record(seq: u64) -> OracleRecord {
         source_ts: 1_789_999_000 + seq as i64,
         asset: 0,
     }
+}
+
+/// Registers on the fake chain the confirmation of `in_flight`'s own bundle the way the real chain
+/// shows it: the singleton coin spent -- with the very spend the bundle contains, so a lineage walk
+/// can read its announcements -- and the coin it recreated. Since a bundle that was rebuilt or
+/// replaced has earlier versions, the publisher no longer takes "the recreated coin exists" for
+/// "all my records are on chain" (`docs/research/chain_service.md` §17.4): it reads the spend.
+fn confirm_in_flight(chain: &FakeChainClient, in_flight: &c2_svc::oracle::queue::InFlightSpend, height: u32) {
+    let singleton_spend = in_flight
+        .bundle
+        .coin_spends
+        .iter()
+        .find(|spend| spend.coin == in_flight.spent_coin)
+        .expect("every bundle spends the singleton coin")
+        .clone();
+    chain.set_lineage_spend(in_flight.spent_coin, height, height, singleton_spend);
+    chain.set_confirmed(in_flight.next_coin.coin_id(), height);
 }
 
 // --- tests -----------------------------------------------------------------
@@ -667,7 +707,7 @@ async fn fee_too_low_rejection_rebuilds_with_higher_fee_then_confirms() -> Resul
     let fx = set_up(Duration::from_secs(0))?; // zero backoff: every tick is eligible to act
 
     fx.publisher.enqueue(vec![record(1)]).await?;
-    fx.publisher.chain.set_fee_estimate(0);
+    fx.publisher.chain.set_fee_estimate(1_000); // a fee the mempool will not take
     fx.publisher.chain.set_push_outcome(PushOutcome {
         accepted: false,
         status: None,
@@ -676,13 +716,13 @@ async fn fee_too_low_rejection_rebuilds_with_higher_fee_then_confirms() -> Resul
         ),
     });
 
-    let outcome = fx.publisher.tick().await?; // start_new_batch: broadcasts at fee=0, rejected
+    let outcome = fx.publisher.tick().await?; // start_new_batch: broadcasts at the estimated fee, rejected
     assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
     assert_eq!(fx.publisher.chain.push_call_count(), 1);
 
     let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
     let first_in_flight = queue.in_flight.expect("should be in flight after the rejected broadcast");
-    assert_eq!(first_in_flight.fee_mojos, 0);
+    assert_eq!(first_in_flight.fee_mojos, 1_000);
     assert_eq!(first_in_flight.attempts, 1);
 
     // The mempool has since eased: a real, higher fee is now both estimated
@@ -712,7 +752,7 @@ async fn fee_too_low_rejection_rebuilds_with_higher_fee_then_confirms() -> Resul
         "rebuilding (higher fee) produces a materially different bundle"
     );
 
-    fx.publisher.chain.set_confirmed(rebuilt.next_coin.coin_id(), 4_800_000);
+    confirm_in_flight(&fx.publisher.chain, &rebuilt, 4_800_000);
     let outcome = fx.publisher.tick().await?;
     assert_eq!(outcome, TickOutcome::Confirmed { records: 1 });
 
@@ -798,7 +838,7 @@ async fn fee_coin_double_spent_elsewhere_rebuilds_immediately_without_burning_a_
         "the dead fee coin's reservation must have been released"
     );
 
-    fx.publisher.chain.set_confirmed(rebuilt.next_coin.coin_id(), 4_738_950);
+    confirm_in_flight(&fx.publisher.chain, &rebuilt, 4_738_950);
     let outcome = fx.publisher.tick().await?;
     assert_eq!(outcome, TickOutcome::Confirmed { records: 1 });
     assert!(
@@ -849,6 +889,7 @@ async fn restart_recovers_when_the_in_flight_fee_coin_was_spent_while_down() -> 
         max_retry_attempts: 3,
         max_fee_mojos: 50_000_000,
         fee_target_time_secs: 60,
+        mempool_replace_after: Duration::from_secs(180),
         balance_snapshot: tokio::sync::RwLock::new(None),
         queue_lock: tokio::sync::Mutex::new(()),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
@@ -885,7 +926,7 @@ async fn restart_recovers_when_the_in_flight_fee_coin_was_spent_while_down() -> 
     let new_fee_coin = fee_coin_of(&rebuilt.bundle, rebuilt.spent_coin).expect("must have a fee coin");
     assert_eq!(new_fee_coin, fresh_fee_coin);
 
-    restarted.chain.set_confirmed(rebuilt.next_coin.coin_id(), 4_738_950);
+    confirm_in_flight(&restarted.chain, &rebuilt, 4_738_950);
     let outcome = restarted.tick().await?;
     assert_eq!(outcome, TickOutcome::Confirmed { records: 1 }, "restart must fully recover to a confirmed publish");
 
@@ -902,13 +943,14 @@ async fn fee_cap_reached_reports_stuck_with_reason() -> Result<()> {
     fx.publisher.max_fee_mojos = 100; // tiny cap -- saturates on the very first rebuild
 
     fx.publisher.enqueue(vec![record(1)]).await?;
+    fx.publisher.chain.set_fee_estimate(10); // below the cap, so the first rejection can still be escalated
     fx.publisher.chain.set_push_outcome(PushOutcome {
         accepted: false,
         status: None,
         error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
     });
 
-    let outcome = fx.publisher.tick().await?; // Broadcast at fee=0
+    let outcome = fx.publisher.tick().await?; // Broadcast at fee=10
     assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
 
     fx.publisher.chain.set_fee_estimate(999_999); // far above the cap
@@ -1177,6 +1219,8 @@ fn in_flight_stub(records: &[OracleRecord]) -> c2_svc::oracle::queue::InFlightSp
         attempts: 1,
         last_push_accepted: true,
         last_push_error: None,
+        superseded: Vec::new(),
+        replace_blocked: None,
     }
 }
 
@@ -1207,6 +1251,7 @@ async fn restart_resumes_a_pending_in_flight_spend() -> Result<()> {
         max_retry_attempts: 3,
         max_fee_mojos: 50_000_000,
         fee_target_time_secs: 60,
+        mempool_replace_after: Duration::from_secs(180),
         balance_snapshot: tokio::sync::RwLock::new(None),
         queue_lock: tokio::sync::Mutex::new(()),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
@@ -1233,7 +1278,7 @@ async fn rebuild_merge_keeps_every_original_and_newly_queued_record() -> Result<
     let fx = set_up(Duration::from_secs(0))?;
 
     fx.publisher.enqueue(vec![record(1), record(2)]).await?;
-    fx.publisher.chain.set_fee_estimate(0);
+    fx.publisher.chain.set_fee_estimate(1_000);
     fx.publisher.chain.set_push_outcome(PushOutcome {
         accepted: false,
         status: None,
@@ -1593,7 +1638,7 @@ async fn the_rebuild_merge_never_exceeds_the_maximum_records_per_spend() -> Resu
     let fx = set_up(Duration::from_secs(0))?;
     let first = MAX_RECORDS_PER_SPEND as u64 - 2;
     fx.publisher.enqueue((1..=first).map(record).collect()).await?;
-    fx.publisher.chain.set_fee_estimate(0);
+    fx.publisher.chain.set_fee_estimate(1_000);
     fx.publisher.chain.set_push_outcome(PushOutcome {
         accepted: false,
         status: None,
@@ -2013,5 +2058,194 @@ async fn repeated_tick_failures_surface_stuck_reason_and_degrade_health() -> Res
     assert!(status.stuck_reason.is_none(), "a successful tick must reset the consecutive-failure counter");
     assert!(fx.publisher.health_check().await?.is_none());
 
+    Ok(())
+}
+
+// --- C1: a failed fee estimate is never a fee of 0 (`docs/research/chain_service.md` §17.2) -----------------------
+
+/// The cost the publisher priced a bundle at: of the singleton spend alone, which is what
+/// `start_new_batch` and `rebuild_in_flight` measure (the fee spend is added after the fee is chosen).
+fn draft_cost_of(in_flight: &c2_svc::oracle::queue::InFlightSpend) -> u64 {
+    let spends: Vec<CoinSpend> =
+        in_flight.bundle.coin_spends.iter().filter(|spend| spend.coin == in_flight.spent_coin).cloned().collect();
+    c2_cli::cost::measure_bundle_cost(&spends).expect("cost").total_cost
+}
+
+/// `ceil(rate * cost / 1000)`, the fee at a rate in millimojos per unit of cost.
+fn fee_at(rate_millimojos: u64, cost: u64) -> u64 {
+    (u128::from(rate_millimojos) * u128::from(cost)).div_ceil(1000) as u64
+}
+
+/// 2026-10-02: `get_fee_estimate` answered "Upstream request timed out", the publisher fell back to
+/// fee 0, the node accepted the fee-0 bundle and it sat in the mempool for ten minutes. Now the first
+/// attempt is priced at the floor rate (0.1 mojo per cost) times the bundle's cost, with a fee coin
+/// attached -- never nothing -- and the same holds when the estimate "succeeds" with 0.
+#[tokio::test]
+async fn a_failed_or_zero_fee_estimate_is_priced_at_the_floor_rate_never_at_zero() -> Result<()> {
+    for failing in [true, false] {
+        let fx = set_up(Duration::from_secs(300))?;
+        fx.publisher.chain.set_funding_amount(100_000_000);
+        if failing {
+            fx.publisher.chain.set_fee_estimate_fails(true);
+        } else {
+            fx.publisher.chain.set_fee_estimate(0);
+        }
+        fx.publisher.enqueue((1..=18).map(record).collect()).await?;
+        assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 18, accepted: true });
+
+        let in_flight = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+        let expected = fee_at(100, draft_cost_of(&in_flight));
+        assert!(expected > 1_000_000, "sanity: 0.1 mojo per cost of an 18-record bundle is millions of mojos, got {expected}");
+        assert_eq!(in_flight.fee_mojos, expected, "failing={failing}: priced at the floor rate times the draft's cost");
+        assert!(fee_coin_of(&in_flight.bundle, in_flight.spent_coin).is_some(), "a fee coin pays it");
+    }
+    Ok(())
+}
+
+/// After a successful estimate the fallback is *that* rate, not the floor.
+#[tokio::test]
+async fn after_a_successful_estimate_a_failure_uses_that_rate() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.chain.set_funding_amount(100_000_000);
+    fx.publisher.chain.set_fee_estimate(500_000);
+    fx.publisher.enqueue(vec![record(1), record(2)]).await?;
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 2, accepted: true });
+    let first = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    assert_eq!(first.fee_mojos, 500_000);
+    let remembered_rate = (500_000u128 * 1000).div_ceil(u128::from(draft_cost_of(&first))) as u64;
+    assert!(remembered_rate < 100, "the estimate is cheaper than the floor, so the two are told apart: {remembered_rate}");
+
+    confirm_in_flight(&fx.publisher.chain, &first, 100);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: 2 });
+
+    // The estimate is down for the next batch.
+    fx.publisher.chain.set_fee_estimate_fails(true);
+    fx.publisher.enqueue(vec![record(3), record(4), record(5)]).await?;
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 3, accepted: true });
+    let second = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    assert_eq!(second.fee_mojos, fee_at(remembered_rate, draft_cost_of(&second)), "the last successful estimate's rate");
+    assert!(second.fee_mojos > 0);
+    Ok(())
+}
+
+/// Whatever the fallback comes to, `C2_MAX_FEE_MOJOS` caps it.
+#[tokio::test]
+async fn the_fallback_fee_is_capped_at_the_maximum_fee() -> Result<()> {
+    let mut fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.max_fee_mojos = 700_000;
+    fx.publisher.chain.set_fee_estimate_fails(true);
+    fx.publisher.enqueue((1..=18).map(record).collect()).await?;
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 18, accepted: true });
+    let in_flight = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    assert!(fee_at(100, draft_cost_of(&in_flight)) > 700_000, "the floor alone would be above the cap");
+    assert_eq!(in_flight.fee_mojos, 700_000);
+    Ok(())
+}
+
+/// A rebuild after a fee rejection with `get_fee_estimate` down: the old code's "falling back to 0"
+/// plus `.max(1)` could pay ONE mojo; now the estimate is the fallback rate and the usual doubling
+/// applies on top.
+#[tokio::test]
+async fn a_rebuild_with_the_estimate_down_is_priced_at_the_fallback_not_at_one_mojo() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.chain.set_funding_amount(100_000_000);
+    fx.publisher.chain.set_fee_estimate_fails(true);
+    fx.publisher.enqueue(vec![record(1), record(2)]).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
+    });
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 2, accepted: false });
+    let first = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    let floor_fee = fee_at(100, draft_cost_of(&first));
+    assert_eq!(first.fee_mojos, floor_fee);
+
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+    match fx.publisher.tick().await? {
+        TickOutcome::Rebuilt { fee_mojos, accepted, .. } => {
+            assert!(accepted);
+            assert_eq!(fee_mojos, 2 * floor_fee, "max(2 x old, fallback) with the estimate still down");
+        }
+        other => panic!("expected Rebuilt, got {other:?}"),
+    }
+    Ok(())
+}
+
+// --- C3: settling the confirmation of the in-flight bundle (`docs/research/chain_service.md` §17.5) ----------------------
+
+/// A crash after `operator.oracle.json` was advanced but before the queue file was saved: the queue
+/// still shows the bundle in flight although the chain consumed its coin and the state has moved on.
+/// The next pass reaches the same accounting from the same chain and does not advance the state a
+/// second time.
+#[tokio::test]
+async fn settling_a_confirmation_is_idempotent_after_a_crash_between_the_two_saves() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.enqueue(vec![record(1), record(2)]).await?;
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 2, accepted: true });
+    let in_flight = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    let queue_path = QueueFile::path(&fx.publisher.data_dir, "operator");
+    let queue_before = std::fs::read(&queue_path)?;
+
+    confirm_in_flight(&fx.publisher.chain, &in_flight, 300);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: 2 });
+    let state = c2_svc::state_file::load_oracle_state(&fx.publisher.data_dir, "operator")?;
+    assert_eq!((state.current_coin, state.next_sequence), (in_flight.next_coin, 2));
+
+    // The queue file is as it was before the settlement: the crash.
+    std::fs::write(&queue_path, queue_before)?;
+    assert!(QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.is_some());
+
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: 2 });
+    let state = c2_svc::state_file::load_oracle_state(&fx.publisher.data_dir, "operator")?;
+    assert_eq!((state.current_coin, state.next_sequence), (in_flight.next_coin, 2), "advanced once, not twice");
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.in_flight.is_none());
+    assert_eq!(queue.confirmed.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
+    Ok(())
+}
+
+/// The consuming spend is on chain but coinset cannot give it up in a form that reads (here: an
+/// announcement of the old three-field shape). For a bundle that has earlier versions -- here: a
+/// rebuild -- the publisher does not guess which records were published: it waits, keeps the scan
+/// checkpoint at the coin so the next scan reads the spend again, and settles from what the chain
+/// then says.
+#[tokio::test]
+async fn a_confirming_spend_that_cannot_be_read_is_not_guessed_at_for_a_bundle_with_earlier_versions() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.enqueue(vec![record(1), record(2)]).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
+    });
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 2, accepted: false });
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+    assert!(matches!(fx.publisher.tick().await?, TickOutcome::Rebuilt { .. }));
+    let rebuilt = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    assert_eq!(rebuilt.superseded.len(), 1, "the rejected first version is on record");
+
+    // The coin is consumed, its successor exists -- but the spend announces something unreadable.
+    let three_field = hex::decode("ff8400801ed4ff846ab6a055ff0180")?;
+    fx.publisher.chain.set_lineage_spend(
+        rebuilt.spent_coin,
+        300,
+        300,
+        announcing_coin_spend(rebuilt.spent_coin, &three_field),
+    );
+    fx.publisher.chain.set_confirmed(rebuilt.next_coin.coin_id(), 300);
+
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::WaitingForConfirmation);
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.in_flight.is_some(), "nothing is concluded from a spend that cannot be read");
+    assert!(queue.confirmed.is_empty(), "no record is marked confirmed on a guess");
+    assert_eq!(queue.chain_scan_checkpoint, Some(rebuilt.spent_coin), "the scan will read that generation again");
+
+    // The spend becomes readable (here: the real one). The next tick settles it from the chain.
+    confirm_in_flight(&fx.publisher.chain, &rebuilt, 300);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: 2 });
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.in_flight.is_none());
+    assert_eq!(queue.confirmed.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
     Ok(())
 }

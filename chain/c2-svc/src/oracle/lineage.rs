@@ -61,6 +61,30 @@ pub struct ChainRecord {
     pub record: OracleRecord,
 }
 
+/// One generation of the singleton the walk passed through: the coin that was spent, the coin its
+/// spend recreated, when, and what it announced. Kept (rather than only the merged `confirmed`
+/// map) because the publisher has to answer "was the spend that consumed my in-flight bundle's
+/// singleton coin *my* bundle, and which of my records did it carry" -- which the first-occurrence
+/// `confirmed` map cannot say (a record announced earlier hides a later duplicate) and which a
+/// replaced bundle makes a real question (`docs/research/chain_service.md` §17.4): two bundles
+/// for one coin, and the chain says which of them won.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkedGeneration {
+    /// The singleton coin this generation consumed.
+    pub spent_coin: Coin,
+    /// The coin the spend recreated -- computed, not read: the id of the successor of a singleton
+    /// spend is the same whichever bundle spent it (parent id, puzzle hash and amount all fixed).
+    pub next_coin: Coin,
+    /// The block the spend confirmed in.
+    pub height: Option<u32>,
+    /// The `seq` of every announcement the spend made, duplicates of earlier generations
+    /// included. `None` when the spend could not be read completely -- coinset had no
+    /// puzzle/solution for it, its puzzle did not run, or at least one announcement did not decode
+    /// as an oracle record: nothing may be concluded from a partial list, so a caller treats
+    /// `None` as "unknown", never as "announced nothing".
+    pub announced: Option<Vec<u64>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LineageWalkOutcome {
     /// `seq -> ChainRecord`, first on-chain occurrence only (see module doc
@@ -78,6 +102,8 @@ pub struct LineageWalkOutcome {
     /// starting coin was already the tip, or doesn't exist yet on chain --
     /// e.g. before `c2 oracle-launch` has run).
     pub generations_advanced: u64,
+    /// Every generation this call advanced through, oldest first (`generations_advanced` of them).
+    pub generations: Vec<WalkedGeneration>,
     /// An on-chain announcement that didn't decode as the fixed 6/7-field
     /// record format (e.g. this exact testnet11 launcher's very first-ever
     /// spend, made by the old single-record `c2-cli` publisher's 3-field
@@ -85,6 +111,13 @@ pub struct LineageWalkOutcome {
     /// chain_service.md` §1/§11) -- not an error, just skipped and reported
     /// for visibility (never silently, per the task fix's own principle).
     pub decode_warnings: Vec<String>,
+}
+
+impl LineageWalkOutcome {
+    /// The generation that consumed `coin`, if this walk passed through it.
+    pub fn generation_spending(&self, coin: &Coin) -> Option<&WalkedGeneration> {
+        self.generations.iter().find(|generation| generation.spent_coin == *coin)
+    }
 }
 
 /// The singleton's very first coin (the "eve" coin, created by the
@@ -189,6 +222,7 @@ fn announcement_messages(coin_spend: &CoinSpend) -> Result<Vec<Bytes>> {
 pub async fn walk_lineage<C: ChainClient>(chain: &C, start: Coin) -> Result<LineageWalkOutcome> {
     let mut confirmed = BTreeMap::new();
     let mut decode_warnings = Vec::new();
+    let mut generations = Vec::new();
     let mut current = start;
     let mut generations_advanced = 0u64;
 
@@ -226,12 +260,17 @@ pub async fn walk_lineage<C: ChainClient>(chain: &C, start: Coin) -> Result<Line
             .with_context(|| format!("puzzle_and_solution({}) while walking oracle singleton lineage", current.coin_id()))?;
         let next = Coin::new(current.coin_id(), current.puzzle_hash, current.amount);
 
+        // `Some` only when this spend was read completely (see `WalkedGeneration::announced`).
+        let mut announced: Option<Vec<u64>> = None;
         match coin_spend {
             Some(coin_spend) => match announcement_messages(&coin_spend) {
                 Ok(messages) => {
+                    let mut seqs = Vec::with_capacity(messages.len());
+                    let mut complete = true;
                     for message in messages {
                         match decode_oracle_record(message.as_ref()) {
                             Ok(record) => {
+                                seqs.push(record.seq);
                                 // First occurrence wins (module doc):
                                 // ascending generation order + `entry(..).
                                 // or_insert(..)` means a later duplicate
@@ -243,11 +282,17 @@ pub async fn walk_lineage<C: ChainClient>(chain: &C, start: Coin) -> Result<Line
                                     record,
                                 });
                             }
-                            Err(e) => decode_warnings.push(format!(
-                                "coin {} spend: announcement did not decode as an oracle record: {e:#}",
-                                current.coin_id()
-                            )),
+                            Err(e) => {
+                                complete = false;
+                                decode_warnings.push(format!(
+                                    "coin {} spend: announcement did not decode as an oracle record: {e:#}",
+                                    current.coin_id()
+                                ));
+                            }
                         }
+                    }
+                    if complete {
+                        announced = Some(seqs);
                     }
                 }
                 Err(e) => decode_warnings.push(format!(
@@ -261,6 +306,12 @@ pub async fn walk_lineage<C: ChainClient>(chain: &C, start: Coin) -> Result<Line
             )),
         }
 
+        generations.push(WalkedGeneration {
+            spent_coin: current,
+            next_coin: next,
+            height: record_info.spent_height,
+            announced,
+        });
         current = next;
         generations_advanced += 1;
     }
@@ -269,6 +320,7 @@ pub async fn walk_lineage<C: ChainClient>(chain: &C, start: Coin) -> Result<Line
         confirmed,
         tip_coin: current,
         generations_advanced,
+        generations,
         decode_warnings,
     })
 }

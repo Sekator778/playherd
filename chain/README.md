@@ -122,6 +122,20 @@ see `docs/research/chain_service.md` §1. Write-ups:
     the oracle publisher is not mid-spend, so the oracle and the withdrawal
     publisher never wait for each other's coin; `GET /v1/oracle/status` shows
     `feeCoinsFree`/`feeCoinsFreeMojos`, `maxKnownSeq` and `recordFormat`.
+  - Fees and the mempool (`docs/research/chain_service.md` §17): when
+    `get_fee_estimate` fails or answers 0 a spend is priced at the last
+    successful estimate's rate, else at `C2_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST`
+    (default 100 = 0.1 mojo per cost), capped at `C2_MAX_FEE_MOJOS`, never 0
+    (`src/fee_estimate.rs`); an in-flight oracle bundle or PLAY withdrawal
+    batch that sits in the node's mempool for `C2_MEMPOOL_REPLACE_AFTER_SECS`
+    (default 180, 0 = off) is replaced by one that satisfies the node's
+    replacement rule (`src/mempool_rule.rs`: a superset of its coins, +10 000 000
+    mojos), and which of the two the chain took is read off the chain, never
+    assumed; the chain walk settles our own confirmation as an INFO line, not a
+    warning; `POST /v1/play/withdrawals` answers HTTP 409 for a `requestId` held
+    with another recipient or amount. Tested against the real consensus
+    simulator with a model mempool (`tests/sim_chain/`, `tests/oracle_replace.rs`,
+    `tests/withdrawal_replace.rs`).
   - `Dockerfile` — multi-stage release build, build context `chain/` (needs
     the `c2-cli` path dependency + the shared `Cargo.lock` in scope).
   - `--dry-run` / `C2_PUSH=0` — builds and signs spends, never broadcasts or

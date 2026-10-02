@@ -32,6 +32,15 @@
 //! `requestId` state, same as it was for the oracle queue before §11's fix
 //! (a real, understood risk, not an oversight).
 //!
+//! **A batch that waits in the mempool is replaced, and the chain says which version won**
+//! (`docs/research/chain_service.md` §17.8): after `mempool_replace_after` a batch the node holds
+//! but does not confirm is replaced by one for the same treasury coin that the node's replacement
+//! rule accepts (`mempool_rule.rs`); earlier versions (replaced, rebuilt, or a replacement the node
+//! did not take) are kept on the batch (`SupersededWithdrawalBatch`) because any of them can still be
+//! the one the chain takes -- the treasury coin is spent once -- and a payout must be recorded exactly
+//! as the chain made it: requests the winning version paid are paid (each with its own payout coin),
+//! requests it did not pay go back to the queue.
+//!
 //! What *is* reused here (decision Р-53 follow-up, "treasury self-heal",
 //! `docs/research/chain_service.md` §13): the oracle's §12 principle "make
 //! the chain the source of truth for our own position" -- `tick()` (and
@@ -50,8 +59,8 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use chia_bls::Signature;
-use chia_protocol::{Bytes32, SpendBundle};
+use chia_bls::{SecretKey, Signature};
+use chia_protocol::{Bytes32, Coin, SpendBundle};
 use chia_puzzle_types::Proof;
 use chia_sdk_driver::{Cat, CatInfo, Puzzle};
 use clvmr::{Allocator, serde::node_from_bytes};
@@ -63,15 +72,18 @@ use c2_cli::cost::measure_bundle_cost;
 use c2_cli::keys::WalletKey;
 use c2_cli::state::PlayCoinState;
 
-use crate::fee_allocator::{FeeCoinAllocator, fee_coin_of, is_coin_spent_rejection};
+use crate::fee_allocator::{FeeCoinAllocator, NoFeeCoin, fee_coin_of, is_coin_spent_rejection};
 use crate::fee_reserve::FeeCoinsBusy;
 use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
+use crate::mempool_rule::{MEMPOOL_MIN_FEE_INCREASE, required_replacement_fee};
 use crate::oracle::publisher::TickFailureState;
 use crate::play_state_file::{load_play_state, save_play_state_atomic};
 
 use super::chain_client::PlayChainClient;
 use super::types::{WithdrawalRequest, WithdrawalStatusResponse};
-use super::withdrawal_queue::{InFlightWithdrawalBatch, WithdrawalQueueFile, WithdrawalState};
+use super::withdrawal_queue::{
+    InFlightWithdrawalBatch, SupersededWithdrawalBatch, WithdrawalQueueFile, WithdrawalState,
+};
 use super::withdrawal_spend::{MAX_WITHDRAWALS_PER_SPEND, build_play_withdrawal_batch};
 
 /// Same case-insensitive "contains FEE" heuristic as
@@ -98,6 +110,27 @@ fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+/// A replacement bundle `replace_in_mempool` is ready to make durable and push.
+struct ReplacementBatch {
+    bundle: SpendBundle,
+    bundle_id: String,
+    fee_mojos: u64,
+    next_coin: Coin,
+    next_lineage_proof: super::withdrawal_queue::LineageProofDto,
+    payout_coin_ids: Vec<Bytes32>,
+    /// The fee coin reserved for this replacement alone (the old batch had none).
+    newly_reserved: Option<Coin>,
+}
+
+/// What `prepare_replacement` came to.
+enum Prepared {
+    Ready(Box<ReplacementBatch>),
+    /// No valid replacement can be made now; the reason goes to `GET /health`.
+    Blocked(String),
+    /// The wallet's only coin big enough is held by the fee-coin split: wait.
+    FeeCoinsBusy,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WithdrawalTickOutcome {
     Idle,
@@ -105,6 +138,16 @@ pub enum WithdrawalTickOutcome {
     Broadcast { requests: usize, accepted: bool },
     Retried { accepted: bool },
     Rebuilt { requests: usize, accepted: bool, fee_mojos: u64 },
+    /// The in-flight batch sat in the node's mempool past `mempool_replace_after` and was replaced by a
+    /// batch for the same treasury coin that pays `fee_mojos` instead of `replaced_fee_mojos` and
+    /// carries `requests` (the old ones plus any newly pending, at most `MAX_WITHDRAWALS_PER_SPEND`).
+    Replaced { requests: usize, fee_mojos: u64, replaced_fee_mojos: u64 },
+    /// The in-flight batch sat in the mempool past `mempool_replace_after` but no valid replacement
+    /// could be made or the node did not take it; the old batch stays in flight (`GET /health` says why).
+    ReplacementBlocked { reason: String },
+    /// An earlier version of the in-flight batch (replaced or rebuilt) was the one the chain took:
+    /// its `confirmed` requests are paid, the `requeued` ones are back in `pending`.
+    ConfirmedEarlierVersion { confirmed: usize, requeued: usize },
     WaitingForConfirmation,
     /// This batch's requests were moved to `failed` (task's FIXED INTERFACE
     /// names `failed` as a terminal state) -- see module doc.
@@ -121,6 +164,10 @@ pub struct WithdrawalPublisher<C: PlayChainClient> {
     pub max_retry_attempts: u32,
     pub max_fee_mojos: u64,
     pub fee_target_time_secs: u32,
+    /// How long a batch may sit in the node's mempool unconfirmed before `replace_in_mempool`
+    /// replaces it (`C2_MEMPOOL_REPLACE_AFTER_SECS`, the same setting as the oracle publisher's);
+    /// zero turns the replacement off.
+    pub mempool_replace_after: Duration,
     /// Serializes `enqueue()`/`tick()`'s read-modify-write cycle over the
     /// durable queue file -- same root-cause fix as `oracle::publisher::
     /// Publisher::queue_lock` (`docs/research/chain_service.md` §10).
@@ -162,11 +209,16 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
     /// `POST /v1/play/withdrawals`'s handler support -- `request` is already
     /// validated (`WithdrawalRequest::from_dto`, done by `app.rs` before this
     /// is called, same split as `oracle::app::oracle_records`). `true` iff
-    /// newly accepted (idempotent by `requestId`, task's FIXED INTERFACE).
+    /// newly accepted (idempotent by `requestId`, task's FIXED INTERFACE: a repeat with the same
+    /// recipient and amount is `Ok(false)`).
+    ///
+    /// A `requestId` this service already holds with a different recipient or amount fails with a
+    /// `RequestIdConflict` (the root cause of the `anyhow::Error`; `app.rs` answers HTTP 409) --
+    /// never with the old request's status (`WithdrawalQueueFile::enqueue`, §17.6).
     pub async fn enqueue(&self, request: WithdrawalRequest) -> Result<bool> {
         let _guard = self.queue_lock.lock().await;
         let mut queue = WithdrawalQueueFile::load(&self.data_dir, &self.operator_name)?;
-        let accepted = queue.enqueue(request);
+        let accepted = queue.enqueue(request).map_err(anyhow::Error::new)?;
         if accepted {
             queue
                 .save_atomic(&self.data_dir, &self.operator_name)
@@ -297,7 +349,20 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             )));
         }
         drop(failures);
-        Ok(self.treasury_stuck.read().await.clone())
+        if let Some(reason) = self.treasury_stuck.read().await.clone() {
+            return Ok(Some(reason));
+        }
+        // A batch that waited in the mempool and could not be replaced (`replace_in_mempool`): a plain
+        // read of the queue file, like the oracle's `degraded_reason`.
+        let queue = WithdrawalQueueFile::load(&self.data_dir, &self.operator_name)?;
+        Ok(queue.in_flight.as_ref().and_then(|batch| {
+            batch.replace_blocked.as_ref().map(|reason| {
+                format!(
+                    "withdrawal batch {} has waited in the mempool without confirming and could not be replaced: {reason}",
+                    batch.bundle_id
+                )
+            })
+        }))
     }
 
     /// Reconciles the cached treasury PLAY CAT coin (`operator.play.json`)
@@ -527,15 +592,15 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             // `withdrawal_spend::build_play_withdrawal_batch`), so `zip`
             // covers every request with no fallback needed.
             for (request, &coin_id) in in_flight.requests.iter().zip(&in_flight.payout_coin_ids) {
-                queue.confirmed.insert(request.request_id.clone(), (coin_id, record_info.confirmed_height));
+                queue.record_confirmed(request, coin_id, record_info.confirmed_height);
             }
             let confirmed_count = in_flight.requests.len();
             // The fee coin this confirmed batch consumed is now genuinely,
             // permanently spent -- release its reservation (task fix,
             // `docs/research/chain_service.md` §15), same reasoning as
             // `oracle::publisher::advance_in_flight`'s own confirm branch.
-            if let Some(fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
-                self.fee_allocator.release(fee_coin.coin_id()).await;
+            for coin_id in in_flight.every_fee_coin() {
+                self.fee_allocator.release(coin_id).await;
             }
             queue.in_flight = None;
             queue
@@ -559,9 +624,13 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             .await
             .context("checking treasury coin before acting on an in-flight withdrawal batch")?;
         if spent_record.spent {
-            // Something else (or a race with the `next_coin` check above)
-            // already spent it -- the next tick's `next_coin` check resolves
-            // it once the recreated coin is visible.
+            // The treasury coin is consumed but this batch's own change coin is not on chain (checked
+            // above). Either the next tick's `next_coin` check resolves it once the recreated coin is
+            // visible, or an EARLIER version of this batch (replaced in the mempool, or rebuilt) is what
+            // the chain took: its change coin is the one that exists. Look for it (`settle_earlier_version`).
+            if let Some((version, height)) = self.find_confirmed_earlier_version(&in_flight).await? {
+                return self.settle_earlier_version(queue, in_flight, version, height).await;
+            }
             return Ok(WithdrawalTickOutcome::WaitingForConfirmation);
         }
         let in_mempool = self
@@ -570,7 +639,18 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             .await
             .context("checking mempool for the in-flight withdrawal batch's bundle")?;
         if in_mempool {
-            return Ok(WithdrawalTickOutcome::WaitingForConfirmation);
+            // Waiting -- for `mempool_replace_after`; past that the batch is replaced
+            // (`replace_in_mempool`, `docs/research/chain_service.md` §17.8), like the oracle's bundle.
+            return self.replace_in_mempool_if_due(queue, in_flight).await;
+        }
+
+        // Not in the mempool any more (or never): whatever kept it from being replaced is over.
+        let mut in_flight = in_flight;
+        if in_flight.replace_blocked.take().is_some() {
+            queue.in_flight = Some(in_flight.clone());
+            queue
+                .save_atomic(&self.data_dir, &self.operator_name)
+                .context("clearing a stale 'replacement blocked' note from the in-flight batch")?;
         }
 
         // Task fix (`docs/research/chain_service.md` §15): mirrors
@@ -620,11 +700,11 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             // (if any) is genuinely still free (task fix, `docs/research/
             // chain_service.md` §15): release it so a future batch can use
             // it instead of leaking the reservation forever.
-            if let Some(fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
-                self.fee_allocator.release(fee_coin.coin_id()).await;
+            for coin_id in in_flight.every_fee_coin() {
+                self.fee_allocator.release(coin_id).await;
             }
             for request in &in_flight.requests {
-                queue.failed.insert(request.request_id.clone(), reason.clone());
+                queue.record_failed(request, reason.clone());
             }
             queue.in_flight = None;
             queue
@@ -639,7 +719,6 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             .push_tx(in_flight.bundle.clone())
             .await
             .context("retrying push_tx for an in-flight withdrawal batch")?;
-        let mut in_flight = in_flight;
         in_flight.attempts += 1;
         in_flight.last_attempt_at_unix = now_unix();
         in_flight.last_push_accepted = outcome.accepted;
@@ -650,6 +729,426 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             .save_atomic(&self.data_dir, &self.operator_name)
             .context("persisting retried in-flight withdrawal batch")?;
         Ok(WithdrawalTickOutcome::Retried { accepted })
+    }
+
+    /// The treasury coin of the in-flight batch is consumed and the batch's own change coin is not on
+    /// chain: is the change coin of an EARLIER version of the batch? A version that pays other requests
+    /// leaves another change coin (its amount is the treasury's minus what that version pays), so the
+    /// coin that exists names the version the chain took. Newest version first; `None` when no version's
+    /// change coin exists (someone else spent the treasury coin, or the chain has not shown it yet).
+    async fn find_confirmed_earlier_version(
+        &self,
+        in_flight: &InFlightWithdrawalBatch,
+    ) -> Result<Option<(SupersededWithdrawalBatch, Option<u32>)>> {
+        for version in in_flight.superseded.iter().rev() {
+            let record = self
+                .chain
+                .coin_record(version.next_coin.coin_id())
+                .await
+                .context("checking whether an earlier version of the in-flight withdrawal batch confirmed")?;
+            if record.exists {
+                return Ok(Some((version.clone(), record.confirmed_height)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// An earlier version of the in-flight batch is what the chain took (its change coin exists, the
+    /// treasury coin is consumed): the latest version can never confirm. The requests that version paid
+    /// are paid -- each with its own payout coin, proof that the payout happened -- and the requests only
+    /// the latest version carried (merged from `pending` by a rebuild or a replacement) go back to the
+    /// front of `pending`: they were not paid, a later batch pays them, once. The treasury moves on to
+    /// that version's change coin (the lineage proof of the next treasury coin is the same for every
+    /// version: it describes the consumed coin, not the outputs) and every fee coin reserved for the
+    /// batch is released.
+    async fn settle_earlier_version(
+        &self,
+        queue: &mut WithdrawalQueueFile,
+        in_flight: InFlightWithdrawalBatch,
+        version: SupersededWithdrawalBatch,
+        height: Option<u32>,
+    ) -> Result<WithdrawalTickOutcome> {
+        let mut play_state = load_play_state(&self.data_dir, &self.operator_name)
+            .context("loading PLAY treasury state to settle an earlier version of a withdrawal batch")?;
+        play_state.coin = version.next_coin;
+        play_state.lineage_proof_dto = Proof::Lineage(in_flight.next_lineage_proof.into()).into();
+        save_play_state_atomic(&self.data_dir, &self.operator_name, &play_state)
+            .context("persisting the PLAY treasury advanced by an earlier version of the batch")?;
+
+        // Every request that version paid is paid -- wherever the queue has it now: in the latest batch,
+        // or back in `pending` (a replacement that the node did not take returned its merged requests
+        // there, and that replacement is exactly what the chain may still take).
+        let paid_ids: std::collections::HashSet<&str> = version.requests.iter().map(|r| r.request_id.as_str()).collect();
+        for (request, &payout_coin_id) in version.requests.iter().zip(&version.payout_coin_ids) {
+            queue.record_confirmed(request, payout_coin_id, height);
+        }
+        let confirmed = version.requests.len();
+        queue.pending.retain(|r| !paid_ids.contains(r.request_id.as_str()));
+        // The requests only the latest batch carried were not paid: they go back to the front of `pending`.
+        let requeued: Vec<WithdrawalRequest> = in_flight
+            .requests
+            .iter()
+            .filter(|r| !paid_ids.contains(r.request_id.as_str()) && !queue.pending.iter().any(|p| p.request_id == r.request_id))
+            .cloned()
+            .collect();
+        let requeued_count = requeued.len();
+        queue.pending.splice(0..0, requeued);
+        for coin_id in in_flight.every_fee_coin() {
+            self.fee_allocator.release(coin_id).await;
+        }
+        queue.in_flight = None;
+        queue
+            .save_atomic(&self.data_dir, &self.operator_name)
+            .context("clearing the in-flight withdrawal batch after an earlier version of it confirmed")?;
+        tracing::info!(
+            requests = confirmed,
+            requeued = requeued_count,
+            height = ?height,
+            fee_mojos = version.fee_mojos,
+            "play withdrawal batch confirmed (an earlier version of the in-flight batch was the one the chain took: \
+             the requests it did not carry are back in the queue and a later batch pays them, docs/research/chain_service.md §17.8)"
+        );
+        Ok(WithdrawalTickOutcome::ConfirmedEarlierVersion { confirmed, requeued: requeued_count })
+    }
+
+    /// The in-flight batch is in the node's mempool: replace it once it has waited
+    /// `mempool_replace_after` since this publisher last acted on it (`last_attempt_at_unix`).
+    async fn replace_in_mempool_if_due(
+        &self,
+        queue: &mut WithdrawalQueueFile,
+        in_flight: InFlightWithdrawalBatch,
+    ) -> Result<WithdrawalTickOutcome> {
+        if self.mempool_replace_after.is_zero() {
+            return Ok(WithdrawalTickOutcome::WaitingForConfirmation);
+        }
+        let waited = now_unix() - in_flight.last_attempt_at_unix;
+        if waited < i64::try_from(self.mempool_replace_after.as_secs()).unwrap_or(i64::MAX) {
+            return Ok(WithdrawalTickOutcome::WaitingForConfirmation);
+        }
+        self.replace_in_mempool(queue, in_flight).await
+    }
+
+    /// The replacement could not be made: say so on the batch that stays in flight and restart the wait.
+    fn block_replacement(
+        &self,
+        queue: &mut WithdrawalQueueFile,
+        mut in_flight: InFlightWithdrawalBatch,
+        reason: String,
+    ) -> Result<WithdrawalTickOutcome> {
+        tracing::warn!(
+            bundle_id = %in_flight.bundle_id,
+            fee_mojos = in_flight.fee_mojos,
+            %reason,
+            "in-flight withdrawal batch has waited in the mempool past C2_MEMPOOL_REPLACE_AFTER_SECS but cannot be \
+             replaced -- it keeps waiting"
+        );
+        in_flight.replace_blocked = Some(reason.clone());
+        in_flight.last_attempt_at_unix = now_unix();
+        queue.in_flight = Some(in_flight);
+        queue
+            .save_atomic(&self.data_dir, &self.operator_name)
+            .context("persisting the 'replacement blocked' note on the in-flight batch")?;
+        Ok(WithdrawalTickOutcome::ReplacementBlocked { reason })
+    }
+
+    /// Replaces the in-flight batch, which the node holds in its mempool but does not confirm, with a
+    /// batch that the node's replacement rule accepts (`mempool_rule.rs`, §17.3) -- the withdrawal
+    /// counterpart of `oracle::publisher::Publisher::replace_in_mempool`, with the same persistence and
+    /// failure handling (made durable before the push; a refused or parked replacement is undone: the
+    /// old batch is the in-flight one again, the merged requests are back in `pending`, a fee coin
+    /// reserved for the replacement alone is released).
+    ///
+    /// **Why this cannot pay anyone twice or lose a payout** (§17.8): both batches spend the same
+    /// treasury CAT coin, so the chain confirms at most one. Which one is read off the chain -- each
+    /// version's treasury change coin is unique to what it pays -- never assumed: the latest version
+    /// confirmed when ITS change coin exists (`advance_in_flight`); an earlier one when its change coin
+    /// exists (`settle_earlier_version`). Requests the winning version paid are confirmed with their own
+    /// payout coin; requests it did not pay return to `pending`.
+    async fn replace_in_mempool(
+        &self,
+        queue: &mut WithdrawalQueueFile,
+        in_flight: InFlightWithdrawalBatch,
+    ) -> Result<WithdrawalTickOutcome> {
+        let (owner, treasury) = self.load_treasury_cat()?;
+        if treasury.coin != in_flight.spent_coin {
+            bail!(
+                "PLAY treasury coin {} no longer matches the in-flight withdrawal batch's coin {} -- \
+                 refusing to replace (needs manual reconciliation)",
+                treasury.coin.coin_id(),
+                in_flight.spent_coin.coin_id()
+            );
+        }
+        let master_sk = load_operator_master_sk(&self.data_dir, &self.operator_name).context("loading operator master key")?;
+
+        let old_fee = in_flight.fee_mojos;
+        let old_cost = measure_bundle_cost(&in_flight.bundle.coin_spends)
+            .context("measuring the in-mempool withdrawal batch's cost")?
+            .total_cost;
+        let minimum_by_increase = old_fee.saturating_add(MEMPOOL_MIN_FEE_INCREASE);
+        if minimum_by_increase > self.max_fee_mojos {
+            return self.block_replacement(
+                queue,
+                in_flight,
+                format!(
+                    "the node accepts a replacement only if it pays at least {MEMPOOL_MIN_FEE_INCREASE} mojos more than the \
+                     bundle it replaces ({old_fee} mojos): {minimum_by_increase} mojos, and C2_MAX_FEE_MOJOS is {} mojos",
+                    self.max_fee_mojos
+                ),
+            );
+        }
+
+        // The newly pending requests ride along, like in `rebuild_in_flight` ...
+        let mut requests = in_flight.requests.clone();
+        let room = MAX_WITHDRAWALS_PER_SPEND.saturating_sub(requests.len());
+        let mut merged: Vec<WithdrawalRequest> = if room > 0 { queue.take_batch(room) } else { Vec::new() };
+        requests.extend(merged.iter().cloned());
+
+        // ... unless the merged batch cannot be built (more than the treasury coin holds, say): then the
+        // same requests are replaced, and the merged ones wait for a later batch.
+        let mut prepared = self
+            .prepare_replacement(&in_flight, &requests, treasury, &owner, &master_sk, old_cost)
+            .await;
+        if prepared.is_err() && !merged.is_empty() {
+            tracing::warn!("the merged replacement withdrawal batch could not be prepared -- replacing without the newly pending requests");
+            queue.pending.splice(0..0, std::mem::take(&mut merged));
+            requests = in_flight.requests.clone();
+            prepared = self.prepare_replacement(&in_flight, &requests, treasury, &owner, &master_sk, old_cost).await;
+        }
+        let ready = match prepared {
+            Ok(Prepared::Ready(ready)) => *ready,
+            Ok(Prepared::Blocked(reason)) => {
+                queue.pending.splice(0..0, merged);
+                return self.block_replacement(queue, in_flight, reason);
+            }
+            Ok(Prepared::FeeCoinsBusy) => {
+                queue.pending.splice(0..0, merged);
+                tracing::info!("not replacing the withdrawal batch in the mempool yet: the fee-coin split is holding the wallet's only fee coin");
+                return Ok(WithdrawalTickOutcome::WaitingForConfirmation);
+            }
+            Err(e) => {
+                queue.pending.splice(0..0, merged);
+                return Err(e);
+            }
+        };
+
+        let now = now_unix();
+        let mut superseded = in_flight.superseded.clone();
+        superseded.push(in_flight.as_superseded("replaced in the mempool", now));
+        let replacement = InFlightWithdrawalBatch {
+            requests,
+            payout_coin_ids: ready.payout_coin_ids,
+            spent_coin: treasury.coin,
+            next_coin: ready.next_coin,
+            next_lineage_proof: ready.next_lineage_proof,
+            bundle: ready.bundle.clone(),
+            bundle_id: ready.bundle_id,
+            fee_mojos: ready.fee_mojos,
+            broadcast_at_unix: now,
+            last_attempt_at_unix: now,
+            attempts: 1,
+            last_push_accepted: false,
+            last_push_error: None,
+            superseded,
+            replace_blocked: None,
+        };
+        let batch_len = replacement.requests.len();
+        let replacement_fee = replacement.fee_mojos;
+        queue.in_flight = Some(replacement);
+        // Durability first, same invariant as `start_new_batch`.
+        if let Err(e) = queue.save_atomic(&self.data_dir, &self.operator_name) {
+            if let Some(coin) = ready.newly_reserved {
+                self.fee_allocator.release(coin.coin_id()).await;
+            }
+            return Err(e.context("persisting the replacement in-flight withdrawal batch before broadcasting"));
+        }
+
+        let bundle_name = ready.bundle.name();
+        let pushed = self.chain.push_tx(ready.bundle).await.context("push_tx for the replacement withdrawal batch")?;
+        // `push_tx` answers success with `status: "PENDING"` for a bundle it parked in its conflict cache
+        // instead of replacing the old one (`mempool_rule.rs`): it has to be a `SUCCESS`, or the mempool
+        // has to say it holds the bundle.
+        let taken = pushed.accepted
+            && (pushed.status.as_deref() == Some("SUCCESS")
+                || self.chain.in_mempool(bundle_name).await.unwrap_or(false));
+
+        if taken {
+            if let Some(current) = queue.in_flight.as_mut() {
+                current.last_push_accepted = true;
+                current.last_push_error = None;
+            }
+            queue
+                .save_atomic(&self.data_dir, &self.operator_name)
+                .context("persisting the replacement's push outcome")?;
+            tracing::info!(
+                requests = batch_len,
+                fee_mojos = replacement_fee,
+                replaced_fee_mojos = old_fee,
+                waited_secs = now - in_flight.last_attempt_at_unix,
+                "replaced the play withdrawal batch that sat in the mempool"
+            );
+            return Ok(WithdrawalTickOutcome::Replaced {
+                requests: batch_len,
+                fee_mojos: replacement_fee,
+                replaced_fee_mojos: old_fee,
+            });
+        }
+
+        let detail = match (&pushed.error, &pushed.status) {
+            (Some(error), _) => error.clone(),
+            (None, Some(status)) => format!("status {status}"),
+            (None, None) => "no answer".to_string(),
+        };
+        if let Some(coin) = ready.newly_reserved {
+            self.fee_allocator.release(coin.coin_id()).await;
+        }
+        queue.pending.splice(0..0, merged);
+        // The replacement is not forgotten: the node may still hold it (parked in its conflict cache,
+        // retried at every new block) and another node may include it. Kept as a version of the batch that
+        // goes back in flight, so that if the chain takes it, the payouts it made are recognised.
+        let mut restored = in_flight;
+        if let Some(refused) = queue.in_flight.as_ref() {
+            restored.superseded.push(refused.as_superseded("replacement not taken by the node", now));
+        }
+        self.block_replacement(
+            queue,
+            restored,
+            format!("the node did not take the replacement bundle (fee {replacement_fee} mojos): {detail}"),
+        )
+    }
+
+    /// Builds the replacement bundle for `replace_in_mempool` (see the oracle publisher's
+    /// `prepare_replacement`, which this mirrors for a CAT spend): the draft treasury spend for
+    /// `requests` and a fee spend that satisfies the node's replacement rule -- the old batch's fee coin
+    /// kept, or a new one when it had none -- or the reason it cannot be made.
+    async fn prepare_replacement(
+        &self,
+        in_flight: &InFlightWithdrawalBatch,
+        requests: &[WithdrawalRequest],
+        treasury: chia_sdk_driver::Cat,
+        owner: &WalletKey,
+        master_sk: &SecretKey,
+        old_cost: u64,
+    ) -> Result<Prepared> {
+        let old_fee = in_flight.fee_mojos;
+        let cap = self.max_fee_mojos;
+        let minimum_by_increase = old_fee.saturating_add(MEMPOOL_MIN_FEE_INCREASE);
+
+        let draft = build_play_withdrawal_batch(treasury, owner, requests)
+            .context("building the replacement play withdrawal batch spend")?;
+        let draft_cost = measure_bundle_cost(&draft.coin_spends)
+            .context("measuring the replacement draft's cost")?
+            .total_cost;
+
+        let shorter_target = (self.fee_target_time_secs / 3).max(1);
+        let estimate = self
+            .fee_allocator
+            .fees()
+            .estimate(&self.chain, draft_cost, shorter_target, u64::MAX)
+            .await
+            .fee_mojos;
+        let wanted = old_fee.saturating_mul(2).max(estimate).max(minimum_by_increase);
+
+        let (payer, fee_coin, newly_reserved, ceiling) = match fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
+            Some(coin) => {
+                let Some(payer) = FeeCoinAllocator::owner_key_of(master_sk, &coin) else {
+                    return Ok(Prepared::Blocked(format!(
+                        "the old batch's fee coin {} is not one of this wallet's first {} addresses, so it cannot be \
+                         spent again, and the node only accepts a replacement that spends every coin the old bundle spends",
+                        coin.coin_id(),
+                        c2_cli::chain::ADDRESS_GAP
+                    )));
+                };
+                let record = self
+                    .chain
+                    .coin_record(coin.coin_id())
+                    .await
+                    .context("checking the old batch's fee coin before replacing the batch")?;
+                if record.spent {
+                    return Ok(Prepared::Blocked(format!(
+                        "the old batch's fee coin {} is already spent on chain: that batch cannot confirm and will \
+                         leave the mempool, a replacement that must spend the same coin is impossible",
+                        coin.coin_id()
+                    )));
+                }
+                let ceiling = cap.min(coin.amount);
+                if minimum_by_increase > ceiling {
+                    return Ok(Prepared::Blocked(format!(
+                        "the replacement must spend the old batch's fee coin ({} mojos) and pay at least \
+                         {minimum_by_increase} mojos, C2_MAX_FEE_MOJOS is {cap} mojos",
+                        coin.amount
+                    )));
+                }
+                (payer, coin, None, ceiling)
+            }
+            None => {
+                let (payer, coin) = match self.fee_allocator.reserve(&self.chain, master_sk, wanted.min(cap)).await {
+                    Ok(reserved) => reserved,
+                    Err(e) if e.downcast_ref::<FeeCoinsBusy>().is_some() => return Ok(Prepared::FeeCoinsBusy),
+                    Err(e) if e.downcast_ref::<NoFeeCoin>().is_some() => {
+                        return Ok(Prepared::Blocked(format!(
+                            "the old batch paid no fee coin and the wallet has no unspent, unreserved coin that can pay the \
+                             replacement's fee of up to {} mojos: {e:#}",
+                            wanted.min(cap)
+                        )));
+                    }
+                    Err(e) => return Err(e.context("no funding coin to pay the replacement withdrawal batch's fee with")),
+                };
+                let ceiling = cap.min(coin.amount);
+                (payer, coin, Some(coin), ceiling)
+            }
+        };
+
+        let release_on_exit = async |reserved: Option<Coin>| {
+            if let Some(coin) = reserved {
+                self.fee_allocator.release(coin.coin_id()).await;
+            }
+        };
+
+        let mut fee = wanted.min(ceiling);
+        for _ in 0..3 {
+            let fee_spend = match build_fee_only(fee_coin, &payer, fee) {
+                Ok(spend) => spend,
+                Err(e) => {
+                    release_on_exit(newly_reserved).await;
+                    return Err(e.context("building the replacement's fee-only coin spend"));
+                }
+            };
+            let mut coin_spends = draft.coin_spends.clone();
+            coin_spends.extend(fee_spend.coin_spends);
+            let new_cost = match measure_bundle_cost(&coin_spends) {
+                Ok(cost) => cost.total_cost,
+                Err(e) => {
+                    release_on_exit(newly_reserved).await;
+                    return Err(e.context("measuring the replacement bundle's cost"));
+                }
+            };
+            let required = required_replacement_fee(old_fee, old_cost, new_cost);
+            if fee >= required {
+                let signature = draft.signature.clone() + &fee_spend.signature;
+                let bundle_id = bundle_display_id(&signature);
+                return Ok(Prepared::Ready(Box::new(ReplacementBatch {
+                    bundle: SpendBundle::new(coin_spends, signature),
+                    bundle_id,
+                    fee_mojos: fee,
+                    next_coin: draft.next_coin,
+                    next_lineage_proof: draft.next_lineage_proof.into(),
+                    payout_coin_ids: draft.payout_coin_ids,
+                    newly_reserved,
+                })));
+            }
+            if required > ceiling {
+                release_on_exit(newly_reserved).await;
+                return Ok(Prepared::Blocked(format!(
+                    "the node's replacement rule needs this bundle (cost {new_cost}) to pay at least {required} mojos -- more than \
+                     the {old_fee} mojos of the bundle it replaces (cost {old_cost}) plus {MEMPOOL_MIN_FEE_INCREASE}, and a higher \
+                     fee per cost -- but it may pay at most {ceiling} mojos (C2_MAX_FEE_MOJOS {cap}, fee coin {} mojos)",
+                    fee_coin.amount
+                )));
+            }
+            fee = required;
+        }
+        release_on_exit(newly_reserved).await;
+        Ok(Prepared::Blocked("the replacement's fee did not settle after three rounds".to_string()))
     }
 
     /// Rebuilds the in-flight batch's requests (plus any newly queued ones,
@@ -693,13 +1192,14 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
         let draft_cost = measure_bundle_cost(&draft.coin_spends).context("measuring rebuilt draft spend cost")?;
 
         let shorter_target = (self.fee_target_time_secs / 3).max(1);
-        let chain_estimate = match self.chain.fee_estimate_mojos(draft_cost.total_cost, shorter_target).await {
-            Ok(fee) => fee,
-            Err(e) => {
-                tracing::warn!("get_fee_estimate failed while rebuilding a rejected withdrawal batch, falling back to 0: {e:#}");
-                0
-            }
-        };
+        // A failed or zero estimate is the fallback rate (`fee_estimate.rs`, §17.2), never 0 -- same
+        // rule as the oracle publisher's rebuild.
+        let chain_estimate = self
+            .fee_allocator
+            .fees()
+            .estimate(&self.chain, draft_cost.total_cost, shorter_target, u64::MAX)
+            .await
+            .fee_mojos;
         let fee_mojos = in_flight.fee_mojos.saturating_mul(2).max(chain_estimate).max(1).min(self.max_fee_mojos);
 
         let (coin_spends, signature) = self.attach_fee_coin(draft.coin_spends, draft.signature, fee_mojos).await?;
@@ -721,6 +1221,13 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             attempts: 1,
             last_push_accepted: false,
             last_push_error: None,
+            // The batch this one replaces stays on record: the chain decides which version confirms.
+            superseded: {
+                let mut versions = in_flight.superseded.clone();
+                versions.push(in_flight.as_superseded("rebuilt after a rejection", now));
+                versions
+            },
+            replace_blocked: None,
         });
         queue
             .save_atomic(&self.data_dir, &self.operator_name)
@@ -767,23 +1274,16 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
         let draft = build_play_withdrawal_batch(treasury, &owner, &batch).context("building play withdrawal batch spend")?;
         let draft_cost = measure_bundle_cost(&draft.coin_spends).context("measuring draft spend cost")?;
 
-        let fee_mojos = match self.chain.fee_estimate_mojos(draft_cost.total_cost, self.fee_target_time_secs).await {
-            // Capped at `C2_MAX_FEE_MOJOS` from the first attempt on, like every rebuild (the oracle
-            // publisher does the same).
-            Ok(fee) if fee > self.max_fee_mojos => {
-                tracing::warn!(
-                    estimate = fee,
-                    cap = self.max_fee_mojos,
-                    "get_fee_estimate is above C2_MAX_FEE_MOJOS -- capping the first attempt's fee"
-                );
-                self.max_fee_mojos
-            }
-            Ok(fee) => fee,
-            Err(e) => {
-                tracing::warn!("get_fee_estimate failed, falling back to fee=0: {e:#}");
-                0
-            }
-        };
+        // The estimate; when `get_fee_estimate` fails or answers 0 the fallback rate -- never a
+        // withdrawal batch for nothing because the estimate was unavailable (`fee_estimate.rs`,
+        // `docs/research/chain_service.md` §17.2). Capped at `C2_MAX_FEE_MOJOS` from the first
+        // attempt on, like every rebuild (the oracle publisher does the same).
+        let fee_mojos = self
+            .fee_allocator
+            .fees()
+            .estimate(&self.chain, draft_cost.total_cost, self.fee_target_time_secs, self.max_fee_mojos)
+            .await
+            .fee_mojos;
 
         if !self.push_enabled {
             tracing::info!(
@@ -825,6 +1325,8 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             attempts: 1,
             last_push_accepted: false,
             last_push_error: None,
+            superseded: Vec::new(),
+            replace_blocked: None,
         });
         queue
             .save_atomic(&self.data_dir, &self.operator_name)

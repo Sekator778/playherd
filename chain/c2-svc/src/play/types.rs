@@ -62,6 +62,74 @@ pub struct WithdrawalAcceptedResponse {
     pub accepted: bool,
 }
 
+/// Why `POST /v1/play/withdrawals` refused a `requestId` this service already holds
+/// (`docs/research/chain_service.md` §17.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictKind {
+    /// The id is held with a recipient or an amount other than the ones now submitted.
+    DifferentContent,
+    /// The id is held (confirmed or failed) but the recipient and the amount were not recorded:
+    /// the entry predates content tracking, so a repeat of that withdrawal cannot be told from a
+    /// different withdrawal reusing the id. Refused, never answered with the old entry's status.
+    ContentNotRecorded,
+}
+
+/// A `requestId` that this service holds -- queued, in flight, confirmed or failed -- was submitted
+/// again with a different recipient or amount (or with no way to tell). Never the old request's
+/// status: a payout that the server believes happened must have happened for *its* request.
+/// `app.rs` answers it with HTTP 409 and a `WithdrawalConflictResponse`.
+///
+/// The same `requestId` with the same recipient and amount is a repeat and stays idempotent
+/// (`WithdrawalQueueFile::enqueue` returns `Ok(false)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestIdConflict {
+    pub request_id: String,
+    pub kind: ConflictKind,
+}
+
+impl std::fmt::Display for RequestIdConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            ConflictKind::DifferentContent => write!(
+                f,
+                "requestId {} is already held by this service with a different recipient or amount; a requestId \
+                 identifies exactly one withdrawal -- submit a new requestId for a new withdrawal",
+                self.request_id
+            ),
+            ConflictKind::ContentNotRecorded => write!(
+                f,
+                "requestId {} is already held by this service, but its recipient and amount were not recorded \
+                 (the entry predates content tracking), so this service cannot tell a repeat of that withdrawal \
+                 from a different withdrawal reusing the id -- submit a new requestId",
+                self.request_id
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RequestIdConflict {}
+
+/// The `code` of a `WithdrawalConflictResponse`.
+pub const REQUEST_ID_CONFLICT_CODE: &str = "request_id_conflict";
+
+/// `POST /v1/play/withdrawals` -> HTTP 409 body for a `RequestIdConflict`. A superset of the plain
+/// `{"error": "..."}` every other refusal of this service has: `code` is stable and meant for a
+/// program, `error` for a person, `requestId` is the id that was refused. Deliberately carries
+/// nothing about the withdrawal the id belongs to.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WithdrawalConflictResponse {
+    pub error: String,
+    pub code: &'static str,
+    pub request_id: String,
+}
+
+impl From<&RequestIdConflict> for WithdrawalConflictResponse {
+    fn from(conflict: &RequestIdConflict) -> Self {
+        Self { error: conflict.to_string(), code: REQUEST_ID_CONFLICT_CODE, request_id: conflict.request_id.clone() }
+    }
+}
+
 /// `GET /v1/play/withdrawals/{requestId}`.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

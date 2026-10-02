@@ -9,7 +9,11 @@
 use std::net::IpAddr;
 use std::path::PathBuf;
 
+use crate::fee_estimate::DEFAULT_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST;
 use crate::fee_reserve::FeeCoinPolicy;
+
+/// `C2_MEMPOOL_REPLACE_AFTER_SECS`'s default (`Config::mempool_replace_after`).
+pub const DEFAULT_MEMPOOL_REPLACE_AFTER_SECS: u64 = 180;
 
 /// `C2_PUSH=0` (or `--dry-run` on the CLI, see `main.rs`) disables every
 /// real chain write this service would otherwise make: `push_tx` is never
@@ -72,6 +76,20 @@ pub struct Config {
     /// 3 000 000 mojos at cost≈38.7M) while still bounding the operator's
     /// TXCH spend if the mempool is congested indefinitely.
     pub max_fee_mojos: u64,
+    /// The rate a spend is priced at when `get_fee_estimate` fails or answers 0 and no estimate has
+    /// succeeded yet in this process (afterwards the last successful estimate's rate is used,
+    /// `fee_estimate.rs`), in **millimojos per unit of cost** -- an integer, so 100 means 0.1 mojo
+    /// per cost. `C2_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST`, **предложение** default 100 (derived
+    /// from the numbers of 2026-10-02, `docs/research/chain_service.md` §17.2); 0 = no floor. The
+    /// result is capped at `max_fee_mojos` like every other fee.
+    pub fallback_fee_rate_millimojos_per_cost: u64,
+    /// How long an in-flight bundle may sit in the node's mempool, unconfirmed, before the
+    /// publisher replaces it with one that pays more (`Publisher::replace_in_mempool`,
+    /// `docs/research/chain_service.md` §17.3). `C2_MEMPOOL_REPLACE_AFTER_SECS`, **предложение**
+    /// default 180 s: a healthy batch took about two minutes on 2026-10-02, and 180 s is also the
+    /// cadence at which the server queues records, so at most one more batch waits behind a slow
+    /// one. 0 turns the replacement off (a bundle in the mempool is then left alone, as before).
+    pub mempool_replace_after: std::time::Duration,
     /// N consecutive `tick()` failures before `GET /v1/oracle/status`'s
     /// `stuckReason` and `GET /health` report degraded (task fix,
     /// `docs/research/chain_service.md` §12: "any repeated tick failure (N
@@ -112,6 +130,13 @@ pub struct Config {
     /// enumerated bind list, not "every interface", is the point of this
     /// variable existing at all.
     pub bind_addrs: Vec<IpAddr>,
+}
+
+/// An environment value parsed as `T`, or `default` when it is absent or not a valid `T`. Pure
+/// and env-independent for the same reason `parse_bind_addrs` is (`tests/config.rs`-style unit
+/// tests without mutating process-wide variables).
+pub fn parse_or<T: std::str::FromStr>(raw: Option<&str>, default: T) -> T {
+    raw.and_then(|v| v.trim().parse().ok()).unwrap_or(default)
 }
 
 /// Parses `C2_BIND_ADDR`'s comma-separated address list. Pure and
@@ -166,6 +191,14 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(50_000_000);
+        let fallback_fee_rate_millimojos_per_cost = parse_or(
+            std::env::var("C2_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST").ok().as_deref(),
+            DEFAULT_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST,
+        );
+        let mempool_replace_after = std::time::Duration::from_secs(parse_or(
+            std::env::var("C2_MEMPOOL_REPLACE_AFTER_SECS").ok().as_deref(),
+            DEFAULT_MEMPOOL_REPLACE_AFTER_SECS,
+        ));
         let tick_failure_threshold = std::env::var("C2_TICK_FAILURE_THRESHOLD")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -193,6 +226,8 @@ impl Config {
             retry_backoff: std::time::Duration::from_secs(45),
             max_retry_attempts: 8,
             max_fee_mojos,
+            fallback_fee_rate_millimojos_per_cost,
+            mempool_replace_after,
             tick_failure_threshold,
             fee_coins_min,
             fee_coin_mojos,
@@ -215,6 +250,23 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_new_settings_default_to_a_tenth_of_a_mojo_per_cost_and_three_minutes() {
+        assert_eq!(parse_or(None, DEFAULT_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST), 100);
+        assert_eq!(parse_or(None, DEFAULT_MEMPOOL_REPLACE_AFTER_SECS), 180);
+    }
+
+    #[test]
+    fn parse_or_takes_a_valid_value_including_zero_and_falls_back_on_anything_else() {
+        assert_eq!(parse_or(Some("250"), 100u64), 250);
+        assert_eq!(parse_or(Some(" 7 "), 100u64), 7, "surrounding whitespace is ignored");
+        assert_eq!(parse_or(Some("0"), 100u64), 0, "0 is a real setting (no floor / replacement off), not 'unset'");
+        assert_eq!(parse_or(Some("lots"), 100u64), 100);
+        assert_eq!(parse_or(Some("-5"), 100u64), 100);
+        assert_eq!(parse_or(Some(""), 100u64), 100);
+        assert_eq!(parse_or(None, 100u64), 100);
+    }
 
     #[test]
     fn parses_single_default_address() {

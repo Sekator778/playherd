@@ -51,28 +51,62 @@
 
 use std::collections::HashSet;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use chia_bls::SecretKey;
 use chia_protocol::{Bytes32, Coin, SpendBundle};
 
-use c2_cli::keys::WalletKey;
+use c2_cli::keys::{WalletKey, derive_wallet_key};
 
+use crate::fee_estimate::FeeEstimator;
 use crate::fee_reserve::{FeeCoinPolicy, FeeCoinView, FeeCoinsBusy, ReserveState};
 use crate::oracle::chain_client::ChainClient;
 
 /// In-process (not persisted -- see module doc) set of fee coin ids
 /// currently backing some publisher's not-yet-confirmed in-flight bundle,
-/// plus the fee-coin reserve's own in-memory state (`fee_reserve.rs`).
+/// plus the fee-coin reserve's own in-memory state (`fee_reserve.rs`) and the
+/// fee rule every caller shares (`fee_estimate.rs`: what to pay when
+/// `get_fee_estimate` cannot be trusted).
 #[derive(Debug, Default)]
 pub struct FeeCoinAllocator {
     pub(crate) reserved: tokio::sync::Mutex<HashSet<Bytes32>>,
     pub(crate) policy: FeeCoinPolicy,
     pub(crate) reserve_state: std::sync::Mutex<ReserveState>,
+    pub(crate) fees: FeeEstimator,
 }
+
+/// Returned (as the root cause of an `anyhow::Error`) by `FeeCoinAllocator::reserve` when the
+/// wallet really has no unspent, unreserved coin of the size asked for -- not because the
+/// fee-coin split holds it (that is `FeeCoinsBusy`) and not because the wallet could not be read
+/// (any other error). A caller that can carry on without a new coin (the replacement of an
+/// in-mempool bundle, `Publisher::replace_in_mempool`) recognises it and says so instead of
+/// failing its tick. Displays exactly the message `reserve` has always produced.
+#[derive(Debug)]
+pub struct NoFeeCoin {
+    pub min_amount: u64,
+    /// How many coins were being held by in-flight spends elsewhere in this process.
+    pub reserved: usize,
+}
+
+impl std::fmt::Display for NoFeeCoin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "no unspent, unreserved coin with amount >= {} mojos found in addresses 0..{} \
+             (excluding {} coin(s) already reserved by an in-flight spend elsewhere in this process); \
+             fund the wallet from https://testnet11-faucet.chia.net/ first, or wait for the in-flight \
+             spend(s) to confirm",
+            self.min_amount,
+            c2_cli::chain::ADDRESS_GAP,
+            self.reserved
+        )
+    }
+}
+
+impl std::error::Error for NoFeeCoin {}
 
 impl FeeCoinAllocator {
     /// An allocator with the default reserve policy (`FeeCoinPolicy::default`:
-    /// 4 coins of 200,000,000 mojos).
+    /// 4 coins of 200,000,000 mojos) and the default fallback fee floor.
     pub fn new() -> Self {
         Self::default()
     }
@@ -81,6 +115,28 @@ impl FeeCoinAllocator {
     /// `C2_FEE_COINS_MIN` / `C2_FEE_COIN_MOJOS`).
     pub fn with_policy(policy: FeeCoinPolicy) -> Self {
         Self { policy, ..Self::default() }
+    }
+
+    /// The same allocator with a different floor for the fee that replaces a failed
+    /// `get_fee_estimate` (`C2_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST`, millimojos per unit of
+    /// cost; 0 = no floor).
+    pub fn with_fallback_fee_rate(mut self, millimojos_per_cost: u64) -> Self {
+        self.fees = FeeEstimator::new(millimojos_per_cost);
+        self
+    }
+
+    /// The fee rule every publisher and the fee-coin split share (`fee_estimate.rs`).
+    pub fn fees(&self) -> &FeeEstimator {
+        &self.fees
+    }
+
+    /// The wallet key that owns `coin`, found by deriving the operator's first
+    /// `ADDRESS_GAP` addresses and comparing puzzle hashes -- no chain call. `None` when the coin
+    /// does not belong to this wallet (or sits beyond the gap the wallet scan covers).
+    pub fn owner_key_of(master_sk: &SecretKey, coin: &Coin) -> Option<WalletKey> {
+        (0..c2_cli::chain::ADDRESS_GAP)
+            .map(|index| derive_wallet_key(master_sk, index))
+            .find(|key| key.puzzle_hash == coin.puzzle_hash)
     }
 
     /// Picks and reserves the unspent coin that fits best: the smallest one that
@@ -115,14 +171,7 @@ impl FeeCoinAllocator {
             if self.split_in_flight() {
                 return Err(FeeCoinsBusy.into());
             }
-            return Err(anyhow!(
-                "no unspent, unreserved coin with amount >= {min_amount} mojos found in addresses 0..{} \
-                 (excluding {} coin(s) already reserved by an in-flight spend elsewhere in this process); \
-                 fund the wallet from https://testnet11-faucet.chia.net/ first, or wait for the in-flight \
-                 spend(s) to confirm",
-                c2_cli::chain::ADDRESS_GAP,
-                reserved.len()
-            ));
+            return Err(NoFeeCoin { min_amount, reserved: reserved.len() }.into());
         };
         let (wallet_key, coin) = coins.swap_remove(best);
         reserved.insert(coin.coin_id());

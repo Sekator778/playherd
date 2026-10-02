@@ -25,8 +25,8 @@ use crate::oracle::types::{
 use crate::play::chain_client::PlayChainClient;
 use crate::play::deposit::DepositService;
 use crate::play::types::{
-    DepositAddressRequestDto, DepositAddressResponse, DepositsResponse, WithdrawalAcceptedResponse,
-    WithdrawalRequest, WithdrawalRequestDto, WithdrawalStatusResponse,
+    DepositAddressRequestDto, DepositAddressResponse, DepositsResponse, RequestIdConflict, WithdrawalAcceptedResponse,
+    WithdrawalConflictResponse, WithdrawalRequest, WithdrawalRequestDto, WithdrawalStatusResponse,
 };
 use crate::play::withdrawal_publisher::WithdrawalPublisher;
 use crate::service_auth::{SvcTokenState, require_bearer_token};
@@ -208,13 +208,47 @@ async fn oracle_status<C: ChainClient>(
 
 // --- PLAY withdraw/deposit (Р-6, decision Р-53 2026-09-26) ------------------
 
+/// What `POST /v1/play/withdrawals` can refuse with: the plain `{"error": ...}` of every other
+/// route, or -- a `requestId` this service already holds with a different recipient or amount --
+/// HTTP 409 with a `WithdrawalConflictResponse` (`docs/research/chain_service.md` §17.6).
+enum WithdrawalSubmitError {
+    App(AppError),
+    Conflict(WithdrawalConflictResponse),
+}
+
+impl IntoResponse for WithdrawalSubmitError {
+    fn into_response(self) -> Response {
+        match self {
+            WithdrawalSubmitError::App(e) => e.into_response(),
+            WithdrawalSubmitError::Conflict(body) => (StatusCode::CONFLICT, Json(body)).into_response(),
+        }
+    }
+}
+
+impl From<AppError> for WithdrawalSubmitError {
+    fn from(e: AppError) -> Self {
+        WithdrawalSubmitError::App(e)
+    }
+}
+
+impl From<anyhow::Error> for WithdrawalSubmitError {
+    fn from(e: anyhow::Error) -> Self {
+        match e.downcast_ref::<RequestIdConflict>() {
+            Some(conflict) => WithdrawalSubmitError::Conflict(WithdrawalConflictResponse::from(conflict)),
+            None => WithdrawalSubmitError::App(AppError::from(e)),
+        }
+    }
+}
+
 /// `POST /v1/play/withdrawals` -> `202 {accepted: true}` (idempotent by
-/// `requestId`, task's FIXED INTERFACE). Validates `toAddress`/`amountMojos`
-/// here (400 on failure), same split `oracle_records` uses for its own DTOs.
+/// `requestId` *and content*, task's FIXED INTERFACE: the same `requestId` with the same
+/// recipient and amount is a repeat; with a different recipient or amount it is `409
+/// {error, code: "request_id_conflict", requestId}` -- never the old request's status). Validates
+/// `toAddress`/`amountMojos` here (400 on failure), same split `oracle_records` uses for its own DTOs.
 async fn play_withdrawals<C: PlayChainClient>(
     State(state): State<PlayState<C>>,
     Json(req): Json<WithdrawalRequestDto>,
-) -> Result<(StatusCode, Json<WithdrawalAcceptedResponse>), AppError> {
+) -> Result<(StatusCode, Json<WithdrawalAcceptedResponse>), WithdrawalSubmitError> {
     let request = WithdrawalRequest::from_dto(&req).map_err(|reason| AppError(StatusCode::BAD_REQUEST, reason))?;
     state.withdrawals.enqueue(request).await?;
     Ok((StatusCode::ACCEPTED, Json(WithdrawalAcceptedResponse { accepted: true })))

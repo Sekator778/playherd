@@ -14,12 +14,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use c2_cli::state::ProofDto;
-use chia_protocol::{Coin, SpendBundle};
+use chia_protocol::{Bytes32, Coin, SpendBundle};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic_file::{read_json_or_default, write_json_atomic};
+use crate::fee_allocator::fee_coin_of;
 
-use super::lineage::LineageWalkOutcome;
+use super::lineage::{LineageWalkOutcome, WalkedGeneration};
 use super::types::OracleRecord;
 
 /// One record's on-chain confirmation (`GET /v1/oracle/records/{seq}`,
@@ -80,6 +81,30 @@ pub struct ConflictInfo {
     pub chain_coin_id: String,
 }
 
+/// An earlier version of the in-flight bundle: a bundle for the *same singleton coin* that the
+/// publisher replaced (in the mempool, `Publisher::replace_in_mempool`) or rebuilt (after a
+/// rejection, `Publisher::rebuild_in_flight`) with a later one. Only one bundle can spend a coin,
+/// so at most one version ever confirms -- but which one is for the chain to say, and an earlier
+/// version can still win (another node's mempool may hold it; the replacement may have been
+/// rejected). The publisher keeps what it needs to account for either outcome: the seqs the
+/// version carried (which version won is read off the chain's announcements), its fee (for the
+/// log line), and the fee coin it spent (so a coin reserved for a version that lost is released).
+/// `docs/research/chain_service.md` §17.4.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SupersededBundle {
+    /// `SpendBundle::name()` of that version (the node's own id for it).
+    pub bundle_name: Bytes32,
+    pub fee_mojos: u64,
+    /// The `seq` of every record that version announces, ascending.
+    pub record_seqs: Vec<u64>,
+    /// Id of the fee coin that version spent, if it had one.
+    #[serde(default)]
+    pub fee_coin: Option<Bytes32>,
+    pub superseded_at_unix: i64,
+    /// `"replaced in the mempool"` or `"rebuilt after a rejection"`.
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InFlightSpend {
     /// Records this spend announces, ascending by `seq` (see
@@ -108,6 +133,74 @@ pub struct InFlightSpend {
     pub attempts: u32,
     pub last_push_accepted: bool,
     pub last_push_error: Option<String>,
+    /// Earlier versions of this bundle, oldest first -- empty for a bundle that was never replaced
+    /// or rebuilt. `#[serde(default)]`: a queue file written before this field existed has none.
+    #[serde(default)]
+    pub superseded: Vec<SupersededBundle>,
+    /// Why this bundle, which sits in the mempool past `C2_MEMPOOL_REPLACE_AFTER_SECS`, could not
+    /// be replaced (the fee cap leaves no valid replacement, the fee coin is too small, the node
+    /// refused the replacement, ...). Set and cleared by the publisher only; `Some` is what
+    /// `GET /v1/oracle/status`'s `stuckReason` reports while the bundle keeps waiting.
+    /// `#[serde(default)]` as above.
+    #[serde(default)]
+    pub replace_blocked: Option<String>,
+}
+
+impl InFlightSpend {
+    /// The `seq` of every record this bundle announces, ascending.
+    pub fn record_seqs(&self) -> Vec<u64> {
+        let mut seqs: Vec<u64> = self.records.iter().map(|r| r.seq).collect();
+        seqs.sort_unstable();
+        seqs
+    }
+
+    /// This version as a `SupersededBundle`, for the bundle that replaces it to carry.
+    pub fn as_superseded(&self, reason: &str, now_unix: i64) -> SupersededBundle {
+        SupersededBundle {
+            bundle_name: self.bundle.name(),
+            fee_mojos: self.fee_mojos,
+            record_seqs: self.record_seqs(),
+            fee_coin: fee_coin_of(&self.bundle, self.spent_coin).map(|coin| coin.coin_id()),
+            superseded_at_unix: now_unix,
+            reason: reason.to_string(),
+        }
+    }
+
+    /// Ids of the fee coins this version and every earlier one spent -- all of them are released
+    /// once the singleton coin is consumed, whichever version that was (releasing is idempotent).
+    pub fn every_fee_coin(&self) -> Vec<Bytes32> {
+        let mut coins: Vec<Bytes32> = fee_coin_of(&self.bundle, self.spent_coin).map(|c| c.coin_id()).into_iter().collect();
+        coins.extend(self.superseded.iter().filter_map(|version| version.fee_coin));
+        coins.sort_unstable();
+        coins.dedup();
+        coins
+    }
+
+    /// The fee of the version that the chain says confirmed: the one whose record set is exactly
+    /// what the spend announced. `None` when no version matches (a foreign spend, or the spend
+    /// carried a subset that no version had) and when versions with different fees carry exactly
+    /// the same records -- the announcements cannot tell them apart, and the log says nothing
+    /// rather than the fee of the wrong one.
+    pub fn fee_of_version_announcing(&self, announced: &[u64]) -> Option<u64> {
+        let mut wanted = announced.to_vec();
+        wanted.sort_unstable();
+        wanted.dedup();
+        let mut fees: Vec<u64> = self
+            .superseded
+            .iter()
+            .filter(|version| version.record_seqs == wanted)
+            .map(|version| version.fee_mojos)
+            .collect();
+        if self.record_seqs() == wanted {
+            fees.push(self.fee_mojos);
+        }
+        fees.sort_unstable();
+        fees.dedup();
+        match fees.as_slice() {
+            [fee] => Some(*fee),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -177,6 +270,43 @@ pub struct ReconcileOutcome {
     /// adopting a chain tip saves `operator.oracle.json`, a separate file,
     /// unconditionally and immediately, not gated on this outcome at all).
     pub adopted_stale_coin: Option<Coin>,
+    /// Set when the chain walk found the spend that consumed the in-flight bundle's singleton coin
+    /// (the bundle can never confirm any more -- the coin is gone) and its announcements could be
+    /// read: what became of each in-flight record, and whether the spend was ours. The
+    /// in-flight spend is already cleared in `QueueFile` when this is `Some`; the publisher
+    /// finishes the job (oracle state, fee coin, log line).
+    pub resolved_in_flight: Option<ResolvedInFlight>,
+    /// The spend that consumed the in-flight bundle's singleton coin was found but could not be
+    /// read completely (`WalkedGeneration::announced == None`): the in-flight spend was left
+    /// alone and the scan checkpoint held back at that coin, so the next scan reads it again.
+    pub in_flight_unreadable: bool,
+}
+
+/// What the chain says became of the in-flight bundle, once the walk found the spend that consumed
+/// its singleton coin. The records of the bundle -- whichever version of it (`SupersededBundle`)
+/// was the one the chain took, or none of them -- are accounted for from the chain's own
+/// announcements: a record the spend announced is confirmed, a record the spend did not announce
+/// goes back to `pending` and a later batch publishes it. Never "all records confirmed because the
+/// singleton advanced" (`docs/research/chain_service.md` §17.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedInFlight {
+    /// In-flight records the chain confirms, identical, now in `confirmed`.
+    pub confirmed: Vec<u64>,
+    /// In-flight records the consuming spend did not announce and the chain has nowhere else:
+    /// back in `pending`.
+    pub requeued: Vec<u64>,
+    /// In-flight records the chain has with different content: now in `conflicts`.
+    pub conflicts: Vec<u64>,
+    /// Every seq the consuming spend announced.
+    pub announced: Vec<u64>,
+    /// The spend announced at least one record and every one of them is a record this queue holds
+    /// -- in the in-flight bundle or pending -- identical: it was this service's bundle (this
+    /// version, an earlier one, or a replacement that was refused). `false`: someone else spent
+    /// the singleton.
+    pub ours: bool,
+    pub height: Option<u32>,
+    /// The singleton coin the spend recreated.
+    pub next_coin: Coin,
 }
 
 impl ReconcileOutcome {
@@ -311,10 +441,17 @@ impl QueueFile {
     ///
     /// `pending` is reconciled unconditionally -- this is exactly what this
     /// incident republished (a stale/race-corrupted queue file's `pending`
-    /// holding records the chain already had). `in_flight` is reconciled
-    /// defensively: only fully cleared when *every* one of its records is
-    /// already confirmed identically on chain (nothing left to broadcast or
-    /// wait for); a partial or outright conflicting match is surfaced via
+    /// holding records the chain already had). `in_flight` is reconciled in
+    /// two ways. When the walk passed through the spend that consumed the
+    /// in-flight bundle's singleton coin the bundle is finished whatever it
+    /// was (our own bundle or an earlier version of it, §17.4; someone
+    /// else's spend): every record is accounted for from the chain's
+    /// announcements and the in-flight spend is cleared
+    /// (`resolve_consumed_in_flight`). When the coin is still unspent the
+    /// original defensive rule applies (`reconcile_unconsumed_in_flight`):
+    /// only fully cleared when *every* one of its records is already
+    /// confirmed identically on chain (nothing left to broadcast or wait
+    /// for); a partial or outright conflicting match is surfaced via
     /// `conflicts` but the in-flight spend itself is left alone --
     /// unwinding an already-broadcast spend is `advance_in_flight`'s job via
     /// its own existing chain checks, not this reconciliation pass's.
@@ -324,6 +461,11 @@ impl QueueFile {
             decode_warnings: walk.decode_warnings.clone(),
             ..Default::default()
         };
+
+        // What this queue holds before the walk's findings are applied: whether a spend the walk
+        // found is "ours" is judged against every record the queue knows, pending ones included
+        // (the records a refused replacement merged and returned to `pending` are ours too).
+        let queued_before: BTreeMap<u64, OracleRecord> = self.pending.iter().map(|r| (r.seq, *r)).collect();
 
         let stale_pending = std::mem::take(&mut self.pending);
         for record in stale_pending {
@@ -352,44 +494,31 @@ impl QueueFile {
         }
         self.pending.sort_by_key(|r| r.seq);
 
-        // Cloned (not borrowed) so `self.in_flight = None` below and the
-        // `self.confirmed`/`self.conflicts` mutations don't fight the
-        // borrow checker over sibling fields of `self`.
+        // The in-flight spend. Its singleton coin consumed on chain means the bundle can never
+        // confirm any more, whichever version of it the chain took: resolve it from what the
+        // chain says (`resolve_consumed_in_flight`). Not consumed: the defensive reconciliation
+        // the first version of this code had (`reconcile_unconsumed_in_flight`).
+        let mut hold_checkpoint = None;
         if let Some(in_flight) = self.in_flight.clone() {
-            let mismatched: Vec<u64> = in_flight
-                .records
-                .iter()
-                .filter(|r| walk.confirmed.get(&r.seq).is_some_and(|cr| cr.record != **r))
-                .map(|r| r.seq)
-                .collect();
-            let all_confirmed = !in_flight.records.is_empty()
-                && in_flight.records.iter().all(|r| walk.confirmed.get(&r.seq).is_some_and(|cr| cr.record == *r));
-
-            if all_confirmed {
-                for record in &in_flight.records {
-                    let chain_record = &walk.confirmed[&record.seq];
-                    self.confirmed.insert(
-                        record.seq,
-                        ConfirmedRecordInfo { height: chain_record.height, coin_id: chain_record.coin_id.clone() },
-                    );
-                    outcome.dropped_confirmed.push(record.seq);
-                }
-                self.in_flight = None;
-                outcome.in_flight_cleared = true;
-            } else {
-                for record in in_flight.records.iter().filter(|r| mismatched.contains(&r.seq)) {
-                    let chain_record = &walk.confirmed[&record.seq];
-                    self.conflicts.insert(
-                        record.seq,
-                        ConflictInfo {
-                            local: *record,
-                            chain: chain_record.record,
-                            chain_height: chain_record.height,
-                            chain_coin_id: chain_record.coin_id.clone(),
-                        },
-                    );
-                    outcome.new_conflicts.push(record.seq);
-                }
+            match walk.generation_spending(&in_flight.spent_coin) {
+                Some(generation) => match &generation.announced {
+                    Some(announced) => {
+                        let resolved = self.resolve_consumed_in_flight(
+                            &in_flight,
+                            generation,
+                            announced,
+                            &queued_before,
+                            walk,
+                            &mut outcome,
+                        );
+                        outcome.resolved_in_flight = Some(resolved);
+                    }
+                    None => {
+                        hold_checkpoint = Some(generation.spent_coin);
+                        outcome.in_flight_unreadable = true;
+                    }
+                },
+                None => self.reconcile_unconsumed_in_flight(&in_flight, walk, &mut outcome),
             }
         }
 
@@ -400,12 +529,138 @@ impl QueueFile {
             self.last_confirmed_height = chain_record.height.or(self.last_confirmed_height);
         }
 
-        let checkpoint_advanced = self.chain_scan_checkpoint != Some(walk.tip_coin);
+        // Normally the tip. Held back at the spent coin of an in-flight generation the walk could
+        // not read, so the next scan walks it again and reads it once coinset has its data.
+        let new_checkpoint = hold_checkpoint.unwrap_or(walk.tip_coin);
+        let checkpoint_advanced = self.chain_scan_checkpoint != Some(new_checkpoint);
         if checkpoint_advanced {
-            self.chain_scan_checkpoint = Some(walk.tip_coin);
+            self.chain_scan_checkpoint = Some(new_checkpoint);
         }
         outcome.checkpoint_advanced = checkpoint_advanced;
 
         outcome
+    }
+
+    /// The in-flight spend's singleton coin was consumed by `generation`, which announced
+    /// `announced`: account for every in-flight record from the chain (see `ResolvedInFlight`) and
+    /// clear the in-flight spend. Called only with a generation the walk read completely.
+    fn resolve_consumed_in_flight(
+        &mut self,
+        in_flight: &InFlightSpend,
+        generation: &WalkedGeneration,
+        announced: &[u64],
+        queued_before: &BTreeMap<u64, OracleRecord>,
+        walk: &LineageWalkOutcome,
+        outcome: &mut ReconcileOutcome,
+    ) -> ResolvedInFlight {
+        // "Ours": the spend announced something, and everything it announced is a record this queue
+        // holds -- in the bundle, or pending (a replacement that was refused and put its merged
+        // records back) -- identical to what the chain has.
+        let ours = !announced.is_empty()
+            && announced.iter().all(|seq| {
+                let held = in_flight.records.iter().find(|r| r.seq == *seq).or_else(|| queued_before.get(seq));
+                held.zip(walk.confirmed.get(seq)).is_some_and(|(record, chain_record)| chain_record.record == *record)
+            });
+
+        // The in-flight spend is gone before its records are placed, so `record_state` below
+        // never sees them as "in flight".
+        self.in_flight = None;
+        outcome.in_flight_cleared = true;
+
+        let mut confirmed = Vec::new();
+        let mut requeued = Vec::new();
+        let mut conflicts = Vec::new();
+        for record in &in_flight.records {
+            match walk.confirmed.get(&record.seq) {
+                Some(chain_record) if chain_record.record == *record => {
+                    self.confirmed.insert(
+                        record.seq,
+                        ConfirmedRecordInfo { height: chain_record.height, coin_id: chain_record.coin_id.clone() },
+                    );
+                    confirmed.push(record.seq);
+                }
+                Some(chain_record) => {
+                    self.conflicts.insert(
+                        record.seq,
+                        ConflictInfo {
+                            local: *record,
+                            chain: chain_record.record,
+                            chain_height: chain_record.height,
+                            chain_coin_id: chain_record.coin_id.clone(),
+                        },
+                    );
+                    outcome.new_conflicts.push(record.seq);
+                    conflicts.push(record.seq);
+                }
+                None => {
+                    // Not on chain: a later batch publishes it. Never twice in `pending`, never
+                    // when the queue already accounts for the seq some other way.
+                    if matches!(self.record_state(record.seq), RecordState::Unknown) {
+                        self.pending.push(*record);
+                    }
+                    requeued.push(record.seq);
+                }
+            }
+        }
+        self.pending.sort_by_key(|r| r.seq);
+
+        ResolvedInFlight {
+            confirmed,
+            requeued,
+            conflicts,
+            announced: announced.to_vec(),
+            ours,
+            height: generation.height,
+            next_coin: generation.next_coin,
+        }
+    }
+
+    /// The defensive reconciliation of an in-flight spend whose singleton coin the walk did *not*
+    /// see consumed -- unchanged from before the consumed case existed: cleared only when every
+    /// one of its records is already confirmed identically on chain (nothing left to broadcast or
+    /// wait for); a partial or outright conflicting match is surfaced via `conflicts` but the
+    /// in-flight spend itself is left alone -- unwinding an already-broadcast spend is
+    /// `advance_in_flight`'s job via its own chain checks.
+    fn reconcile_unconsumed_in_flight(
+        &mut self,
+        in_flight: &InFlightSpend,
+        walk: &LineageWalkOutcome,
+        outcome: &mut ReconcileOutcome,
+    ) {
+        let mismatched: Vec<u64> = in_flight
+            .records
+            .iter()
+            .filter(|r| walk.confirmed.get(&r.seq).is_some_and(|cr| cr.record != **r))
+            .map(|r| r.seq)
+            .collect();
+        let all_confirmed = !in_flight.records.is_empty()
+            && in_flight.records.iter().all(|r| walk.confirmed.get(&r.seq).is_some_and(|cr| cr.record == *r));
+
+        if all_confirmed {
+            for record in &in_flight.records {
+                let chain_record = &walk.confirmed[&record.seq];
+                self.confirmed.insert(
+                    record.seq,
+                    ConfirmedRecordInfo { height: chain_record.height, coin_id: chain_record.coin_id.clone() },
+                );
+                outcome.dropped_confirmed.push(record.seq);
+            }
+            self.in_flight = None;
+            outcome.in_flight_cleared = true;
+        } else {
+            for record in in_flight.records.iter().filter(|r| mismatched.contains(&r.seq)) {
+                let chain_record = &walk.confirmed[&record.seq];
+                self.conflicts.insert(
+                    record.seq,
+                    ConflictInfo {
+                        local: *record,
+                        chain: chain_record.record,
+                        chain_height: chain_record.height,
+                        chain_coin_id: chain_record.coin_id.clone(),
+                    },
+                );
+                outcome.new_conflicts.push(record.seq);
+            }
+        }
     }
 }

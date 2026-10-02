@@ -399,14 +399,17 @@ impl FeeCoinAllocator {
         let outputs = self.policy.min_free;
         let base = self.policy.coin_mojos;
 
-        // Priced like every other bundle: estimate the fee for the cost of a draft without one.
+        // Priced like every other bundle: estimate the fee for the cost of a draft without one --
+        // and, like every other bundle, never for nothing because the estimate failed or answered 0
+        // (`fee_estimate.rs`, `docs/research/chain_service.md` §17): the fallback rate, capped at
+        // `C2_MAX_FEE_MOJOS`.
         let draft = build_fee_coin_split(input, owner, outputs, base, 0)?;
         let cost = measure_bundle_cost(&draft.coin_spends).context("measuring the fee-coin split's cost")?;
-        let estimate = chain
-            .fee_estimate_mojos(cost.total_cost, params.fee_target_time_secs)
+        let fee = self
+            .fees
+            .estimate(chain, cost.total_cost, params.fee_target_time_secs, params.max_fee_mojos)
             .await
-            .context("get_fee_estimate for the fee-coin split")?;
-        let fee = estimate.min(params.max_fee_mojos);
+            .fee_mojos;
         let needed = split_outputs_total(outputs, base).saturating_add(fee);
         if input.amount < needed {
             return Ok(MaintenanceOutcome::NoCoinLargeEnough { largest: input.amount, needed });

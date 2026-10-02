@@ -29,6 +29,8 @@ struct Inner {
     puzzle_solutions: HashMap<Bytes32, CoinSpend>,
     peak_height: u32,
     fee_mojos: u64,
+    /// `fee_estimate_mojos` fails instead of answering `fee_mojos` ("Upstream request timed out").
+    fee_estimate_fails: bool,
     funding_amount: u64,
     /// Extra funding-coin candidates a test registers explicitly -- same
     /// purpose as `tests/oracle_queue.rs::FakeChainClient`'s own field (task
@@ -53,7 +55,11 @@ impl FakePlayChainClient {
             puzzle_hash_records: Vec::new(),
             puzzle_solutions: HashMap::new(),
             peak_height: 1_000,
-            fee_mojos: 0,
+            // A small, non-zero estimate: since `docs/research/chain_service.md` §17.2 an estimate
+            // of 0 (like a failed one) is replaced by the fallback rate, too much for this fake's
+            // 1,000,000-mojo wallet coin on a CAT bundle. Tests that care set their own.
+            fee_mojos: 1_000,
+            fee_estimate_fails: false,
             funding_amount: 1_000_000,
             extra_funding_coins: Vec::new(),
             push_calls: 0,
@@ -66,6 +72,11 @@ impl FakePlayChainClient {
 
     pub fn set_fee_estimate(&self, fee_mojos: u64) {
         self.0.lock().unwrap().fee_mojos = fee_mojos;
+    }
+
+    /// Makes `fee_estimate_mojos` fail (or answer again).
+    pub fn set_fee_estimate_fails(&self, fails: bool) {
+        self.0.lock().unwrap().fee_estimate_fails = fails;
     }
 
     /// Registers an additional wallet coin `unspent_coins` reports, alongside the
@@ -167,7 +178,11 @@ impl ChainClient for FakePlayChainClient {
     }
 
     async fn fee_estimate_mojos(&self, _cost: u64, _target_time_secs: u32) -> Result<u64> {
-        Ok(self.0.lock().unwrap().fee_mojos)
+        let inner = self.0.lock().unwrap();
+        if inner.fee_estimate_fails {
+            anyhow::bail!("Upstream request timed out");
+        }
+        Ok(inner.fee_mojos)
     }
 
     async fn unspent_coins(&self, master_sk: &SecretKey) -> Result<Vec<(WalletKey, Coin)>> {

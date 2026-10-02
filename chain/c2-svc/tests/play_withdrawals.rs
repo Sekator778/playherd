@@ -76,6 +76,7 @@ fn set_up() -> Result<Fixture> {
         max_retry_attempts: 3,
         max_fee_mojos: 50_000_000,
         fee_target_time_secs: 60,
+        mempool_replace_after: std::time::Duration::from_secs(180),
         queue_lock: tokio::sync::Mutex::new(()),
         treasury_stuck: tokio::sync::RwLock::new(None),
         tick_failures: tokio::sync::RwLock::new(c2_svc::oracle::publisher::TickFailureState::default()),
@@ -248,6 +249,7 @@ async fn restart_resumes_and_confirms_a_pending_in_flight_batch() -> Result<()> 
         max_retry_attempts: 3,
         max_fee_mojos: 50_000_000,
         fee_target_time_secs: 60,
+        mempool_replace_after: std::time::Duration::from_secs(180),
         queue_lock: tokio::sync::Mutex::new(()),
         treasury_stuck: tokio::sync::RwLock::new(None),
         tick_failures: tokio::sync::RwLock::new(c2_svc::oracle::publisher::TickFailureState::default()),
@@ -415,5 +417,206 @@ async fn treasury_self_heal_waits_when_our_own_in_flight_batch_explains_the_spen
     );
     assert!(fx.publisher.health_check().await?.is_none());
 
+    Ok(())
+}
+
+// --- C1: a failed fee estimate is never a fee of 0 (`docs/research/chain_service.md` §17.2) -----------------------
+
+/// `ceil(rate * cost / 1000)`.
+fn fee_at(rate_millimojos: u64, cost: u64) -> u64 {
+    (u128::from(rate_millimojos) * u128::from(cost)).div_ceil(1000) as u64
+}
+
+fn draft_cost_of(in_flight: &c2_svc::play::withdrawal_queue::InFlightWithdrawalBatch) -> u64 {
+    let spends: Vec<_> =
+        in_flight.bundle.coin_spends.iter().filter(|spend| spend.coin == in_flight.spent_coin).cloned().collect();
+    c2_cli::cost::measure_bundle_cost(&spends).expect("cost").total_cost
+}
+
+/// The withdrawal publisher follows the same rule as the oracle's: the first attempt with the estimate down
+/// (or answering 0) is priced at the floor rate times the cost, with a fee coin; capped at `C2_MAX_FEE_MOJOS`.
+#[tokio::test]
+async fn a_failed_or_zero_estimate_prices_a_withdrawal_batch_at_the_floor_rate_never_at_zero() -> Result<()> {
+    for failing in [true, false] {
+        let fx = set_up()?;
+        fx.publisher.chain.set_funding_amount(100_000_000);
+        if failing {
+            fx.publisher.chain.set_fee_estimate_fails(true);
+        } else {
+            fx.publisher.chain.set_fee_estimate(0);
+        }
+        fx.publisher.enqueue(withdrawal_request("w1", Bytes32::from([1u8; 32]), 100_000)).await?;
+        assert_eq!(fx.publisher.tick().await?, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: true });
+        let in_flight = WithdrawalQueueFile::load(&fx.data_dir, "operator")?.in_flight.expect("in flight");
+        let expected = fee_at(100, draft_cost_of(&in_flight));
+        assert!(expected > 1_000_000, "{expected}");
+        assert_eq!(in_flight.fee_mojos, expected, "failing={failing}");
+        assert!(fee_coin_of(&in_flight.bundle, in_flight.spent_coin).is_some());
+    }
+
+    let mut capped = set_up()?;
+    capped.publisher.max_fee_mojos = 900_000;
+    capped.publisher.chain.set_fee_estimate_fails(true);
+    capped.publisher.enqueue(withdrawal_request("w1", Bytes32::from([1u8; 32]), 100_000)).await?;
+    capped.publisher.tick().await?;
+    let in_flight = WithdrawalQueueFile::load(&capped.data_dir, "operator")?.in_flight.expect("in flight");
+    assert_eq!(in_flight.fee_mojos, 900_000, "the fallback is capped at the maximum fee");
+    Ok(())
+}
+
+/// And a rebuild with the estimate down is the fallback, doubled -- not one mojo.
+#[tokio::test]
+async fn a_withdrawal_rebuild_with_the_estimate_down_is_priced_at_the_fallback_not_at_one_mojo() -> Result<()> {
+    let mut fx = set_up()?;
+    fx.publisher.retry_backoff = std::time::Duration::from_secs(0);
+    fx.publisher.chain.set_funding_amount(100_000_000);
+    fx.publisher.chain.set_fee_estimate_fails(true);
+    fx.publisher.enqueue(withdrawal_request("w1", Bytes32::from([1u8; 32]), 100_000)).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
+    });
+    assert_eq!(fx.publisher.tick().await?, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: false });
+    let first = WithdrawalQueueFile::load(&fx.data_dir, "operator")?.in_flight.expect("in flight");
+    let floor_fee = fee_at(100, draft_cost_of(&first));
+    assert_eq!(first.fee_mojos, floor_fee);
+
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+    match fx.publisher.tick().await? {
+        WithdrawalTickOutcome::Rebuilt { fee_mojos, accepted, .. } => {
+            assert!(accepted);
+            assert_eq!(fee_mojos, 2 * floor_fee);
+        }
+        other => panic!("expected Rebuilt, got {other:?}"),
+    }
+    Ok(())
+}
+
+// --- C4: a requestId reused with other content is a conflict (`docs/research/chain_service.md` §17.6) -------------
+
+use c2_svc::play::types::{ConflictKind, RequestIdConflict};
+
+fn conflict_of(error: anyhow::Error) -> RequestIdConflict {
+    error.downcast::<RequestIdConflict>().expect("the failure is a RequestIdConflict")
+}
+
+/// The same `requestId` with a different recipient or amount is refused in EVERY state the id can be in --
+/// queued, in flight, confirmed, failed -- and the same id with the same content stays the idempotent
+/// repeat it always was, in every one of those states too.
+#[tokio::test]
+async fn a_request_id_reused_with_another_recipient_or_amount_is_a_conflict_in_every_state() -> Result<()> {
+    let fx = set_up()?;
+    let alice = Bytes32::from([1u8; 32]);
+    let mallory = Bytes32::from([9u8; 32]);
+
+    // Checks one state: the identical request is a repeat, anything else with that id is a conflict.
+    async fn check(fx: &Fixture, id: &str, to: Bytes32, amount: u64, state: &str) -> Result<()> {
+        assert!(!fx.publisher.enqueue(withdrawal_request(id, to, amount)).await?, "{state}: same content stays idempotent");
+        let other_recipient = conflict_of(fx.publisher.enqueue(withdrawal_request(id, Bytes32::from([9u8; 32]), amount)).await.unwrap_err());
+        assert_eq!((other_recipient.request_id.as_str(), other_recipient.kind), (id, ConflictKind::DifferentContent), "{state}");
+        let other_amount = conflict_of(fx.publisher.enqueue(withdrawal_request(id, to, amount + 1)).await.unwrap_err());
+        assert_eq!(other_amount.kind, ConflictKind::DifferentContent, "{state}");
+        assert_eq!(fx.publisher.status(id)?.state, state, "a conflict changes nothing");
+        Ok(())
+    }
+
+    // queued
+    assert!(fx.publisher.enqueue(withdrawal_request("w-11", alice, 100_000)).await?);
+    check(&fx, "w-11", alice, 100_000, "queued").await?;
+    assert_eq!(WithdrawalQueueFile::load(&fx.data_dir, "operator")?.pending_count(), 1, "nothing was queued by the conflicts");
+
+    // in flight
+    assert_eq!(fx.publisher.tick().await?, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: true });
+    check(&fx, "w-11", alice, 100_000, "in_flight").await?;
+
+    // confirmed
+    let queue = WithdrawalQueueFile::load(&fx.data_dir, "operator")?;
+    fx.publisher.chain.set_confirmed(queue.in_flight.unwrap().next_coin.coin_id(), 5_000_000);
+    assert_eq!(fx.publisher.tick().await?, WithdrawalTickOutcome::Confirmed { requests: 1 });
+    check(&fx, "w-11", alice, 100_000, "confirmed").await?;
+    // The old request's status is never what a conflicting request gets: the refusal carries none.
+    let refused = conflict_of(fx.publisher.enqueue(withdrawal_request("w-11", mallory, 7)).await.unwrap_err());
+    assert!(!refused.to_string().contains("confirmed"), "{refused}");
+
+    // failed (the batch exhausted its retries)
+    let mut failing = set_up()?;
+    failing.publisher.retry_backoff = std::time::Duration::from_secs(0);
+    failing.publisher.max_retry_attempts = 1;
+    failing.publisher.chain.set_push_outcome(PushOutcome { accepted: false, status: None, error: Some("some other rejection".into()) });
+    failing.publisher.enqueue(withdrawal_request("w-12", alice, 5_000)).await?;
+    failing.publisher.tick().await?;
+    assert!(matches!(failing.publisher.tick().await?, WithdrawalTickOutcome::Failed { .. }));
+    check(&failing, "w-12", alice, 5_000, "failed").await?;
+    Ok(())
+}
+
+/// The exact case of 2026-10-02: the queue file of the stand holds `w-11` ... `w-15` confirmed from an
+/// earlier server database, written before the queue recorded what a request was for. A fresh database
+/// reuses `w-11` with another recipient and amount: it must NOT be answered with the old `w-11`'s
+/// confirmation. The entry has no recorded content, so even an identical resubmission cannot be
+/// told from a reuse: both are refused (fail closed), with a body that says why.
+#[tokio::test]
+async fn an_old_confirmed_entry_without_recorded_content_is_never_answered_with_its_status() -> Result<()> {
+    let fx = set_up()?;
+    // A queue file as it was before `settled` existed: confirmed entries only.
+    let mut queue = WithdrawalQueueFile::load(&fx.data_dir, "operator")?;
+    for n in 11..=15 {
+        queue.confirmed.insert(format!("w-{n}"), (Bytes32::from([n as u8; 32]), Some(4_765_000 + n)));
+    }
+    queue.save_atomic(&fx.data_dir, "operator")?;
+    let mut json: serde_json::Value = serde_json::from_slice(&std::fs::read(WithdrawalQueueFile::path(&fx.data_dir, "operator"))?)?;
+    json.as_object_mut().unwrap().remove("settled");
+    std::fs::write(WithdrawalQueueFile::path(&fx.data_dir, "operator"), serde_json::to_vec_pretty(&json)?)?;
+    assert!(WithdrawalQueueFile::load(&fx.data_dir, "operator")?.settled.is_empty(), "the file really has no `settled` map");
+
+    let reused = fx.publisher.enqueue(withdrawal_request("w-11", Bytes32::from([77u8; 32]), 123_456)).await;
+    let conflict = conflict_of(reused.unwrap_err());
+    assert_eq!(conflict.kind, ConflictKind::ContentNotRecorded);
+    assert!(conflict.to_string().contains("were not recorded"), "{conflict}");
+    let identical = conflict_of(fx.publisher.enqueue(withdrawal_request("w-11", Bytes32::from([11u8; 32]), 1)).await.unwrap_err());
+    assert_eq!(identical.kind, ConflictKind::ContentNotRecorded);
+    assert_eq!(WithdrawalQueueFile::load(&fx.data_dir, "operator")?.pending_count(), 0, "nothing was queued for the reused id");
+
+    // A fresh id is accepted as always.
+    assert!(fx.publisher.enqueue(withdrawal_request("w-16", Bytes32::from([77u8; 32]), 123_456)).await?);
+    Ok(())
+}
+
+/// What a withdrawal that is paid out records about itself survives a reload from disk: the same id
+/// with other content is still refused after a restart.
+#[tokio::test]
+async fn what_a_settled_request_was_for_is_remembered_across_a_restart() -> Result<()> {
+    let fx = set_up()?;
+    let alice = Bytes32::from([1u8; 32]);
+    fx.publisher.enqueue(withdrawal_request("w-1", alice, 40_000)).await?;
+    fx.publisher.tick().await?;
+    let next_coin = WithdrawalQueueFile::load(&fx.data_dir, "operator")?.in_flight.unwrap().next_coin;
+    fx.publisher.chain.set_confirmed(next_coin.coin_id(), 5_000_000);
+    fx.publisher.tick().await?;
+
+    let queue = WithdrawalQueueFile::load(&fx.data_dir, "operator")?;
+    let settled = queue.settled.get("w-1").expect("the confirmed request's recipient and amount are recorded");
+    assert_eq!((settled.to_puzzle_hash, settled.amount_mojos), (alice, 40_000));
+
+    let restarted = WithdrawalPublisher {
+        data_dir: fx.data_dir.clone(),
+        operator_name: "operator".to_string(),
+        push_enabled: true,
+        chain: FakePlayChainClient::new(),
+        retry_backoff: std::time::Duration::from_secs(300),
+        max_retry_attempts: 3,
+        max_fee_mojos: 50_000_000,
+        fee_target_time_secs: 60,
+        mempool_replace_after: std::time::Duration::from_secs(180),
+        queue_lock: tokio::sync::Mutex::new(()),
+        treasury_stuck: tokio::sync::RwLock::new(None),
+        tick_failures: tokio::sync::RwLock::new(c2_svc::oracle::publisher::TickFailureState::default()),
+        tick_failure_threshold: 3,
+        fee_allocator: std::sync::Arc::new(c2_svc::fee_allocator::FeeCoinAllocator::new()),
+    };
+    assert!(!restarted.enqueue(withdrawal_request("w-1", alice, 40_000)).await?, "the same request is still a repeat");
+    let conflict = conflict_of(restarted.enqueue(withdrawal_request("w-1", alice, 40_001)).await.unwrap_err());
+    assert_eq!(conflict.kind, ConflictKind::DifferentContent);
     Ok(())
 }

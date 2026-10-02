@@ -49,6 +49,9 @@ async fn main() -> Result<()> {
         auth_enabled = config.svc_token.is_some(),
         fee_coins_min = config.fee_coins_min,
         fee_coin_mojos = config.fee_coin_mojos,
+        max_fee_mojos = config.max_fee_mojos,
+        fallback_fee_rate_millimojos_per_cost = config.fallback_fee_rate_millimojos_per_cost,
+        mempool_replace_after_secs = config.mempool_replace_after.as_secs(),
         "starting c2-svc"
     );
 
@@ -62,10 +65,18 @@ async fn main() -> Result<()> {
     // The same allocator owns the fee-coin reserve (`fee_reserve.rs`, `docs/research/
     // chain_service.md` §16): `C2_FEE_COINS_MIN` free coins of `C2_FEE_COIN_MOJOS` each, kept by
     // splitting a big coin from the oracle publisher's tick (only while the oracle has nothing in flight).
-    let fee_allocator = Arc::new(FeeCoinAllocator::with_policy(FeeCoinPolicy {
-        min_free: config.fee_coins_min,
-        coin_mojos: config.fee_coin_mojos,
-    }));
+    //
+    // It also carries the fee rule every publisher and the fee-coin split share
+    // (`fee_estimate.rs`, `docs/research/chain_service.md` §17.2): what to pay when
+    // `get_fee_estimate` fails or answers 0 -- the last successful estimate's rate, else the floor
+    // `C2_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST`.
+    let fee_allocator = Arc::new(
+        FeeCoinAllocator::with_policy(FeeCoinPolicy {
+            min_free: config.fee_coins_min,
+            coin_mojos: config.fee_coin_mojos,
+        })
+        .with_fallback_fee_rate(config.fallback_fee_rate_millimojos_per_cost),
+    );
 
     let chain = CoinsetChainClient::new(config.coinset_base_url.clone());
     let publisher = Arc::new(Publisher {
@@ -77,6 +88,7 @@ async fn main() -> Result<()> {
         max_retry_attempts: config.max_retry_attempts,
         max_fee_mojos: config.max_fee_mojos,
         fee_target_time_secs: 60,
+        mempool_replace_after: config.mempool_replace_after,
         balance_snapshot: tokio::sync::RwLock::new(None),
         queue_lock: tokio::sync::Mutex::new(()),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
@@ -101,6 +113,7 @@ async fn main() -> Result<()> {
         max_retry_attempts: config.max_retry_attempts,
         max_fee_mojos: config.max_fee_mojos,
         fee_target_time_secs: 60,
+        mempool_replace_after: config.mempool_replace_after,
         queue_lock: tokio::sync::Mutex::new(()),
         treasury_stuck: tokio::sync::RwLock::new(None),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),

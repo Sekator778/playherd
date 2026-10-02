@@ -104,6 +104,7 @@ fn set_up() -> Result<Fixture> {
         max_retry_attempts: 3,
         max_fee_mojos: 50_000_000,
         fee_target_time_secs: 60,
+        mempool_replace_after: std::time::Duration::from_secs(180),
         balance_snapshot: tokio::sync::RwLock::new(None),
         queue_lock: tokio::sync::Mutex::new(()),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
@@ -120,6 +121,7 @@ fn set_up() -> Result<Fixture> {
         max_retry_attempts: 3,
         max_fee_mojos: 50_000_000,
         fee_target_time_secs: 60,
+        mempool_replace_after: std::time::Duration::from_secs(180),
         queue_lock: tokio::sync::Mutex::new(()),
         treasury_stuck: tokio::sync::RwLock::new(None),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
@@ -301,6 +303,7 @@ fn oracle_with(
         max_retry_attempts: 3,
         max_fee_mojos: 50_000_000,
         fee_target_time_secs: 60,
+        mempool_replace_after: std::time::Duration::from_secs(180),
         balance_snapshot: tokio::sync::RwLock::new(None),
         queue_lock: tokio::sync::Mutex::new(()),
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
@@ -847,5 +850,34 @@ async fn the_first_fee_attempt_is_capped_at_the_maximum_fee() -> Result<()> {
     fx.withdrawal.enqueue(withdrawal_request("w1", Bytes32::from([1u8; 32]), 1_000)).await?;
     assert_eq!(fx.withdrawal.tick().await?, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: true });
     assert_eq!(WithdrawalQueueFile::load(&fx.withdrawal.data_dir, "operator")?.in_flight.unwrap().fee_mojos, 50_000_000);
+    Ok(())
+}
+
+/// C1 for the fee-coin split (`docs/research/chain_service.md` §17.2): when `get_fee_estimate` fails the
+/// split is no longer abandoned with the error (the wallet then stayed below the minimum for as long as the
+/// estimate was down), and when it answers 0 it is no longer sent for nothing -- either way the fee is the
+/// fallback rate (0.1 mojo per cost) times the split's cost, which the split's `RESERVE_FEE` shows.
+#[tokio::test]
+async fn the_split_is_priced_at_the_fallback_rate_when_the_estimate_fails_or_answers_zero() -> Result<()> {
+    for failing in [true, false] {
+        let fx = set_up()?;
+        fx.set_wallet(BIG_COIN);
+        if failing {
+            fx.oracle.chain.set_fee_estimate_fails(true);
+        } else {
+            fx.oracle.chain.set_fee_estimate(0);
+        }
+        assert_eq!(fx.oracle.tick().await?, TickOutcome::Idle);
+        assert_eq!(fx.oracle.chain.push_call_count(), 1, "failing={failing}: the split was pushed");
+        let bundle = fx.oracle.chain.pushed_bundles().remove(0);
+        let spend = &bundle.coin_spends[0];
+
+        let owner = derive_wallet_key(&fx.master_sk, 0);
+        let draft = c2_svc::fee_reserve::build_fee_coin_split(spend.coin, &owner, 4, 200_000_000, 0)?;
+        let cost = c2_cli::cost::measure_bundle_cost(&draft.coin_spends)?.total_cost;
+        let expected = (100u128 * u128::from(cost)).div_ceil(1000) as u64;
+        assert!(expected > 0);
+        assert_eq!(reserved_fee(spend), expected, "failing={failing}");
+    }
     Ok(())
 }

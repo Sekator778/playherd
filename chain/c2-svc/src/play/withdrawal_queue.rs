@@ -19,8 +19,9 @@ use chia_puzzle_types::LineageProof;
 use serde::{Deserialize, Serialize};
 
 use crate::atomic_file::{read_json_or_default, write_json_atomic};
+use crate::fee_allocator::fee_coin_of;
 
-pub use super::types::WithdrawalRequest;
+pub use super::types::{ConflictKind, RequestIdConflict, WithdrawalRequest};
 
 /// Hand-written serde mirror of `chia_puzzle_types::LineageProof` (same
 /// reason `c2_cli::state::ProofDto` exists: that crate never derives serde).
@@ -57,6 +58,35 @@ impl From<LineageProofDto> for LineageProof {
     }
 }
 
+/// An earlier version of the in-flight batch: a bundle for the *same treasury coin* that the publisher
+/// replaced (in the mempool, `WithdrawalPublisher::replace_in_mempool`), rebuilt (after a rejection), or
+/// pushed as a replacement the node then did not take -- the withdrawal counterpart of
+/// `oracle::queue::SupersededBundle` (`docs/research/chain_service.md` §17.4, §17.8). Only one bundle can
+/// spend the treasury coin, so at most one version ever confirms; the chain says which, and an earlier
+/// version can still win (another node's mempool may hold it, a parked replacement may be retried by the
+/// node at a new block). What is kept is what it takes to account for that: the requests that version
+/// pays -- in full, because a request that went back to `pending` when its replacement was refused is
+/// paid all the same if that replacement is the one the chain takes -- the coin each payout created
+/// (the proof of the payout), the treasury change coin it would leave (its existence on chain is how the
+/// winning version is recognised -- a version that pays more leaves a smaller change coin, so two
+/// versions with different payouts never leave the same one), and its fee coin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SupersededWithdrawalBatch {
+    /// `SpendBundle::name()` of that version.
+    pub bundle_name: Bytes32,
+    pub fee_mojos: u64,
+    /// The requests that version pays, in payout order; `payout_coin_ids[i]` is `requests[i]`'s coin.
+    pub requests: Vec<WithdrawalRequest>,
+    pub payout_coin_ids: Vec<Bytes32>,
+    /// The treasury change coin that version creates.
+    pub next_coin: Coin,
+    #[serde(default)]
+    pub fee_coin: Option<Bytes32>,
+    pub superseded_at_unix: i64,
+    /// `"replaced in the mempool"`, `"rebuilt after a rejection"` or `"replacement not taken by the node"`.
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InFlightWithdrawalBatch {
     /// Requests this batch pays out, in the order they were taken from
@@ -89,6 +119,40 @@ pub struct InFlightWithdrawalBatch {
     pub attempts: u32,
     pub last_push_accepted: bool,
     pub last_push_error: Option<String>,
+    /// Earlier versions of this batch, oldest first -- empty for a batch never replaced or rebuilt.
+    /// `#[serde(default)]`: a queue file written before this field existed has none.
+    #[serde(default)]
+    pub superseded: Vec<SupersededWithdrawalBatch>,
+    /// Why this batch, which sits in the mempool past `C2_MEMPOOL_REPLACE_AFTER_SECS`, could not be
+    /// replaced; `GET /health` reports it while the batch keeps waiting. `#[serde(default)]` as above.
+    #[serde(default)]
+    pub replace_blocked: Option<String>,
+}
+
+impl InFlightWithdrawalBatch {
+    /// This version as a `SupersededWithdrawalBatch`, for the batch that replaces it to carry.
+    pub fn as_superseded(&self, reason: &str, now_unix: i64) -> SupersededWithdrawalBatch {
+        SupersededWithdrawalBatch {
+            bundle_name: self.bundle.name(),
+            fee_mojos: self.fee_mojos,
+            requests: self.requests.clone(),
+            payout_coin_ids: self.payout_coin_ids.clone(),
+            next_coin: self.next_coin,
+            fee_coin: fee_coin_of(&self.bundle, self.spent_coin).map(|coin| coin.coin_id()),
+            superseded_at_unix: now_unix,
+            reason: reason.to_string(),
+        }
+    }
+
+    /// Ids of the fee coins this version and every earlier one spent (released once the treasury coin
+    /// is consumed, whichever version that was; releasing is idempotent).
+    pub fn every_fee_coin(&self) -> Vec<Bytes32> {
+        let mut coins: Vec<Bytes32> = fee_coin_of(&self.bundle, self.spent_coin).map(|c| c.coin_id()).into_iter().collect();
+        coins.extend(self.superseded.iter().filter_map(|version| version.fee_coin));
+        coins.sort_unstable();
+        coins.dedup();
+        coins
+    }
 }
 
 /// `GET /v1/play/withdrawals/{requestId}`'s `state`.
@@ -109,6 +173,15 @@ pub enum WithdrawalState {
     Unknown,
 }
 
+/// Recipient and amount of a request that has left `pending`/`in_flight` for `confirmed` or
+/// `failed` -- the two maps keep only the outcome, so without this a `requestId` reused with other
+/// content could not be told from a repeat (`WithdrawalQueueFile::enqueue`, §17.6).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SettledRequest {
+    pub to_puzzle_hash: Bytes32,
+    pub amount_mojos: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WithdrawalQueueFile {
     pub pending: Vec<WithdrawalRequest>,
@@ -117,6 +190,19 @@ pub struct WithdrawalQueueFile {
     pub in_flight: Option<InFlightWithdrawalBatch>,
     pub confirmed: BTreeMap<String, (Bytes32, Option<u32>)>,
     pub failed: BTreeMap<String, String>,
+    /// What each `confirmed`/`failed` request was for. `#[serde(default)]`: a queue file written
+    /// before this field existed has none, and its confirmed/failed entries then count as "held,
+    /// content not recorded" (`ConflictKind::ContentNotRecorded`) -- the stand's file from before
+    /// 2026-10-02 holds `w-11` ... `w-15` confirmed exactly like that.
+    #[serde(default)]
+    pub settled: BTreeMap<String, SettledRequest>,
+}
+
+/// What `WithdrawalQueueFile::enqueue` found under a `requestId`.
+enum Held {
+    Nothing,
+    Known { to_puzzle_hash: Bytes32, amount_mojos: u64 },
+    Unrecorded,
 }
 
 impl WithdrawalQueueFile {
@@ -152,14 +238,70 @@ impl WithdrawalQueueFile {
 
     /// Idempotent by `requestId` (task's FIXED INTERFACE: "idempotent by
     /// requestId") -- a request already known queued/in-flight/confirmed/
-    /// failed is a silent no-op, `true` iff it was newly accepted into
-    /// `pending`.
-    pub fn enqueue(&mut self, request: WithdrawalRequest) -> bool {
-        if !matches!(self.state(&request.request_id), WithdrawalState::Unknown) {
-            return false;
+    /// failed *with the same recipient and amount* is a silent no-op: `Ok(true)`
+    /// iff it was newly accepted into `pending`.
+    ///
+    /// The same `requestId` with a different recipient or amount is a conflict
+    /// (`RequestIdConflict`, HTTP 409), never the old request's status: on 2026-10-02 the server
+    /// started on a fresh database whose withdrawal ids began at `w-1` again, and its 11th withdrawal
+    /// would have been answered with the confirmed status of the *old* `w-11` -- another recipient,
+    /// another amount -- and been marked paid without a payout. A confirmed or failed entry written
+    /// before `settled` existed has no recorded content to compare with and is refused as well
+    /// (`ConflictKind::ContentNotRecorded`): fail closed.
+    pub fn enqueue(&mut self, request: WithdrawalRequest) -> Result<bool, RequestIdConflict> {
+        match self.held(&request.request_id) {
+            Held::Nothing => {
+                self.pending.push(request);
+                Ok(true)
+            }
+            Held::Known { to_puzzle_hash, amount_mojos }
+                if to_puzzle_hash == request.to_puzzle_hash && amount_mojos == request.amount_mojos =>
+            {
+                Ok(false)
+            }
+            Held::Known { .. } => {
+                Err(RequestIdConflict { request_id: request.request_id, kind: ConflictKind::DifferentContent })
+            }
+            Held::Unrecorded => {
+                Err(RequestIdConflict { request_id: request.request_id, kind: ConflictKind::ContentNotRecorded })
+            }
         }
-        self.pending.push(request);
-        true
+    }
+
+    /// Same precedence as `state`: confirmed, failed, in flight, queued.
+    fn held(&self, request_id: &str) -> Held {
+        if self.confirmed.contains_key(request_id) || self.failed.contains_key(request_id) {
+            return match self.settled.get(request_id) {
+                Some(settled) => {
+                    Held::Known { to_puzzle_hash: settled.to_puzzle_hash, amount_mojos: settled.amount_mojos }
+                }
+                None => Held::Unrecorded,
+            };
+        }
+        let in_flight_request = self.in_flight.as_ref().and_then(|f| f.requests.iter().find(|r| r.request_id == request_id));
+        let pending_request = self.pending.iter().find(|r| r.request_id == request_id);
+        match in_flight_request.or(pending_request) {
+            Some(r) => Held::Known { to_puzzle_hash: r.to_puzzle_hash, amount_mojos: r.amount_mojos },
+            None => Held::Nothing,
+        }
+    }
+
+    /// `request` was paid out: its own payout coin and the block, and what it was for.
+    pub fn record_confirmed(&mut self, request: &WithdrawalRequest, payout_coin_id: Bytes32, height: Option<u32>) {
+        self.confirmed.insert(request.request_id.clone(), (payout_coin_id, height));
+        self.settled.insert(
+            request.request_id.clone(),
+            SettledRequest { to_puzzle_hash: request.to_puzzle_hash, amount_mojos: request.amount_mojos },
+        );
+    }
+
+    /// `request` will not be paid by this service (terminal): why, and what it was for.
+    pub fn record_failed(&mut self, request: &WithdrawalRequest, reason: String) {
+        self.failed.insert(request.request_id.clone(), reason);
+        self.settled.insert(
+            request.request_id.clone(),
+            SettledRequest { to_puzzle_hash: request.to_puzzle_hash, amount_mojos: request.amount_mojos },
+        );
     }
 
     /// Takes up to `max` of the oldest pending requests (FIFO, insertion
@@ -193,9 +335,54 @@ mod tests {
     #[test]
     fn enqueue_is_idempotent_by_request_id() {
         let mut queue = WithdrawalQueueFile::default();
-        assert!(queue.enqueue(request("r1")));
-        assert!(!queue.enqueue(request("r1")));
+        assert_eq!(queue.enqueue(request("r1")), Ok(true));
+        assert_eq!(queue.enqueue(request("r1")), Ok(false));
         assert_eq!(queue.pending_count(), 1);
+    }
+
+    /// A queue file written before `superseded`, `replace_blocked` and `settled` existed -- the stand's
+    /// own file is one -- still loads: every new field is `#[serde(default)]`, and its confirmed entries
+    /// are "held, content not recorded".
+    #[test]
+    fn a_queue_file_from_before_the_replacement_fields_still_loads() {
+        let mut queue = WithdrawalQueueFile::default();
+        queue.enqueue(request("r1")).unwrap();
+        let batch = queue.take_batch(1);
+        queue.in_flight = Some(InFlightWithdrawalBatch {
+            payout_coin_ids: vec![Bytes32::from([3u8; 32])],
+            requests: batch,
+            spent_coin: Coin::new(Bytes32::from([0u8; 32]), Bytes32::from([0u8; 32]), 1),
+            next_coin: Coin::new(Bytes32::from([0u8; 32]), Bytes32::from([0u8; 32]), 1),
+            next_lineage_proof: LineageProofDto {
+                parent_parent_coin_info: Bytes32::from([0u8; 32]),
+                parent_inner_puzzle_hash: Bytes32::from([0u8; 32]),
+                parent_amount: 1,
+            },
+            bundle: SpendBundle::new(vec![], chia_bls::Signature::default()),
+            bundle_id: "0xtest".to_string(),
+            fee_mojos: 0,
+            broadcast_at_unix: 0,
+            last_attempt_at_unix: 0,
+            attempts: 1,
+            last_push_accepted: true,
+            last_push_error: None,
+            superseded: Vec::new(),
+            replace_blocked: None,
+        });
+        queue.confirmed.insert("w-11".to_string(), (Bytes32::from([2u8; 32]), Some(42)));
+
+        let mut json = serde_json::to_value(&queue).unwrap();
+        let in_flight = json["in_flight"].as_object_mut().unwrap();
+        assert!(in_flight.remove("superseded").is_some() && in_flight.remove("replace_blocked").is_some());
+        assert!(json.as_object_mut().unwrap().remove("settled").is_some());
+
+        let old_file: WithdrawalQueueFile = serde_json::from_value(json).unwrap();
+        assert!(old_file.in_flight.as_ref().unwrap().superseded.is_empty());
+        assert_eq!(old_file.in_flight.as_ref().unwrap().replace_blocked, None);
+        assert_eq!(old_file.state("w-11"), WithdrawalState::Confirmed { coin_id: Bytes32::from([2u8; 32]), height: Some(42) });
+        let mut old_file = old_file;
+        let conflict = old_file.enqueue(request("w-11")).unwrap_err();
+        assert_eq!(conflict.kind, ConflictKind::ContentNotRecorded);
     }
 
     #[test]
@@ -203,7 +390,7 @@ mod tests {
         let mut queue = WithdrawalQueueFile::default();
         assert_eq!(queue.state("r1"), WithdrawalState::Unknown);
 
-        queue.enqueue(request("r1"));
+        queue.enqueue(request("r1")).unwrap();
         assert_eq!(queue.state("r1"), WithdrawalState::Queued);
 
         let batch = queue.take_batch(10);
@@ -225,6 +412,8 @@ mod tests {
             attempts: 1,
             last_push_accepted: true,
             last_push_error: None,
+            superseded: Vec::new(),
+            replace_blocked: None,
         });
         assert_eq!(queue.state("r1"), WithdrawalState::InFlight);
 

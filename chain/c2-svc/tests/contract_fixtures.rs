@@ -26,8 +26,8 @@ use c2_svc::oracle::types::{
 };
 use c2_svc::play::deposit::deposit_address;
 use c2_svc::play::types::{
-    DepositAddressRequestDto, DepositAddressResponse, DepositDto, DepositsResponse, WithdrawalAcceptedResponse,
-    WithdrawalRequestDto, WithdrawalStatusResponse,
+    ConflictKind, DepositAddressRequestDto, DepositAddressResponse, DepositDto, DepositsResponse, RequestIdConflict,
+    WithdrawalAcceptedResponse, WithdrawalConflictResponse, WithdrawalRequestDto, WithdrawalStatusResponse,
 };
 use chia_bls::SecretKey;
 use chia_protocol::Bytes32;
@@ -191,6 +191,18 @@ fn write_contract_fixtures() {
     write_fixture(
         "WithdrawalStatusResponse_queued",
         &WithdrawalStatusResponse { request_id: "w-207".to_string(), state: "queued", coin_id: None, height: None, reason: None },
+    );
+
+    // HTTP 409 for a requestId the service already holds with another recipient or amount
+    // (docs/research/chain_service.md §17.6). Built by the production conversion the handler uses
+    // (`From<&RequestIdConflict>`), not hand-typed; `tests/play_http.rs` compares the handler's real
+    // answer with this committed file.
+    write_fixture(
+        "WithdrawalConflictResponse",
+        &WithdrawalConflictResponse::from(&RequestIdConflict {
+            request_id: "w-11".to_string(),
+            kind: ConflictKind::DifferentContent,
+        }),
     );
 
     // --- POST /v1/play/deposit-address, GET /v1/play/deposits ---

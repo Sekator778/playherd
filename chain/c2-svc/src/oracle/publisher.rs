@@ -10,10 +10,11 @@
 //! 1. an in-flight spend just confirmed -> finalize (advance
 //!    `operator.oracle.json`, clear `in_flight`);
 //! 2. an in-flight spend is still unconfirmed -> either wait (still sitting
-//!    in the mempool, or backoff hasn't elapsed), rebuild it with a higher
-//!    fee (rejected for being underpriced, task instruction), or retry the
-//!    exact same bundle (any other rejection reason, task instruction
-//!    "retries with backoff");
+//!    in the mempool, or backoff hasn't elapsed), replace it once it has
+//!    sat in the mempool past `mempool_replace_after` (`replace_in_mempool`,
+//!    below), rebuild it with a higher fee (rejected for being underpriced,
+//!    task instruction), or retry the exact same bundle (any other rejection
+//!    reason, task instruction "retries with backoff");
 //! 3. no in-flight spend and records are pending -> build, sign, persist
 //!    (durably, before broadcasting), and broadcast a new batch (<=40
 //!    records, task instruction);
@@ -42,28 +43,47 @@
 //! from a *previous* process run recovers automatically on the next tick
 //! after restart: `attempts` from before the restart no longer permanently
 //! blocks progress once a fee bump is possible (see `stuck_reason`).
+//!
+//! **Waiting in the mempool is not forever** (`docs/research/chain_service.md` §17): a bundle the
+//! node accepted but does not confirm -- the fee-0 bundle of 2026-10-02 sat there for ten minutes while
+//! full blocks went by -- is replaced once it has waited `mempool_replace_after`
+//! (`replace_in_mempool`), with a bundle that satisfies the node's replacement rule
+//! (`mempool_rule.rs`): the same singleton coin, the fee coin the old bundle spent (or a new one
+//! when it had none), a fee at least 10,000,000 mojos higher. Both bundles spend the same coin, so
+//! at most one confirms; which one the chain took is read off its announcements, never assumed
+//! (`QueueFile::resolve_consumed_in_flight`): records the chain has are confirmed, records it does
+//! not have go back to `pending`.
+//!
+//! **Our own confirmation is not an incident** (§17.5): the chain walk that opens every tick sees
+//! our bundle's confirmation first, and `reconcile_queue_with_chain` settles it as what it is -- an
+//! INFO line, the records confirmed, the fee coin released, the oracle state advanced -- and warns
+//! only for a spend that is not ours.
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use chia_bls::Signature;
-use chia_protocol::{CoinSpend, SpendBundle};
+use chia_bls::{SecretKey, Signature};
+use chia_protocol::{Coin, CoinSpend, SpendBundle};
 use chia_puzzle_types::Proof;
 use sha2::{Digest, Sha256};
 
 use c2_cli::builders::fee::build_fee_only;
 use c2_cli::cost::measure_bundle_cost;
+use c2_cli::keys::WalletKey;
 use c2_cli::state::{OracleState, ProofDto};
 
-use crate::fee_allocator::{FeeCoinAllocator, fee_coin_of, is_coin_spent_rejection};
+use crate::fee_allocator::{FeeCoinAllocator, NoFeeCoin, fee_coin_of, is_coin_spent_rejection};
 use crate::fee_reserve::{FeeCoinsBusy, MaintenanceOutcome, MaintenanceParams};
 use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
+use crate::mempool_rule::{MEMPOOL_MIN_FEE_INCREASE, required_replacement_fee};
 use crate::state_file::{load_oracle_state, save_oracle_state_atomic};
 
 use super::chain_client::ChainClient;
 use super::lineage::{genesis_coin, tip_lineage_proof, walk_lineage};
-use super::queue::{ConfirmedRecordInfo, InFlightSpend, QueueFile, ReconcileOutcome, RecordState};
+use super::queue::{
+    ConfirmedRecordInfo, InFlightSpend, QueueFile, ReconcileOutcome, RecordState, ResolvedInFlight,
+};
 use super::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
 use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusResponse, RECORD_FORMAT};
 
@@ -91,6 +111,15 @@ fn is_fee_rejection(error: Option<&str>) -> bool {
 /// current bundle* -- a rebuild resets that counter (see module doc), so a
 /// spend that's still being automatically fee-bumped is not yet "stuck".
 fn stuck_reason(in_flight: &InFlightSpend, max_retry_attempts: u32, max_fee_mojos: u64) -> Option<String> {
+    // A bundle in the mempool that waited past `C2_MEMPOOL_REPLACE_AFTER_SECS` and cannot be
+    // replaced (`replace_in_mempool`): it keeps waiting -- it may still confirm -- and this is how
+    // an operator is told why nothing is being done about it.
+    if let Some(blocked) = &in_flight.replace_blocked {
+        return Some(format!(
+            "bundle {} has waited in the mempool without confirming and could not be replaced: {blocked}",
+            in_flight.bundle_id
+        ));
+    }
     if in_flight.attempts < max_retry_attempts {
         return None;
     }
@@ -125,6 +154,27 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// A replacement bundle `replace_in_mempool` is ready to make durable and push.
+struct ReplacementBundle {
+    bundle: SpendBundle,
+    bundle_id: String,
+    fee_mojos: u64,
+    next_coin: Coin,
+    next_proof: ProofDto,
+    /// The fee coin reserved for this replacement alone (the old bundle had none): released if the
+    /// replacement is not taken. `None` when the old bundle's own fee coin is kept.
+    newly_reserved: Option<Coin>,
+}
+
+/// What `prepare_replacement` came to.
+enum Prepared {
+    Ready(Box<ReplacementBundle>),
+    /// No valid replacement can be made now; the reason goes to `stuckReason`.
+    Blocked(String),
+    /// The wallet's only coin big enough is held by the fee-coin split: wait, it is a few blocks.
+    FeeCoinsBusy,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TickOutcome {
     /// Nothing in flight, nothing pending.
@@ -141,6 +191,15 @@ pub enum TickOutcome {
     /// from the mempool) -- rebuilt with a higher fee and broadcast (task
     /// instruction: "rebuild the spend with a higher fee").
     Rebuilt { records: usize, accepted: bool, fee_mojos: u64 },
+    /// The in-flight bundle sat in the node's mempool past `mempool_replace_after` and was
+    /// replaced by a bundle for the same singleton coin that pays `fee_mojos` instead of
+    /// `replaced_fee_mojos` (and carries `records`: the old ones plus any newly pending, at most
+    /// `MAX_RECORDS_PER_SPEND`), accepted by the node (`replace_in_mempool`).
+    Replaced { records: usize, fee_mojos: u64, replaced_fee_mojos: u64 },
+    /// The in-flight bundle sat in the mempool past `mempool_replace_after` but no valid
+    /// replacement could be made or the node did not take it; the old bundle stays in flight and
+    /// `reason` is in `GET /v1/oracle/status`'s `stuckReason`.
+    ReplacementBlocked { reason: String },
     /// An in-flight spend exists but isn't due for a retry yet, or is
     /// sitting in the mempool / has its coin already spent by something
     /// else -- either way, nothing to do this tick but wait. Also: a new
@@ -193,6 +252,10 @@ pub struct Publisher<C: ChainClient> {
     /// instruction: "fees from coinset get_fee_estimate with the dry-run
     /// cost"). **предложение**: 60s, see `Config::retry_backoff` doc.
     pub fee_target_time_secs: u32,
+    /// How long a bundle may sit in the node's mempool unconfirmed before `replace_in_mempool`
+    /// replaces it (`C2_MEMPOOL_REPLACE_AFTER_SECS`, `Config::mempool_replace_after`); zero turns
+    /// the replacement off.
+    pub mempool_replace_after: Duration,
     /// `GET /v1/oracle/status`'s `operatorBalanceMojos`, refreshed out of
     /// band by `refresh_balance_snapshot` (called from `main.rs`'s own
     /// background loop, decoupled from `tick()`). `status()` only ever reads
@@ -506,10 +569,37 @@ impl<C: ChainClient> Publisher<C> {
         let walk = walk_lineage(&self.chain, start)
             .await
             .context("walking oracle singleton lineage for chain reconciliation")?;
+        let in_flight_before = queue.in_flight.clone();
         let mut outcome = queue.reconcile_with_chain(&walk);
 
         for warning in &outcome.decode_warnings {
             tracing::warn!(%warning, "oracle lineage walk");
+        }
+
+        // Whenever the chain walk takes the in-flight spend off the queue -- its singleton coin was
+        // consumed, or every record of it is already on chain -- the bundle is finished and so is
+        // every fee coin reserved for it, whichever version of the bundle it was (task C3/(e):
+        // the coin reserved for a version that lost the race is released too). Releasing is
+        // idempotent; a coin that was never reserved in this process is a no-op.
+        if let Some(before) = &in_flight_before
+            && queue.in_flight.is_none()
+        {
+            for coin_id in before.every_fee_coin() {
+                self.fee_allocator.release(coin_id).await;
+            }
+        }
+        // The spend that consumed the singleton coin was found and read: settle it -- the oracle
+        // state moves on, and the log says what happened (INFO for our own bundle, WARN for a spend
+        // that was not ours) instead of reading like an incident on every healthy batch.
+        if let (Some(resolved), Some(before)) = (&outcome.resolved_in_flight, &in_flight_before) {
+            self.settle_resolved_in_flight(&mut oracle_state, before, resolved)?;
+        }
+        if outcome.in_flight_unreadable {
+            tracing::warn!(
+                "the spend that consumed the in-flight bundle's singleton coin could not be read completely \
+                 (no puzzle/solution from coinset, or an announcement that does not decode) -- not concluding \
+                 anything about the bundle's records, will read it again on the next scan"
+            );
         }
         if !outcome.dropped_confirmed.is_empty() {
             tracing::info!(
@@ -595,6 +685,64 @@ impl<C: ChainClient> Publisher<C> {
         Ok(outcome)
     }
 
+    /// The part of settling an in-flight spend that the chain walk found consumed
+    /// (`ResolvedInFlight`) that is not queue bookkeeping: advances `operator.oracle.json` to the
+    /// singleton the spend recreated and says what happened. Idempotent against a crash between
+    /// this function and the caller's save of the queue: when `current_coin` is no longer the
+    /// consumed coin there is nothing to advance, and the next pass reaches the same accounting
+    /// from the same chain.
+    ///
+    /// Why the next coin and proof of the *latest* version of the bundle are right whichever version
+    /// the chain took: the successor of a singleton spend has the id of (parent id, puzzle hash,
+    /// amount), and the proof to spend it is the lineage proof of the consumed coin -- neither
+    /// depends on the records or the fee of the bundle (`spend::build_oracle_publish_batch`).
+    fn settle_resolved_in_flight(
+        &self,
+        oracle_state: &mut OracleState,
+        in_flight: &InFlightSpend,
+        resolved: &ResolvedInFlight,
+    ) -> Result<()> {
+        if oracle_state.current_coin == in_flight.spent_coin {
+            oracle_state.current_coin = in_flight.next_coin;
+            oracle_state.current_proof_dto = in_flight.next_proof.clone();
+            oracle_state.next_sequence = oracle_state.next_sequence.saturating_add(1);
+            save_oracle_state_atomic(&self.data_dir, &self.operator_name, oracle_state)
+                .context("persisting oracle state advanced by the confirmed in-flight spend")?;
+        }
+
+        let fee_mojos = in_flight.fee_of_version_announcing(&resolved.announced);
+        if resolved.ours {
+            tracing::info!(
+                records = resolved.confirmed.len(),
+                requeued = resolved.requeued.len(),
+                height = ?resolved.height,
+                fee_mojos = ?fee_mojos,
+                bundle_id = %in_flight.bundle_id,
+                "oracle publish batch confirmed"
+            );
+            if !resolved.requeued.is_empty() {
+                tracing::info!(
+                    seqs = ?resolved.requeued,
+                    "the chain took an earlier version of the in-flight bundle: the records it did not \
+                     carry are back in the queue and a later batch publishes them (docs/research/chain_service.md §17.4)"
+                );
+            }
+        } else {
+            tracing::warn!(
+                announced = ?resolved.announced,
+                height = ?resolved.height,
+                requeued = ?resolved.requeued,
+                confirmed = ?resolved.confirmed,
+                conflicts = ?resolved.conflicts,
+                bundle_id = %in_flight.bundle_id,
+                "the spend that consumed the in-flight bundle's singleton coin is not this service's bundle \
+                 (it announced records the bundle does not carry, or none) -- someone else published; the \
+                 records the chain does not have are back in the queue, the rest are accounted for from the chain"
+            );
+        }
+        Ok(())
+    }
+
     /// Runs one iteration of the publisher state machine (see module doc),
     /// then records the outcome into `tick_failures` (task fix,
     /// `docs/research/chain_service.md` §12: "any repeated tick failure (N
@@ -665,7 +813,13 @@ impl<C: ChainClient> Publisher<C> {
         }
 
         if queue.pending.is_empty() {
-            return Ok(TickOutcome::Idle);
+            // A tick whose chain walk settled our own bundle (and has nothing more to publish)
+            // reports the confirmation, like the tick that used to settle it in
+            // `advance_in_flight`; the INFO line was logged by the walk.
+            return Ok(match &reconcile_outcome.resolved_in_flight {
+                Some(resolved) if resolved.ours => TickOutcome::Confirmed { records: resolved.confirmed.len() },
+                _ => TickOutcome::Idle,
+            });
         }
 
         self.start_new_batch(&mut queue).await
@@ -680,48 +834,7 @@ impl<C: ChainClient> Publisher<C> {
             .context("checking in-flight spend confirmation")?;
 
         if record_info.exists {
-            let mut oracle_state = load_oracle_state(&self.data_dir, &self.operator_name)
-                .context("loading oracle state to finalize a confirmed spend")?;
-            oracle_state.current_coin = in_flight.next_coin;
-            oracle_state.current_proof_dto = in_flight.next_proof.clone();
-            oracle_state.next_sequence += 1;
-            save_oracle_state_atomic(&self.data_dir, &self.operator_name, &oracle_state)
-                .context("persisting advanced oracle state")?;
-
-            // Per-record confirmation (FIXED INTERFACE (b),
-            // `GET /v1/oracle/records/{seq}`): every record in this batch,
-            // not just "the last one" -- `in_flight.records` is no longer
-            // guaranteed sorted ascending by seq once a LATE/backfill record
-            // (arbitrary seq) can be merged into a rebuild alongside newer
-            // ones (`rebuild_in_flight`), so `.last()`/`.max()` on it would
-            // both be the wrong question for per-seq tracking, only the
-            // right one for the *overall* high-water mark below.
-            let confirmed_coin_id = format!("{}", in_flight.next_coin.coin_id());
-            for record in &in_flight.records {
-                queue.confirmed.insert(
-                    record.seq,
-                    ConfirmedRecordInfo { height: record_info.confirmed_height, coin_id: confirmed_coin_id.clone() },
-                );
-            }
-            let confirmed_count = in_flight.records.len();
-            queue.last_confirmed_seq =
-                in_flight.records.iter().map(|r| r.seq).max().max(queue.last_confirmed_seq);
-            queue.last_confirmed_height = record_info.confirmed_height.or(queue.last_confirmed_height);
-            // The fee coin this confirmed spend consumed is now genuinely,
-            // permanently spent on chain -- release its reservation (task
-            // fix, `docs/research/chain_service.md` §15): a gap-scan will
-            // never offer it again anyway, this is just housekeeping so the
-            // shared allocator's reserved set doesn't grow forever.
-            if let Some(fee_coin) = fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
-                self.fee_allocator.release(fee_coin.coin_id()).await;
-            }
-            queue.in_flight = None;
-            queue
-                .save_atomic(&self.data_dir, &self.operator_name)
-                .context("clearing in-flight spend after confirmation")?;
-
-            tracing::info!(records = confirmed_count, "oracle publish batch confirmed");
-            return Ok(TickOutcome::Confirmed { records: confirmed_count });
+            return self.settle_confirmed_in_flight(queue, in_flight, record_info.confirmed_height).await;
         }
 
         // Backoff / dry-run gating happens before anything else below --
@@ -760,16 +873,26 @@ impl<C: ChainClient> Publisher<C> {
             .await
             .context("checking mempool for the in-flight spend's bundle")?;
         if in_mempool {
-            // Task instruction: "the previous bundle IS in the mempool but
-            // pending too long: leave it". A Chia mempool replacement
-            // requires spending a *superset* of the same coins at a
-            // strictly higher fee (`chia-blockchain`'s
-            // `mempool_manager.py::check_removals`/`MempoolItem` replacement
-            // rule) -- a same-coin, higher-fee rebuild does not qualify, so
-            // resubmitting it would just be rejected as a conflicting spend.
-            // Not implemented; just wait for it to confirm or fall out of
-            // the mempool on its own.
-            return Ok(TickOutcome::WaitingForConfirmation);
+            // In the mempool: wait for it -- for `mempool_replace_after`. Past that the bundle is
+            // replaced (`replace_in_mempool`): the first version of this code left it alone
+            // forever ("Not implemented; just wait"), and on 2026-10-02 a fee-0 bundle sat there
+            // for ten minutes while every batch behind it piled up (§17.1). The rule the
+            // replacement has to satisfy is `mempool_rule.rs` (§17.3): it spends a *superset* of
+            // the old bundle's coins -- the same singleton coin and the fee coin the old bundle
+            // spent -- at a fee at least `MEMPOOL_MIN_FEE_INCREASE` higher; the earlier note here
+            // that a same-coin, higher-fee bundle "does not qualify" was wrong: same coins *is* a
+            // superset.
+            return self.replace_in_mempool_if_due(queue, in_flight).await;
+        }
+
+        // Not in the mempool any more (or never): whatever kept the bundle from being replaced
+        // is over. Clear it so `stuckReason` stops naming it.
+        let mut in_flight = in_flight;
+        if in_flight.replace_blocked.take().is_some() {
+            queue.in_flight = Some(in_flight.clone());
+            queue
+                .save_atomic(&self.data_dir, &self.operator_name)
+                .context("clearing a stale 'replacement blocked' note from the in-flight spend")?;
         }
 
         // Task fix (`docs/research/chain_service.md` §15): the singleton
@@ -844,7 +967,6 @@ impl<C: ChainClient> Publisher<C> {
             .await
             .context("retrying push_tx for an in-flight spend")?;
 
-        let mut in_flight = in_flight;
         in_flight.attempts += 1;
         in_flight.last_attempt_at_unix = now_unix();
         in_flight.last_push_accepted = outcome.accepted;
@@ -856,6 +978,453 @@ impl<C: ChainClient> Publisher<C> {
             .context("persisting retried in-flight spend")?;
 
         Ok(TickOutcome::Retried { accepted })
+    }
+
+    /// `in_flight.next_coin` exists on chain: the singleton coin the bundle spends was consumed by
+    /// *some* spend -- the successor of a singleton spend has the same id whichever bundle made
+    /// it, so this alone does not say that it was this bundle, nor which version of it.
+    ///
+    /// The chain walk that opens every tick (`reconcile_queue_with_chain`) normally settles this
+    /// first and there is no in-flight spend left to reach here -- the INFO line
+    /// "oracle publish batch confirmed" comes from there (§17.5). This branch still runs when a
+    /// block arrived between that walk and the check in `advance_in_flight`, and when the walk
+    /// could not read the consuming spend. It walks again, now that the coin is known to be consumed,
+    /// and settles from what the chain announced. If the spend still cannot be read:
+    ///
+    /// * a bundle that was never replaced or rebuilt is taken to be the one that confirmed, as it
+    ///   always was (every record confirmed at `confirmed_height`);
+    /// * a bundle with earlier versions is **not** guessed at -- the records of the version that
+    ///   lost must not be marked confirmed -- it waits until the chain can be read.
+    async fn settle_confirmed_in_flight(
+        &self,
+        queue: &mut QueueFile,
+        in_flight: InFlightSpend,
+        confirmed_height: Option<u32>,
+    ) -> Result<TickOutcome> {
+        let outcome = self.reconcile_queue_with_chain(queue).await?;
+        if queue.in_flight.is_none() {
+            queue
+                .save_atomic(&self.data_dir, &self.operator_name)
+                .context("clearing in-flight spend after confirmation")?;
+            let records = outcome
+                .resolved_in_flight
+                .as_ref()
+                .map_or(outcome.dropped_confirmed.len(), |resolved| resolved.confirmed.len());
+            return Ok(TickOutcome::Confirmed { records });
+        }
+
+        if !in_flight.superseded.is_empty() {
+            if outcome.changed() {
+                queue
+                    .save_atomic(&self.data_dir, &self.operator_name)
+                    .context("persisting chain-reconciled queue while waiting for the confirming spend")?;
+            }
+            tracing::warn!(
+                bundle_id = %in_flight.bundle_id,
+                versions = in_flight.superseded.len() + 1,
+                "the in-flight bundle's singleton coin is consumed but the spend cannot be read yet, and the bundle \
+                 has earlier versions -- not deciding which records were published until the chain can be read"
+            );
+            return Ok(TickOutcome::WaitingForConfirmation);
+        }
+
+        let mut oracle_state = load_oracle_state(&self.data_dir, &self.operator_name)
+            .context("loading oracle state to finalize a confirmed spend")?;
+        oracle_state.current_coin = in_flight.next_coin;
+        oracle_state.current_proof_dto = in_flight.next_proof.clone();
+        oracle_state.next_sequence += 1;
+        save_oracle_state_atomic(&self.data_dir, &self.operator_name, &oracle_state)
+            .context("persisting advanced oracle state")?;
+
+        // Per-record confirmation (FIXED INTERFACE (b), `GET /v1/oracle/records/{seq}`): every
+        // record in this batch, not just "the last one" -- `in_flight.records` is no longer
+        // guaranteed sorted ascending by seq once a LATE/backfill record (arbitrary seq) can be
+        // merged into a rebuild alongside newer ones (`rebuild_in_flight`), so `.last()`/`.max()`
+        // on it would both be the wrong question for per-seq tracking, only the right one for the
+        // *overall* high-water mark below.
+        let confirmed_coin_id = format!("{}", in_flight.next_coin.coin_id());
+        for record in &in_flight.records {
+            queue
+                .confirmed
+                .insert(record.seq, ConfirmedRecordInfo { height: confirmed_height, coin_id: confirmed_coin_id.clone() });
+        }
+        let confirmed_count = in_flight.records.len();
+        queue.last_confirmed_seq = in_flight.records.iter().map(|r| r.seq).max().max(queue.last_confirmed_seq);
+        queue.last_confirmed_height = confirmed_height.or(queue.last_confirmed_height);
+        // The fee coin this confirmed spend consumed is now genuinely, permanently spent on chain --
+        // release its reservation (task fix, `docs/research/chain_service.md` §15): a gap-scan will
+        // never offer it again anyway, this is just housekeeping so the shared allocator's reserved
+        // set doesn't grow forever.
+        for coin_id in in_flight.every_fee_coin() {
+            self.fee_allocator.release(coin_id).await;
+        }
+        queue.in_flight = None;
+        queue
+            .save_atomic(&self.data_dir, &self.operator_name)
+            .context("clearing in-flight spend after confirmation")?;
+
+        tracing::info!(
+            records = confirmed_count,
+            height = ?confirmed_height,
+            fee_mojos = in_flight.fee_mojos,
+            "oracle publish batch confirmed (the chain walk could not read the confirming spend; the bundle was \
+             never replaced, so it is taken to be the one that confirmed)"
+        );
+        Ok(TickOutcome::Confirmed { records: confirmed_count })
+    }
+
+    /// The in-flight bundle is in the node's mempool: replace it once it has waited
+    /// `mempool_replace_after` since the last time this publisher acted on it
+    /// (`last_attempt_at_unix`: the last push, or the last time a replacement was tried and could
+    /// not be made -- so a refusal is retried after another full wait, not on every tick).
+    async fn replace_in_mempool_if_due(&self, queue: &mut QueueFile, in_flight: InFlightSpend) -> Result<TickOutcome> {
+        if self.mempool_replace_after.is_zero() {
+            return Ok(TickOutcome::WaitingForConfirmation);
+        }
+        let waited = now_unix() - in_flight.last_attempt_at_unix;
+        if waited < i64::try_from(self.mempool_replace_after.as_secs()).unwrap_or(i64::MAX) {
+            return Ok(TickOutcome::WaitingForConfirmation);
+        }
+        self.replace_in_mempool(queue, in_flight).await
+    }
+
+    /// Records that the replacement could not be made, on the bundle that stays in flight, and
+    /// restarts the wait: `last_attempt_at_unix` is when this publisher last acted on the bundle.
+    /// The bundle keeps waiting in the mempool -- it may still confirm -- and `stuckReason` says why
+    /// nothing better is happening to it.
+    fn block_replacement(&self, queue: &mut QueueFile, mut in_flight: InFlightSpend, reason: String) -> Result<TickOutcome> {
+        tracing::warn!(
+            bundle_id = %in_flight.bundle_id,
+            fee_mojos = in_flight.fee_mojos,
+            %reason,
+            "in-flight bundle has waited in the mempool past C2_MEMPOOL_REPLACE_AFTER_SECS but cannot be replaced -- \
+             it keeps waiting"
+        );
+        in_flight.replace_blocked = Some(reason.clone());
+        in_flight.last_attempt_at_unix = now_unix();
+        queue.in_flight = Some(in_flight);
+        queue
+            .save_atomic(&self.data_dir, &self.operator_name)
+            .context("persisting the 'replacement blocked' note on the in-flight spend")?;
+        Ok(TickOutcome::ReplacementBlocked { reason })
+    }
+
+    /// Replaces the in-flight bundle, which the node holds in its mempool but does not confirm, with
+    /// a bundle that the node's replacement rule accepts (`mempool_rule.rs`, `docs/research/
+    /// chain_service.md` §17.3) and that pays enough to be taken:
+    ///
+    /// * **the same singleton coin**, with the old records plus any newly pending (at most
+    ///   `MAX_RECORDS_PER_SPEND`, like `rebuild_in_flight`) -- both bundles spend that coin, so at
+    ///   most one of them can ever confirm (the chain says which, `QueueFile::resolve_consumed_in_flight`);
+    /// * **a superset of the old bundle's coins**: a bundle that had no fee coin gains one (reserved
+    ///   from the shared allocator); a bundle that had one keeps spending that very coin, with a
+    ///   higher fee -- the replacement may not drop a coin the old bundle spent;
+    /// * **a fee** of `max(2 x old, the estimate for the new cost, old + 10,000,000)`, raised to the
+    ///   exact minimum of the fee-per-cost rule if the new cost needs it, never above
+    ///   `C2_MAX_FEE_MOJOS` (nor above what the fee coin holds). When the cap leaves no valid
+    ///   replacement the old bundle keeps waiting and `stuckReason` says so
+    ///   (`ReplacementBlocked`) -- nothing is pushed and nothing is retried before another full wait.
+    ///
+    /// Persistence follows `start_new_batch`: the replacement is made durable *before* it is
+    /// pushed. If the node then does not take it (a `FAILED` answer, or `PENDING` -- parked in
+    /// the node's conflict cache, not in the mempool), the old bundle is put back as the in-flight
+    /// spend, the records merged from `pending` return to it, and a fee coin newly reserved for the
+    /// replacement is released: the persisted state keeps describing what the node actually holds.
+    /// Whichever of the two the chain ends up taking, nothing is lost or published twice -- see
+    /// `ResolvedInFlight`.
+    async fn replace_in_mempool(&self, queue: &mut QueueFile, in_flight: InFlightSpend) -> Result<TickOutcome> {
+        let manager = load_operator_wallet_key(&self.data_dir, &self.operator_name)
+            .context("loading operator wallet key")?;
+        let master_sk = load_operator_master_sk(&self.data_dir, &self.operator_name)
+            .context("loading operator master key")?;
+        let oracle_state = load_oracle_state(&self.data_dir, &self.operator_name)
+            .context("loading oracle state to replace a bundle in the mempool")?;
+        if oracle_state.current_coin != in_flight.spent_coin {
+            // Same belt-and-suspenders as `rebuild_in_flight`: the singleton coin was just checked
+            // unspent by `advance_in_flight`, and `current_coin` only moves on a confirmed spend.
+            bail!(
+                "oracle state current_coin {} no longer matches the in-flight spend's coin {} -- \
+                 refusing to replace (needs manual reconciliation, see docs/research/chain_service.md §5)",
+                oracle_state.current_coin.coin_id(),
+                in_flight.spent_coin.coin_id()
+            );
+        }
+
+        let old_fee = in_flight.fee_mojos;
+        let old_cost = measure_bundle_cost(&in_flight.bundle.coin_spends)
+            .context("measuring the in-mempool bundle's cost")?
+            .total_cost;
+        let minimum_by_increase = old_fee.saturating_add(MEMPOOL_MIN_FEE_INCREASE);
+        if minimum_by_increase > self.max_fee_mojos {
+            return self.block_replacement(
+                queue,
+                in_flight,
+                format!(
+                    "the node accepts a replacement only if it pays at least {MEMPOOL_MIN_FEE_INCREASE} mojos more than the \
+                     bundle it replaces ({old_fee} mojos): {minimum_by_increase} mojos, and C2_MAX_FEE_MOJOS is {} mojos",
+                    self.max_fee_mojos
+                ),
+            );
+        }
+
+        // The newly pending records ride along, like in `rebuild_in_flight`.
+        let mut records = in_flight.records.clone();
+        let room = MAX_RECORDS_PER_SPEND.saturating_sub(records.len());
+        let merged: Vec<OracleRecord> = if room > 0 { queue.take_batch(room) } else { Vec::new() };
+        records.extend(merged.iter().copied());
+
+        let prepared = match self
+            .prepare_replacement(&in_flight, &records, &oracle_state, &manager, &master_sk, old_cost)
+            .await
+        {
+            Ok(prepared) => prepared,
+            Err(e) => {
+                queue.pending.splice(0..0, merged);
+                return Err(e);
+            }
+        };
+        let ready = match prepared {
+            Prepared::Ready(ready) => *ready,
+            Prepared::Blocked(reason) => {
+                queue.pending.splice(0..0, merged);
+                return self.block_replacement(queue, in_flight, reason);
+            }
+            Prepared::FeeCoinsBusy => {
+                queue.pending.splice(0..0, merged);
+                tracing::info!("not replacing the bundle in the mempool yet: the fee-coin split is holding the wallet's only fee coin");
+                return Ok(TickOutcome::WaitingForConfirmation);
+            }
+        };
+
+        let now = now_unix();
+        let mut superseded = in_flight.superseded.clone();
+        superseded.push(in_flight.as_superseded("replaced in the mempool", now));
+        let replacement = InFlightSpend {
+            records,
+            spent_coin: oracle_state.current_coin,
+            next_coin: ready.next_coin,
+            next_proof: ready.next_proof,
+            bundle: ready.bundle.clone(),
+            bundle_id: ready.bundle_id,
+            fee_mojos: ready.fee_mojos,
+            broadcast_at_unix: now,
+            last_attempt_at_unix: now,
+            // A materially different transaction gets its own retry budget.
+            attempts: 1,
+            last_push_accepted: false,
+            last_push_error: None,
+            superseded,
+            replace_blocked: None,
+        };
+        let batch_len = replacement.records.len();
+        let replacement_fee = replacement.fee_mojos;
+        queue.in_flight = Some(replacement);
+        // Durability first, same invariant as `start_new_batch`: a crash after this line and
+        // before the push leaves a persisted bundle that the next tick pushes.
+        if let Err(e) = queue.save_atomic(&self.data_dir, &self.operator_name) {
+            // Nothing reached the disk, so nothing refers to a fee coin reserved for this
+            // replacement; the next tick starts over and must be able to pick it again.
+            if let Some(coin) = ready.newly_reserved {
+                self.fee_allocator.release(coin.coin_id()).await;
+            }
+            return Err(e.context("persisting the replacement in-flight spend before broadcasting"));
+        }
+
+        let bundle_name = ready.bundle.name();
+        let pushed = self.chain.push_tx(ready.bundle).await.context("push_tx for the replacement bundle")?;
+        // `push_tx` answers success with `status: "PENDING"` when it parked the bundle in its
+        // conflict cache instead of replacing the old one (`mempool_rule.rs` module doc), so
+        // "accepted" is not enough: it has to be a `SUCCESS`, or the mempool has to say it holds it.
+        let taken = pushed.accepted
+            && (pushed.status.as_deref() == Some("SUCCESS")
+                || self.chain.in_mempool(bundle_name).await.unwrap_or(false));
+
+        if taken {
+            if let Some(current) = queue.in_flight.as_mut() {
+                current.last_push_accepted = true;
+                current.last_push_error = None;
+            }
+            queue
+                .save_atomic(&self.data_dir, &self.operator_name)
+                .context("persisting the replacement's push outcome")?;
+            tracing::info!(
+                records = batch_len,
+                fee_mojos = replacement_fee,
+                replaced_fee_mojos = old_fee,
+                waited_secs = now - in_flight.last_attempt_at_unix,
+                "replaced the oracle publish bundle that sat in the mempool"
+            );
+            return Ok(TickOutcome::Replaced { records: batch_len, fee_mojos: replacement_fee, replaced_fee_mojos: old_fee });
+        }
+
+        // The node did not take the replacement: put the old bundle back as the in-flight spend,
+        // the merged records back in `pending`, and release the fee coin that was reserved for the
+        // replacement only. What the node holds is still the old bundle.
+        let detail = match (&pushed.error, &pushed.status) {
+            (Some(error), _) => error.clone(),
+            (None, Some(status)) => format!("status {status}"),
+            (None, None) => "no answer".to_string(),
+        };
+        if let Some(coin) = ready.newly_reserved {
+            self.fee_allocator.release(coin.coin_id()).await;
+        }
+        queue.pending.splice(0..0, merged);
+        self.block_replacement(
+            queue,
+            in_flight,
+            format!("the node did not take the replacement bundle (fee {replacement_fee} mojos): {detail}"),
+        )
+    }
+
+    /// Builds the replacement bundle for `replace_in_mempool`: the draft spend of the singleton for
+    /// `records`, a fee spend that satisfies the node's replacement rule (or the reason it cannot
+    /// be made), signed and priced. Reserves a fee coin only when the old bundle had none; releases
+    /// it again on every path that does not end in `Prepared::Ready`.
+    async fn prepare_replacement(
+        &self,
+        in_flight: &InFlightSpend,
+        records: &[OracleRecord],
+        oracle_state: &OracleState,
+        manager: &WalletKey,
+        master_sk: &SecretKey,
+        old_cost: u64,
+    ) -> Result<Prepared> {
+        let old_fee = in_flight.fee_mojos;
+        let cap = self.max_fee_mojos;
+        let minimum_by_increase = old_fee.saturating_add(MEMPOOL_MIN_FEE_INCREASE);
+
+        let draft = build_oracle_publish_batch(
+            oracle_state.launcher_id,
+            oracle_state.current_coin,
+            oracle_state.current_proof(),
+            manager,
+            records,
+        )
+        .context("building the replacement oracle-publish batch spend")?;
+        let draft_cost = measure_bundle_cost(&draft.coin_spends)
+            .context("measuring the replacement draft's cost")?
+            .total_cost;
+
+        // What the fee should be: at least the old one doubled (like a rebuild), at least what
+        // the chain asks for this cost at a shorter target than a fresh batch (or the fallback rate
+        // when the estimate is not available -- never nothing), at least what the node's rule
+        // demands -- and never above the cap.
+        let shorter_target = (self.fee_target_time_secs / 3).max(1);
+        let estimate = self
+            .fee_allocator
+            .fees()
+            .estimate(&self.chain, draft_cost, shorter_target, u64::MAX)
+            .await
+            .fee_mojos;
+        let wanted = old_fee.saturating_mul(2).max(estimate).max(minimum_by_increase);
+
+        // The fee coin. A replacement must spend every coin the old bundle spent (rule 1): the
+        // old bundle's fee coin stays; a bundle that had none gets one.
+        let (payer, fee_coin, newly_reserved, ceiling) = match fee_coin_of(&in_flight.bundle, in_flight.spent_coin) {
+            Some(coin) => {
+                let Some(payer) = FeeCoinAllocator::owner_key_of(master_sk, &coin) else {
+                    return Ok(Prepared::Blocked(format!(
+                        "the old bundle's fee coin {} is not one of this wallet's first {} addresses, so it cannot be \
+                         spent again, and the node only accepts a replacement that spends every coin the old bundle spends",
+                        coin.coin_id(),
+                        c2_cli::chain::ADDRESS_GAP
+                    )));
+                };
+                let record = self
+                    .chain
+                    .coin_record(coin.coin_id())
+                    .await
+                    .context("checking the old bundle's fee coin before replacing the bundle")?;
+                if record.spent {
+                    return Ok(Prepared::Blocked(format!(
+                        "the old bundle's fee coin {} is already spent on chain: that bundle cannot confirm and will \
+                         leave the mempool, a replacement that must spend the same coin is impossible",
+                        coin.coin_id()
+                    )));
+                }
+                let ceiling = cap.min(coin.amount);
+                if minimum_by_increase > ceiling {
+                    return Ok(Prepared::Blocked(format!(
+                        "the replacement must spend the old bundle's fee coin ({} mojos) and pay at least \
+                         {minimum_by_increase} mojos, C2_MAX_FEE_MOJOS is {cap} mojos",
+                        coin.amount
+                    )));
+                }
+                (payer, coin, None, ceiling)
+            }
+            None => {
+                let (payer, coin) = match self.fee_allocator.reserve(&self.chain, master_sk, wanted.min(cap)).await {
+                    Ok(reserved) => reserved,
+                    Err(e) if e.downcast_ref::<FeeCoinsBusy>().is_some() => return Ok(Prepared::FeeCoinsBusy),
+                    Err(e) if e.downcast_ref::<NoFeeCoin>().is_some() => {
+                        return Ok(Prepared::Blocked(format!(
+                            "the old bundle paid no fee coin and the wallet has no unspent, unreserved coin that can pay the \
+                             replacement's fee of up to {} mojos: {e:#}",
+                            wanted.min(cap)
+                        )));
+                    }
+                    Err(e) => return Err(e.context("no funding coin to pay the replacement bundle's fee with")),
+                };
+                let ceiling = cap.min(coin.amount);
+                (payer, coin, Some(coin), ceiling)
+            }
+        };
+
+        // From here on a fee coin that was reserved for this replacement is given back on any way
+        // out that is not `Ready`.
+        let release_on_exit = async |reserved: Option<Coin>| {
+            if let Some(coin) = reserved {
+                self.fee_allocator.release(coin.coin_id()).await;
+            }
+        };
+
+        let mut fee = wanted.min(ceiling);
+        // The cost of the real bundle -- fee spend included -- decides the fee-per-cost rule; the
+        // fee spend's own bytes depend a little on the amounts in it, so settle in a few rounds
+        // (one is normal: `required_replacement_fee` already leaves slack).
+        for _ in 0..3 {
+            let fee_spend = match build_fee_only(fee_coin, &payer, fee) {
+                Ok(spend) => spend,
+                Err(e) => {
+                    release_on_exit(newly_reserved).await;
+                    return Err(e.context("building the replacement's fee-only coin spend"));
+                }
+            };
+            let mut coin_spends = draft.coin_spends.clone();
+            coin_spends.extend(fee_spend.coin_spends);
+            let new_cost = match measure_bundle_cost(&coin_spends) {
+                Ok(cost) => cost.total_cost,
+                Err(e) => {
+                    release_on_exit(newly_reserved).await;
+                    return Err(e.context("measuring the replacement bundle's cost"));
+                }
+            };
+            let required = required_replacement_fee(old_fee, old_cost, new_cost);
+            if fee >= required {
+                let signature = draft.signature.clone() + &fee_spend.signature;
+                let bundle_id = bundle_display_id(&signature);
+                return Ok(Prepared::Ready(Box::new(ReplacementBundle {
+                    bundle: SpendBundle::new(coin_spends, signature),
+                    bundle_id,
+                    fee_mojos: fee,
+                    next_coin: draft.next_coin,
+                    next_proof: draft.next_proof.into(),
+                    newly_reserved,
+                })));
+            }
+            if required > ceiling {
+                release_on_exit(newly_reserved).await;
+                return Ok(Prepared::Blocked(format!(
+                    "the node's replacement rule needs this bundle (cost {new_cost}) to pay at least {required} mojos -- more than \
+                     the {old_fee} mojos of the bundle it replaces (cost {old_cost}) plus {MEMPOOL_MIN_FEE_INCREASE}, and a higher \
+                     fee per cost -- but it may pay at most {ceiling} mojos (C2_MAX_FEE_MOJOS {cap}, fee coin {} mojos)",
+                    fee_coin.amount
+                )));
+            }
+            fee = required;
+        }
+        release_on_exit(newly_reserved).await;
+        Ok(Prepared::Blocked("the replacement's fee did not settle after three rounds".to_string()))
     }
 
     /// Rebuilds the in-flight spend's records (plus any newly queued ones,
@@ -923,13 +1492,15 @@ impl<C: ChainClient> Publisher<C> {
         // default target, not just match it. **предложение**: a third of
         // `fee_target_time_secs`, floor 1s.
         let shorter_target = (self.fee_target_time_secs / 3).max(1);
-        let chain_estimate = match self.chain.fee_estimate_mojos(draft_cost.total_cost, shorter_target).await {
-            Ok(fee) => fee,
-            Err(e) => {
-                tracing::warn!("get_fee_estimate failed while rebuilding a rejected spend, falling back to 0: {e:#}");
-                0
-            }
-        };
+        // A failed or zero estimate is the fallback rate (`fee_estimate.rs`, §17.2), not 0: the old
+        // "falling back to 0" followed by `.max(1)` below is how a rebuild after a fee rejection
+        // could come out at a fee of one mojo.
+        let chain_estimate = self
+            .fee_allocator
+            .fees()
+            .estimate(&self.chain, draft_cost.total_cost, shorter_target, u64::MAX)
+            .await
+            .fee_mojos;
         // Task instruction: "on each consecutive fee rejection multiply the
         // fee (e.g. x2) up to a configurable cap".
         let fee_mojos = in_flight
@@ -962,6 +1533,14 @@ impl<C: ChainClient> Publisher<C> {
             attempts: 1,
             last_push_accepted: false,
             last_push_error: None,
+            // The bundle this one replaces stays on record: the chain, not this process, decides
+            // which version confirms (`QueueFile::resolve_consumed_in_flight`).
+            superseded: {
+                let mut versions = in_flight.superseded.clone();
+                versions.push(in_flight.as_superseded("rebuilt after a rejection", now));
+                versions
+            },
+            replace_blocked: None,
         });
         // Durability first, same invariant as `start_new_batch`.
         queue
@@ -1053,27 +1632,18 @@ impl<C: ChainClient> Publisher<C> {
         .context("building oracle-publish batch spend")?;
         let draft_cost = measure_bundle_cost(&draft.coin_spends).context("measuring draft spend cost")?;
 
-        let fee_mojos = match self
-            .chain
-            .fee_estimate_mojos(draft_cost.total_cost, self.fee_target_time_secs)
+        // The first attempt: the estimate; when `get_fee_estimate` fails or answers 0 the fallback
+        // (the last successful estimate's rate, else the configured floor) -- never a fee of 0
+        // because an estimate was unavailable (`fee_estimate.rs`, §17.2: a fee-0 bundle sat in a
+        // busy mempool for ten minutes on 2026-10-02). Capped at `C2_MAX_FEE_MOJOS` just like every
+        // rebuild: an estimate from a briefly insane mempool must not be able to spend more than the
+        // operator allowed.
+        let fee_mojos = self
+            .fee_allocator
+            .fees()
+            .estimate(&self.chain, draft_cost.total_cost, self.fee_target_time_secs, self.max_fee_mojos)
             .await
-        {
-            // The first attempt is capped at `C2_MAX_FEE_MOJOS` just like every rebuild: an estimate
-            // from a briefly insane mempool must not be able to spend more than the operator allowed.
-            Ok(fee) if fee > self.max_fee_mojos => {
-                tracing::warn!(
-                    estimate = fee,
-                    cap = self.max_fee_mojos,
-                    "get_fee_estimate is above C2_MAX_FEE_MOJOS -- capping the first attempt's fee"
-                );
-                self.max_fee_mojos
-            }
-            Ok(fee) => fee,
-            Err(e) => {
-                tracing::warn!("get_fee_estimate failed, falling back to fee=0: {e:#}");
-                0
-            }
-        };
+            .fee_mojos;
 
         if !self.push_enabled {
             tracing::info!(
@@ -1122,6 +1692,8 @@ impl<C: ChainClient> Publisher<C> {
             attempts: 1,
             last_push_accepted: false,
             last_push_error: None,
+            superseded: Vec::new(),
+            replace_blocked: None,
         });
         // Durability first (task instruction: "queue records durably ...
         // while a spend is in flight"): this atomic write is what removes

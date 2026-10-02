@@ -99,11 +99,13 @@ pub trait ChainClient: Send + Sync {
     /// to the mempool. Distinguishes "the node rejected this push outright,
     /// it never entered the mempool" (safe to rebuild with a higher fee,
     /// task instruction: "the singleton coin is still unspent") from "it's
-    /// sitting in the mempool, just slow to confirm" (task instruction:
-    /// "leave it" -- Chia has no fee-bump replacement for a same-coin bundle
-    /// already known to the mempool unless the replacement spends a superset
-    /// of coins at a higher fee, which this service does not implement, see
-    /// `publisher.rs::advance_in_flight`).
+    /// sitting in the mempool, just slow to confirm" (waited for, then
+    /// replaced by a bundle the node's replacement rule accepts -- a superset
+    /// of its coins at a fee at least 10,000,000 mojos higher, `mempool_rule.rs`,
+    /// `publisher.rs::replace_in_mempool`, `docs/research/chain_service.md`
+    /// §17.3). Only a bundle the mempool itself holds counts: one the node
+    /// parked in its conflict cache (`push_tx` answers `PENDING`) is not "in
+    /// the mempool".
     fn in_mempool(&self, tx_id: Bytes32) -> impl Future<Output = Result<bool>> + Send;
 
     /// The puzzle reveal + solution that spent `coin_id` (`None` if

@@ -1,0 +1,5 @@
+{
+  "error": "requestId w-11 is already held by this service with a different recipient or amount; a requestId identifies exactly one withdrawal -- submit a new requestId for a new withdrawal",
+  "code": "request_id_conflict",
+  "requestId": "w-11"
+}
