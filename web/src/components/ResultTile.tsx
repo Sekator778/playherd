@@ -40,8 +40,8 @@ export function ResultTile({
   roundId: RoundId;
   /** The market's ticker ("BTC", "NVDA", "GER") — which market the round was played in (Р-69). */
   symbol?: string;
-  /** The series' real length ("3 MIN"), when known: `ProfileRoundEntryDto` only carries the series' name,
-   *  so a caller that has the market list passes it; without it the tile simply leaves it out (never
+  /** The series' real length ("3 MIN"), when known: from the history row's own `durationSec`, or — for a
+   *  server that predates it — the market list; without either the tile simply leaves it out (never
    *  "Hourly"/"Daily" for a round that was three minutes long). */
   seriesLabel?: string;
   direction: Direction;

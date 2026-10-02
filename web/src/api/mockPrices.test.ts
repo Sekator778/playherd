@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DAY_MS, HOUR_MS, SIM_BASE_MS, windowFor } from "./clock";
-import { MOCK_MARKETS, mockMarketById, perpPriceDecimals, type MockMarketSpec } from "./mockMarkets";
+import { MOCK_MARKETS, MOCK_NEW_LISTING_ID, mockMarketById, perpPriceDecimals, type MockMarketSpec } from "./mockMarkets";
 import { TICK_MS, change24hAt, ohlcFor, priceAt, priceStrAt, ticksBetween } from "./mockPrices";
 import { rngFor } from "./rng";
 
@@ -13,15 +13,15 @@ function fractionDigits(price: string): number {
 }
 
 describe("the market catalog (docs/research/markets_architecture.md Т-3, Т-4)", () => {
-  it("has 18 markets in 6 categories: 6 crypto, 2 stocks, 2 indices, 2 commodities, 3 politics, 3 sports", () => {
-    expect(MOCK_MARKETS).toHaveLength(18);
+  it("has 19 markets in 6 categories: 6 crypto, 2 stocks, 2 indices, 2 commodities, 4 politics, 3 sports", () => {
+    expect(MOCK_MARKETS).toHaveLength(19);
     const count = (category: string) => MOCK_MARKETS.filter((m) => m.category === category).length;
-    expect(["crypto", "stocks", "indices", "commodities", "politics", "sports"].map(count)).toEqual([6, 2, 2, 2, 3, 3]);
+    expect(["crypto", "stocks", "indices", "commodities", "politics", "sports"].map(count)).toEqual([6, 2, 2, 2, 4, 3]);
     expect(MOCK_MARKETS.filter((m) => m.kind === "ODDS").every((m) => m.category === "politics" || m.category === "sports")).toBe(true);
   });
 
   it("market ids are unique and match [A-Za-z0-9_]{1,32}; symbols are card tickers", () => {
-    expect(new Set(MOCK_MARKETS.map((m) => m.id)).size).toBe(18);
+    expect(new Set(MOCK_MARKETS.map((m) => m.id)).size).toBe(19);
     for (const m of MOCK_MARKETS) expect(m.id).toMatch(/^[A-Za-z0-9_]{1,32}$/);
     expect(PERPS.map((m) => m.symbol)).toEqual(["BTC", "ETH", "SOL", "XRP", "DOGE", "HYPE", "NVDA", "TSLA", "SP500", "XYZ100", "GOLD", "BRENTOIL"]);
   });
@@ -41,23 +41,44 @@ describe("the market catalog (docs/research/markets_architecture.md Т-3, Т-4)"
     expect(byId("xyz_SP500").maxLeverage).toBe(40); // Hyperliquid says 50, Т-4 caps at 40
   });
 
-  it("ODDS markets: priceDecimals 6, maxLeverage 10, a question, a subtitle and an end date", () => {
-    expect(ODDS).toHaveLength(6);
+  it("ODDS markets: priceDecimals 6, maxLeverage 10, a question, a subtitle — an end date (politics) or a kick-off (sports)", () => {
+    expect(ODDS).toHaveLength(7);
     for (const m of ODDS) {
       expect(m.priceDecimals).toBe(6);
       expect(m.maxLeverage).toBe(10);
       expect(m.title.endsWith("?")).toBe(true);
       expect(m.subtitle).toMatch(/·/);
-      expect(m.endsAtMs).toBeGreaterThan(SIM_BASE_MS);
+      if (m.category === "sports") {
+        // a game's source "end date" is its kick-off (`MarketDto.endsAtMs` / `eventStartsAtMs`)
+        expect(m.endsAtMs).toBeNull();
+        expect(m.eventStartsAtMs).toBeGreaterThan(SIM_BASE_MS);
+      } else {
+        expect(m.endsAtMs).toBeGreaterThan(SIM_BASE_MS);
+        expect(m.eventStartsAtMs).toBeNull();
+      }
     }
   });
 
-  it("exactly one market closes during a session, and it is an ODDS market with 'less than 5 minutes to the end'", () => {
+  it("the oracle index follows the listing order, BTC first as 0 (Т-9)", () => {
+    expect(MOCK_MARKETS.map((m) => m.oracleIndex)).toEqual(MOCK_MARKETS.map((_, i) => i));
+    expect(BTC.oracleIndex).toBe(0);
+  });
+
+  it("exactly one market closes during a session — a sports game that kicks off first — and says why", () => {
     const closing = MOCK_MARKETS.filter((m) => m.closesAtMs !== null);
     expect(closing).toHaveLength(1);
     expect(closing[0].kind).toBe("ODDS");
-    expect(closing[0].endsAtMs! - closing[0].closesAtMs!).toBe(5 * 60_000);
+    expect(closing[0].closeReason).toBe("The source market ended");
+    expect(closing[0].eventStartsAtMs!).toBeGreaterThan(SIM_BASE_MS); // not started when the session opens…
+    expect(closing[0].eventStartsAtMs!).toBeLessThan(closing[0].closesAtMs!); // …live for a while, then closed
     expect(closing[0].closesAtMs).toBeGreaterThan(SIM_BASE_MS);
+  });
+
+  it("exactly one market was listed moments ago: it has no price from before that, so no opening price for the running round", () => {
+    const fresh = MOCK_MARKETS.filter((m) => m.priceFromMs !== null);
+    expect(fresh.map((m) => m.id)).toEqual([MOCK_NEW_LISTING_ID]);
+    expect(fresh[0].priceFromMs!).toBeLessThan(SIM_BASE_MS); // there is a price when the session opens…
+    expect(fresh[0].priceFromMs!).toBeGreaterThan(windowFor("HOURLY", SIM_BASE_MS).startMs); // …but the round window began before it
   });
 });
 
@@ -114,9 +135,13 @@ describe("priceAt — a pure, seeded function of time", () => {
     expect(Math.abs(price / anchorDay1 - 1)).toBeLessThan(0.011);
   });
 
-  it("change24h is the relative move over the last 24 simulated hours", () => {
+  it("change24h is the relative move over the last 24 simulated hours — null for a market with no price from that long ago", () => {
     for (const m of MOCK_MARKETS) {
       const t = SIM_BASE_MS + 5 * HOUR_MS;
+      if (m.id === MOCK_NEW_LISTING_ID) {
+        expect(change24hAt(m, t)).toBeNull();
+        continue;
+      }
       expect(change24hAt(m, t)).toBeCloseTo(priceAt(m, t) / priceAt(m, t - DAY_MS) - 1, 12);
     }
   });
@@ -139,10 +164,41 @@ describe("ticksBetween — the mock's priceSeries", () => {
     expect(ticks[ticks.length - 1].atMs).toBe(Math.floor(until / TICK_MS) * TICK_MS);
   });
 
-  it("returns only the newest `max` when more would fit", () => {
-    const ticks = ticksBetween(ETH, SIM_BASE_MS - DAY_MS, SIM_BASE_MS, 600);
+  it("is STRICTLY after `after`: a tick exactly at it is never returned again (the poll already holds it)", () => {
+    const onGrid = Math.floor(SIM_BASE_MS / TICK_MS) * TICK_MS;
+    const ticks = ticksBetween(ETH, onGrid, onGrid + 5 * TICK_MS, 600);
+    expect(ticks.map((t) => t.atMs)).toEqual([1, 2, 3, 4, 5].map((k) => onGrid + k * TICK_MS));
+  });
+
+  it("when more than `max` exist, returns `max` of them thinned EVENLY across the whole range — both ends included", () => {
+    const after = SIM_BASE_MS - DAY_MS;
+    const ticks = ticksBetween(ETH, after, SIM_BASE_MS, 600);
     expect(ticks).toHaveLength(600);
-    expect(ticks[ticks.length - 1].atMs).toBe(Math.floor(SIM_BASE_MS / TICK_MS) * TICK_MS);
+    const newest = Math.floor(SIM_BASE_MS / TICK_MS) * TICK_MS;
+    const oldest = (Math.floor(after / TICK_MS) + 1) * TICK_MS;
+    expect(ticks[0].atMs).toBe(oldest); // the range's start is still on the chart…
+    expect(ticks[ticks.length - 1].atMs).toBe(newest); // …and so is the newest tick
+    // evenly: every gap is the same number of grid steps, give or take the rounding of one step
+    const total = (newest - oldest) / TICK_MS;
+    const gaps = ticks.slice(1).map((t, i) => (t.atMs - ticks[i].atMs) / TICK_MS);
+    for (const gap of gaps) {
+      expect(gap).toBeGreaterThanOrEqual(Math.floor(total / 599));
+      expect(gap).toBeLessThanOrEqual(Math.ceil(total / 599));
+    }
+    expect(ticks.every((t) => t.atMs % TICK_MS === 0)).toBe(true);
+  });
+
+  it("a thinned tick has the price the dense series has at that instant", () => {
+    const thinned = ticksBetween(ETH, SIM_BASE_MS - DAY_MS, SIM_BASE_MS, 600);
+    for (const t of thinned.slice(0, 40)) expect(t.price).toBe(priceStrAt(ETH, t.atMs));
+  });
+
+  it("never returns a tick from before the market had a price", () => {
+    const listed = mockMarketById(MOCK_NEW_LISTING_ID)!;
+    const ticks = ticksBetween(listed, SIM_BASE_MS - DAY_MS, SIM_BASE_MS, 600);
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(ticks[0].atMs).toBeGreaterThanOrEqual(listed.priceFromMs!);
+    expect(ticks.length).toBeLessThan(60); // two simulated minutes of 3 s ticks, not a day of them
   });
 
   it("two overlapping calls agree on every tick's time AND price (the incremental poll never contradicts itself)", () => {
@@ -208,7 +264,7 @@ describe("ohlcFor — a round's open, close and extremes", () => {
 
 describe("the walks are decorrelated across markets (no two cards look like one price)", () => {
   it("24h changes of the six crypto markets are not all alike", () => {
-    const changes = PERPS.slice(0, 6).map((m: MockMarketSpec) => change24hAt(m, SIM_BASE_MS));
+    const changes = PERPS.slice(0, 6).map((m: MockMarketSpec) => change24hAt(m, SIM_BASE_MS)!);
     const distinct = new Set(changes.map((c) => c.toFixed(3)));
     expect(distinct.size).toBeGreaterThanOrEqual(5);
   });

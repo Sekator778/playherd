@@ -525,6 +525,16 @@ ol {
   }
 }
 
+/* 320 px header (found checking the Status screens, 2026-10-02): a signed-in header with "9,700 +800 in play" and a
+   92 px nickname button came to 323 px — three past a 320 px phone, which a mobile browser answers by zooming the
+   whole page out. A narrower nickname cap at that width keeps the header, and the tab bar that follows its width,
+   inside the screen. */
+@media (max-width: 340px) {
+  .profile-menu__button {
+    max-width: 68px;
+  }
+}
+
 /* Balance as a HUD "hero chip" (audit.md's Header section, direction.md §4's hero zone) — bigger,
    tabular-nums, a coin glyph so the one number that's actually money reads differently from the
    profile-nickname pill next to it, not the same grey chip twice. */

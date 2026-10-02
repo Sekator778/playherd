@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { useClock } from "../api/useClock";
-import { loadInPlay } from "../api/inPlay";
+import { inPlayExcludingLiquidated, loadInPlay } from "../api/inPlay";
+import { useMyPositions } from "../api/useMyPositions";
 import { formatPlayAmount } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 import { PositionsStrip } from "./PositionsStrip";
 import { ScrollManager } from "./ScrollManager";
 import { CoinIcon, SpeakerOnIcon, SpeakerMuteIcon, VibrationOnIcon, VibrationOffIcon, LobbyTabIcon, StatsTabIcon, ProfileTabIcon } from "./icons";
 import { useSettlementWatcher } from "../fx/useSettlementWatcher";
+import { useLiquidationWatcher } from "../fx/useLiquidationWatcher";
 import { useAwayReplay } from "../fx/useAwayReplay";
 import { useAndroidBackButton } from "../fx/useAndroidBackButton";
 import { ResultMomentHost } from "../fx/ResultMomentHost";
@@ -44,6 +46,13 @@ function BalancePill() {
   // `rounds()` (BTC) for a server that does not send it.
   const [inPlay, setInPlay] = useState<number | null>(null);
   const tick = useClock(4000);
+  // A position a liquidation has already taken is lost, whatever the server still counts as "in play" until its
+  // round settles — the pill must not go on suggesting it can come back (`api/inPlay.ts`). The account is also
+  // fetched again whenever the set of positions changes (a bet placed or cancelled, a round settled), so the
+  // pill and the list never disagree for a poll's length.
+  const { positions } = useMyPositions();
+  const positionsKey = positions.map((p) => `${p.roundId}:${p.liquidated ? 1 : 0}`).join("|");
+  const shownInPlay = inPlay === null ? null : inPlayExcludingLiquidated(inPlay, positions);
 
   useEffect(() => {
     if (!player) return;
@@ -61,7 +70,7 @@ function BalancePill() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player, tick]);
+  }, [player, tick, positionsKey]);
 
   if (!player || balance === null) return null;
   return (
@@ -78,8 +87,8 @@ function BalancePill() {
       <span className="balance-pill__amount">
         <RollingDigits value={Number(balance)} format={(n) => formatPlayAmount(n)} durationMs={500} />
       </span>
-      {inPlay !== null && inPlay > 0 && (
-        <span className="balance-pill__in-play">+{formatPlayAmount(inPlay)} in play</span>
+      {shownInPlay !== null && shownInPlay > 0 && (
+        <span className="balance-pill__in-play">+{formatPlayAmount(shownInPlay)} in play</span>
       )}
     </NavLink>
   );
@@ -257,6 +266,9 @@ export function Layout() {
   // Global settlement-event watcher (implementation-plan.md §3) — runs regardless of which page
   // is mounted below, so a result moment fires "видно с любой страницы" (game-designer.md).
   useSettlementWatcher();
+  // The mid-round LIQUIDATION moment (Р-50): `myPositions()` says a running position is liquidated long before
+  // its round settles, so this fires then — once, remembered across reloads and tabs.
+  useLiquidationWatcher();
   // "While you were away" one-shot catch-up (task item) — same reasoning: lives at the layout
   // level, not on any one page, so it runs no matter which screen the app opens on.
   useAwayReplay();
@@ -281,6 +293,8 @@ export function Layout() {
       <footer className="app-footer">
         <div className="container">
           Herd — crowd vs market. A toy-money demo on Chia testnet11. <NavLink to="/how-it-works">How it works</NavLink>
+          {" · "}
+          <NavLink to="/status">Status</NavLink>
         </div>
       </footer>
       <BottomTabBar />

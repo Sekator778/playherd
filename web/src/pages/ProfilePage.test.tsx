@@ -100,6 +100,27 @@ describe("Profile — history rows name the market", () => {
     expect(row).not.toHaveTextContent(/MIN|HOUR/);
   });
 
+  it("a row's own durationSec names the round, even when the market has left the list — and wins over the market's series", async () => {
+    renderProfile(
+      profile({
+        history: [
+          entry({ roundId: "PM_GONE-1h-1", marketId: "PM_GONE", asset: "OLD", durationSec: 900 }), // not on the list at all
+          entry({ roundId: "1h-2", durationSec: 3600 }), // BTC's series on the list is 3 MIN; this round was an hour
+        ],
+      }),
+    );
+    const rows = await screen.findAllByRole("link", { name: /PLAY/ });
+    expect(rows[0].querySelector(".result-tile__title")).toHaveTextContent("OLD · 15 MIN");
+    expect(rows[1].querySelector(".result-tile__title")).toHaveTextContent("BTC · 1 HOUR");
+    expect(screen.queryByText(/Hourly|Daily/)).not.toBeInTheDocument();
+  });
+
+  it("a row with no durationSec (a server that predates it) falls back to the market's series", async () => {
+    renderProfile(profile({ history: [entry({ interval: "DAILY" })] }));
+    const row = await screen.findByRole("link", { name: /PLAY/ });
+    expect(row.querySelector(".result-tile__title")).toHaveTextContent("BTC · 15 MIN");
+  });
+
   it("a liquidation reads as the whole stake, with the tag", async () => {
     renderProfile(profile({ history: [entry({ liquidated: true, payout: "0.000", stake: "250.000" })] }));
     const row = await screen.findByRole("link", { name: /PLAY/ });

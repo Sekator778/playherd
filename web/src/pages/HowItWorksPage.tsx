@@ -22,7 +22,9 @@ export function HowItWorksPage() {
           While betting is open you can see how the crowd is split — the share of the stake on UP and on DOWN, and
           how many players have bet — and a live feed of the bets as they are placed (test bots are marked BOT).
           When betting closes, every bet becomes a real position at that moment's price, and each position's entry and
-          liquidation price are revealed. When the round ends, positions are settled against the closing price.
+          liquidation price are revealed. When the round ends, positions are settled against the closing price. If the
+          source hasn't sent the round's opening price yet, the round says "Waiting for the opening price…" and shows no
+          positions, no P&amp;L and no liquidation prices until it does.
         </p>
       </section>
 
@@ -33,12 +35,13 @@ export function HowItWorksPage() {
           market</strong> follows the price of a Hyperliquid perpetual in dollars. An <strong>odds market</strong>{" "}
           (politics, sports) follows the probability of one outcome of a Polymarket market, shown as a percentage —
           you bet on whether that probability goes up or down during the round, <strong>not on who wins</strong> the
-          election or the match.
+          election or the match. Its 24-hour change is shown in percentage points (from 64% to 65% is +1.0 pt), a
+          price market's as a percentage. A sports game says how long is left before it starts, and shows LIVE once it has.
         </p>
         <p>
           Each market has its own highest leverage (the leverage dial stops there). If the market behind an odds
           market closes — the event is decided or withdrawn — its open rounds are cancelled and every open bet is
-          refunded in full.
+          refunded in full; the market's card says why it closed, in the source's own words.
         </p>
       </section>
 
@@ -51,7 +54,9 @@ export function HowItWorksPage() {
         </p>
         <p>
           If the price moves against you enough to reach your liquidation price, your position is liquidated and you
-          lose your entire stake — no partial refunds. The liquidation price is shown before you place a bet, using
+          lose your entire stake — no partial refunds. With the app open you are told the moment it happens, while the
+          round is still running; when the round ends, a short note says so again and your balance does not change (if
+          you were away, you see it when you come back). The liquidation price is shown before you place a bet, using
           the same isolated-margin formula Hyperliquid uses for its own perpetual futures.
         </p>
       </section>
@@ -79,7 +84,7 @@ export function HowItWorksPage() {
         <h2>Where the price comes from</h2>
         <p>
           Prices come from Hyperliquid and odds from Polymarket (a test deployment can run on recorded or simulated
-          prices instead — when it does, the Wallet screen says so). There is no decentralized price oracle here —
+          prices instead — when it does, the Wallet screen and the Status page say so). There is no decentralized price oracle here —
           prices are read and published on-chain by a key our team controls. If a reliable price can't be read within
           an hour of a round closing, the round is cancelled and every bet is refunded, including any that would have
           been liquidated. A cancelled round always shows its reason on the round's page.
@@ -88,6 +93,10 @@ export function HowItWorksPage() {
           After a round settles, its results and their hash are published in an oracle record on Chia. The round's
           page says where that record is — queued, sent, confirmed, or not anchored — and links the results file
           the hash commits to, so anyone can check that a round was not rewritten afterwards.
+        </p>
+        <p>
+          The <Link to="/status">Status page</Link> shows it live: where each market's price comes from and how old it is, the state of
+          the oracle on the chain, how to check it yourself, and every round that was cancelled with its reason.
         </p>
       </section>
 

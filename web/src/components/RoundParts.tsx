@@ -19,7 +19,8 @@ import { DirectionGlyph } from "./icons";
 import { RollingDigits } from "../fx/RollingDigits";
 
 /** `labels` name the two series by their real length (`formatDuration(MarketSeriesDto.durationSec)`,
- *  "3 MIN" / "15 MIN"); the default words are only right for a server with 1 h / 1 d rounds.
+ *  "3 MIN" / "15 MIN"). A series with no label (a market the server lists without it) is called what it is —
+ *  the shorter or the longer one — never "Hourly"/"Daily", which are wrong for a 3-minute round.
  *  `openCounts` puts a dot on a series where the player has bets open (the count is spoken, not only drawn). */
 export function IntervalTabs({
   value,
@@ -43,8 +44,8 @@ export function IntervalTabs({
   };
   return (
     <div className="tabs" role="tablist" aria-label="Round interval">
-      {tab("HOURLY", "Hourly")}
-      {tab("DAILY", "Daily")}
+      {tab("HOURLY", "Shorter")}
+      {tab("DAILY", "Longer")}
     </div>
   );
 }

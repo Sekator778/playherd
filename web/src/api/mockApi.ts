@@ -6,13 +6,15 @@
  * and a seed (`mockMarkets.ts`, `mockPrices.ts`, `mockPlayers.ts`, `mockRounds.ts`,
  * `mockCrowdHistory.ts`).
  *
- * The world is 18 markets in 6 categories (Р-69) — see `mockMarkets.ts` — each with its own price
+ * The world is 19 markets in 6 categories (Р-69) — see `mockMarkets.ts` — each with its own price
  * path, two round series (the mock's 1 h and 1 d), bots, crowd account, and the risk parameters the
  * real server would derive (leverage cap, price scale; `liquidation.ts` does the math per market).
  * One `ODDS` market closes 90 simulated minutes into a session (`MOCK_CLOSING_AT_MS`): from then on
  * it is `CLOSED`, its running and betting rounds are cancelled and a bet on them refunded
  * ("market closed", Т-10), and `placeBet` on it answers `MARKET_CLOSED` — so a UI can be built
- * against that state.
+ * against that state. One `ODDS` market is "listed moments ago" (`MOCK_NEW_LISTING_ID`): the round window the
+ * session opens in began before it had a price, so that running round has no opening price
+ * (`RoundRunning.openPrice === null`) — the "waiting for the opening price" state.
  *
  * Sign-in is mocked behind the exact interface the real WalletConnect flow will use
  * (`docs/research/week1_wallet_auth.md` §4): `authChallenge`/`authVerify` fabricate an address
@@ -78,9 +80,11 @@ import { crowdAccount as buildCrowdAccount, crowdBrief, crowdCapitalAt } from ".
 import {
   MOCK_BTC,
   MOCK_MARKETS,
+  hasMockPrice,
   isMockMarketClosed,
   isMockMarketListed,
   mockMarketById,
+  openingPriceKnown,
   type MockMarketSpec,
 } from "./mockMarkets";
 import {
@@ -132,6 +136,10 @@ const CANCELLED_REFUNDED_COUNT = 19;
 /** Why the rounds of a closed `ODDS` market are cancelled (Т-10) — shown on the round page. */
 const MARKET_CLOSED_REASON =
   "Market closed: the underlying market ended or was withdrawn by its source, so this round was cancelled and every bet refunded.";
+
+/** Why a round that never had an opening price ends cancelled (the mock's rule, in the spirit of Р-23). */
+const NO_OPENING_PRICE_REASON =
+  "No opening price: this market was listed after the round started, so the round could not open. Any bet in it was refunded.";
 
 /** How far back `priceSeries` goes without a `sinceMs` ("the last 15 minutes"), and its point cap. */
 const PRICE_SERIES_WINDOW_MS = 15 * 60_000;
@@ -193,6 +201,7 @@ class MockApi implements Api {
         interval: parsed.interval,
         marketId: spec.id,
         asset: spec.symbol,
+        durationSec: (window.endMs - window.startMs) / 1000,
         settledAtMs: window.endMs - 1,
         direction: bet.direction,
         leverage: bet.leverage,
@@ -349,13 +358,19 @@ class MockApi implements Api {
       priceDecimals: spec.priceDecimals,
       status: closed ? "CLOSED" : "ACTIVE",
       endsAtMs: spec.endsAtMs,
+      eventStartsAtMs: spec.eventStartsAtMs,
+      closedAtMs: closed ? spec.closesAtMs : null,
+      closeReason: closed ? spec.closeReason : null,
+      oracleIndex: spec.oracleIndex,
       source: spec.source,
-      price: {
-        price: priceStrAt(spec, priceAtMs),
-        asOfMs: priceAtMs,
-        change24h: change24hAt(spec, priceAtMs),
-        stale: false,
-      },
+      price: hasMockPrice(spec, priceAtMs)
+        ? {
+            price: priceStrAt(spec, priceAtMs),
+            asOfMs: priceAtMs,
+            change24h: change24hAt(spec, priceAtMs),
+            stale: false,
+          }
+        : null,
       series: INTERVALS.map((interval) => this.seriesDto(spec, interval, now)),
       crowd: crowdBrief(spec, now),
     };
@@ -382,6 +397,8 @@ class MockApi implements Api {
     };
   }
 
+  /** The contract's words: the last 15 minutes of ticks, or those with `atMs > sinceMs`; at most 600, thinned
+   *  evenly when more exist (`mockPrices.ticksBetween`). */
   async priceSeries(marketId: MarketId, sinceMs?: EpochMs): Promise<PriceSeriesDto> {
     const spec = requireMarket(marketId);
     const now = simNowMs();
@@ -417,6 +434,7 @@ class MockApi implements Api {
         symbol: spec.symbol,
         roundId,
         interval: parsed.interval,
+        durationSec: (window.endMs - window.startMs) / 1000,
         direction: bet.direction,
         leverage: bet.leverage,
         stake: bet.stake,
@@ -427,6 +445,7 @@ class MockApi implements Api {
           phase: "BETTING",
           entryPrice: null,
           liquidationPrice: null,
+          size: null,
           liquidated: false,
           untilMs: window.startMs,
         });
@@ -435,9 +454,10 @@ class MockApi implements Api {
         positions.push({
           ...base,
           phase: "RUNNING",
-          entryPrice: running.entryPrice,
-          liquidationPrice: running.liquidationPrice,
-          liquidated: running.liquidated,
+          entryPrice: running ? running.entryPrice : null,
+          liquidationPrice: running ? running.liquidationPrice : null,
+          size: running ? running.size : null,
+          liquidated: running ? running.liquidated : false,
           untilMs: window.endMs,
         });
       }
@@ -483,6 +503,10 @@ class MockApi implements Api {
     const { spec, window } = this.resolveRoundId(roundId);
     const now = simNowMs();
     if (isCancelledByClose(spec, window, now)) return this.marketClosedRound(spec, window);
+    if (now >= window.endMs && !openingPriceKnown(spec, window.startMs)) {
+      // It started before there was a price and has now ended: it never opened.
+      return buildCancelledRound(spec, window, NO_OPENING_PRICE_REASON, 0, window.endMs);
+    }
     const capitalBefore = crowdCapitalAt(spec, Math.min(now, window.startMs));
     const own = this.ownBetInfo(roundId);
     if (now < window.startMs) return buildBettingRound(spec, window, own);
@@ -723,15 +747,17 @@ class MockApi implements Api {
     return buildCrowdAccount(requireMarket(marketId), simNowMs());
   }
 
+  /** Every market keeps its row here — a closed one too, after it has left `markets()` (`CrowdOverviewDto`). */
   async crowdOverview(): Promise<CrowdOverviewDto> {
     const now = simNowMs();
-    const listed = MOCK_MARKETS.filter((spec) => isMockMarketListed(spec, now));
     const starting = Number(CROWD_STARTING_CAPITAL_USD);
-    const rows = listed.map((spec) => {
+    const rows = MOCK_MARKETS.map((spec) => {
       const brief = crowdBrief(spec, now);
       return {
         marketId: spec.id,
         symbol: spec.symbol,
+        title: spec.title,
+        status: isMockMarketClosed(spec, now) ? ("CLOSED" as const) : ("ACTIVE" as const),
         category: spec.category,
         capital: brief.capital,
         returnPct: brief.returnPct,

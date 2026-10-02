@@ -58,3 +58,13 @@ export function nextCloseMs(market: Pick<MarketDto, "series" | "endsAtMs">): Epo
   const betting = series ? series.bettingClosesAtMs : Number.POSITIVE_INFINITY;
   return Math.min(betting, market.endsAtMs ?? Number.POSITIVE_INFINITY);
 }
+
+/** Where a sports game stands against its kick-off (`MarketDto.eventStartsAtMs`): not started yet — with the time
+ *  left — or under way. `null` for everything that has no kick-off, and for a closed market (nothing to say). */
+export type Kickoff = { state: "upcoming"; inMs: number } | { state: "live" };
+
+export function kickoffOf(market: Pick<MarketDto, "status" | "eventStartsAtMs">, nowMs: EpochMs): Kickoff | null {
+  const startsAt = market.eventStartsAtMs;
+  if (!isOpenMarket(market) || startsAt === null || startsAt === undefined) return null;
+  return startsAt > nowMs ? { state: "upcoming", inMs: startsAt - nowMs } : { state: "live" };
+}

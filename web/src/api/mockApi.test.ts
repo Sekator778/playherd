@@ -15,7 +15,7 @@ import {
   sizeForMargin,
 } from "./liquidation";
 import { mockApi } from "./mockApi";
-import { CLOSED_LISTING_MS, MOCK_CLOSING_AT_MS, MOCK_MARKETS, mockMarketById } from "./mockMarkets";
+import { CLOSED_LISTING_MS, MOCK_CLOSING_AT_MS, MOCK_MARKETS, MOCK_NEW_LISTING_ID, mockMarketById } from "./mockMarkets";
 import { priceStrAt, TICK_MS } from "./mockPrices";
 
 const ADDRESS = "txch1mockapitestaddress0000000000000000000000000000000000q";
@@ -50,12 +50,12 @@ async function expectApiError(promise: Promise<unknown>, code: string): Promise<
 }
 
 describe("markets() — the lobby in one call", () => {
-  it("lists the 18 markets in catalog order, with the categories of Т-1 and their counts", async () => {
+  it("lists the 19 markets in catalog order, with the categories of Т-1 and their counts", async () => {
     const res = await mockApi.markets();
     expect(res.markets.map((m) => m.id)).toEqual(MOCK_MARKETS.map((m) => m.id));
     expect(res.categories).toEqual([
       { id: "crypto", title: "Crypto", marketCount: 6 },
-      { id: "politics", title: "Politics", marketCount: 3 },
+      { id: "politics", title: "Politics", marketCount: 4 },
       { id: "sports", title: "Sports", marketCount: 3 },
       { id: "stocks", title: "Stocks", marketCount: 2 },
       { id: "indices", title: "Indices", marketCount: 2 },
@@ -77,13 +77,18 @@ describe("markets() — the lobby in one call", () => {
         maxLeverage: spec.maxLeverage,
         priceDecimals: spec.priceDecimals,
         endsAtMs: spec.endsAtMs,
+        eventStartsAtMs: spec.eventStartsAtMs,
+        oracleIndex: spec.oracleIndex,
+        closedAtMs: null,
+        closeReason: null,
         source: spec.kind === "ODDS" ? "polymarket" : "hyperliquid",
         status: "ACTIVE",
       });
       expect(m.price).not.toBeNull();
       expect(m.price!.price.split(".")[1]).toHaveLength(m.priceDecimals);
       expect(m.price!.stale).toBe(false);
-      expect(typeof m.price!.change24h).toBe("number");
+      // A market listed less than a day ago has no price from 24 h back, so the source gives no change.
+      expect(typeof m.price!.change24h).toBe(m.id === MOCK_NEW_LISTING_ID ? "object" : "number");
       if (m.kind === "ODDS") {
         expect(Number(m.price!.price)).toBeGreaterThanOrEqual(0.1);
         expect(Number(m.price!.price)).toBeLessThanOrEqual(0.9);
@@ -142,7 +147,7 @@ describe("rounds / round — per market", () => {
       }
       expect(pair.running.phase).toBe("RUNNING");
       expect(pair.betting.phase).toBe("BETTING");
-      if (pair.running.phase === "RUNNING") {
+      if (pair.running.phase === "RUNNING" && pair.running.openPrice !== null) {
         expect(pair.running.openPrice.split(".")[1]).toHaveLength(spec.priceDecimals);
         for (const p of pair.running.positions) {
           expect(p.entryPrice).toBe(pair.running.openPrice);
@@ -507,9 +512,11 @@ describe("the market that closes during a session (Т-10)", () => {
     const after = await mockApi.markets();
     const card = after.markets.find((m) => m.id === CLOSING.id)!;
     expect(card.status).toBe("CLOSED"); // still listed, so a card can say why it left
-    expect(after.markets).toHaveLength(18);
+    expect(after.markets).toHaveLength(19);
     expect(after.categories.find((c) => c.id === "sports")!.marketCount).toBe(2);
     expect(after.markets.filter((m) => m.status === "CLOSED").map((m) => m.id)).toEqual([CLOSING.id]);
+    // the card says why and when, in the source's own words
+    expect(card).toMatchObject({ closedAtMs: MOCK_CLOSING_AT_MS, closeReason: "The source market ended" });
     // its price is frozen at the closing moment
     expect(card.price!.asOfMs).toBe(MOCK_CLOSING_AT_MS);
     expect((await mockApi.referencePrice(CLOSING.id)).asOfMs).toBe(MOCK_CLOSING_AT_MS);
@@ -588,9 +595,12 @@ describe("the market that closes during a session (Т-10)", () => {
     await advanceSimClockTo(MOCK_CLOSING_AT_MS + CLOSED_LISTING_MS + 60_000);
     const res = await mockApi.markets();
     expect(res.markets.map((m) => m.id)).not.toContain(CLOSING.id);
-    expect(res.markets).toHaveLength(17);
-    // …but its rounds stay reachable by id (the registry keeps closed markets)
+    expect(res.markets).toHaveLength(18);
+    // …but its rounds stay reachable by id (the registry keeps closed markets)…
     await expect(mockApi.rounds("HOURLY", CLOSING.id)).resolves.toBeDefined();
+    // …and it keeps its row in the herd's overview, marked closed, with its own title (`CrowdOverviewDto`)
+    const row = (await mockApi.crowdOverview()).markets.find((r) => r.marketId === CLOSING.id);
+    expect(row).toMatchObject({ symbol: "GER", title: "Will Germany win against Serbia?", status: "CLOSED" });
   });
 });
 
@@ -631,14 +641,16 @@ describe("crowd accounts, one per market (Т-6)", () => {
     vi.useFakeTimers();
     try {
       const [{ markets }, overview] = await Promise.all([mockApi.markets(), mockApi.crowdOverview()]);
-      expect(overview.markets).toHaveLength(18);
-      expect(overview.totalStartingCapital).toBe("1800000.00");
+      expect(overview.markets).toHaveLength(19);
+      expect(overview.totalStartingCapital).toBe("1900000.00");
       expect(Number(overview.totalCapital)).toBeCloseTo(overview.markets.reduce((s, m) => s + Number(m.capital), 0), 1);
-      expect(overview.returnPct).toBeCloseTo(Number(overview.totalCapital) / 1_800_000 - 1, 6);
+      expect(overview.returnPct).toBeCloseTo(Number(overview.totalCapital) / 1_900_000 - 1, 6);
       for (const row of overview.markets) {
         const card = markets.find((m) => m.id === row.marketId)!;
         expect(row).toMatchObject({
           symbol: card.symbol,
+          title: card.title,
+          status: card.status,
           category: card.category,
           capital: card.crowd.capital,
           returnPct: card.crowd.returnPct,
@@ -731,5 +743,186 @@ describe("what did not change for BTC and the old callers", () => {
     await signIn();
     const profile = await mockApi.myProfile();
     expect(profile.streak).toEqual({ current: 0, best: 0 });
+  });
+});
+
+describe("priceSeries — the contract's wording (ticks with atMs > sinceMs, at most 600, thinned evenly beyond)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("with a sinceMs on a tick, that tick is NOT in the answer — only strictly newer ones", async () => {
+    const first = await mockApi.priceSeries("ETH");
+    const since = first.ticks[first.ticks.length - 5].atMs;
+    const next = await mockApi.priceSeries("ETH", since);
+    expect(next.ticks.map((t) => t.atMs)).toEqual(first.ticks.slice(-4).map((t) => t.atMs));
+  });
+
+  it("a very old sinceMs gets 600 ticks spread over the WHOLE range — from its start to the newest tick — not the newest 600 in a row", async () => {
+    const since = simNowMs() - 3 * 86_400_000;
+    const res = await mockApi.priceSeries("BTC", since);
+    expect(res.ticks).toHaveLength(600);
+    expect(res.ticks[0].atMs - since).toBeLessThan(TICK_MS + 1); // the range starts at the first tick after sinceMs
+    expect(simNowMs() - res.ticks[res.ticks.length - 1].atMs).toBeLessThan(TICK_MS); // …and ends at the newest
+    const gaps = res.ticks.slice(1).map((t, i) => t.atMs - res.ticks[i].atMs);
+    expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(TICK_MS); // evenly thinned
+    expect(Math.min(...gaps)).toBeGreaterThan(TICK_MS); // really thinned: more than one grid step apart
+  });
+
+  it("the default (no sinceMs) is the last 15 minutes, unthinned", async () => {
+    const res = await mockApi.priceSeries("SOL");
+    expect(res.ticks.length).toBeGreaterThan(290);
+    expect(res.ticks.length).toBeLessThanOrEqual(300);
+    for (let i = 1; i < res.ticks.length; i++) expect(res.ticks[i].atMs - res.ticks[i - 1].atMs).toBe(TICK_MS);
+  });
+});
+
+describe("a market listed moments ago — the round window it was handed has no opening price (RoundRunning.openPrice === null)", () => {
+  const FRESH = mockMarketById(MOCK_NEW_LISTING_ID)!;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    await signIn();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("both series' RUNNING rounds are open-price-less: no price, no positions, no crowd position", async () => {
+    for (const interval of ["HOURLY", "DAILY"] as const) {
+      const pair = await mockApi.rounds(interval, FRESH.id);
+      expect(pair.running).toMatchObject({ phase: "RUNNING", openPrice: null, positions: [], crowd: null, marketId: FRESH.id });
+      // betting on the NEXT round is open as usual, with its own bots
+      expect(pair.betting.phase).toBe("BETTING");
+      expect((pair.betting as RoundBetting).participantCount).toBeGreaterThan(0);
+    }
+    expect(await mockApi.round((await mockApi.rounds("HOURLY", FRESH.id)).running.roundId)).toMatchObject({ phase: "RUNNING", openPrice: null });
+  });
+
+  it("the card is there with a price (the first ticks have come) — and no 24 h change, which the source cannot give yet", async () => {
+    const card = (await mockApi.markets()).markets.find((m) => m.id === FRESH.id)!;
+    expect(card.status).toBe("ACTIVE");
+    expect(card.price).not.toBeNull();
+    expect(card.price!.change24h).toBeNull();
+    expect(card.crowd.roundsTraded).toBe(0); // listed moments ago: the herd has not traded here
+  });
+
+  it("every other market has its opening price, always", async () => {
+    for (const spec of MOCK_MARKETS.filter((m) => m.id !== FRESH.id)) {
+      const pair = await mockApi.rounds("HOURLY", spec.id);
+      expect(pair.running.phase === "RUNNING" && pair.running.openPrice !== null).toBe(true);
+    }
+  });
+
+  it("when the window ends the next round has its price and its positions — and the window that never opened is cancelled, not settled", async () => {
+    const before = await mockApi.rounds("HOURLY", FRESH.id);
+    const neverOpened = before.running.roundId;
+    await advanceSimClockTo(before.running.window.endMs + 60_000);
+
+    const after = await mockApi.rounds("HOURLY", FRESH.id);
+    expect(after.running.roundId).not.toBe(neverOpened);
+    expect(after.running.phase === "RUNNING" && after.running.openPrice !== null && after.running.positions.length > 0).toBe(true);
+    const old = await mockApi.round(neverOpened);
+    expect(old).toMatchObject({ phase: "CANCELLED", marketId: FRESH.id });
+    if (old.phase === "CANCELLED") expect(old.cancellation.reason).toMatch(/No opening price/);
+  });
+
+  it("a bet on the next round becomes a RUNNING position with its entry, liquidation price and size once that round starts", async () => {
+    const betting = await bettingRoundOf(FRESH.id);
+    await mockApi.placeBet({ roundId: betting.roundId, direction: "UP", leverage: 5, stake: "400.000" });
+    await advanceSimClockTo(betting.window.startMs + 60_000);
+    const [position] = await mockApi.myPositions();
+    expect(position).toMatchObject({ marketId: FRESH.id, phase: "RUNNING", durationSec: 3600, stake: "400.000", liquidated: false });
+    expect(position.entryPrice).not.toBeNull();
+    expect(position.liquidationPrice).not.toBeNull();
+    expect(position.size).toMatch(/^\d+\.\d{8}$/);
+  });
+
+  it("its price series starts at its first price, not a day before it", async () => {
+    const res = await mockApi.priceSeries(FRESH.id, simNowMs() - 86_400_000);
+    expect(res.ticks.length).toBeGreaterThan(0);
+    expect(res.ticks[0].atMs).toBeGreaterThanOrEqual(FRESH.priceFromMs!);
+  });
+});
+
+describe("what a market card says about a game, a close and the oracle (kick-off, closeReason, oracleIndex)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a sports game has a kick-off and no end date; the rest have no kick-off", async () => {
+    const { markets } = await mockApi.markets();
+    for (const m of markets) {
+      if (m.category === "sports") {
+        expect(m.endsAtMs).toBeNull();
+        expect(m.eventStartsAtMs).toBeGreaterThan(simNowMs());
+      } else {
+        expect(m.eventStartsAtMs).toBeNull();
+      }
+    }
+  });
+
+  it("the game that closes kicks off first: upcoming, then live, then closed with its reason", async () => {
+    const card = async () => (await mockApi.markets()).markets.find((m) => m.id === CLOSING.id)!;
+    expect((await card()).eventStartsAtMs!).toBeGreaterThan(simNowMs());
+    await advanceSimClockTo(CLOSING.eventStartsAtMs! + 60_000);
+    expect(simNowMs()).toBeGreaterThan((await card()).eventStartsAtMs!);
+    expect((await card()).status).toBe("ACTIVE"); // kicked off, still taking bets: the card says LIVE
+    await advanceSimClockTo(MOCK_CLOSING_AT_MS + 60_000);
+    expect(await card()).toMatchObject({ status: "CLOSED", closedAtMs: MOCK_CLOSING_AT_MS, closeReason: "The source market ended" });
+  });
+
+  it("every market names its place in the oracle record: BTC is 0, the rest in listing order", async () => {
+    const { markets } = await mockApi.markets();
+    expect(markets[0]).toMatchObject({ id: "BTC", oracleIndex: 0 });
+    expect(markets.map((m) => m.oracleIndex)).toEqual(markets.map((_, i) => i));
+  });
+});
+
+describe("the player's own positions and history carry their round's real length (durationSec) and size", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    await signIn();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a waiting bet has the length and no size; a running one has the size the server opened, as 8 dp lots", async () => {
+    const eth = await bettingRoundOf("ETH");
+    const gold = await bettingRoundOf("xyz_GOLD", "DAILY");
+    await mockApi.placeBet({ roundId: eth.roundId, direction: "UP", leverage: 10, stake: "500.000" });
+    await mockApi.placeBet({ roundId: gold.roundId, direction: "DOWN", leverage: 20, stake: "300.000" });
+
+    const waiting = await mockApi.myPositions();
+    expect(waiting.find((p) => p.marketId === "ETH")).toMatchObject({ phase: "BETTING", interval: "HOURLY", durationSec: 3600, size: null });
+    expect(waiting.find((p) => p.marketId === "xyz_GOLD")).toMatchObject({ phase: "BETTING", interval: "DAILY", durationSec: 86_400, size: null });
+
+    await advanceSimClockTo(eth.window.startMs + 60_000);
+    const running = (await mockApi.myPositions()).find((p) => p.marketId === "ETH")!;
+    const spec = mockMarketById("ETH")!;
+    expect(running).toMatchObject({ phase: "RUNNING", durationSec: 3600 });
+    // the size the server opened = the stake at the round's entry price, exactly the engine's rule
+    expect(running.size).toBe(sizeForMargin("500.000", 10, running.entryPrice!, spec).toFixed(8));
+  });
+
+  it("a settled bet's history row says how long its round was — for any series", async () => {
+    const eth = await bettingRoundOf("ETH");
+    await mockApi.placeBet({ roundId: eth.roundId, direction: "UP", leverage: 5, stake: "200.000" });
+    await advanceSimClockTo(eth.window.endMs + 60_000);
+    const [row] = (await mockApi.myProfile()).history;
+    expect(row).toMatchObject({ marketId: "ETH", interval: "HOURLY", durationSec: 3600 });
+    expect((await mockApi.unseenResults!())[0]).toMatchObject({ durationSec: 3600 });
+  });
+
+  it("NPC histories carry it too", async () => {
+    const profile = await mockApi.publicProfile("npc-3");
+    for (const entry of profile.history) expect(entry.durationSec).toBe(entry.interval === "HOURLY" ? 3600 : 86_400);
   });
 });

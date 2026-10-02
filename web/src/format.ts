@@ -1,7 +1,7 @@
 /** Shared display formatting — kept separate from `api/contract.ts` data shapes (those stay
  *  plain decimal strings, per contract.ts's own doc comment) and from `api/liquidation.ts`
  *  (exact math). Nothing here is a source of truth for a number, only how it is printed. */
-import type { MarketDto } from "./api/contract";
+import type { MarketDto, MarketPriceDto } from "./api/contract";
 
 /** One convention for every PLAY amount in the app (independent critique, 2026-09-26, "Game feel
  *  / number formatting consistency": whole numbers in some places, 2-3 decimals in others, for
@@ -75,10 +75,58 @@ export function formatPrice(price: string | number, market: PriceFormatMarket): 
   return formatUsd(n, { decimals: Math.min(market.priceDecimals, wanted) });
 }
 
-/** `MarketPriceDto.change24h` (`0.0098` → `+0.98%`); `null` — the source gives none — is a dash. */
+/** `MarketPriceDto.change24h` (`0.0098` → `+0.98%`); `null` — the source gives none — is a dash. This is the
+ *  PERP reading; an `ODDS` market's change is read in points ({@link market24hMove}). */
 export function formatChange24h(change: number | null): string {
   if (change === null || !Number.isFinite(change)) return "—";
+  // A change that rounds to nothing is "0.00%" — not "+0.00%" or "-0.00%", which would claim a direction.
+  if (Number((change * 100).toFixed(2)) === 0) return "0.00%";
   return formatPercent(change, { decimals: 2, sign: true });
+}
+
+/**
+ * How far an `ODDS` price moved in the last 24 hours, in PERCENTAGE POINTS (0.64 → 0.65 is `+1.0`), from the
+ * contract's `change24h`, which is the RELATIVE change (`MarketPriceDto.change24h`): the price 24 h ago was
+ * `price / (1 + change24h)`, so the move is `price − price / (1 + change24h)`, ×100 to read in points. `null`
+ * when there is no change, or when it cannot be a probability's change (≤ −100%).
+ */
+export function oddsMove24hPoints(price: string | number, change24h: number | null): number | null {
+  const now = typeof price === "string" ? Number(price) : price;
+  if (change24h === null || !Number.isFinite(change24h) || !Number.isFinite(now) || 1 + change24h <= 0) return null;
+  return (now - now / (1 + change24h)) * 100;
+}
+
+/** A move in percentage points as text: `+1.0 pt`, `-0.4 pt`, `0.0 pt` — one decimal, no sign on a zero. */
+export function formatPoints(points: number, opts: { sign?: boolean } = {}): string {
+  const rounded = Math.round(points * 10) / 10;
+  const sign = opts.sign && rounded > 0 ? "+" : "";
+  return `${sign}${rounded === 0 ? "0.0" : rounded.toFixed(1)} pt`;
+}
+
+/** What a market's 24 h figure reads as: the text, and the signed number the trend arrow and colour follow. */
+export interface Move24h {
+  text: string;
+  /** Signed, at the precision `text` shows (a move that prints as 0.0 is flat, never an arrow). `null` — unknown. */
+  value: number | null;
+  unit: "pct" | "pt";
+}
+
+/**
+ * The 24 h change of a market the way the player reads it: a `PERP` as a percentage (`+0.98%`), an `ODDS`
+ * market in percentage points (`+1.0 pt` — the price is itself a percentage, so a percentage of a percentage
+ * would read as 1.56% for a 0.64 → 0.65 move). `price` may be `null` (no price yet): a dash, never a zero.
+ */
+export function market24hMove(market: Pick<MarketDto, "kind">, price: Pick<MarketPriceDto, "price" | "change24h"> | null): Move24h {
+  const change = price ? price.change24h : null;
+  if (market.kind === "ODDS") {
+    const points = price ? oddsMove24hPoints(price.price, change) : null;
+    if (points === null) return { text: "—", value: null, unit: "pt" };
+    const rounded = Math.round(points * 10) / 10;
+    return { text: formatPoints(points, { sign: true }), value: rounded, unit: "pt" };
+  }
+  const known = change !== null && Number.isFinite(change);
+  // The value follows what the text shows: a change that prints as 0.00% is flat.
+  return { text: formatChange24h(change), value: known ? (Number((change * 100).toFixed(2)) === 0 ? 0 : change) : null, unit: "pct" };
 }
 
 /**

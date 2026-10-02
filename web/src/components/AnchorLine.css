@@ -72,3 +72,8 @@
   color: var(--text-faint);
   overflow-wrap: anywhere;
 }
+.anchor__asset {
+  margin-top: 2px !important;
+  color: var(--text-muted);
+  font-size: 13px;
+}

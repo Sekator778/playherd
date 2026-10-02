@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
-import type { Interval, MarketDto, PublicProfileDto } from "../api/contract";
+import type { MarketDto, ProfileRoundEntryDto, PublicProfileDto } from "../api/contract";
 import { netFromPayoutAndStake } from "../api/outcome";
 import { seasonHistory } from "../api/seasonStats";
 import { useMarkets } from "../api/useMarkets";
@@ -23,9 +23,12 @@ function seasonBalanceChange(profile: PublicProfileDto): number {
   );
 }
 
-/** "3 MIN" for the series the round was in, when its market is still on the list; nothing otherwise. */
-function seriesLabelOf(market: MarketDto | undefined, interval: Interval): string | undefined {
-  const series = market?.series.find((s) => s.interval === interval);
+/** "3 MIN" for the series a history row's round was in: the row's own length (`durationSec`, which survives
+ *  the market leaving the list) when the server sends it; else the market's series, when it is still on the
+ *  list; nothing otherwise — never "Hourly"/"Daily" for a round that was three minutes long. */
+function seriesLabelOf(entry: ProfileRoundEntryDto, market: MarketDto | undefined): string | undefined {
+  if (entry.durationSec !== undefined && Number.isFinite(entry.durationSec) && entry.durationSec > 0) return formatDuration(entry.durationSec);
+  const series = market?.series.find((s) => s.interval === entry.interval);
   return series ? formatDuration(series.durationSec) : undefined;
 }
 
@@ -35,7 +38,8 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
   const { player, openConnectModal } = useSession();
   const [profile, setProfile] = useState<PublicProfileDto | null>(null);
   const [error, setError] = useState<"generic" | "not-found" | null>(null);
-  // A history row only carries the series' NAME (`Interval`); its real length lives on the market.
+  // A history row carries its round's real length (`durationSec`); a server that predates the field sends only
+  // the series' NAME (`Interval`), whose length is then looked up on the market.
   const { byId } = useMarkets();
 
   // Reset to loading whenever the profile's *subject* changes (navigating from one player's
@@ -136,7 +140,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
               key={h.roundId}
               roundId={h.roundId}
               symbol={h.asset}
-              seriesLabel={seriesLabelOf(byId.get(h.marketId), h.interval)}
+              seriesLabel={seriesLabelOf(h, byId.get(h.marketId))}
               direction={h.direction}
               leverage={h.leverage}
               net={netFromPayoutAndStake(h.payout, h.stake)}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatChange24h, formatDuration, formatPlayAmount, formatPrice } from "./format";
+import { formatChange24h, formatDuration, formatPlayAmount, formatPoints, formatPrice, market24hMove, oddsMove24hPoints } from "./format";
 
 describe("formatPlayAmount — auto decimals (independent critique, 2026-09-26)", () => {
   it("shows a whole amount with 0 decimals", () => {
@@ -104,6 +104,13 @@ describe("formatChange24h", () => {
     expect(formatChange24h(0)).toBe("0.00%");
     expect(formatChange24h(null)).toBe("—");
   });
+
+  it("a change too small to show is '0.00%' — no '+' or '-' that would claim a direction", () => {
+    expect(formatChange24h(0.00004)).toBe("0.00%");
+    expect(formatChange24h(-0.00004)).toBe("0.00%");
+    expect(formatChange24h(0.0001)).toBe("+0.01%");
+    expect(market24hMove({ kind: "PERP" }, { price: "100.00", change24h: -0.00004 })).toMatchObject({ text: "0.00%", value: 0 });
+  });
 });
 
 describe("formatDuration — the series chips", () => {
@@ -121,5 +128,54 @@ describe("formatDuration — the series chips", () => {
     expect(formatDuration(5400)).toBe("90 MIN");
     expect(formatDuration(45)).toBe("45 SEC");
     expect(formatDuration(0)).toBe("0 SEC");
+  });
+});
+
+describe("an ODDS market's 24 h change is in percentage points (the contract's formula), a perp's a percentage", () => {
+  // `MarketPriceDto.change24h` is the RELATIVE change: 0.64 → 0.65 is 0.65 / 0.64 − 1 = +1.5625%, which on a card
+  // that already speaks in percent would read as "+1.56%" for a move of one point.
+  const relative = 0.65 / 0.64 - 1;
+
+  it("0.64 → 0.65 is '+1.0 pt', not '+1.56%'", () => {
+    expect(oddsMove24hPoints("0.650000", relative)).toBeCloseTo(1, 9);
+    const move = market24hMove({ kind: "ODDS" }, { price: "0.650000", change24h: relative });
+    expect(move.text).toBe("+1.0 pt");
+    expect(move.text).not.toContain("%");
+    expect(move).toMatchObject({ value: 1, unit: "pt" });
+  });
+
+  it("the price 24 h ago is price / (1 + change24h): a fall of 4 points reads '-4.0 pt'", () => {
+    const fell = 0.5 / 0.54 - 1; // 0.54 → 0.50
+    expect(oddsMove24hPoints(0.5, fell)).toBeCloseTo(-4, 9);
+    expect(market24hMove({ kind: "ODDS" }, { price: "0.500000", change24h: fell })).toMatchObject({ text: "-4.0 pt", value: -4 });
+  });
+
+  it("a move that rounds to nothing is '0.0 pt' with no sign and no direction — never an arrow for a zero", () => {
+    const tiny = 0.65 / 0.6499 - 1; // ~0.01 point
+    const move = market24hMove({ kind: "ODDS" }, { price: "0.650000", change24h: tiny });
+    expect(move.text).toBe("0.0 pt");
+    expect(move.value).toBe(0);
+    expect(formatPoints(-0.04, { sign: true })).toBe("0.0 pt");
+  });
+
+  it("an unknown change — or an impossible one — is a dash, not a made-up zero", () => {
+    expect(market24hMove({ kind: "ODDS" }, { price: "0.640000", change24h: null })).toMatchObject({ text: "—", value: null });
+    expect(market24hMove({ kind: "ODDS" }, null)).toMatchObject({ text: "—", value: null });
+    expect(oddsMove24hPoints("0.64", -1)).toBeNull(); // a probability cannot have lost all of itself
+    expect(oddsMove24hPoints("0.64", -1.5)).toBeNull();
+    expect(oddsMove24hPoints("nope", 0.1)).toBeNull();
+  });
+
+  it("a perp stays a signed percentage with two decimals", () => {
+    expect(market24hMove({ kind: "PERP" }, { price: "83451.00", change24h: 0.0098 })).toMatchObject({ text: "+0.98%", value: 0.0098, unit: "pct" });
+    expect(market24hMove({ kind: "PERP" }, { price: "2696.80", change24h: -0.0141 }).text).toBe("-1.41%");
+    expect(market24hMove({ kind: "PERP" }, { price: "100.00", change24h: null })).toMatchObject({ text: "—", value: null });
+    expect(market24hMove({ kind: "PERP" }, null).text).toBe("—");
+  });
+
+  it("formatPoints: one decimal, '+' only on a gain", () => {
+    expect(formatPoints(1.04, { sign: true })).toBe("+1.0 pt");
+    expect(formatPoints(-12.36, { sign: true })).toBe("-12.4 pt");
+    expect(formatPoints(2.5)).toBe("2.5 pt");
   });
 });

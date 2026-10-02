@@ -16,9 +16,14 @@
  * away) are published oldest first with their balances chained backwards from the current balance,
  * so the queue plays them in the order they happened and every WIN's coin animation stays
  * internally consistent.
+ *
+ * A liquidated position's settlement is the one exception to "one full moment per result": when the
+ * player has already been shown that round's liquidation mid-round (`liquidationMoment.ts`), the settlement
+ * goes out as a quiet summary (`ResultEvent.quiet`) — still acknowledged, still signed, not repeated loudly.
  */
 import type { Api, ProfileRoundEntryDto, RoundId } from "../api/contract";
 import { netFromPayoutAndStake } from "../api/outcome";
+import { liquidationMomentShown, quietSummaryOf } from "./liquidationMoment";
 import { resultEventFromHistoryEntry, type ResultEvent } from "./resultEvent";
 import { publish } from "./resultEventBus";
 
@@ -104,7 +109,9 @@ async function doPublish(api: Api, playerId: string, isCurrent: () => boolean): 
     const fresh = unseen.filter((entry) => !shown.has(key(entry)));
     for (const event of eventsFromUnseen(fresh, playerId, balance)) {
       shown.add(event.id);
-      publish(event);
+      // A liquidation the player was already shown while its round was running (`useLiquidationWatcher`) is not
+      // flashed, stamped and shaken a second time at settlement: a quiet summary says it ended, the loss signed.
+      publish(event.kind === "LIQUIDATION" && liquidationMomentShown(playerId, event.roundId) ? quietSummaryOf(event) : event);
     }
   }
   // Everything the server still lists is on screen now (or was, in an earlier tick whose ack failed).

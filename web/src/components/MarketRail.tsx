@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import type { MarketDto } from "../api/contract";
 import { useMarkets } from "../api/useMarkets";
 import { categoryTitle } from "../api/marketMeta";
-import { formatChange24h, formatPrice } from "../format";
+import { formatPrice, market24hMove } from "../format";
 import { MarketIcon } from "./MarketIcon";
 import { trend, TREND_GLYPH } from "./marketFormat";
 import { isOpenMarket } from "./marketModel";
@@ -28,8 +28,8 @@ export function MarketRail({ market }: { market: MarketDto }) {
       </div>
       <ul className="mrail__list">
         {others.map((m) => {
-          const change = m.price ? m.price.change24h : null;
-          const t = trend(change);
+          const move = market24hMove(m, m.price);
+          const t = trend(move.value);
           return (
             <li key={m.id}>
               <Link to={`/play/${encodeURIComponent(m.id)}`} className="mrail__card" aria-label={`${m.symbol} — ${m.title}`}>
@@ -37,7 +37,7 @@ export function MarketRail({ market }: { market: MarketDto }) {
                 <span className="mrail__symbol">{m.symbol}</span>
                 <span className="mrail__price mono">{m.price ? formatPrice(m.price.price, m) : "—"}</span>
                 <span className={`mrail__change mrail__change--${t} mono`}>
-                  <span aria-hidden="true">{TREND_GLYPH[t]}</span> {formatChange24h(change)}
+                  <span aria-hidden="true">{TREND_GLYPH[t]}</span> {move.text}
                 </span>
               </Link>
             </li>

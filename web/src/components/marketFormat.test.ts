@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAgo, formatTimeLeft, trend } from "./marketFormat";
+import { formatAgo, formatStartsIn, formatTimeLeft, trend } from "./marketFormat";
 
 describe("formatTimeLeft", () => {
   it("shows the two most significant units", () => {
@@ -29,5 +29,21 @@ describe("trend", () => {
     expect(trend(0)).toBe("flat");
     expect(trend(null)).toBe("flat");
     expect(trend(Number.NaN)).toBe("flat");
+  });
+});
+
+describe("formatStartsIn — 'Starts in …' before a kick-off", () => {
+  it("reads like a clock: hours with the minutes padded", () => {
+    expect(formatStartsIn(2 * 3_600_000 + 5 * 60_000 + 30_000)).toBe("2h 05m");
+    expect(formatStartsIn(3_600_000)).toBe("1h 00m");
+    expect(formatStartsIn(10 * 3_600_000 + 45 * 60_000)).toBe("10h 45m");
+  });
+  it("days with the hours; under an hour just the minutes; under a minute the seconds", () => {
+    expect(formatStartsIn(2 * 86_400_000 + 4 * 3_600_000 + 59 * 60_000)).toBe("2d 4h");
+    expect(formatStartsIn(45 * 60_000 + 59_000)).toBe("45m");
+    expect(formatStartsIn(40_000)).toBe("40s");
+  });
+  it("never goes negative", () => {
+    expect(formatStartsIn(-1)).toBe("0s");
   });
 });

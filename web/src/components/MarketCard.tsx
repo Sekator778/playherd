@@ -2,12 +2,12 @@ import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import type { EpochMs, MarketDto } from "../api/contract";
 import { symbolMeta } from "../api/marketMeta";
-import { formatChange24h, formatDuration, formatPercent, formatPrice } from "../format";
+import { formatDuration, formatPercent, formatPrice, market24hMove } from "../format";
 import { Countdown, Skeleton } from "./Common";
 import { FlameIcon, LockIcon, StarIcon } from "./icons";
 import { MarketIcon } from "./MarketIcon";
-import { formatAgo, formatTimeLeft, trend, TREND_GLYPH } from "./marketFormat";
-import { crowdSplitOf, herdSideOf, isOpenMarket, leadSeries } from "./marketModel";
+import { formatAgo, formatStartsIn, formatTimeLeft, trend, TREND_GLYPH } from "./marketFormat";
+import { crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries } from "./marketModel";
 import "./MarketCard.css";
 
 /** The live crowd split (Р-62) as a slim UP/DOWN bar with its percentages and the player count — the
@@ -104,8 +104,12 @@ interface MarketCardProps {
  * side preselected. The whole card is one link to the room (the title's stretched link); the buttons,
  * star and badge sit above it.
  *
+ * An `ODDS` market's 24 h change is in percentage points (`+1.0 pt`), a perp's a percentage. A sports game says
+ * "Starts in 2h 05m" before kick-off and wears a LIVE mark after it (`MarketDto.eventStartsAtMs`).
+ *
  * Designed states: stale price (kept, dimmed, with its age), no price yet (buttons off — such a round
- * could not settle), closed market (no buttons, "Closed — open bets refunded").
+ * could not settle), closed market (no buttons; the server's own reason when it gave one — `closeReason`,
+ * `closedAtMs` — else "Closed — open bets refunded").
  */
 export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = false }: MarketCardProps) {
   const meta = symbolMeta(market.symbol);
@@ -113,8 +117,9 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
   const open = isOpenMarket(market);
   const price = market.price;
   const stale = open && price?.stale === true;
-  const change = price ? price.change24h : null;
-  const changeTrend = trend(change);
+  const move = market24hMove(market, price);
+  const changeTrend = trend(move.value);
+  const kickoff = kickoffOf(market, nowMs);
   const herdSide = series ? herdSideOf(series) : null;
   const room = `/play/${encodeURIComponent(market.id)}`;
   const canBet = open && price !== null;
@@ -154,6 +159,11 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
                 ODDS
               </span>
             )}
+            {kickoff?.state === "live" && (
+              <span className="mk-tag mk-tag--live" title="The game has kicked off">
+                <span className="mk-live-dot" aria-hidden="true" /> LIVE
+              </span>
+            )}
             {hot && (
               <span className="mk-tag mk-tag--hot">
                 <FlameIcon className="mk-tag__icon" /> HOT
@@ -168,8 +178,8 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
               <span className="mk-card__price-num mono">{formatPrice(price.price, market)}</span>
               <span className={`mk-card__change mono mk-card__change--${changeTrend}`}>
                 <span aria-hidden="true">{TREND_GLYPH[changeTrend]}</span>{" "}
-                <span className="visually-hidden">24 hour change </span>
-                {formatChange24h(change)}
+                <span className="visually-hidden">{move.unit === "pt" ? "24 hour change in percentage points " : "24 hour change "}</span>
+                {move.text}
                 <span className="mk-card__change-unit"> 24h</span>
               </span>
               {stale && (
@@ -201,6 +211,11 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
               <span aria-hidden="true"> · </span>
               <Countdown nowMs={nowMs} targetMs={series.bettingClosesAtMs} prefix="closes in " calm />
             </span>
+            {kickoff?.state === "upcoming" && (
+              <span className="mk-card__meta-item mk-card__meta-item--faint" title="The game has not started yet — rounds run meanwhile">
+                Starts in <span className="mono">{formatStartsIn(kickoff.inMs)}</span>
+              </span>
+            )}
             {odds && endsInMs !== null && endsInMs > 0 && (
               <span className="mk-card__meta-item mk-card__meta-item--faint" title="If the market closes first, open bets are refunded">
                 Event ends in <span className="mono">{formatTimeLeft(endsInMs)}</span>
@@ -252,9 +267,20 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
         <>
           <div className="mk-closed" role="note">
             <LockIcon className="mk-closed__icon" />
-            <p>
-              <strong>Closed</strong> — open bets refunded. This market takes no more bets.
-            </p>
+            {market.closeReason ? (
+              // The server said why, in plain words — shown as it is, never reworded.
+              <div>
+                <p>
+                  <strong>Closed</strong>
+                  {market.closedAtMs ? ` ${formatAgo(nowMs - market.closedAtMs)}` : ""} — {market.closeReason}
+                </p>
+                <p className="mk-closed__sub">Open bets were refunded. This market takes no more bets.</p>
+              </div>
+            ) : (
+              <p>
+                <strong>Closed</strong> — open bets refunded. This market takes no more bets.
+              </p>
+            )}
           </div>
           <div className="mk-card__foot">
             <HerdBadge market={market} />

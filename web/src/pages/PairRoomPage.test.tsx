@@ -153,6 +153,42 @@ describe("Room — header", () => {
   });
 });
 
+describe("Room — a sports game's kick-off, the odds' 24 h change", () => {
+  it("before kick-off the header says how long is left — 'Starts in 2h 05m' — and has no LIVE mark", async () => {
+    renderRoom("/play/PM900104");
+    await screen.findByText("GER");
+    expect(screen.getByText(/Starts in/)).toHaveTextContent(/^Starts in 2h 0[45]m$/);
+    expect(screen.queryByText("LIVE")).not.toBeInTheDocument();
+  });
+
+  it("after kick-off the header wears a LIVE mark and no longer says 'Starts in'", async () => {
+    const started = MARKETS.map((m) => (m.id === "PM900104" ? { ...m, eventStartsAtMs: NOW - 30 * 60_000 } : m));
+    renderRoom("/play/PM900104", { markets: started });
+    await screen.findByText("GER");
+    expect(await screen.findByText("LIVE")).toBeInTheDocument();
+    expect(screen.queryByText(/Starts in/)).not.toBeInTheDocument();
+  });
+
+  it("a market with no kick-off says nothing of one", async () => {
+    renderRoom("/play/BTC");
+    await screen.findByText("BTC/USD");
+    expect(screen.queryByText(/Starts in/)).not.toBeInTheDocument();
+    expect(screen.queryByText("LIVE")).not.toBeInTheDocument();
+  });
+
+  it("an odds market's 24 h change is in points ('+1.0 pt', not '+1.56%'); a perp's stays a percentage", async () => {
+    const odds = MARKETS.map((m) =>
+      m.id === "PM900104" ? { ...m, price: { price: "0.650000", asOfMs: NOW - 500, change24h: 0.65 / 0.64 - 1, stale: false } } : m,
+    );
+    renderRoom("/play/PM900104", { markets: odds, price: "0.650000" });
+    await screen.findByText("65.0%");
+    const change = screen.getByText("24h").closest(".room-change") as HTMLElement;
+    expect(change).toHaveTextContent("+1.0 pt 24h");
+    expect(change).not.toHaveTextContent("%");
+    expect(within(change).getByText("24 hour change in percentage points")).toBeInTheDocument();
+  });
+});
+
 describe("Room — leverage is capped at the market's own maximum (Т-4)", () => {
   it.each([
     ["BTC", "40"],
@@ -228,6 +264,15 @@ describe("Room — the series are named by their real length", () => {
     expect(screen.queryByText(/Hourly|Daily/)).not.toBeInTheDocument();
   });
 
+  it("a market the server lists without its series still never says Hourly/Daily — the chips say what they are, shorter and longer", async () => {
+    const bare = MARKETS.map((m) => (m.id === "BTC" ? { ...m, series: [] } : m));
+    renderRoom("/play/BTC", { markets: bare });
+    await screen.findByText("BTC/USD");
+    const tabs = within(await screen.findByRole("tablist", { name: "Round interval" })).getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Shorter", "Longer"]);
+    expect(screen.queryByText(/Hourly|Daily/)).not.toBeInTheDocument();
+  });
+
   it("picking the longer series loads its rounds; ?series=daily starts there", async () => {
     const user = userEvent.setup();
     const { rounds } = renderRoom("/play/BTC");
@@ -282,6 +327,7 @@ describe("Room — the series are named by their real length", () => {
       symbol: "BTC",
       roundId: "BTC-1d-0",
       interval: "DAILY",
+      durationSec: 900,
       phase: "BETTING",
       direction: "UP",
       leverage: 5,
@@ -339,7 +385,7 @@ describe("Room — the live chart", () => {
     renderRoom("/play/PM900104", { running: (id) => runningRoundOf(id, "GER", { openPrice: "0.620000" }) });
     const chart = await screen.findByRole("img", { name: /GER price/ });
     expect(chart).toHaveAccessibleName(/round opened at 62\.0%/);
-    expect(screen.getByText(/pts/)).toBeInTheDocument(); // the move since open, in points
+    expect(screen.getByText(/ pt$/)).toBeInTheDocument(); // the move since open, in points
   });
 });
 
@@ -372,6 +418,80 @@ describe("Room — a position in the running round", () => {
   });
 });
 
+describe("Room — a running round with no opening price yet (RoundRunning.openPrice === null)", () => {
+  const waiting = (id: string) => runningRoundOf(id, market(id).symbol, { openPrice: null, positions: [], crowd: null });
+  const ownBet = (over: Partial<MyPositionDto> = {}): MyPositionDto => ({
+    marketId: "BTC",
+    symbol: "BTC",
+    roundId: "BTC-1h-0",
+    interval: "HOURLY",
+    durationSec: 180,
+    phase: "RUNNING",
+    direction: "UP",
+    leverage: 10,
+    stake: "500.000",
+    entryPrice: null,
+    liquidationPrice: null,
+    size: null,
+    liquidated: false,
+    untilMs: NOW + 90_000,
+    ...over,
+  });
+
+  it("says 'Waiting for the opening price…' in place of the herd's position and the list of players — no zero, no NaN", async () => {
+    renderRoom("/play/BTC", { running: waiting });
+    expect(await screen.findByRole("heading", { name: "Waiting for the opening price…" })).toBeInTheDocument();
+    expect(screen.getByText(/the price source hasn't sent its opening price yet/)).toBeInTheDocument();
+    // the things that would have been wrong to show: a tie, an empty round, a price that is not there
+    expect(screen.queryByRole("heading", { name: /Crowd account/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/tied this round/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/players? in this round/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unrealized/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("meter")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/NaN|undefined/);
+  });
+
+  it("the chart draws no open line and no round-start marker — there is no open price to put on it", async () => {
+    renderRoom("/play/BTC", { running: waiting });
+    const chart = await screen.findByRole("img", { name: /BTC price/ });
+    expect(chart).not.toHaveAccessibleName(/round opened at/);
+    expect(screen.queryByText(/vs round open/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Round open/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Round start")).not.toBeInTheDocument();
+  });
+
+  it("betting on the next round is untouched — the arena and the slip are there", async () => {
+    renderRoom("/play/BTC", { running: waiting });
+    expect(await screen.findByRole("button", { name: /^UP/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^DOWN/ })).toBeEnabled();
+  });
+
+  it("the player's own bet in that round is said, with the same wait — no P&L, no entry, no liquidation price", async () => {
+    renderRoom("/play/BTC", { running: waiting, positions: [ownBet()] }, true);
+    const card = (await screen.findByText(/Your bet:/)).closest(".card") as HTMLElement;
+    expect(card).toHaveTextContent(/Your bet:.*UP · x10 · BTC · 500 PLAY/);
+    expect(within(card).getByText("Waiting for the opening price…")).toBeInTheDocument();
+    expect(within(card).getByText(/the price source hasn't sent its opening price yet/)).toBeInTheDocument();
+    expect(within(card).queryByText(/unrealized/)).not.toBeInTheDocument();
+    expect(within(card).queryByRole("meter")).not.toBeInTheDocument();
+    expect(within(card).queryByText(/Entry|Liquidation/)).not.toBeInTheDocument();
+    // …said once: the round-level notice is not repeated beside it
+    expect(screen.queryByRole("heading", { name: "Waiting for the opening price…" })).not.toBeInTheDocument();
+  });
+
+  it("a bet in another round of this market is not shown as this round's", async () => {
+    renderRoom("/play/BTC", { running: waiting, positions: [ownBet({ roundId: "BTC-1h-999" })] }, true);
+    await screen.findByRole("heading", { name: "Waiting for the opening price…" });
+    expect(screen.queryByText(/Your bet:/)).not.toBeInTheDocument();
+  });
+
+  it("once the price is known the usual panel is back", async () => {
+    renderRoom("/play/BTC", { running: (id) => runningRoundOf(id, "BTC", { openPrice: "100.00", crowd: crowdPosition() }) });
+    expect(await screen.findByRole("heading", { name: "Crowd account" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Waiting for the opening price…" })).not.toBeInTheDocument();
+  });
+});
+
 describe("Room — a closed market", () => {
   const closedBtc: MarketDto = { ...BTC, status: "CLOSED", series: [seriesDto(), seriesDto({ interval: "DAILY", durationSec: 900 })] };
 
@@ -401,6 +521,33 @@ describe("Room — a closed market", () => {
       }) as unknown as RoundBetting,
     });
     expect(await screen.findByText("Market closed: the underlying market ended.")).toBeInTheDocument();
+  });
+
+  it("says the server's reason for closing as it is, and when — ahead of any round's cancellation text", async () => {
+    const reasoned: MarketDto = { ...closedBtc, closedAtMs: Date.UTC(2026, 9, 1, 14, 25), closeReason: "Price left the 3%–97% range" };
+    renderRoom("/play/BTC", {
+      markets: [reasoned, ...MARKETS.slice(1)],
+      betting: () => ({
+        phase: "CANCELLED",
+        roundId: "BTC-1h-1",
+        window: { interval: "HOURLY", startMs: NOW, endMs: NOW + 1000 },
+        marketId: "BTC",
+        asset: "BTC",
+        cancellation: { roundId: "BTC-1h-1", reason: "Market closed: the underlying market ended.", cancelledAtMs: NOW, refundedBetCount: 3 },
+      }) as unknown as RoundBetting,
+    });
+    expect(await screen.findByText("Price left the 3%–97% range")).toBeInTheDocument();
+    expect(screen.getByText("Closed 2026-10-01 14:25 UTC")).toBeInTheDocument();
+    expect(screen.queryByText("Market closed: the underlying market ended.")).not.toBeInTheDocument();
+    // the plain facts about the bets stay
+    expect(screen.getByText(/refunded in full/)).toBeInTheDocument();
+  });
+
+  it("without a reason from the server there is no invented one", async () => {
+    renderRoom("/play/PM900199");
+    await screen.findByRole("heading", { name: "This market is closed" });
+    expect(document.querySelector(".room-closed__reason")).toBeNull();
+    expect(screen.queryByText(/^Closed 20/)).not.toBeInTheDocument();
   });
 });
 

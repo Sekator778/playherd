@@ -45,7 +45,7 @@ import {
   unrealizedPnl,
   type Side,
 } from "./liquidation";
-import type { MockMarketSpec } from "./mockMarkets";
+import { openingPriceKnown, type MockMarketSpec } from "./mockMarkets";
 import { NPC_COUNT, npcPlayer } from "./mockPlayers";
 import { ohlcFor, type RoundOhlc } from "./mockPrices";
 
@@ -333,6 +333,11 @@ export function buildRunningRound(
   own?: OwnBetInfo | null,
 ): RoundRunning {
   const roundId = roundIdForWindow(spec.id, window);
+  if (!openingPriceKnown(spec, window.startMs)) {
+    // The round started before the mock had a price for this market (a market listed moments ago): no
+    // opening price yet, so — as the contract says — no positions are opened and the crowd has none.
+    return { roundId, window, marketId: spec.id, asset: spec.symbol, phase: "RUNNING", openPrice: null, positions: [], crowd: null };
+  }
   const bets = roundBets(spec, roundId, own);
   const ohlc = ohlcFor(spec, window, nowMs);
   return {
@@ -402,14 +407,16 @@ export function settleOwnBet(
   return { liquidated, payout: payout.toFixed(3), directionCorrect };
 }
 
-/** A position of the signed-in player on a RUNNING round, as `MyPositionDto` needs it: the entry
- *  and liquidation price, and whether the path so far has already liquidated it. */
+/** A position of the signed-in player on a RUNNING round, as `MyPositionDto` needs it: the entry and
+ *  liquidation price, the size the position was opened with (`PositionDto.size`) and whether the path so far
+ *  has already liquidated it. `null` while the round has no opening price yet. */
 export function ownRunningPosition(
   spec: MockMarketSpec,
   bet: BetDto,
   window: RoundWindowDto,
   nowMs: EpochMs,
-): { entryPrice: string; liquidationPrice: string; liquidated: boolean } {
+): { entryPrice: string; liquidationPrice: string; size: string; liquidated: boolean } | null {
+  if (!openingPriceKnown(spec, window.startMs)) return null;
   const ohlc = ohlcFor(spec, window, nowMs);
   const side = directionSide(bet.direction);
   const size = sizeForMargin(bet.stake, bet.leverage, ohlc.open, spec);
@@ -417,6 +424,7 @@ export function ownRunningPosition(
   return {
     entryPrice: ohlc.open,
     liquidationPrice: priceStr(liqPrice, spec),
+    size: size.toFixed(8),
     liquidated: isLiquidatedInRange(side, liqPrice, ohlc.low, ohlc.high),
   };
 }

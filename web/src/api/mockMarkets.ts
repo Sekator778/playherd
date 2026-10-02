@@ -1,7 +1,8 @@
 /**
- * The mock's market catalog (Р-69): 6 categories, 18 markets — the six crypto perps, two stocks,
+ * The mock's market catalog (Р-69): 6 categories, 19 markets — the six crypto perps, two stocks,
  * two indices, two commodities (the `herd.markets.*` defaults of `docs/research/markets_architecture.md`
- * §10) and three politics + three sports `ODDS` markets (Т-10). Static data only; the price paths
+ * §10) and four politics + three sports `ODDS` markets (Т-10), one of them listed "moments ago" so the
+ * no-opening-price state exists (`MOCK_NEW_LISTING_ID`). Static data only; the price paths
  * are `mockPrices.ts`, the round/crowd builders `mockRounds.ts`/`mockCrowdHistory.ts`.
  *
  * Every parameter that the server fixes at listing time (Т-3, Т-4) follows the same rule here:
@@ -34,12 +35,25 @@ export interface MockMarketSpec {
   /** `PERP`: standard deviation of the price over one simulated hour, as a fraction of it.
    *  `ODDS`: the same in logit space (a fraction of the log-odds). */
   hourlyVol: number;
-  /** `ODDS`: when the underlying market is scheduled to end. */
+  /** `ODDS`: when the underlying market is scheduled to end. Null for a sports game (its source "end
+   *  date" is the kick-off, `eventStartsAtMs`) — as the contract says of `MarketDto.endsAtMs`. */
   endsAtMs: EpochMs | null;
+  /** `ODDS` sports game: kick-off (`MarketDto.eventStartsAtMs`). */
+  eventStartsAtMs: EpochMs | null;
   /** Mock only: when this market is closed (`ODDS`: "less than 5 minutes to the end", Т-10). */
   closesAtMs: EpochMs | null;
+  /** Mock only: why it closes, in the words a source would use (`MarketDto.closeReason`). */
+  closeReason: string | null;
   /** First day of this market's crowd account (Р-25, Т-6). */
   listedAtMs: EpochMs;
+  /** Mock only: the first instant the mock has a price for this market (null = from the start of time).
+   *  A round that STARTED before it has no opening price (`RoundRunning.openPrice === null`) — the state of
+   *  a market listed moments ago, which the server hands the window "now" lies in (markets_architecture.md
+   *  §4 п.2). Also no 24 h change until a day of prices exists. */
+  priceFromMs: EpochMs | null;
+  /** The market's index in the on-chain oracle record (`MarketDto.oracleIndex`; 0 = BTC, the rest in
+   *  listing order, Т-9). */
+  oracleIndex: number;
   /** Bots in a round of this market: `[min, max]` (Т-8). */
   bots: readonly [number, number];
 }
@@ -56,6 +70,8 @@ const ODDS_PRICE_DECIMALS = 6;
 
 const DAY_ONE = Date.UTC(2026, 0, 1);
 
+type MockMarketBase = Omit<MockMarketSpec, "oracleIndex">;
+
 function perp(
   id: MarketId,
   category: CategoryId,
@@ -67,7 +83,7 @@ function perp(
   listedAtMs: EpochMs,
   bots: readonly [number, number],
   priceDecimals = perpPriceDecimals(startPrice),
-): MockMarketSpec {
+): MockMarketBase {
   return {
     id,
     kind: "PERP",
@@ -82,12 +98,25 @@ function perp(
     startPrice,
     hourlyVol,
     endsAtMs: null,
+    eventStartsAtMs: null,
     closesAtMs: null,
+    closeReason: null,
     listedAtMs,
+    priceFromMs: null,
     bots,
   };
 }
 
+/** What only some `ODDS` markets have: a kick-off (sports), a closing moment and its reason, a first price. */
+interface OddsExtras {
+  eventStartsAtMs?: EpochMs;
+  closesAtMs?: EpochMs;
+  closeReason?: string;
+  priceFromMs?: EpochMs;
+}
+
+/** `endsAtMs`: the source market's scheduled end (politics); a sports game has none — its source "end date" is
+ *  the kick-off, which goes in `extras.eventStartsAtMs` instead (`MarketDto.endsAtMs`). */
 function odds(
   id: MarketId,
   category: CategoryId,
@@ -96,11 +125,11 @@ function odds(
   subtitle: string,
   startPrice: number,
   hourlyVol: number,
-  endsAtMs: EpochMs,
+  endsAtMs: EpochMs | null,
   listedAtMs: EpochMs,
   bots: readonly [number, number],
-  closesAtMs: EpochMs | null = null,
-): MockMarketSpec {
+  extras: OddsExtras = {},
+): MockMarketBase {
   return {
     id,
     kind: "ODDS",
@@ -115,8 +144,11 @@ function odds(
     startPrice,
     hourlyVol,
     endsAtMs,
-    closesAtMs,
+    eventStartsAtMs: extras.eventStartsAtMs ?? null,
+    closesAtMs: extras.closesAtMs ?? null,
+    closeReason: extras.closeReason ?? null,
     listedAtMs,
+    priceFromMs: extras.priceFromMs ?? null,
     bots,
   };
 }
@@ -128,8 +160,15 @@ export const MOCK_CLOSING_AT_MS = SIM_BASE_MS + 90 * 60_000;
 /** The politics markets were listed a week before the demo anchor. */
 const POLITICS_LISTED_AT = Date.UTC(2026, 8, 18);
 
-/** Listing order = the order `markets()` returns them in. */
-export const MOCK_MARKETS: readonly MockMarketSpec[] = [
+/** The market listed "moments ago": the mock has a price for it only from two simulated minutes before the demo
+ *  starts, so the round window the session opens in began before there was a price — that running round has no
+ *  opening price (`RoundRunning.openPrice === null`, the "waiting for the opening price" state) until it ends:
+ *  about 37 s into a session on the shorter series, about 9.6 minutes on the longer one. */
+export const MOCK_NEW_LISTING_ID: MarketId = "PM900107";
+const NEW_LISTING_PRICE_FROM = SIM_BASE_MS - 2 * 60_000;
+
+/** Listing order = the order `markets()` returns them in; the oracle index follows it (BTC is 0, Т-9). */
+const CATALOG: readonly MockMarketBase[] = [
   // crypto (`herd.markets.crypto` default)
   perp("BTC", "crypto", "BTC", "Bitcoin", 83_451, 40, 0.0045, DAY_ONE, [12, 32], 2),
   perp("ETH", "crypto", "ETH", "Ethereum", 2_696.8, 25, 0.007, DAY_ONE, [10, 28]),
@@ -183,7 +222,8 @@ export const MOCK_MARKETS: readonly MockMarketSpec[] = [
     Date.UTC(2026, 8, 21),
     [3, 10],
   ),
-  // sports (Polymarket tag 1) — the first one is the market that closes during a session
+  // sports (Polymarket tag 1) — a game has a kick-off and no end date; the first one is the market that
+  // kicks off and then closes during a session
   odds(
     "PM900104",
     "sports",
@@ -192,10 +232,10 @@ export const MOCK_MARKETS: readonly MockMarketSpec[] = [
     "Germany · UEFA Nations League",
     0.64,
     0.016,
-    MOCK_CLOSING_AT_MS + 5 * 60_000,
+    null,
     Date.UTC(2026, 8, 22),
     [4, 14],
-    MOCK_CLOSING_AT_MS,
+    { eventStartsAtMs: SIM_BASE_MS + 60 * 60_000, closesAtMs: MOCK_CLOSING_AT_MS, closeReason: "The source market ended" },
   ),
   odds(
     "PM900105",
@@ -205,9 +245,10 @@ export const MOCK_MARKETS: readonly MockMarketSpec[] = [
     "Portugal · UEFA Nations League",
     0.46,
     0.016,
-    SIM_BASE_MS + 30 * HOUR_MS,
+    null,
     Date.UTC(2026, 8, 22),
     [4, 14],
+    { eventStartsAtMs: SIM_BASE_MS + 30 * HOUR_MS },
   ),
   odds(
     "PM900106",
@@ -217,11 +258,28 @@ export const MOCK_MARKETS: readonly MockMarketSpec[] = [
     "Norway · UEFA Nations League",
     0.41,
     0.016,
-    SIM_BASE_MS + 52 * HOUR_MS,
+    null,
     Date.UTC(2026, 8, 23),
     [4, 14],
+    { eventStartsAtMs: SIM_BASE_MS + 52 * HOUR_MS },
+  ),
+  // politics, listed moments ago — see `MOCK_NEW_LISTING_ID`
+  odds(
+    MOCK_NEW_LISTING_ID,
+    "politics",
+    "FED",
+    "Will the Fed cut interest rates at its next meeting?",
+    "Yes · US Federal Reserve",
+    0.43,
+    0.01,
+    Date.UTC(2026, 10, 6, 19),
+    SIM_BASE_MS - 3 * 60_000,
+    [3, 10],
+    { priceFromMs: NEW_LISTING_PRICE_FROM },
   ),
 ];
+
+export const MOCK_MARKETS: readonly MockMarketSpec[] = CATALOG.map((spec, index) => ({ ...spec, oracleIndex: index }));
 
 const BY_ID = new Map(MOCK_MARKETS.map((m) => [m.id, m] as const));
 
@@ -231,6 +289,16 @@ export function mockMarketById(id: MarketId): MockMarketSpec | undefined {
 
 /** The legacy BTC market — what every call that omits a `marketId` means (`rounds`, `crowdAccount`, …). */
 export const MOCK_BTC: MockMarketSpec = BY_ID.get("BTC")!;
+
+/** Whether the mock has a price for this market at `atMs` (a market listed moments ago has none before that). */
+export function hasMockPrice(spec: MockMarketSpec, atMs: EpochMs): boolean {
+  return spec.priceFromMs === null || atMs >= spec.priceFromMs;
+}
+
+/** Whether a round that starts at `startMs` has an opening price: the mock had a price at its start. */
+export function openingPriceKnown(spec: MockMarketSpec, startMs: EpochMs): boolean {
+  return hasMockPrice(spec, startMs);
+}
 
 /** Whether the mock has closed this market by `nowMs` (`MarketStatus.CLOSED`). */
 export function isMockMarketClosed(spec: MockMarketSpec, nowMs: EpochMs): boolean {

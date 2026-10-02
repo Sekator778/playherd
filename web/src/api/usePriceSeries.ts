@@ -4,6 +4,12 @@
  * buffer. One store per (`Api`, market) is shared by everything in the room that reads the series
  * (chart, price header), and a store that nobody is watching any more forgets its buffer, so
  * coming back to a room starts from a fresh load rather than stitching onto a stale tail.
+ *
+ * What the server promises (`contract.ts`, `Api.priceSeries`): with `sinceMs` it returns the ticks with
+ * `atMs > sinceMs` — strictly after, never the tick a poll already holds — at most 600, and when more exist the
+ * 600 come thinned evenly so they still span the whole range. A poll after a long pause (a tab that was hidden:
+ * the poll stops while it is) therefore brings a coarser stretch where the gap was, then the fine ticks again;
+ * the chart draws on real time, so uneven spacing is fine and the merge below only has to keep the order.
  */
 import { useApi } from "./ApiContext";
 import type { Api, MarketId, PriceTickDto } from "./contract";
@@ -15,10 +21,11 @@ export const PRICE_SERIES_MAX_TICKS = 600;
 
 /**
  * Appends `incoming` (oldest first) to `existing` (oldest first), keeping the newest `max`.
- * Ticks that are not newer than the newest one already held are dropped — a poll that returns the
- * `sinceMs` tick again, or two overlapping polls, never duplicates a point. If the incoming batch
- * ends BEFORE what we hold, the server's series has restarted (a new run, a clock reset): the batch
- * replaces the buffer instead of being ignored forever.
+ * Ticks that are not newer than the newest one already held are dropped. The server's `atMs > sinceMs` means
+ * a poll never repeats the tick it was asked after, so this is a guard (two overlapping polls, a server that
+ * is inclusive) rather than something every response needs — a point is never duplicated either way. If the
+ * incoming batch ends BEFORE what we hold, the server's series has restarted (a new run, a clock reset): the
+ * batch replaces the buffer instead of being ignored forever.
  */
 export function mergeTicks(
   existing: readonly PriceTickDto[],

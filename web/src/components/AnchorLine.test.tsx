@@ -56,3 +56,30 @@ describe("AnchorLine", () => {
     expect(screen.getByRole("link", { name: "verify results.json" })).toHaveAttribute("href", "/api/rounds/xyz_NVDA-1h-1/results.json");
   });
 });
+
+describe("AnchorLine — which asset of the oracle record the market is (oracleIndex)", () => {
+  const anchor = { seq: 412, state: "confirmed", height: 4_738_927 };
+
+  it("says 'asset #7 in the oracle record', with the public registry", () => {
+    render(<AnchorLine roundId="NVDA-1h-1" resultsHash={HASH} anchor={anchor} symbol="NVDA" oracleIndex={7} />);
+    expect(screen.getByText(/NVDA is asset #7 in the oracle record/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "market registry" })).toHaveAttribute("href", "/api/markets/registry.json");
+  });
+
+  it("0 is a real index (BTC's), not 'absent'", () => {
+    render(<AnchorLine roundId="1h-1" resultsHash={HASH} anchor={anchor} symbol="BTC" oracleIndex={0} />);
+    expect(screen.getByText(/BTC is asset #0 in the oracle record/)).toBeInTheDocument();
+  });
+
+  it("without a symbol it still says which asset", () => {
+    render(<AnchorLine roundId="1h-1" anchor={anchor} oracleIndex={3} />);
+    expect(screen.getByText(/Asset #3 in the oracle record/)).toBeInTheDocument();
+  });
+
+  it("no index from the server, no sentence — and no index alone makes an 'anchored' claim", () => {
+    const { container, rerender } = render(<AnchorLine roundId="1h-1" resultsHash={HASH} anchor={anchor} symbol="BTC" />);
+    expect(screen.queryByText(/in the oracle record/)).not.toBeInTheDocument();
+    rerender(<AnchorLine roundId="1h-1" symbol="BTC" oracleIndex={0} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+});

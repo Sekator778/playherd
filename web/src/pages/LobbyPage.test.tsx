@@ -303,7 +303,8 @@ describe("Lobby — the card", () => {
     expect(runoff.getByText("Will Brazil's 2026 presidential election go to a runoff?")).toBeInTheDocument();
     expect(runoff.getByText("Yes · Brazil election")).toBeInTheDocument();
     expect(runoff.getByTitle("If the market closes first, open bets are refunded")).toHaveTextContent(/Event ends in 5d/);
-    expect(within(cardOf("GER")).getByTitle("If the market closes first, open bets are refunded")).toHaveTextContent(/Event ends in \d+m/);
+    // A sports game has no end date, only a kick-off: it says "Starts in", not "Event ends in".
+    expect(within(cardOf("GER")).queryByText(/Event ends in/)).not.toBeInTheDocument();
     // Odds with no 24 h figure: a dash, not a made-up zero.
     expect(within(cardOf("GER")).getByText("—")).toBeInTheDocument();
     expect(within(cardOf("BTC")).queryByText("ODDS")).not.toBeInTheDocument();
@@ -349,6 +350,91 @@ describe("Lobby — the card", () => {
     expect(old.queryByRole("button", { name: /Bet UP/ })).not.toBeInTheDocument();
     expect(old.getByRole("link", { name: /^OLD — .*\(closed\)/ })).toHaveAttribute("href", "/play/PM900199");
     expect(old.getByRole("button", { name: "Add OLD to favorites" })).toBeInTheDocument();
+  });
+});
+
+describe("Lobby — the card: a sports game, the odds' 24 h change, a closed market's reason", () => {
+  it("before kick-off a game says how long is left — 'Starts in 2h 05m' — and wears no LIVE mark", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    const ger = within(cardOf("GER"));
+    expect(ger.getByText(/Starts in/)).toHaveTextContent(/^Starts in 2h 0[45]m$/);
+    expect(ger.queryByText("LIVE")).not.toBeInTheDocument();
+    // …and only a game: a market with no kick-off says nothing of one.
+    expect(within(cardOf("BTC")).queryByText(/Starts in/)).not.toBeInTheDocument();
+    expect(within(cardOf("RUNOFF")).queryByText(/Starts in/)).not.toBeInTheDocument();
+  });
+
+  it("after kick-off the game wears a LIVE mark (a word, not only a pulse) and 'Starts in' is gone", async () => {
+    const started = market("PM900104", {
+      kind: "ODDS",
+      category: "sports",
+      symbol: "GER",
+      title: "Will Germany win against Serbia?",
+      subtitle: "Germany · UEFA Nations League",
+      source: "polymarket",
+      priceDecimals: 6,
+      maxLeverage: 10,
+      eventStartsAtMs: 1_000_000 - 20 * 60_000,
+      price: { price: "0.640000", asOfMs: 999_500, change24h: null, stale: false },
+    });
+    renderLobby([started]);
+    await screen.findAllByRole("article");
+    const ger = within(cardOf("GER"));
+    expect(ger.getByText("LIVE")).toBeInTheDocument();
+    expect(ger.getByTitle("The game has kicked off")).toBeInTheDocument();
+    expect(ger.queryByText(/Starts in/)).not.toBeInTheDocument();
+  });
+
+  it("an odds market's 24 h change is in percentage points: 0.64 → 0.65 is '+1.0 pt', not '+1.56%'", async () => {
+    const odds = market("PM900101", {
+      kind: "ODDS",
+      category: "politics",
+      symbol: "RUNOFF",
+      title: "Will Brazil's 2026 presidential election go to a runoff?",
+      subtitle: "Yes · Brazil election",
+      source: "polymarket",
+      priceDecimals: 6,
+      maxLeverage: 10,
+      price: { price: "0.650000", asOfMs: 999_500, change24h: 0.65 / 0.64 - 1, stale: false },
+    });
+    renderLobby([odds, ...catalogue().filter((m) => m.id === "BTC")]);
+    await screen.findAllByRole("article");
+    const runoff = within(cardOf("RUNOFF"));
+    expect(runoff.getByText("+1.0 pt")).toBeInTheDocument();
+    expect(runoff.queryByText(/1\.56/)).not.toBeInTheDocument();
+    expect(runoff.getByText("24 hour change in percentage points")).toBeInTheDocument();
+    // the perp beside it is still a percentage
+    expect(within(cardOf("BTC")).getByText("+0.98%")).toBeInTheDocument();
+  });
+
+  it("a closed market with a reason from the server says that reason as it is, and when", async () => {
+    const closed = market("PM900199", {
+      kind: "ODDS",
+      category: "sports",
+      symbol: "OLD",
+      title: "Will the old match end in a draw?",
+      subtitle: "Draw · Friendly",
+      source: "polymarket",
+      status: "CLOSED",
+      priceDecimals: 6,
+      closedAtMs: 1_000_000 - 180_000,
+      closeReason: "Price left the 3%–97% range",
+      price: { price: "0.970000", asOfMs: 820_000, change24h: null, stale: false },
+    });
+    renderLobby([closed]);
+    await screen.findAllByRole("article");
+    const old = within(cardOf("OLD"));
+    // (the mock clock runs 60× real time, so "3 minutes ago" can read 2 by the time the card is looked at)
+    expect(old.getByRole("note")).toHaveTextContent(/Closed [23] min ago — Price left the 3%–97% range/);
+    expect(old.getByText(/Open bets were refunded/)).toBeInTheDocument();
+    expect(old.queryByRole("link", { name: /Bet UP/ })).not.toBeInTheDocument();
+  });
+
+  it("a closed market with no reason keeps the generic line", async () => {
+    renderLobby();
+    await screen.findAllByRole("article");
+    expect(within(cardOf("OLD")).getByText(/open bets refunded\. This market takes no more bets\./)).toBeInTheDocument();
   });
 });
 

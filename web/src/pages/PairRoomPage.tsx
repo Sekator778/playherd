@@ -11,7 +11,10 @@
  *   slip with the leverage dial capped at the market's own maximum;
  * - for an `ODDS` market, one honest line: you bet on how the odds move, not on who wins;
  * - a RUNNING round: own position with live P&L and the distance to liquidation, the crowd's position, the
- *   biggest movers; a closed market gets its own state.
+ *   biggest movers — or, while the round has no opening price yet (`RoundRunning.openPrice === null`), one calm
+ *   "Waiting for the opening price…" in their place, with no figure at all; a closed market gets its own state
+ *   (the server's reason as it sent it, `closeReason`);
+ * - an `ODDS` market's 24 h change in percentage points; a sports game's "Starts in 2h 05m" / LIVE mark.
  *
  * `?side=up|down` (from a lobby card's UP/DOWN) preselects the direction, `?series=daily` the longer series.
  * Two round contexts, as before (Р-19: "всегда один идущий и один открытый для ставок раунд"): `betting`
@@ -50,12 +53,13 @@ import { MarketIcon } from "../components/MarketIcon";
 import { MarketRail } from "../components/MarketRail";
 import { PriceChart } from "../components/PriceChart";
 import { buildChartLines } from "../components/priceChartModel";
-import { trend, TREND_GLYPH } from "../components/marketFormat";
+import { formatStartsIn, trend, TREND_GLYPH } from "../components/marketFormat";
 import { rememberMarket } from "../components/lastMarket";
-import { crowdSplitOf, isOpenMarket, type CrowdSplit } from "../components/marketModel";
+import { crowdSplitOf, isOpenMarket, kickoffOf, type CrowdSplit } from "../components/marketModel";
+import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
 import { useServerNow } from "../components/useServerNow";
 import { RollingDigits } from "../fx/RollingDigits";
-import { formatChange24h, formatDuration, formatPlayAmount, formatPrice } from "../format";
+import { formatDateTimeUtc, formatDuration, formatPlayAmount, formatPrice, market24hMove } from "../format";
 import "./PairRoomPage.css";
 
 const POLL_MS = 2000;
@@ -330,6 +334,11 @@ function Room({ market }: { market: MarketDto }) {
   // own position and the crowd's — liquidation levels included. Only what the chosen series has.
   const runningRound = running?.phase === "RUNNING" ? running : null;
   const ownPosition = runningRound && player ? runningRound.positions.find((p) => p.playerId === player.playerId) : undefined;
+  // No opening price yet: nothing of the running round can be drawn or computed — no line, no round-start
+  // marker (it marks where the open price was fixed), no positions, no herd position.
+  const waitingOpen = runningRound !== null && runningRound.openPrice === null;
+  // The player's bet in such a round is known to `myPositions()` only — the round's own list is empty.
+  const ownWaiting = waitingOpen && player ? myPositions.find((p) => p.roundId === runningRound.roundId) : undefined;
   const lines = useMemo(
     () =>
       open && runningRound
@@ -355,8 +364,9 @@ function Room({ market }: { market: MarketDto }) {
   };
 
   const current = referencePrice ?? (market.price ? { price: market.price.price, asOfMs: market.price.asOfMs } : null);
-  const change = market.price ? market.price.change24h : null;
-  const changeTrend = trend(change);
+  const move = market24hMove(market, market.price);
+  const changeTrend = trend(move.value);
+  const kickoff = kickoffOf(market, nowMs);
   const stale = open && market.price?.stale === true;
   const symbolText = market.kind === "PERP" ? `${market.symbol}/USD` : market.symbol;
 
@@ -373,10 +383,20 @@ function Room({ market }: { market: MarketDto }) {
                 ODDS
               </span>
             )}
+            {kickoff?.state === "live" && (
+              <span className="mk-tag mk-tag--live" title="The game has kicked off">
+                <span className="mk-live-dot" aria-hidden="true" /> LIVE
+              </span>
+            )}
             {!open && <span className="mk-tag">CLOSED</span>}
           </div>
           <p className="room-head__title">{market.title}</p>
           {market.subtitle && <p className="room-head__sub">{market.subtitle}</p>}
+          {kickoff?.state === "upcoming" && (
+            <p className="room-head__sub room-head__kickoff">
+              Starts in <span className="mono">{formatStartsIn(kickoff.inMs)}</span>
+            </p>
+          )}
         </div>
         <FavoriteButton market={market} />
       </header>
@@ -389,8 +409,9 @@ function Room({ market }: { market: MarketDto }) {
             <span className="room-price__num room-price__num--none">—</span>
           )}
           <span className={`room-change room-change--${changeTrend} mono`}>
-            <span aria-hidden="true">{TREND_GLYPH[changeTrend]}</span> <span className="visually-hidden">24 hour change </span>
-            {formatChange24h(change)} <span className="room-change__unit">24h</span>
+            <span aria-hidden="true">{TREND_GLYPH[changeTrend]}</span>{" "}
+            <span className="visually-hidden">{move.unit === "pt" ? "24 hour change in percentage points " : "24 hour change "}</span>
+            {move.text} <span className="room-change__unit">24h</span>
           </span>
           {stale && <span className="room-stale">Price is stale</span>}
           {!open && <span className="room-stale">Last price</span>}
@@ -412,7 +433,7 @@ function Room({ market }: { market: MarketDto }) {
       ticks={series.ticks}
       current={current}
       lines={lines}
-      roundStartMs={runningRound ? runningRound.window.startMs : null}
+      roundStartMs={runningRound && !waitingOpen ? runningRound.window.startMs : null}
       loading={series.loading}
       error={series.error}
       stale={stale}
@@ -435,7 +456,15 @@ function Room({ market }: { market: MarketDto }) {
             It takes no more bets. Any bet that was still waiting for its round, or in a round that had not ended, was cancelled and{" "}
             <strong>refunded in full</strong>; rounds that had already ended were settled as usual.
           </p>
-          {betting && betting.phase === "CANCELLED" && <p className="muted">{betting.cancellation.reason}</p>}
+          {/* Why, in the server's own words when it gave them (`closeReason`); else the closed round's reason, if any. */}
+          {market.closeReason ? (
+            <p className="room-closed__reason">
+              <strong>{market.closeReason}</strong>
+            </p>
+          ) : (
+            betting && betting.phase === "CANCELLED" && <p className="muted">{betting.cancellation.reason}</p>
+          )}
+          {market.closedAtMs ? <p className="faint room-closed__when">Closed {formatDateTimeUtc(market.closedAtMs)}</p> : null}
           <div className="room-closed__actions">
             <Link to={`/?c=${market.category}`} className="btn btn--primary">
               Open markets in this panel
@@ -480,6 +509,11 @@ function Room({ market }: { market: MarketDto }) {
       {runningRound && player && ownPosition && (
         <div className="room-own">
           <OwnPositionCard position={ownPosition} referencePrice={referencePrice} market={market} />
+        </div>
+      )}
+      {ownWaiting && (
+        <div className="room-own">
+          <OwnBetWaiting position={ownWaiting} />
         </div>
       )}
 
@@ -569,14 +603,18 @@ function Room({ market }: { market: MarketDto }) {
         </div>
       )}
 
-      {running.phase === "RUNNING" && (
-        <>
-          <h3 className="room-section-title">Crowd account</h3>
-          <CrowdPositionCard phase="RUNNING" crowd={running.crowd} referencePrice={referencePrice} market={market} />
-          <h3 className="room-section-title">Live round</h3>
-          <LiveRoundStrip positions={running.positions} referencePrice={referencePrice} roundId={running.roundId} market={market} />
-        </>
-      )}
+      {running.phase === "RUNNING" &&
+        (waitingOpen ? (
+          // The player's own bet (above) already says it; one notice is enough.
+          ownWaiting ? null : <WaitingForOpenCard symbol={market.symbol} length={seriesLabel(interval)} />
+        ) : (
+          <>
+            <h3 className="room-section-title">Crowd account</h3>
+            <CrowdPositionCard phase="RUNNING" crowd={running.crowd} referencePrice={referencePrice} market={market} />
+            <h3 className="room-section-title">Live round</h3>
+            <LiveRoundStrip positions={running.positions} referencePrice={referencePrice} roundId={running.roundId} market={market} />
+          </>
+        ))}
       {running.phase === "SETTLED" && <p className="muted">Settled.</p>}
 
       <p className="room-links">

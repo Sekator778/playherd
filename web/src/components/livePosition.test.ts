@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MyPositionDto } from "../api/contract";
-import { liquidationRoomFraction, liveReadOfPosition } from "./livePosition";
+import { isWaitingForOpen, liquidationRoomFraction, liveReadOfPosition, serverSizeOf } from "./livePosition";
 
 describe("liquidationRoomFraction", () => {
   it("long: 1 at the entry price, 0 at liquidation, linear between, clamped outside", () => {
@@ -32,6 +32,7 @@ const running = (over: Partial<MyPositionDto> = {}): MyPositionDto => ({
   symbol: "BTC",
   roundId: "1h-3600000",
   interval: "HOURLY",
+  durationSec: 180,
   phase: "RUNNING",
   direction: "UP",
   leverage: 10,
@@ -74,5 +75,37 @@ describe("liveReadOfPosition", () => {
     );
     expect(read?.pnl).toBeLessThan(0);
     expect(read?.roomFraction).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("the server's size (MyPositionDto.size) drives the live P&L when it sends one", () => {
+  it("uses the server's size, not a re-derivation from the stake", () => {
+    // The stake would derive 0.125 BTC (1000 × 10 / 80000); the server says it opened 0.2 — the P&L is of the 0.2.
+    const read = liveReadOfPosition(running({ size: "0.20000000" }), "80800.00", BTC);
+    expect(read?.pnl).toBe(160); // 0.2 × 800
+    expect(liveReadOfPosition(running(), "80800.00", BTC)?.pnl).toBe(100); // no size sent: the derivation, as before
+  });
+
+  it("falls back to the derivation for a size that is null, empty, zero or not a number", () => {
+    for (const size of [null, "", "0.00000000", "abc"]) {
+      expect(liveReadOfPosition(running({ size }), "80800.00", BTC)?.pnl).toBe(100);
+    }
+    expect(serverSizeOf({ size: "0.12500000" })).toBe("0.12500000");
+    expect(serverSizeOf({ size: undefined })).toBeNull();
+    expect(serverSizeOf({ size: null })).toBeNull();
+  });
+});
+
+describe("a round with no opening price yet reads as nothing, never a zero", () => {
+  const waiting = running({ entryPrice: null, liquidationPrice: null, size: null });
+
+  it("isWaitingForOpen: RUNNING with no entry price — not a bet still waiting for its round", () => {
+    expect(isWaitingForOpen(waiting)).toBe(true);
+    expect(isWaitingForOpen(running())).toBe(false);
+    expect(isWaitingForOpen(running({ phase: "BETTING", entryPrice: null, liquidationPrice: null }))).toBe(false);
+  });
+
+  it("has no live reading: no P&L, no room, no distance to liquidation", () => {
+    expect(liveReadOfPosition(waiting, "80800.00", BTC)).toBeNull();
   });
 });

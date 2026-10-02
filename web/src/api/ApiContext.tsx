@@ -56,20 +56,21 @@ export function useConnectModalState(): ConnectModalState {
 
 /** Wraps the app once: provides the `Api` instance and a small session cache (current player) so
  *  the header, bet slip, and every "not signed in" state all agree on sign-in state without each
- *  re-fetching it themselves. Also owns whether the connect-wallet modal is open. */
-export function ApiProvider({ children }: { children: ReactNode }) {
+ *  re-fetching it themselves. Also owns whether the connect-wallet modal is open. `api` is for a test that
+ *  needs this provider (the session and the modal) around a fake `Api`; the app never passes it. */
+export function ApiProvider({ children, api = apiInstance }: { children: ReactNode; api?: Api }) {
   const [player, setPlayer] = useState<PlayerSummaryDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
 
   const refresh = async () => {
-    const current = await apiInstance.currentPlayer();
+    const current = await api.currentPlayer();
     setPlayer(current);
     setLoading(false);
   };
 
   const signOut = async () => {
-    await apiInstance.signOut();
+    await api.signOut();
     await refresh();
   };
 
@@ -77,11 +78,11 @@ export function ApiProvider({ children }: { children: ReactNode }) {
   // linter only recognizes a bare promise chain with no synchronous setState before it as a
   // safe effect body.
   useEffect(() => {
-    apiInstance.currentPlayer().then((current) => {
+    api.currentPlayer().then((current) => {
       setPlayer(current);
       setLoading(false);
     });
-  }, []);
+  }, [api]);
 
   const session: SessionState = {
     player,
@@ -92,7 +93,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <ApiInstanceContext.Provider value={apiInstance}>
+    <ApiInstanceContext.Provider value={api}>
       <SessionContext.Provider value={session}>
         <ConnectModalContext.Provider value={{ isOpen: modalOpen, close: () => setModalOpen(false) }}>
           {children}

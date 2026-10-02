@@ -5,6 +5,7 @@ import { usePoll } from "../api/usePoll";
 import { useClock } from "../api/useClock";
 import { useReferencePrice } from "../api/useReferencePrice";
 import { useMarket } from "../api/useMarkets";
+import { useMyPositions } from "../api/useMyPositions";
 import type { RoundDto } from "../api/contract";
 import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
 import { AnchorLine } from "../components/AnchorLine";
@@ -13,6 +14,7 @@ import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton
 import { MarketIcon } from "../components/MarketIcon";
 import { OwnPositionCard } from "../components/OwnPositionCard";
 import { CancellationNotice, CrowdPositionCard, PositionsList } from "../components/RoundParts";
+import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
 import { formatDuration, formatPlayAmount, formatPrice, type PriceFormatMarket } from "../format";
 import "./RoundPage.css";
 
@@ -33,6 +35,9 @@ export function RoundPage() {
   // Live reference price for the RUNNING phase's unrealized P&L / % to liquidation (task: "live
   // unrealized P&L ... updating every poll") — same interval as the round poll below.
   const referencePrice = useReferencePrice(round?.marketId, POLL_MS);
+  // The player's own bets: while a round has no opening price yet its public `positions` list is empty, and
+  // `myPositions()` is the only place that still knows the player is in it.
+  const { positions: myPositions } = useMyPositions();
   const priceText = (price: string) => formatPrice(price, market ?? FALLBACK_PRICE_MARKET);
 
   // Reset to loading only when navigating to a *different* round (during render, not in an
@@ -84,6 +89,10 @@ export function RoundPage() {
 
   const ownPosition =
     round.phase !== "BETTING" && player ? round.positions.find((p) => p.playerId === player.playerId) : undefined;
+  // A RUNNING round the source has not given an opening price for yet: no positions, no crowd position, no
+  // open price — one calm notice instead (`RoundRunning.openPrice`).
+  const waitingOpen = round.phase === "RUNNING" && round.openPrice === null;
+  const ownWaiting = waitingOpen && player ? myPositions.find((p) => p.roundId === round.roundId) : undefined;
 
   // Round-start reveal (live-round.md §3): the hero card and the positions stage below both play
   // a one-shot flip-in the moment they first mount in a post-BETTING shape — a `key` that only
@@ -118,6 +127,8 @@ export function RoundPage() {
           </h2>
         )}
       </div>
+
+      {ownWaiting && <OwnBetWaiting position={ownWaiting} hero />}
 
       {ownPosition &&
         (round.phase === "SETTLED" && ownPosition.payout !== null && !ownPosition.liquidated ? (
@@ -165,11 +176,26 @@ export function RoundPage() {
               />
             </>
           )}
-          {(round.phase === "RUNNING" || round.phase === "SETTLED") && (
-            <div className="stack reveal-flip-in" style={{ gap: 16 }}>
-              <p className="mono">Open price: {priceText(round.openPrice)}</p>
+          {waitingOpen && (
+            <div className="stack" style={{ gap: 16 }}>
+              {/* The player's own bet (above) already says it; one notice is enough. */}
+              {!ownWaiting && <WaitingForOpenCard symbol={round.asset} length={length} />}
               <OracleDisclosureLine source={market?.source} />
-              {round.phase === "SETTLED" && <AnchorLine roundId={round.roundId} resultsHash={round.resultsHash} anchor={round.oracleAnchor} />}
+            </div>
+          )}
+          {(round.phase === "SETTLED" || (round.phase === "RUNNING" && !waitingOpen)) && (
+            <div className="stack reveal-flip-in" style={{ gap: 16 }}>
+              {round.openPrice !== null && <p className="mono">Open price: {priceText(round.openPrice)}</p>}
+              <OracleDisclosureLine source={market?.source} />
+              {round.phase === "SETTLED" && (
+                <AnchorLine
+                  roundId={round.roundId}
+                  resultsHash={round.resultsHash}
+                  anchor={round.oracleAnchor}
+                  symbol={round.asset}
+                  oracleIndex={market?.oracleIndex}
+                />
+              )}
               <h3>All positions</h3>
               <PositionsList
                 positions={round.positions}
@@ -181,7 +207,7 @@ export function RoundPage() {
           )}
         </div>
         <div className="stack" style={{ gap: 16 }}>
-          {round.phase !== "BETTING" && (
+          {round.phase !== "BETTING" && !waitingOpen && (
             <CrowdPositionCard phase={round.phase} crowd={round.crowd} referencePrice={referencePrice} market={market} />
           )}
           {round.phase === "BETTING" && (

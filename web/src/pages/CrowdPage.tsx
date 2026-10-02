@@ -7,6 +7,10 @@
  * - a market selector (default: `?m=`, else the market you came from, else BTC) driving `crowdAccount(id)`,
  *   with its capital, returns and the chart crowd vs hold vs anti-crowd on a time axis that follows how much
  *   history there is (`components/crowdModel.ts`).
+ *
+ * A row of the overview carries the market's own `title` and `status` (`CrowdOverviewDto`), so a closed market
+ * keeps its row — marked closed — and its account stays reachable after it has left `markets()`: nothing here
+ * joins the overview against the market list for a name.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -35,12 +39,31 @@ function Return({ value }: { value: number }) {
   );
 }
 
+/** "closed" beside a market's ticker: a word, not just a dimmed row. */
+function ClosedTag({ row }: { row: OverviewRow }) {
+  return row.status === "CLOSED" ? <span className="crowd-closed-tag">closed</span> : null;
+}
+
+/** The row's name for a spoken label: the ticker, and "closed" — the row's `title` rides along as the button's
+ *  own `title` (its description), so a long question is not read out in front of every figure. */
+function rowName(row: OverviewRow): string {
+  return `${row.symbol}${row.status === "CLOSED" ? ", closed" : ""}`;
+}
+
 /** One market's mini-card in the overview (best / worst): taps through to that market's account below. */
 function Extreme({ label, row, onPick }: { label: string; row: OverviewRow; onPick: (marketId: string) => void }) {
   return (
-    <button type="button" className="crowd-extreme" onClick={() => onPick(row.marketId)} aria-label={`${label}: ${row.symbol}, ${formatPercent(row.returnPct, { sign: true })}. Show its account.`}>
+    <button
+      type="button"
+      className="crowd-extreme"
+      title={row.title}
+      onClick={() => onPick(row.marketId)}
+      aria-label={`${label}: ${rowName(row)}, ${formatPercent(row.returnPct, { sign: true })}. Show its account.`}
+    >
       <span className="crowd-extreme__label">{label}</span>
-      <span className="crowd-extreme__symbol">{row.symbol}</span>
+      <span className="crowd-extreme__symbol">
+        {row.symbol} <ClosedTag row={row} />
+      </span>
       <Return value={row.returnPct} />
     </button>
   );
@@ -82,8 +105,17 @@ function Overview({ overview, onPick }: { overview: CrowdOverviewDto; onPick: (m
           <ul className="crowd-rank">
             {ranked.map((r) => (
               <li key={r.marketId}>
-                <button type="button" className="crowd-rank__row" onClick={() => onPick(r.marketId)} aria-label={`${r.symbol}: ${formatPercent(r.returnPct, { sign: true })}, won ${r.roundsWon} of ${r.roundsTraded} rounds. Show its account.`}>
-                  <span className="crowd-rank__symbol">{r.symbol}</span>
+                <button
+                  type="button"
+                  className="crowd-rank__row"
+                  title={r.title}
+                  onClick={() => onPick(r.marketId)}
+                  aria-label={`${rowName(r)}: ${formatPercent(r.returnPct, { sign: true })}, won ${r.roundsWon} of ${r.roundsTraded} rounds. Show its account.`}
+                >
+                  <span className="crowd-rank__symbol">
+                    {r.symbol}
+                    <ClosedTag row={r} />
+                  </span>
                   <span className="crowd-rank__bar" aria-hidden="true">
                     <span
                       className={`crowd-rank__fill crowd-rank__fill--${trend(r.returnPct)}`}
@@ -105,7 +137,11 @@ function Overview({ overview, onPick }: { overview: CrowdOverviewDto; onPick: (m
   );
 }
 
-function CrowdAccount({ market }: { market: MarketDto }) {
+/** What the account below needs to know of its market: for a market still on the list that is the `MarketDto`;
+ *  for one that has left it, the few facts the overview row carries (`source` unknown: no oracle line then). */
+type AccountMarket = Pick<MarketDto, "id" | "symbol" | "iconUrl" | "status"> & Partial<Pick<MarketDto, "source" | "title">>;
+
+function CrowdAccount({ market }: { market: AccountMarket }) {
   const api = useApi();
   const tick = useClock(5000);
   const [crowd, setCrowd] = useState<CrowdAccountDto | null>(null);
@@ -161,7 +197,7 @@ function CrowdAccount({ market }: { market: MarketDto }) {
       </div>
       <LazyCrowdChart history={crowd.history} variant="full" symbol={market.symbol} />
       {updatedAt !== null && <p className="faint">{formatUpdatedAtUtc(updatedAt)}</p>}
-      <OracleDisclosureLine source={market.source} />
+      {market.source && <OracleDisclosureLine source={market.source} />}
       <OracleStatusLine />
       <h2>Season returns</h2>
       <table className="data-table data-table--responsive">
@@ -194,8 +230,6 @@ export function CrowdPage() {
   const wanted = params.get("m") ?? lastMarket() ?? "BTC";
   const requested = useMarket(wanted).market;
   const btc = useMarket("BTC").market;
-  // The market asked for (the link, or the room it came from) — BTC when that is gone or never was.
-  const market = requested ?? btc ?? markets[0];
 
   const [overview, setOverview] = useState<CrowdOverviewDto | null>(null);
   useEffect(() => {
@@ -214,6 +248,13 @@ export function CrowdPage() {
   }, [api, tick]);
 
   const groups = useMemo(() => marketGroups(markets, categories), [markets, categories]);
+
+  // The market asked for (the link, or the room it came from): from the list; else — a closed market that has
+  // left it — from its row of the overview (which keeps it); else BTC, when that is gone or never was.
+  const wantedRow = overview?.markets.find((r) => r.marketId.toLowerCase() === wanted.toLowerCase());
+  const leftTheList: AccountMarket | undefined =
+    !requested && wantedRow ? { id: wantedRow.marketId, symbol: wantedRow.symbol, title: wantedRow.title, status: wantedRow.status, iconUrl: null } : undefined;
+  const market: AccountMarket | undefined = requested ?? leftTheList ?? btc ?? markets[0];
 
   const pick = useCallback(
     (marketId: string) => {
@@ -257,11 +298,20 @@ export function CrowdPage() {
                 ))}
               </optgroup>
             ))}
+            {leftTheList && (
+              <optgroup label="Left the list">
+                <option value={leftTheList.id}>
+                  {leftTheList.symbol} · {leftTheList.title} (closed)
+                </option>
+              </optgroup>
+            )}
           </select>
         </div>
-        <Link to={`/play/${encodeURIComponent(market.id)}`} className="btn btn--secondary crowd-selector__play">
-          Play {market.symbol}
-        </Link>
+        {market.status === "ACTIVE" && (
+          <Link to={`/play/${encodeURIComponent(market.id)}`} className="btn btn--secondary crowd-selector__play">
+            Play {market.symbol}
+          </Link>
+        )}
       </div>
 
       <CrowdAccount key={market.id} market={market} />

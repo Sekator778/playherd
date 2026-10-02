@@ -33,6 +33,8 @@
 /* LIQUIDATION — a compact toast, no full-screen dimming (result-moment.md §2: "не общий оверлей
    на весь экран"), pinned near the top so it never covers the DEMO banner/meta rail underneath. */
 .result-overlay--toast {
+  /* Nothing under a toast is blocked (the next bet, a scroll): only the card itself takes taps, to dismiss. */
+  pointer-events: none;
   align-items: flex-start;
   justify-content: center;
   /* Below the sticky header incl. the status-bar inset (`--header-offset`, index.css). It used to read
@@ -41,6 +43,10 @@
   padding-top: calc(var(--header-offset) + 12px);
   background: transparent;
   backdrop-filter: none;
+}
+
+.result-overlay--toast .result-card {
+  pointer-events: auto;
 }
 
 .result-overlay--overflow {
@@ -195,6 +201,12 @@
   color: var(--text-muted);
   margin: 4px 0;
 }
+.result-card__note {
+  margin: 6px 0 0;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 14px;
+}
 .result-card__actions {
   display: flex;
   align-items: center;
@@ -298,6 +310,114 @@
   gap: 6px;
   max-height: 220px;
   overflow-y: auto;
+}
+
+/* ---------------------------------------------------------------------------
+   Quiet summaries (`QuietNotes.tsx`) — the settlement of a liquidation the player was already shown
+   mid-round: one calm line above the tab bar, never an overlay, nothing blocked.
+--------------------------------------------------------------------------- */
+
+.quiet-notes {
+  position: fixed;
+  z-index: 9450;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--tabbar-height) + var(--safe-bottom) + 12px);
+  width: min(560px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+.quiet-note {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--liq-magenta);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated-2);
+  box-shadow: var(--shadow-card);
+  animation: quiet-note-in var(--dur-fast) var(--ease-out-expo);
+}
+.quiet-note__icon {
+  width: 22px;
+  height: 22px;
+  color: var(--liq-magenta);
+}
+.quiet-note__body p {
+  margin: 0;
+}
+.quiet-note__title {
+  font-size: 13px;
+  color: var(--text);
+}
+.quiet-note__body .quiet-note__text {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.quiet-note__link {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.quiet-note__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.quiet-note__close:hover {
+  color: var(--text);
+}
+.quiet-notes__more {
+  pointer-events: auto;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated-2);
+  color: var(--text-faint);
+  font-size: 12px;
+  align-self: flex-start;
+}
+@keyframes quiet-note-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@media (max-width: 420px) {
+  /* The link drops under the text on a narrow phone instead of squeezing it. */
+  .quiet-note {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .quiet-note__link {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .quiet-note__close {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+html[data-reduced-motion="true"] .quiet-note {
+  animation: none;
 }
 
 /* Reduced motion — disable every CSS-driven animation above, keep color/icon/text (direction.md

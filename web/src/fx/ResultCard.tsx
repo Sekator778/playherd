@@ -49,10 +49,12 @@ function balancePillRect(): DOMRect | null {
   return el ? el.getBoundingClientRect() : null;
 }
 
-/** "3 MIN" for the series an event's round was in — `ResultEvent` only carries the series' name, the real
- *  length lives on the market; nothing when the market has left the list (never "hourly" for a 3-minute round). */
-function useSeriesLabel(event: Pick<ResultEvent, "marketId" | "interval">): string | null {
+/** "3 MIN" for the series an event's round was in: the round's own length when the event carries it
+ *  (`ResultEvent.durationSec`, from the server's history row or the round's window); otherwise the length of the
+ *  market's series, and nothing when the market has left the list — never "Hourly"/"Daily" for a 3-minute round. */
+function useSeriesLabel(event: Pick<ResultEvent, "marketId" | "interval" | "durationSec">): string | null {
   const { byId } = useMarkets();
+  if (event.durationSec !== undefined && Number.isFinite(event.durationSec) && event.durationSec > 0) return formatDuration(event.durationSec);
   const series = byId.get(event.marketId)?.series.find((s) => s.interval === event.interval);
   return series ? formatDuration(series.durationSec) : null;
 }
@@ -85,7 +87,11 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
       : event.kind === "LOSS"
         ? LOSS_TABLE[event.tier].holdMs
         : event.kind === "LIQUIDATION"
-          ? 1400
+          ? // The mid-round moment carries a sentence more to read (the stake is lost, the round runs on, a
+            // cancelled round refunds it): 2.8 s, tap to skip like every moment.
+            event.midRound
+            ? 2800
+            : 1400
           : 1200;
   const activeMs =
     event.kind === "WIN"
@@ -238,6 +244,14 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
           <p className="result-card__secondary">
             <strong className="result-card__symbol">{event.symbol}</strong>
             {seriesLabel ? ` · ${seriesLabel} round` : ""}
+          </p>
+        )}
+        {/* Р-50 / Р-7, said plainly while it is true: liquidated NOW, not at the end of the round. And the one rule
+            that can still change it, said just as plainly: a round that gets cancelled refunds every bet in it,
+            liquidated ones too (Р-23) — so "lost" is what happens when the round settles, which it has not yet. */}
+        {event.kind === "LIQUIDATION" && event.midRound && (
+          <p className="result-card__note">
+            <strong>Your whole stake is lost.</strong> The round is still running — if it is cancelled, every bet in it is refunded.
           </p>
         )}
 

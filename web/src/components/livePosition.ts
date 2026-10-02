@@ -50,16 +50,32 @@ export function liveRead(
   };
 }
 
+/** A RUNNING position whose round has no opening price yet: `myPositions()` sends `entryPrice` and
+ *  `liquidationPrice` as null. Nothing can be read of it — not a P&L, not a distance to liquidation. */
+export function isWaitingForOpen(position: Pick<MyPositionDto, "phase" | "entryPrice">): boolean {
+  return position.phase === "RUNNING" && position.entryPrice === null;
+}
+
+/** The size the SERVER opened the position with (`MyPositionDto.size`, lots at 8 dp), when it sent a usable
+ *  one: a positive decimal. Absent / null / garbage → `null`, and the caller derives it from the stake. */
+export function serverSizeOf(position: Pick<MyPositionDto, "size">): string | null {
+  const size = position.size;
+  if (typeof size !== "string" || size.trim() === "") return null;
+  const n = Number(size);
+  return Number.isFinite(n) && n > 0 ? size : null;
+}
+
 /**
- * The live numbers of one of the player's own RUNNING positions as `myPositions()` reports it
- * (`MyPositionDto` has no `size`: the client recomputes it from the stake the way the server sizes a
- * position, `sizeForMargin`). `null` when there is nothing to read yet — a bet still waiting for its round
- * to start (no entry price), a liquidated position, no current price, or a market whose parameters have
- * not arrived.
+ * The live numbers of one of the player's own RUNNING positions as `myPositions()` reports it. The size is the
+ * server's (`MyPositionDto.size`) when it sends one — the position it really opened; for a server that does not,
+ * the client recomputes it from the stake the way the server sizes a position (`sizeForMargin`). `null` when
+ * there is nothing to read yet — a bet still waiting for its round to start, a round with no opening price yet
+ * (no entry price: {@link isWaitingForOpen}), a liquidated position, no current price, or a market whose
+ * parameters have not arrived.
  */
 export function liveReadOfPosition(position: MyPositionDto, currentPrice: string | null | undefined, market: MarketParams | undefined): LiveRead | null {
   if (position.phase !== "RUNNING" || position.liquidated || !market || !currentPrice) return null;
   if (position.entryPrice === null || position.liquidationPrice === null) return null;
-  const size = sizeForMargin(position.stake, position.leverage, position.entryPrice, market).toFixed(8);
+  const size = serverSizeOf(position) ?? sizeForMargin(position.stake, position.leverage, position.entryPrice, market).toFixed(8);
   return liveRead({ size, entryPrice: position.entryPrice, liquidationPrice: position.liquidationPrice, direction: position.direction }, currentPrice, market);
 }

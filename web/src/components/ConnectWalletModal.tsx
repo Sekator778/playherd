@@ -49,13 +49,18 @@ export function ConnectWalletModal() {
   const [wcProjectId, setWcProjectId] = useState<string | null>(() =>
     api.serverInfo ? null : getWalletConnectProjectId(),
   );
+  // `ServerInfoDto.testWallet === false`: this server does not offer the browser test wallet (Р-45) at all —
+  // the sheet then has no test-wallet button, not a disabled one. Absent (or no answer) → offered, as before.
+  const [testWalletOffered, setTestWalletOffered] = useState(true);
   useEffect(() => {
     if (!api.serverInfo) return;
     let cancelled = false;
     api
       .serverInfo()
       .then((info) => {
-        if (!cancelled) setWcProjectId(getWalletConnectProjectId(info));
+        if (cancelled) return;
+        setWcProjectId(getWalletConnectProjectId(info));
+        setTestWalletOffered(info.testWallet !== false);
       })
       .catch(() => {
         if (!cancelled) setWcProjectId(getWalletConnectProjectId());
@@ -236,24 +241,32 @@ export function ConnectWalletModal() {
         {step === "connect" && (
           <>
             <h2 id="connect-modal-title">Connect your wallet</h2>
-            {/* The test wallet leads on this stand (HANDOFF §6 п.10): it is the one path that works for
-             *  everybody — the Sage button first was a dead end for a visitor without Sage. Both stay. */}
-            <p className="test-wallet-tag">TEST WALLET</p>
-            <p className="muted">
-              Fastest way in: this stand signs you in with a real Chia key generated right in your browser — not Sage. It doesn't move any
-              funds, and each browser/profile is a separate player.
-            </p>
-            <div className="modal-actions" style={{ marginTop: 0 }}>
-              <button type="button" className="btn btn--primary btn--block btn--lg" onClick={() => void startConnect()}>
-                Continue with test wallet
-              </button>
-            </div>
-            <div className="modal-or" role="separator">
-              <span>or</span>
-            </div>
+            {testWalletOffered ? (
+              <>
+                {/* The test wallet leads on this stand (HANDOFF §6 п.10): it is the one path that works for
+                 *  everybody — the Sage button first was a dead end for a visitor without Sage. Both stay. */}
+                <p className="test-wallet-tag">TEST WALLET</p>
+                <p className="muted">
+                  Fastest way in: this stand signs you in with a real Chia key generated right in your browser — not Sage. It doesn't move any
+                  funds, and each browser/profile is a separate player.
+                </p>
+                <div className="modal-actions" style={{ marginTop: 0 }}>
+                  <button type="button" className="btn btn--primary btn--block btn--lg" onClick={() => void startConnect()}>
+                    Continue with test wallet
+                  </button>
+                </div>
+                <div className="modal-or" role="separator">
+                  <span>or</span>
+                </div>
+              </>
+            ) : (
+              <p className="muted">
+                This server signs you in with your own Chia wallet (Sage) — a real signature on testnet11; it doesn't move any funds.
+              </p>
+            )}
             <button
               type="button"
-              className="btn btn--secondary btn--block btn--lg"
+              className={`btn ${testWalletOffered ? "btn--secondary" : "btn--primary"} btn--block btn--lg`}
               onClick={() => void startSageConnect()}
               disabled={!wcProjectId}
               title={wcProjectId ? undefined : "Coming soon — needs WalletConnect project id"}
@@ -261,7 +274,9 @@ export function ConnectWalletModal() {
               Connect with Sage
             </button>
             {!wcProjectId ? (
-              <p className="field-hint">Coming soon — needs WalletConnect project id.</p>
+              <p className="field-hint">
+                {testWalletOffered ? "Coming soon — needs WalletConnect project id." : "Sign-in isn't available on this server yet — Sage needs a WalletConnect project id."}
+              </p>
             ) : (
               <p className="field-hint">Real wallet, real signature — Sage needs to be on testnet11.</p>
             )}

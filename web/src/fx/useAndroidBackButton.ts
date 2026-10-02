@@ -1,7 +1,7 @@
 /**
  * Android hardware Back (player review fix item 4). Without this, Capacitor's Android bridge
  * exits the whole app on any hardware Back press that isn't otherwise handled — confirmed on
- * `/play/:asset`: Lobby → Pair room is real in-app navigation (React Router's `BrowserRouter`,
+ * `/play/:marketId`: Lobby → Pair room is real in-app navigation (React Router's `BrowserRouter`,
  * `main.tsx`), but nothing wired the WebView's back button to it, so the OS default ("nothing
  * handled it, finish the Activity") fired instead of returning to the Lobby.
  *

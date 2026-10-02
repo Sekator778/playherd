@@ -10,7 +10,7 @@
  * round and the running round, per series — which sees the BTC pair only (`rounds` without a
  * market), so it under-reports once a player is in other markets.
  */
-import type { Api, PlayerAccountDto, RoundsPairDto } from "./contract";
+import type { Api, MyPositionDto, PlayerAccountDto, RoundsPairDto } from "./contract";
 import { positionStakeStr } from "./outcome";
 
 /** The server's own in-play figure, or `null` when this server does not send one. */
@@ -46,4 +46,20 @@ export function inPlayStakeForSeries(playerId: string, pair: RoundsPairDto): num
 /** Both series (Hourly + Daily) of one pair combined — the fallback behind the header's "+{N} in play". */
 export function totalInPlayStake(playerId: string, hourly: RoundsPairDto, daily: RoundsPairDto): number {
   return inPlayStakeForSeries(playerId, hourly) + inPlayStakeForSeries(playerId, daily);
+}
+
+/**
+ * The stake of the player's positions that a liquidation has ALREADY taken while their round is still running
+ * (`MyPositionDto.liquidated`). The server counts it as "in play" until the round settles — nothing is paid
+ * back, it just has not been booked yet — but the player has been told it is lost (the mid-round LIQUIDATION
+ * moment, Р-7/Р-50), so a header that went on saying "+300 in play" would suggest it could still come back.
+ */
+export function liquidatedStake(positions: readonly MyPositionDto[]): number {
+  return positions.filter((p) => p.phase === "RUNNING" && p.liquidated).reduce((sum, p) => sum + Number(p.stake), 0);
+}
+
+/** The header's in-play figure with what a liquidation already took left out — never below zero (the server's
+ *  figure and the positions list come from two polls, so they can disagree for a moment). */
+export function inPlayExcludingLiquidated(inPlay: number, positions: readonly MyPositionDto[]): number {
+  return Math.max(0, inPlay - liquidatedStake(positions));
 }

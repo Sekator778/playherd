@@ -1,5 +1,6 @@
+import { useServerInfo } from "../api/useServerInfo";
 import { CopyButton } from "./Common";
-import { PLAY_ASSET_ID, RECOMMENDED_DEPOSIT_FEE } from "./playAsset";
+import { playAssetIdOf, RECOMMENDED_DEPOSIT_FEE } from "./playAsset";
 import "./SageHints.css";
 
 /** The two things that trip a first Sage sign-in (`docs/research/sage_real_e2e.md` «Трение» п. 1, 3). */
@@ -24,6 +25,9 @@ export function SageSignInTips() {
  * sign-in is a new WalletConnect pairing.
  */
 export function SageDepositHints() {
+  // The server's own PLAY asset id when it sends one (`ServerInfoDto.playAssetId`), else this build's.
+  const { info } = useServerInfo();
+  const assetId = playAssetIdOf(info);
   return (
     <div className="card sage-hints">
       <h3>Using Sage? Four things to know</h3>
@@ -36,9 +40,9 @@ export function SageDepositHints() {
           rename the token:
           <span className="sage-asset">
             <code className="mono sage-asset__id" aria-label="PLAY asset id">
-              {PLAY_ASSET_ID}
+              {assetId}
             </code>
-            <CopyButton value={PLAY_ASSET_ID} label="Copy asset id" className="btn btn--secondary sage-asset__copy" />
+            <CopyButton value={assetId} label="Copy asset id" className="btn btn--secondary sage-asset__copy" />
           </span>
         </li>
         <li>

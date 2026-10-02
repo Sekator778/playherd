@@ -10,15 +10,22 @@ import { RollingDigits } from "../fx/RollingDigits";
 import { ChevronIcon, CrackIcon, DirectionGlyph } from "./icons";
 import { liquidationLiveCardClass } from "./heat";
 import { LiveLiqBar } from "./LiquidationBar";
-import { liveReadOfPosition, type LiveRead } from "./livePosition";
+import { isWaitingForOpen, liveReadOfPosition, type LiveRead } from "./livePosition";
+import { WAITING_FOR_OPEN } from "./WaitingForOpen";
 import { positionRoomPath, readStripCollapsed, writeStripCollapsed } from "./positionsStripModel";
 import { useServerNow } from "./useServerNow";
 import "./PositionsStrip.css";
 
+/** "3 MIN" — the position's own round length (`MyPositionDto.durationSec`), so the label survives the market
+ *  leaving `markets()`; nothing at all if a server sent none, never "NaN SEC". */
+function lengthLabel(position: MyPositionDto): string | null {
+  return Number.isFinite(position.durationSec) && position.durationSec > 0 ? formatDuration(position.durationSec) : null;
+}
+
 export function PositionCard({ position, market, nowMs }: { position: MyPositionDto; market: MarketDto | undefined; nowMs: number }) {
   const read: LiveRead | null = liveReadOfPosition(position, market?.price?.price, market);
-  const series = market?.series.find((s) => s.interval === position.interval);
-  const length = series ? formatDuration(series.durationSec) : null;
+  const length = lengthLabel(position);
+  const waitingOpen = isWaitingForOpen(position);
   const betting = position.phase === "BETTING";
   const timeLeft = formatCountdown(position.untilMs - nowMs);
   const liquidated = position.phase === "RUNNING" && position.liquidated;
@@ -30,7 +37,9 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
       ? ", liquidated"
       : betting
         ? `, round starts in ${timeLeft}`
-        : read
+        : waitingOpen
+          ? ", waiting for the opening price"
+          : read
           ? `, live ${formatPlayAmount(read.pnl, { sign: true })} PLAY, ${(read.pctToLiquidation * 100).toFixed(1)}% to liquidation`
           : "");
   return (
@@ -56,6 +65,14 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
       ) : betting ? (
         <span className="pos-card__pnl pos-card__pnl--wait">
           <span className="pos-card__note">Bet placed — waits for the round to start</span>
+        </span>
+      ) : waitingOpen ? (
+        // The round has no opening price yet: no entry, no P&L, no meter — never a zero.
+        <span className="pos-card__pnl pos-card__pnl--wait">
+          <span className="pos-card__note pos-card__note--waiting">
+            <span className="pos-card__waiting-dot" aria-hidden="true" />
+            {WAITING_FOR_OPEN}
+          </span>
         </span>
       ) : read ? (
         <>

@@ -23,14 +23,17 @@ function accountOf(marketId: string): CrowdAccountDto {
   };
 }
 
-const row = (marketId: string, symbol: string, returnPct: number, roundsTraded = 10) => ({
+const row = (marketId: string, symbol: string, returnPct: number, roundsTraded = 10, over: Partial<CrowdOverviewDto["markets"][number]> = {}): CrowdOverviewDto["markets"][number] => ({
   marketId,
   symbol,
+  title: MARKETS.find((m) => m.id === marketId)?.title ?? symbol,
+  status: "ACTIVE" as const,
   category: "crypto" as const,
   capital: (100000 * (1 + returnPct)).toFixed(2),
   returnPct,
   roundsTraded,
   roundsWon: Math.floor(roundsTraded / 2),
+  ...over,
 });
 
 const OVERVIEW: CrowdOverviewDto = {
@@ -183,5 +186,56 @@ describe("Stats → Crowd — the herd overview (S4)", () => {
     );
     expect(await screen.findByText("Capital")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /The whole herd/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("Stats → Crowd — a closed market keeps its row, named by the row itself (CrowdOverviewDto.title / status)", () => {
+  const GONE = row("PM_GONE", "GONE", -0.02, 4, { status: "CLOSED", title: "Will the old match end in a draw?", category: "sports" });
+  const WITH_CLOSED: CrowdOverviewDto = { ...OVERVIEW, markets: [...OVERVIEW.markets, GONE] };
+
+  it("marks the closed market's row closed — in words — and carries its title, with no join against the market list", async () => {
+    const user = userEvent.setup();
+    renderCrowd("/stats", WITH_CLOSED);
+    const overview = await screen.findByRole("region", { name: /The whole herd — 5 markets/ });
+    await user.click(within(overview).getByText("Every market, best to worst"));
+    const goneRow = within(overview).getByRole("button", { name: /^GONE, closed: -2\.0%/ });
+    expect(goneRow).toHaveTextContent("closed");
+    expect(goneRow).toHaveAttribute("title", "Will the old match end in a draw?");
+    // an open market's row has no such word
+    const btcRow = within(overview).getAllByRole("button", { name: /^BTC: \+3\.4%/ }).find((b) => b.className.includes("crowd-rank__row"))!;
+    expect(btcRow).not.toHaveTextContent("closed");
+  });
+
+  it("a closed market that is the worst says so on the worst card too", async () => {
+    renderCrowd("/stats", { ...WITH_CLOSED, markets: [row("BTC", "BTC", 0.034, 20), { ...GONE, returnPct: -0.09 }] });
+    const worst = await screen.findByRole("button", { name: /^Worst market: GONE, closed, -9\.0%/ });
+    expect(worst).toHaveTextContent("closed");
+  });
+
+  it("its account is still reachable after it has left the market list: opened, not silently swapped for BTC", async () => {
+    const { crowdAccount } = renderCrowd("/stats?m=PM_GONE", WITH_CLOSED);
+    await waitFor(() => expect(crowdAccount).toHaveBeenCalledWith("PM_GONE"));
+    const select = await screen.findByLabelText("Market");
+    expect(select).toHaveValue("PM_GONE");
+    expect(within(select).getByRole("option", { name: "GONE · Will the old match end in a draw? (closed)" })).toBeInTheDocument();
+    // nothing to bet on, and no source to name for it
+    expect(screen.queryByRole("link", { name: /^Play / })).not.toBeInTheDocument();
+    expect(screen.queryByText(/published by our team's key/)).not.toBeInTheDocument();
+  });
+
+  it("picking it from the ranked list opens its account", async () => {
+    const user = userEvent.setup();
+    const { crowdAccount } = renderCrowd("/stats", WITH_CLOSED);
+    const overview = await screen.findByRole("region", { name: /The whole herd/ });
+    await user.click(within(overview).getByText("Every market, best to worst"));
+    await user.click(within(overview).getByRole("button", { name: /^GONE, closed/ }));
+    await waitFor(() => expect(crowdAccount).toHaveBeenCalledWith("PM_GONE"));
+    expect(screen.getByLabelText("Market")).toHaveValue("PM_GONE");
+  });
+
+  it("an open market still has its Play link and its source line", async () => {
+    renderCrowd("/stats?m=ETH", WITH_CLOSED);
+    expect(await screen.findByRole("link", { name: "Play ETH" })).toHaveAttribute("href", "/play/ETH");
+    expect(await screen.findByText(/Price from Hyperliquid, published by our team's key/)).toBeInTheDocument();
   });
 });

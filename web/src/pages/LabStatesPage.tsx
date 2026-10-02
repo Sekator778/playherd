@@ -1,11 +1,14 @@
 /**
  * Hidden "/lab/states" — every designed STATE of the Р-69 screens on one page, drawn by the real components
  * from fixed data, so the states that a live stand rarely produces (a stale price, a market with no price
- * yet, a closed one, each way an oracle record can be, a zero win streak, a liquidation pinned off the chart)
- * can be looked at, screenshotted and argued about without waiting for them. Same rule as `/lab`: not in any
- * nav, nothing here touches a session or money, and the data below is invented.
+ * yet, a closed one with the server's reason, a game before and after kick-off, a round with no opening price,
+ * each way an oracle record can be, a zero win streak, a liquidation pinned off the chart, the mid-round
+ * liquidation moment and its quiet settlement summary) can be looked at, screenshotted and argued about without
+ * waiting for them. Same rule as `/lab`: not in any nav, nothing here touches a session or money, and the data
+ * below is invented.
  */
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import type { Direction, MarketDto, MyPositionDto } from "../api/contract";
 import { AnchorLine } from "../components/AnchorLine";
 import { HerdPicker } from "../components/BetSlip";
@@ -15,6 +18,9 @@ import { PositionCard } from "../components/PositionsStrip";
 import { PriceChart } from "../components/PriceChart";
 import { buildChartLines } from "../components/priceChartModel";
 import { StreakBadge } from "../components/StreakBadge";
+import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
+import { liquidationMomentEvent, quietSummaryOf } from "../fx/liquidationMoment";
+import { publish } from "../fx/resultEventBus";
 
 /** A fixed "now" so every countdown on the page reads the same and the page does not tick. */
 const NOW = Date.UTC(2026, 9, 1, 12, 0, 0);
@@ -84,7 +90,7 @@ const CARDS: Array<{ label: string; market: MarketDto; hot?: boolean; favorite?:
     market: market("NEW", { title: "A market that has just been listed", price: null, crowd: { capital: "100000.00", returnPct: 0, roundsTraded: 0, roundsWon: 0, lastOutcome: null }, series: [series({ participantCount: 0, upStake: "0.000", downStake: "0.000", majorityDirection: null }), series({ interval: "DAILY", durationSec: 900 })] }),
   },
   {
-    label: "Closed",
+    label: "Closed — the server sent no reason (the generic line)",
     market: market("GER", {
       kind: "ODDS",
       category: "sports",
@@ -97,30 +103,99 @@ const CARDS: Array<{ label: string; market: MarketDto; hot?: boolean; favorite?:
       price: { price: "0.710000", asOfMs: NOW - 400_000, change24h: 0.04, stale: false },
     }),
   },
+  {
+    label: "Closed — with the server's own reason, as it sent it",
+    market: market("POR", {
+      kind: "ODDS",
+      category: "sports",
+      status: "CLOSED",
+      title: "Will Portugal win against Denmark?",
+      subtitle: "Portugal · UEFA Nations League",
+      source: "polymarket",
+      priceDecimals: 6,
+      maxLeverage: 10,
+      closedAtMs: NOW - 180_000,
+      closeReason: "Price left the 3%–97% range",
+      price: { price: "0.970000", asOfMs: NOW - 180_000, change24h: null, stale: false },
+    }),
+  },
+  {
+    label: "A game before kick-off — 'Starts in 2h 05m'; the odds' 24 h change is in points (0.64 → 0.65 is +1.0 pt)",
+    market: market("NOR", {
+      kind: "ODDS",
+      category: "sports",
+      title: "Will Norway win against Wales?",
+      subtitle: "Norway · UEFA Nations League",
+      source: "polymarket",
+      priceDecimals: 6,
+      maxLeverage: 10,
+      endsAtMs: null,
+      eventStartsAtMs: NOW + 125 * 60_000 + 30_000,
+      price: { price: "0.650000", asOfMs: NOW - 500, change24h: 0.65 / 0.64 - 1, stale: false },
+    }),
+  },
+  {
+    label: "The same game after kick-off — a LIVE mark",
+    market: market("SWE", {
+      kind: "ODDS",
+      category: "sports",
+      title: "Will Sweden win against Estonia?",
+      subtitle: "Sweden · UEFA Nations League",
+      source: "polymarket",
+      priceDecimals: 6,
+      maxLeverage: 10,
+      endsAtMs: null,
+      eventStartsAtMs: NOW - 25 * 60_000,
+      price: { price: "0.380000", asOfMs: NOW - 500, change24h: 0.38 / 0.41 - 1, stale: false },
+    }),
+  },
 ];
 
 const POSITIONS: Array<{ label: string; position: MyPositionDto; price: string }> = [
   {
     label: "Waiting for its round",
     price: "83451.00",
-    position: { marketId: "BTC", symbol: "BTC", roundId: "lab-a", interval: "HOURLY", phase: "BETTING", direction: "UP", leverage: 15, stake: "500.000", entryPrice: null, liquidationPrice: null, liquidated: false, untilMs: NOW + 41_000 },
+    position: { marketId: "BTC", symbol: "BTC", roundId: "lab-a", interval: "HOURLY", durationSec: 180, phase: "BETTING", direction: "UP", leverage: 15, stake: "500.000", entryPrice: null, liquidationPrice: null, liquidated: false, untilMs: NOW + 41_000 },
   },
   {
     label: "Running, in profit",
     price: "83900.00",
-    position: { marketId: "BTC", symbol: "BTC", roundId: "lab-b", interval: "HOURLY", phase: "RUNNING", direction: "UP", leverage: 15, stake: "500.000", entryPrice: "83451.00", liquidationPrice: "78000.00", liquidated: false, untilMs: NOW + 95_000 },
+    position: { marketId: "BTC", symbol: "BTC", roundId: "lab-b", interval: "HOURLY", durationSec: 180, phase: "RUNNING", direction: "UP", leverage: 15, stake: "500.000", entryPrice: "83451.00", liquidationPrice: "78000.00", liquidated: false, untilMs: NOW + 95_000 },
   },
   {
     label: "Running, losing, close to liquidation",
     price: "78900.00",
-    position: { marketId: "BTC", symbol: "BTC", roundId: "lab-c", interval: "DAILY", phase: "RUNNING", direction: "UP", leverage: 15, stake: "300.000", entryPrice: "83451.00", liquidationPrice: "78000.00", liquidated: false, untilMs: NOW + 640_000 },
+    position: { marketId: "BTC", symbol: "BTC", roundId: "lab-c", interval: "DAILY", durationSec: 900, phase: "RUNNING", direction: "UP", leverage: 15, stake: "300.000", entryPrice: "83451.00", liquidationPrice: "78000.00", liquidated: false, untilMs: NOW + 640_000 },
+  },
+  {
+    label: "Running, but the round has no opening price yet — no P&L, no meter, no zero",
+    price: "83900.00",
+    position: { marketId: "BTC", symbol: "BTC", roundId: "lab-e", interval: "HOURLY", durationSec: 180, phase: "RUNNING", direction: "UP", leverage: 15, stake: "500.000", entryPrice: null, liquidationPrice: null, size: null, liquidated: false, untilMs: NOW + 70_000 },
   },
   {
     label: "Liquidated",
     price: "77000.00",
-    position: { marketId: "BTC", symbol: "BTC", roundId: "lab-d", interval: "HOURLY", phase: "RUNNING", direction: "UP", leverage: 15, stake: "300.000", entryPrice: "83451.00", liquidationPrice: "78000.00", liquidated: true, untilMs: NOW + 20_000 },
+    position: { marketId: "BTC", symbol: "BTC", roundId: "lab-d", interval: "HOURLY", durationSec: 180, phase: "RUNNING", direction: "UP", leverage: 15, stake: "300.000", entryPrice: "83451.00", liquidationPrice: "78000.00", liquidated: true, untilMs: NOW + 20_000 },
   },
 ];
+
+/** A liquidated running position — what `myPositions()` reports the instant the path touches its liquidation price. */
+const LIQUIDATED_POSITION: MyPositionDto = {
+  marketId: "BTC",
+  symbol: "BTC",
+  roundId: "BTC-1h-lab-liq",
+  interval: "HOURLY",
+  durationSec: 180,
+  phase: "RUNNING",
+  direction: "UP",
+  leverage: 25,
+  stake: "300.000",
+  entryPrice: "83451.00",
+  liquidationPrice: "80100.00",
+  size: "0.08986000",
+  liquidated: true,
+  untilMs: NOW + 90_000,
+};
 
 const TICKS = Array.from({ length: 300 }, (_, i) => ({
   atMs: NOW - (299 - i) * 3_000,
@@ -203,6 +278,47 @@ export function LabStatesPage() {
       </section>
 
       <section className="lab-section">
+        <h2>A round with no opening price yet (openPrice is null)</h2>
+        <p className="faint">
+          The round page and the room put this where the crowd's position and the list of players would be; the player's own bet (from
+          myPositions) gets its own card. No figure anywhere — never a zero.
+        </p>
+        <div className="stack" style={{ gap: 12 }}>
+          <WaitingForOpenCard symbol="BTC" length="3 MIN" />
+          <OwnBetWaiting position={{ direction: "UP", leverage: 15, stake: "500.000", symbol: "BTC" }} />
+        </div>
+      </section>
+
+      <section className="lab-section">
+        <h2>The liquidation moment in the middle of the round, and its quiet summary at settlement</h2>
+        <p className="faint">
+          Tap to fire them through the same bus the real watchers use: the first is the moment when myPositions() first reports the position
+          liquidated (the round is still running); the second is what the settlement of that same round shows instead of a second flash.
+        </p>
+        <div className="lab-row">
+          <button
+            type="button"
+            className="btn btn--danger"
+            onClick={() => publish({ ...liquidationMomentEvent(LIQUIDATED_POSITION, "lab", Date.now()), id: `lab-liq-${Date.now()}` })}
+          >
+            Fire: liquidated mid-round
+          </button>
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() =>
+              publish(quietSummaryOf({ ...liquidationMomentEvent(LIQUIDATED_POSITION, "lab", Date.now()), id: `lab-quiet-${Date.now()}` }))
+            }
+          >
+            Fire: the quiet summary at settlement
+          </button>
+        </div>
+        <p className="faint">
+          Also: <Link to="/status">the Status page</Link> (public) and <Link to="/lab">every result moment ×tier</Link>.
+        </p>
+      </section>
+
+      <section className="lab-section">
         <h2>Price chart — with a position (entry = round open; the player's liquidation is far, so it is pinned to the edge)</h2>
         <PriceChart
           market={market0}
@@ -236,6 +352,14 @@ export function LabStatesPage() {
           <AnchorLine roundId="BTC-1h-3" anchor={{ seq: 414, state: "queued", height: null }} />
           <AnchorLine roundId="BTC-1h-4" anchor={{ seq: 0, state: "unknown", height: null }} />
           <AnchorLine roundId="BTC-1h-5" resultsHash={HASH} anchor={{ seq: 415, state: "conflict", height: null }} />
+          <p className="faint">With the market's place in the oracle record (MarketDto.oracleIndex)</p>
+          <AnchorLine
+            roundId="xyz_NVDA-1h-6"
+            resultsHash={HASH}
+            anchor={{ seq: 416, state: "confirmed", height: 4_738_990 }}
+            symbol="NVDA"
+            oracleIndex={7}
+          />
         </div>
       </section>
 

@@ -136,7 +136,7 @@ describe("PriceChart — the betting lines", () => {
 
   it("for odds the move is in points, not percent", () => {
     const { container } = chart({ market: GER, ticks: ticksOf(300, NOW, 0.64, 3_000, 6), lines: buildChartLines({ openPrice: "0.500000" }) });
-    expect(container.querySelector(".pchart__move")).toHaveTextContent(/\+\d+\.\d pts vs round open/);
+    expect(container.querySelector(".pchart__move")).toHaveTextContent(/\+\d+\.\d pt vs round open/);
   });
 
   it("the round start is marked when it is inside the view", () => {

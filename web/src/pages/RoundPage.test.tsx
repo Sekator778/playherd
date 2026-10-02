@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
-import type { RoundCancelled, RoundDto, RoundSettled } from "../api/contract";
+import type { MyPositionDto, RoundCancelled, RoundDto, RoundSettled } from "../api/contract";
 import { NOW, bettingRoundOf, catalogue, crowdPosition, marketsOf, publicPosition, runningRoundOf } from "../components/testFixtures";
 import { RoundPage } from "./RoundPage";
 
@@ -24,10 +24,11 @@ function settled(over: Partial<RoundSettled> = {}): RoundSettled {
   };
 }
 
-function renderRound(round: RoundDto, signedIn = false) {
+function renderRound(round: RoundDto, signedIn = false, positions: MyPositionDto[] = [], markets = catalogue()) {
   const api = fakeApi({
     round: vi.fn(async () => round),
-    markets: vi.fn(async () => marketsOf(catalogue())),
+    markets: vi.fn(async () => marketsOf(markets)),
+    myPositions: vi.fn(async () => positions),
     referencePrice: vi.fn(async () => ({ price: "100.50", asOfMs: NOW })),
     myAccount: vi.fn(async () => ({ playerId: TEST_PLAYER.playerId, balance: "5000.000", currentSeason: "2026-09", inPlay: "0.000" })),
     previewLiquidation: vi.fn(async () => ({ entryPriceUsed: "100.00", liquidationPrice: "92.00", percentToLiquidation: 0.08 })),
@@ -127,6 +128,83 @@ describe("Round page — the player's own position", () => {
     expect(within(card).getByText(/\+5 PLAY/)).toBeInTheDocument();
     expect(within(card).getByRole("meter", { name: "Room left before liquidation" })).toBeInTheDocument();
     expect(within(card).getByText(/Entry \$100\.00 · Liquidation \$90\.50/)).toBeInTheDocument();
+  });
+});
+
+describe("Round page — «Anchored on Chia»: which asset of the oracle record this market is (MarketDto.oracleIndex)", () => {
+  const anchored = (marketOver: Record<string, unknown>) =>
+    catalogue().map((m) => (m.id === "BTC" ? { ...m, ...marketOver } : m));
+
+  it("says 'BTC is asset #0 in the oracle record' with the public registry — 0 is a real index", async () => {
+    renderRound(settled({ resultsHash: HASH, oracleAnchor: { seq: 412, state: "confirmed", height: 4_738_927 } }), false, [], anchored({ oracleIndex: 0 }));
+    expect(await screen.findByText(/BTC is asset #0 in the oracle record/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "market registry" })).toHaveAttribute("href", "/api/markets/registry.json");
+  });
+
+  it("another market says its own number", async () => {
+    renderRound(
+      settled({ roundId: "ETH-1h-0", marketId: "ETH", asset: "ETH", resultsHash: HASH, oracleAnchor: { seq: 413, state: "queued", height: null } }),
+      false,
+      [],
+      catalogue().map((m) => (m.id === "ETH" ? { ...m, oracleIndex: 7 } : m)),
+    );
+    expect(await screen.findByText(/ETH is asset #7 in the oracle record/)).toBeInTheDocument();
+  });
+
+  it("a server that sends no index gets no sentence about one", async () => {
+    renderRound(settled({ resultsHash: HASH, oracleAnchor: { seq: 412, state: "confirmed", height: 4_738_927 } }));
+    await screen.findByText("Anchored on Chia");
+    expect(screen.queryByText(/in the oracle record/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Round page — a running round with no opening price yet (RoundRunning.openPrice === null)", () => {
+  const waiting = () => runningRoundOf("BTC", "BTC", { openPrice: null, positions: [], crowd: null });
+
+  it("says it is waiting — and prints no open price, no crowd position, no player list, no zero", async () => {
+    renderRound(waiting());
+    expect(await screen.findByRole("heading", { name: "Waiting for the opening price…" })).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument(); // the round is running; the clock still counts down
+    expect(screen.getByText(/Resolves in/)).toBeInTheDocument();
+    expect(screen.queryByText(/Open price/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Crowd account's position/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/tied this round/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No positions in this round/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "All positions" })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/NaN|undefined|\$0\.00/);
+  });
+
+  it("the player's own bet in it: said, with no P&L and no liquidation meter", async () => {
+    const bet: MyPositionDto = {
+      marketId: "BTC",
+      symbol: "BTC",
+      roundId: "BTC-1h-0",
+      interval: "HOURLY",
+      durationSec: 180,
+      phase: "RUNNING",
+      direction: "DOWN",
+      leverage: 12,
+      stake: "250.000",
+      entryPrice: null,
+      liquidationPrice: null,
+      size: null,
+      liquidated: false,
+      untilMs: NOW + 90_000,
+    };
+    renderRound(waiting(), true, [bet]);
+    expect(await screen.findByText(/Your bet:/)).toHaveTextContent(/DOWN · x12 · BTC · 250 PLAY/);
+    expect(screen.queryByText(/unrealized/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("meter")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your position:/)).not.toBeInTheDocument();
+    // said once, on the card of the player's own bet — the round-level notice is not stacked beside it
+    expect(screen.getAllByText("Waiting for the opening price…")).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "Waiting for the opening price…" })).not.toBeInTheDocument();
+  });
+
+  it("with a known open price it is the usual page", async () => {
+    renderRound(runningRoundOf("BTC", "BTC", { openPrice: "100.00", crowd: crowdPosition() }));
+    expect(await screen.findByText(/Open price: \$100\.00/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Waiting for the opening price…" })).not.toBeInTheDocument();
   });
 });
 

@@ -63,6 +63,9 @@
   color: var(--text-faint);
   font-size: 12px;
 }
+.room-head__kickoff {
+  margin-top: 2px;
+}
 .room-star {
   flex: none;
   display: inline-flex;
@@ -183,6 +186,15 @@
 }
 .room-closed p {
   margin: 0;
+}
+.room-closed .room-closed__reason {
+  padding: 8px 10px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+}
+.room-closed .room-closed__when {
+  font-size: 12px;
 }
 .room-closed__actions {
   display: flex;

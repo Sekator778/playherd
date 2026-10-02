@@ -20,7 +20,7 @@
 import type { EpochMs, PriceStr, PriceTickDto, RoundWindowDto } from "./contract";
 import { DAY_MS, HOUR_MS, SIM_BASE_MS } from "./clock";
 import { priceStr } from "./liquidation";
-import type { MockMarketSpec } from "./mockMarkets";
+import { hasMockPrice, type MockMarketSpec } from "./mockMarkets";
 import { rngFor } from "./rng";
 
 /** Spacing of the mock's price ticks: a simulated 3 s (the sources are polled every 3 s,
@@ -166,22 +166,33 @@ export function priceStrAt(spec: MockMarketSpec, atMs: EpochMs): PriceStr {
   return priceStr(priceAt(spec, atMs), spec);
 }
 
-/** Relative change vs 24 hours earlier (`MarketPriceDto.change24h`, `0.0098` = +0.98%). */
-export function change24hAt(spec: MockMarketSpec, atMs: EpochMs): number {
+/** Relative change vs 24 hours earlier (`MarketPriceDto.change24h`, `0.0098` = +0.98%) — for an `ODDS` market
+ *  too: the RELATIVE move of the probability (0.64 → 0.65 is +1.5625%), which the UI turns into points. Null
+ *  when there is no price from that long ago (a market listed less than a day ago): the source gives none. */
+export function change24hAt(spec: MockMarketSpec, atMs: EpochMs): number | null {
+  if (!hasMockPrice(spec, atMs - DAY_MS)) return null;
   return priceAt(spec, atMs) / priceAt(spec, atMs - DAY_MS) - 1;
 }
 
 /**
- * Price ticks with `afterMs < atMs ≤ untilMs`, oldest first, at most the newest `max` of them —
- * the mock's `priceSeries`. Ticks sit on a fixed {@link TICK_MS} grid, so two calls never disagree
- * about a tick's time or price.
+ * The mock's `priceSeries`, in the contract's words (`Api.priceSeries`): the ticks with `afterMs < atMs ≤ untilMs`,
+ * oldest first — STRICTLY after `afterMs`, never the tick a poll already holds — at most `max` of them. When more
+ * exist, `max` are returned thinned evenly, so they still span the whole range from the first tick after
+ * `afterMs` to the newest one (both ends are always in). Ticks sit on a fixed {@link TICK_MS} grid, so two calls
+ * never disagree about a tick's time or price; a market has none from before its first price.
  */
 export function ticksBetween(spec: MockMarketSpec, afterMs: EpochMs, untilMs: EpochMs, max: number): PriceTickDto[] {
   const last = Math.floor(untilMs / TICK_MS);
   let first = Math.floor(afterMs / TICK_MS) + 1;
-  if (last - first + 1 > max) first = last - max + 1;
+  if (spec.priceFromMs !== null) first = Math.max(first, Math.ceil(spec.priceFromMs / TICK_MS));
+  const count = last - first + 1;
+  if (count <= 0 || max <= 0) return [];
+  const take = Math.min(count, max);
   const ticks: PriceTickDto[] = [];
-  for (let k = first; k <= last; k++) ticks.push({ atMs: k * TICK_MS, price: priceStrAt(spec, k * TICK_MS) });
+  for (let i = 0; i < take; i++) {
+    const k = take === 1 ? last : first + Math.round((i * (count - 1)) / (take - 1));
+    ticks.push({ atMs: k * TICK_MS, price: priceStrAt(spec, k * TICK_MS) });
+  }
   return ticks;
 }
 

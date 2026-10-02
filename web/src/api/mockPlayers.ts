@@ -132,6 +132,7 @@ function generateHistory(index: number): HistoryEntry[] {
       interval,
       marketId: market.id,
       asset: market.symbol,
+      durationSec: (window.endMs - window.startMs) / 1000,
       settledAtMs: window.endMs - 1,
       direction,
       leverage: Math.min(leverage, market.maxLeverage),

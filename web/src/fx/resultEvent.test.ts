@@ -436,3 +436,27 @@ describe("a server that predates markets (no marketId on its DTOs) means BTC", (
     expect(live).toMatchObject({ marketId: "BTC", symbol: "BTC" });
   });
 });
+
+describe("the event carries the round's real length, so the card never says Hourly/Daily", () => {
+  it("an event rebuilt from a history entry takes durationSec from the entry", () => {
+    const event = resultEventFromHistoryEntry(historyEntry({ durationSec: 180 }), PLAYER_ID, { balanceBefore: 10_000, balanceAfter: 10_400 });
+    expect(event.durationSec).toBe(180);
+  });
+
+  it("an entry from a server that sends none gives an event with none (the card then reads the market's series)", () => {
+    const event = resultEventFromHistoryEntry(historyEntry(), PLAYER_ID, { balanceBefore: 10_000, balanceAfter: 10_400 });
+    expect(event.durationSec).toBeUndefined();
+  });
+
+  it("a live settlement and a live liquidation take it from the round's own window", () => {
+    const window = { interval: "HOURLY" as const, startMs: 0, endMs: 900_000 };
+    const settled: RoundSettled = { ...makeSettled([makePosition({ payout: "130.000", directionCorrect: true })]), window };
+    const win = detectResultEvent({ prev: undefined, curr: settled, playerId: PLAYER_ID, interval: "HOURLY", alreadyEmitted: false, currentBalance: 10_030, nowMs: 5 });
+    expect(win?.durationSec).toBe(900);
+
+    const prev: RoundRunning = { ...makeRunning([makePosition({ leverage: 20 })]), window };
+    const curr: RoundRunning = { ...makeRunning([makePosition({ leverage: 20, liquidated: true })]), window };
+    const liq = detectResultEvent({ prev, curr, playerId: PLAYER_ID, interval: "HOURLY", alreadyEmitted: false, currentBalance: 9_900, nowMs: 5 });
+    expect(liq).toMatchObject({ kind: "LIQUIDATION", durationSec: 900 });
+  });
+});

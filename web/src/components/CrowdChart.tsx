@@ -50,7 +50,8 @@ interface CrowdChartProps {
    *  full = the dedicated Crowd page (range tabs, season-boundary markers). */
   variant?: "compact" | "full";
   /** The market's ticker, for the "hold" line's legend ("Hold BTC", "Hold NVDA"): the line is a plain
-   *  buy-and-hold of THAT market (Р-26, per market — Т-6). */
+   *  buy-and-hold of THAT market (Р-26, per market — Т-6). Without one the legend says "Hold the asset" — it
+   *  never assumes BTC. */
   symbol?: string;
 }
 
@@ -61,7 +62,7 @@ interface CrowdChartProps {
  * months it ticks with dates and keeps 1M · 3M · 1Y · All — the open critique item "the chart's x axis must
  * show time of day when the data span is short".
  */
-export function CrowdChart({ history, variant = "full", symbol = "BTC" }: CrowdChartProps) {
+export function CrowdChart({ history, variant = "full", symbol }: CrowdChartProps) {
   const [picked, setPicked] = useState<string | null>(null);
   const [compactShowAll, setCompactShowAll] = useState(false);
 
@@ -129,7 +130,7 @@ export function CrowdChart({ history, variant = "full", symbol = "BTC" }: CrowdC
             <Tooltip content={<TooltipContent spanMs={visibleSpanMs} />} />
             <Legend
               formatter={(value: string) =>
-                value === "crowdCapital" ? "Crowd account" : value === "holdCapital" ? `Hold ${symbol}` : "Anti-crowd"
+                value === "crowdCapital" ? "Crowd account" : value === "holdCapital" ? (symbol ? `Hold ${symbol}` : "Hold the asset") : "Anti-crowd"
               }
             />
             {boundaries.map((b) => (

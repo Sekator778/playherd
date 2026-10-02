@@ -16,6 +16,7 @@ const position = (marketId: string, overrides: Partial<MyPositionDto> = {}): MyP
   symbol: marketId,
   roundId: `${marketId}-1h-3600000`,
   interval: "HOURLY",
+  durationSec: 180,
   phase: "BETTING",
   direction: "UP",
   leverage: 5,

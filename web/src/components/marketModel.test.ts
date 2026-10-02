@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { crowdSplitOf, herdSideOf, isOpenMarket, leadSeries, marketPool, nextCloseMs } from "./marketModel";
+import { crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, marketPool, nextCloseMs } from "./marketModel";
 import { NOW, catalogue, market, seriesDto } from "./testFixtures";
 
 describe("crowdSplitOf", () => {
@@ -52,5 +52,20 @@ describe("market helpers", () => {
     expect(nextCloseMs(ger)).toBe(NOW + 30_000); // betting closes before the 40 min event end
     expect(nextCloseMs({ series: [seriesDto({ bettingClosesAtMs: NOW + 900_000 })], endsAtMs: NOW + 60_000 })).toBe(NOW + 60_000);
     expect(nextCloseMs(runoff)).toBe(NOW + 75_000);
+  });
+});
+
+describe("kickoffOf — a sports game against its kick-off (MarketDto.eventStartsAtMs)", () => {
+  it("before it: how long is left; at and after it: live", () => {
+    expect(kickoffOf({ status: "ACTIVE", eventStartsAtMs: NOW + 7_500_000 }, NOW)).toEqual({ state: "upcoming", inMs: 7_500_000 });
+    expect(kickoffOf({ status: "ACTIVE", eventStartsAtMs: NOW }, NOW)).toEqual({ state: "live" });
+    expect(kickoffOf({ status: "ACTIVE", eventStartsAtMs: NOW - 60_000 }, NOW)).toEqual({ state: "live" });
+  });
+  it("nothing for a market without a kick-off — null and absent alike", () => {
+    expect(kickoffOf({ status: "ACTIVE", eventStartsAtMs: null }, NOW)).toBeNull();
+    expect(kickoffOf({ status: "ACTIVE" }, NOW)).toBeNull();
+  });
+  it("nothing for a closed market: a card that is closed does not say the game is live", () => {
+    expect(kickoffOf({ status: "CLOSED", eventStartsAtMs: NOW - 60_000 }, NOW)).toBeNull();
   });
 });

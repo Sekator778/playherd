@@ -17,6 +17,8 @@ import { catalogue } from "./testFixtures";
 const row = (symbol: string, returnPct: number, roundsTraded = 10): OverviewRow => ({
   marketId: symbol,
   symbol,
+  title: symbol,
+  status: "ACTIVE",
   category: "crypto",
   capital: "100000.00",
   returnPct,

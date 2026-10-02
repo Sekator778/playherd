@@ -183,6 +183,11 @@
   color: var(--gold);
   border-color: var(--gold-strong);
 }
+.mk-tag--live {
+  color: var(--up);
+  border-color: var(--up-strong);
+  gap: 5px;
+}
 .mk-tag__icon {
   width: 11px;
   height: 11px;
@@ -437,6 +442,11 @@
 }
 .mk-closed strong {
   color: var(--text);
+}
+.mk-closed .mk-closed__sub {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 12px;
 }
 .mk-closed__icon {
   flex: none;

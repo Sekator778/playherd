@@ -158,6 +158,18 @@
   font-weight: 600;
   letter-spacing: 0;
 }
+.pos-card__note--waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.pos-card__waiting-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+}
 .pos-card__pnl--liq .pos-card__note {
   color: var(--liq-magenta);
   font-weight: 800;

@@ -196,3 +196,82 @@ describe("usePriceSeries", () => {
     expect(result.current.error).toBe(false);
   });
 });
+
+/** Thins `list` evenly to `max` points, both ends kept — the contract's wording for "more than 600 exist". */
+function thinEvenly(list: PriceTickDto[], max: number): PriceTickDto[] {
+  if (list.length <= max) return list;
+  return Array.from({ length: max }, (_, i) => list[Math.round((i * (list.length - 1)) / (max - 1))]);
+}
+
+describe("usePriceSeries against the contract's wording (Api.priceSeries)", () => {
+  /** A server that answers as the contract says: ticks with `atMs > sinceMs`, at most 600, thinned evenly beyond. */
+  function contractServer(history: PriceTickDto[]) {
+    const all = [...history];
+    const priceSeries = vi.fn(async (marketId: string, sinceMs?: number): Promise<PriceSeriesDto> => {
+      const newest = all[all.length - 1]?.atMs ?? 0;
+      const from = sinceMs ?? newest - 15 * 60_000;
+      return { marketId, priceDecimals: 2, ticks: thinEvenly(all.filter((t) => t.atMs > from), PRICE_SERIES_MAX_TICKS) };
+    });
+    return { all, priceSeries, api: fakeApi({ priceSeries }) };
+  }
+
+  it("asks for what is newer than the newest tick it holds, and the answer never repeats that tick", async () => {
+    const server = contractServer(ticks(0, 60_000));
+    const { result } = renderHook(() => usePriceSeries("ETH"), { wrapper: apiWrapper(server.api) });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    server.all.push(...ticks(63_000, 69_000));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PRICE_SERIES_POLL_MS);
+    });
+    expect(server.priceSeries).toHaveBeenLastCalledWith("ETH", 60_000);
+    const answered = await server.priceSeries.mock.results[server.priceSeries.mock.results.length - 1].value;
+    expect(answered.ticks[0].atMs).toBe(63_000); // strictly after 60_000
+    const times = result.current.ticks.map((t) => t.atMs);
+    expect(times).toEqual([...new Set(times)].sort((a, b) => a - b)); // strictly increasing: no repeat, no disorder
+  });
+
+  it("after a long pause (a hidden tab) the answer is a thinned stretch over the gap — merged in order, ending at the newest tick", async () => {
+    const server = contractServer(ticks(0, 30_000));
+    const { result } = renderHook(() => usePriceSeries("ETH"), { wrapper: apiWrapper(server.api) });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // 40 minutes pass without a poll: 800 ticks exist since the last one held — more than the 600 a call returns
+    const gap = ticks(33_000, 33_000 + 800 * 3000);
+    server.all.push(...gap);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PRICE_SERIES_POLL_MS);
+    });
+    const answered = await server.priceSeries.mock.results[server.priceSeries.mock.results.length - 1].value;
+    expect(answered.ticks).toHaveLength(600); // thinned to the cap…
+    expect(answered.ticks[0].atMs).toBe(33_000); // …spanning the whole gap, from its start…
+    expect(answered.ticks[answered.ticks.length - 1].atMs).toBe(gap[gap.length - 1].atMs); // …to the newest tick
+    const times = result.current.ticks.map((t) => t.atMs);
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    expect(new Set(times).size).toBe(times.length);
+    expect(times[times.length - 1]).toBe(gap[gap.length - 1].atMs);
+    expect(times.length).toBeLessThanOrEqual(PRICE_SERIES_MAX_TICKS);
+  });
+
+  it("still takes in a server that is inclusive (returns the tick it was asked after): it is dropped, not repeated", async () => {
+    const server = serverWith(ticks(0, 60_000));
+    server.priceSeries.mockImplementation(async (marketId: string, sinceMs?: number) => ({
+      marketId,
+      priceDecimals: 2,
+      ticks: server.all.filter((t) => t.atMs >= (sinceMs ?? 0)),
+    }));
+    const { result } = renderHook(() => usePriceSeries("ETH"), { wrapper: apiWrapper(server.api) });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    server.all.push(...ticks(63_000, 66_000));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PRICE_SERIES_POLL_MS);
+    });
+    const times = result.current.ticks.map((t) => t.atMs);
+    expect(new Set(times).size).toBe(times.length);
+    expect(times[times.length - 1]).toBe(66_000);
+  });
+});

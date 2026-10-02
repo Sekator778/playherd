@@ -8,6 +8,7 @@ import { ProfilePage } from "./pages/ProfilePage";
 import { MyProfilePage } from "./pages/MyProfilePage";
 import { WalletPage } from "./pages/WalletPage";
 import { HowItWorksPage } from "./pages/HowItWorksPage";
+import { StatusPage } from "./pages/StatusPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { LabPage } from "./pages/LabPage";
 import { LabStatesPage } from "./pages/LabStatesPage";
@@ -30,6 +31,9 @@ import { ConceptALobby, ConceptARoom, ConceptAStats } from "./pages/lab/concepts
  * leaderboards/position chips still link straight to it). `/round/:roundId` and `/lab` (+ its
  * `/lab/concepts/a` prototype) are kept exactly as they were.
  *
+ * `/status` is the public status page (Р-43): the price sources and how fresh each market's price is, what the
+ * server has anchored on Chia, the log of cancelled rounds — linked from the footer and from How it works.
+ *
  * Player review fix (2026-09-26, item 2): `/profile/me` no longer redirects to the Stats tab's
  * History segment — it renders `MyProfilePage` directly, the screen the bottom tab bar's
  * "Profile" now opens (`Layout.tsx`'s `TAB_LINKS`, previously pointed at `/wallet`). Wallet moved
@@ -50,6 +54,7 @@ export default function App() {
         <Route path="/profile/:playerId" element={<ProfilePage />} />
         <Route path="/wallet" element={<WalletPage />} />
         <Route path="/how-it-works" element={<HowItWorksPage />} />
+        <Route path="/status" element={<StatusPage />} />
         {/* Hidden design lab (implementation-plan.md §5) — intentionally not in any nav; reachable
          *  only by knowing the URL. */}
         <Route path="/lab" element={<LabPage />} />

@@ -1,0 +1,60 @@
+/* "Waiting for the opening price…" (`WaitingForOpen.tsx`) — a calm, neutral card: no heat colours, no
+   urgency; the dot pulses slowly and stops under reduced motion. Tokens only. */
+
+.waiting-open {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+.waiting-open p {
+  margin: 0;
+}
+.waiting-open__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.waiting-open__head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.waiting-open__headline {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-muted);
+}
+.waiting-open__ctx {
+  font-size: 12px;
+}
+.waiting-open__text {
+  font-size: 13px;
+}
+.waiting-open__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--warning);
+  animation: waiting-open-pulse 1.8s ease-in-out infinite;
+}
+@keyframes waiting-open-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .waiting-open__dot {
+    animation: none;
+  }
+}
+html[data-reduced-motion="true"] .waiting-open__dot {
+  animation: none;
+}

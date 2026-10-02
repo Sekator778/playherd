@@ -11,9 +11,24 @@ import "./AnchorLine.css";
  * about whose key publishes it ("not a decentralized oracle") sits right next to it on the round page.
  *
  * Renders nothing when the server sent neither an anchor nor a hash (an older server, the mock): no
- * "anchored" claim without something behind it.
+ * "anchored" claim without something behind it. `oracleIndex` (`MarketDto.oracleIndex`) says which asset of the
+ * oracle record this market is — "BTC is asset #0 in the oracle record" — with the public registry that lists
+ * them all; left out when the server does not send it (0 is a real index: BTC's).
  */
-export function AnchorLine({ roundId, resultsHash, anchor }: { roundId: string; resultsHash?: string; anchor?: OracleAnchorDto }) {
+export function AnchorLine({
+  roundId,
+  resultsHash,
+  anchor,
+  symbol,
+  oracleIndex,
+}: {
+  roundId: string;
+  resultsHash?: string;
+  anchor?: OracleAnchorDto;
+  /** The market's ticker, for the asset sentence. */
+  symbol?: string;
+  oracleIndex?: number;
+}) {
   if (!anchor && !resultsHash) return null;
   const said = anchor ? describeAnchor(anchor) : null;
   const short = resultsHash ? `${resultsHash.slice(0, 10)}…${resultsHash.slice(-6)}` : null;
@@ -31,6 +46,14 @@ export function AnchorLine({ roundId, resultsHash, anchor }: { roundId: string; 
           </>
         ) : (
           <p className="anchor__title">Results published</p>
+        )}
+        {oracleIndex !== undefined && Number.isInteger(oracleIndex) && (
+          <p className="anchor__asset">
+            {symbol ? `${symbol} is asset` : "Asset"} #{oracleIndex} in the oracle record ·{" "}
+            <a href="/api/markets/registry.json" target="_blank" rel="noopener noreferrer">
+              market registry
+            </a>
+          </p>
         )}
         <p className="anchor__hash mono">
           {short ? (

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
   Api,
+  MyPositionDto,
   PlayerAccountDto,
   PublicPositionDto,
   RoundBetting,
@@ -9,7 +10,7 @@ import type {
   RoundSettled,
   RoundsPairDto,
 } from "./contract";
-import { accountInPlay, inPlayStakeForSeries, loadInPlay, totalInPlayStake } from "./inPlay";
+import { accountInPlay, inPlayExcludingLiquidated, inPlayStakeForSeries, liquidatedStake, loadInPlay, totalInPlayStake } from "./inPlay";
 
 const PLAYER_ID = "me";
 
@@ -184,5 +185,44 @@ describe("accountInPlay / loadInPlay — the server's own figure covers every ma
     expect(await loadInPlay(api, PLAYER_ID, ACCOUNT)).toBeCloseTo(2600, 5);
     expect(rounds).toHaveBeenCalledWith("HOURLY");
     expect(rounds).toHaveBeenCalledWith("DAILY");
+  });
+});
+
+describe("in play without what a liquidation already took", () => {
+  const mine = (over: Partial<MyPositionDto> = {}): MyPositionDto => ({
+    marketId: "BTC",
+    symbol: "BTC",
+    roundId: "1h-0",
+    interval: "HOURLY",
+    durationSec: 180,
+    phase: "RUNNING",
+    direction: "UP",
+    leverage: 25,
+    stake: "300.000",
+    entryPrice: "100.00",
+    liquidationPrice: "96.00",
+    size: null,
+    liquidated: false,
+    untilMs: 1000,
+    ...over,
+  });
+
+  it("adds up only the stakes of RUNNING positions that are liquidated", () => {
+    expect(liquidatedStake([])).toBe(0);
+    expect(liquidatedStake([mine()])).toBe(0);
+    expect(liquidatedStake([mine({ liquidated: true }), mine({ roundId: "ETH-1h-0", liquidated: true, stake: "150.500" }), mine({ roundId: "x" })])).toBe(450.5);
+    // a bet still waiting for its round cannot be liquidated
+    expect(liquidatedStake([mine({ phase: "BETTING", liquidated: true })])).toBe(0);
+  });
+
+  it("takes it out of the server's figure: 300 in play, all of it liquidated → 0", () => {
+    expect(inPlayExcludingLiquidated(300, [mine({ liquidated: true })])).toBe(0);
+    expect(inPlayExcludingLiquidated(800, [mine({ liquidated: true })])).toBe(500);
+    expect(inPlayExcludingLiquidated(800, [mine()])).toBe(800);
+  });
+
+  it("never below zero when the two polls briefly disagree (the server already booked the settlement)", () => {
+    expect(inPlayExcludingLiquidated(0, [mine({ liquidated: true })])).toBe(0);
+    expect(inPlayExcludingLiquidated(100, [mine({ liquidated: true })])).toBe(0);
   });
 });

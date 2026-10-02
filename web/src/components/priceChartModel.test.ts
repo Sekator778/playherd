@@ -5,6 +5,7 @@ import {
   buildChartLines,
   dataSpanMs,
   defaultRange,
+  describeMove,
   moveSinceOpen,
   placeOnScale,
   sliceRange,
@@ -173,6 +174,27 @@ describe("axis and move", () => {
     const odds = moveSinceOpen(0.5, 0.512, true);
     expect(odds.unit).toBe("pts");
     expect(odds.value).toBeCloseTo(1.2, 6);
+  });
+});
+
+describe("describeMove — the header's 'vs round open' figure", () => {
+  it("a price: a signed percentage with two decimals, three for a tiny move", () => {
+    expect(describeMove({ value: 0.0123, unit: "pct" })).toEqual({ text: "+1.23%", tone: "up" });
+    expect(describeMove({ value: -0.0037, unit: "pct" })).toEqual({ text: "-0.37%", tone: "down" });
+    expect(describeMove({ value: -0.00037, unit: "pct" })).toEqual({ text: "-0.037%", tone: "down" });
+  });
+
+  it("odds: points with one decimal and the same 'pt' as the card's 24 h figure", () => {
+    expect(describeMove({ value: 1.2, unit: "pts" })).toEqual({ text: "+1.2 pt", tone: "up" });
+    expect(describeMove({ value: -0.4, unit: "pts" })).toEqual({ text: "-0.4 pt", tone: "down" });
+  });
+
+  it("a move that prints as zero is flat — no sign, no arrow (never '-0.0 pt' with a down arrow)", () => {
+    expect(describeMove({ value: -0.04, unit: "pts" })).toEqual({ text: "0.0 pt", tone: "flat" });
+    expect(describeMove({ value: 0.04, unit: "pts" })).toEqual({ text: "0.0 pt", tone: "flat" });
+    expect(describeMove({ value: 0, unit: "pts" })).toEqual({ text: "0.0 pt", tone: "flat" });
+    expect(describeMove({ value: -0.0000001, unit: "pct" })).toEqual({ text: "0.000%", tone: "flat" });
+    expect(describeMove({ value: 0, unit: "pct" })).toEqual({ text: "0.000%", tone: "flat" });
   });
 });
 

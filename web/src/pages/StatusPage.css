@@ -1,0 +1,272 @@
+/* Status (`/status`) — plain facts in cards; a word beside every colour. Tokens only; no new hex values. */
+
+.status-page {
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+.status-page h1 {
+  margin-bottom: 4px;
+}
+.status-lead {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+.status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.status-card .section-title {
+  margin-bottom: 8px;
+}
+.status-card p {
+  margin: 0 0 8px;
+}
+
+/* label / value rows ------------------------------------------------------------------------------ */
+
+.status-facts {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.status-fact {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 4px 14px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+}
+.status-fact:first-child {
+  border-top: none;
+}
+.status-fact dt {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-top: 2px;
+}
+.status-fact dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.status-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+}
+@media (max-width: 520px) {
+  .status-fact {
+    grid-template-columns: 1fr;
+  }
+}
+
+.status-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.status-id__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.status-id__copy {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.status-note {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--warning);
+  background: var(--warning-bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.status-fine {
+  font-size: 12.5px;
+}
+.status-card .status-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+/* markets ------------------------------------------------------------------------------------------ */
+
+.status-summary {
+  font-size: 14px;
+}
+.status-markets {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.status-market {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon id price"
+    ". age age";
+  align-items: center;
+  gap: 2px 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+.status-market:first-child {
+  border-top: none;
+}
+.status-market > :nth-child(1) {
+  grid-area: icon;
+}
+.status-market__id {
+  grid-area: id;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 14px;
+}
+.status-market__id .faint {
+  font-size: 12px;
+}
+.status-market__price {
+  grid-area: price;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+.status-market__age {
+  grid-area: age;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
+}
+.status-market--closed .status-market__id,
+.status-market--closed .status-market__price {
+  opacity: 0.7;
+}
+@media (min-width: 640px) {
+  .status-market {
+    grid-template-columns: 28px minmax(0, 1fr) 140px 200px;
+    grid-template-areas: "icon id price age";
+  }
+}
+
+.status-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.status-chip--fresh {
+  color: var(--up);
+  border-color: var(--up-strong);
+}
+.status-chip--stale {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+/* oracle: how to check ------------------------------------------------------------------------------- */
+
+.status-verify {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+}
+.status-verify h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.status-verify ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+.status-command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.status-command code {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.status-command .btn {
+  min-height: 36px;
+}
+
+/* cancellations ---------------------------------------------------------------------------------------- */
+
+.status-cancels {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 0;
+}
+.status-cancel {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated-2);
+}
+.status-cancel p {
+  margin: 0;
+}
+.status-cancel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+.status-cancel .status-cancel__reason {
+  margin-top: 4px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.status-cancel .status-cancel__round {
+  margin-top: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

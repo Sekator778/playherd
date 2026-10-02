@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiProvider, useSession } from "../api/ApiContext";
+import { fakeApi, serverInfoDto } from "../api/apiTestUtils";
+import type { Api, ServerInfoDto } from "../api/contract";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 
 const wc = vi.hoisted(() => ({ projectId: null as string | null }));
@@ -29,10 +31,10 @@ function Opener() {
   );
 }
 
-async function openModal() {
+async function openModal(api?: Api) {
   render(
     <MemoryRouter>
-      <ApiProvider>
+      <ApiProvider api={api}>
         <Opener />
         <ConnectWalletModal />
       </ApiProvider>
@@ -99,5 +101,50 @@ describe("Connect-wallet modal — the test wallet leads (HANDOFF §6 п.10)", (
     const dialog = await openModal();
     await userEvent.setup().click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+/** A server that describes itself (`serverInfo()`), with a signed-out visitor. */
+function serverApi(info: Partial<ServerInfoDto>): Api {
+  return fakeApi({ currentPlayer: async () => null, serverInfo: async () => serverInfoDto(info) });
+}
+
+describe("Connect-wallet modal — a server can switch the browser test wallet off (ServerInfoDto.testWallet)", () => {
+  it("testWallet: false — no test-wallet button, no TEST WALLET tag, no 'or'; Sage is the way in and leads", async () => {
+    wc.projectId = "project-123";
+    const dialog = await openModal(serverApi({ testWallet: false }));
+    expect(await within(dialog).findByText(/signs you in with your own Chia wallet \(Sage\)/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Continue with test wallet" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("TEST WALLET")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/not Sage/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("separator")).not.toBeInTheDocument();
+    const sage = within(dialog).getByRole("button", { name: "Connect with Sage" });
+    expect(sage).toBeEnabled();
+    expect(sage).toHaveClass("btn--primary");
+  });
+
+  it("testWallet: false and no WalletConnect project id — says there is no way in yet instead of offering a dead button as the only choice", async () => {
+    wc.projectId = null;
+    const dialog = await openModal(serverApi({ testWallet: false }));
+    expect(await within(dialog).findByText(/Sign-in isn't available on this server yet/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Connect with Sage" })).toBeDisabled();
+    expect(within(dialog).queryByRole("button", { name: "Continue with test wallet" })).not.toBeInTheDocument();
+  });
+
+  it.each([["true", { testWallet: true }], ["absent", {}]])("testWallet %s — offered, exactly as before", async (_label, info) => {
+    const dialog = await openModal(serverApi(info));
+    expect(await within(dialog).findByRole("button", { name: "Continue with test wallet" })).toHaveClass("btn--primary");
+    expect(within(dialog).getByRole("button", { name: "Connect with Sage" })).toHaveClass("btn--secondary");
+  });
+
+  it("a server that cannot be reached does not take the test wallet away", async () => {
+    const api = fakeApi({
+      currentPlayer: async () => null,
+      serverInfo: async () => {
+        throw new Error("offline");
+      },
+    });
+    const dialog = await openModal(api);
+    expect(await within(dialog).findByRole("button", { name: "Continue with test wallet" })).toBeInTheDocument();
   });
 });

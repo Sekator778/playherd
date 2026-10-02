@@ -18,6 +18,7 @@ const position = (over: Partial<MyPositionDto> = {}): MyPositionDto => ({
   symbol: "BTC",
   roundId: "1h-0",
   interval: "HOURLY",
+  durationSec: 180,
   phase: "RUNNING",
   direction: "UP",
   leverage: 10,
@@ -148,6 +149,72 @@ describe("Your bets — a position it cannot read yet", () => {
     const card = await screen.findByRole("link", { name: /^BTC, UP x10/ });
     expect(within(card).getByText(/Live — waiting for a price/)).toBeInTheDocument();
     expect(within(card).queryByText(/PLAY$/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Your bets — labelled by the position's own round length (MyPositionDto.durationSec)", () => {
+  it("names the length from the position, so it survives the market leaving the list", async () => {
+    // BTC is not in `markets()` at all (a closed market that has left): the label still comes.
+    renderStrip([position({ durationSec: 900, interval: "DAILY" })], [eth]);
+    const card = await screen.findByRole("link", { name: /^BTC, UP x10/ });
+    expect(within(card).getByText(/stake 1,000 · 15 MIN/)).toBeInTheDocument();
+  });
+
+  it("the position's number wins over what the market's series says", async () => {
+    // the market says its HOURLY series is 3 minutes; this position's round was an hour long
+    renderStrip([position({ durationSec: 3600 })], [btc("100.00")]);
+    const card = await screen.findByRole("link", { name: /^BTC, UP x10/ });
+    expect(within(card).getByText(/stake 1,000 · 1 HOUR/)).toBeInTheDocument();
+  });
+
+  it("never prints 'NaN SEC' when a server sends no length", async () => {
+    renderStrip([position({ durationSec: undefined as unknown as number })], [btc("100.00")]);
+    const card = await screen.findByRole("link", { name: /^BTC, UP x10/ });
+    expect(card).not.toHaveTextContent(/NaN|SEC/);
+    expect(within(card).getByText(/^stake 1,000$/)).toBeInTheDocument();
+  });
+});
+
+describe("Your bets — the live P&L uses the size the server opened (MyPositionDto.size)", () => {
+  it("when it sends one, that is the size — not a re-derivation from the stake", async () => {
+    // stake 1000 at x10 from 100.00 would derive 100 units (+50 at 100.50); the server opened 120 → +60
+    renderStrip([position({ size: "120.00000000" })], [btc("100.50")]);
+    const card = await screen.findByRole("link", { name: /^BTC, UP x10/ });
+    expect(within(card).getByText("+60 PLAY")).toBeInTheDocument();
+  });
+
+  it("without one it derives it as before", async () => {
+    renderStrip([position({ size: null })], [btc("100.50")]);
+    const card = await screen.findByRole("link", { name: /^BTC, UP x10/ });
+    expect(within(card).getByText("+50 PLAY")).toBeInTheDocument();
+  });
+});
+
+describe("Your bets — a round with no opening price yet (entryPrice and liquidationPrice null in RUNNING)", () => {
+  const waiting = () => position({ entryPrice: null, liquidationPrice: null, size: null });
+
+  it("says it waits for the opening price — no P&L, no meter, no 'waiting for a price' of the wrong kind", async () => {
+    renderStrip([waiting()], [btc("100.50")]);
+    const card = await screen.findByRole("link", { name: /^BTC, UP x10/ });
+    expect(within(card).getByText("Waiting for the opening price…")).toBeInTheDocument();
+    expect(card).toHaveAccessibleName(/waiting for the opening price/);
+    expect(within(card).queryByRole("meter")).not.toBeInTheDocument();
+    expect(within(card).queryByText(/PLAY$/)).not.toBeInTheDocument();
+    expect(within(card).queryByText(/Live — waiting for a price/)).not.toBeInTheDocument();
+    expect(card.textContent).not.toMatch(/NaN|\+0|-0/);
+  });
+
+  it("stays out of the header's live total (nothing to add up)", async () => {
+    renderStrip([waiting()], [btc("100.50")]);
+    await screen.findByRole("region", { name: "Your open bets and positions" });
+    expect(within(strip()).queryByText(/PLAY live/)).not.toBeInTheDocument();
+  });
+
+  it("is told apart from a bet that has not started and from a position that cannot be priced", async () => {
+    renderStrip([waiting(), position({ roundId: "1h-1", phase: "BETTING", entryPrice: null, liquidationPrice: null, untilMs: NOW + 45_000 })], [btc("100.50")]);
+    await screen.findByRole("region", { name: "Your open bets and positions" });
+    expect(within(strip()).getByText("Waiting for the opening price…")).toBeInTheDocument();
+    expect(within(strip()).getByText(/Bet placed — waits for the round to start/)).toBeInTheDocument();
   });
 });
 

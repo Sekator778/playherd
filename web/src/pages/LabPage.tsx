@@ -16,7 +16,11 @@ import { LiquidationBar } from "../components/LiquidationBar";
 
 let labSeq = 0;
 
-function fireEvent(kind: ResultKind, tier: Tier, opts: { stake: number; net: number; leverage: number; interval?: Interval }): void {
+function fireEvent(
+  kind: ResultKind,
+  tier: Tier,
+  opts: { stake: number; net: number; leverage: number; interval?: Interval; midRound?: boolean; quiet?: boolean },
+): void {
   labSeq += 1;
   const balanceAfter = 10_000;
   const event: ResultEvent = {
@@ -33,6 +37,9 @@ function fireEvent(kind: ResultKind, tier: Tier, opts: { stake: number; net: num
     balanceAfter,
     atMs: Date.now(),
     tier,
+    durationSec: 180,
+    ...(opts.midRound ? { midRound: true } : {}),
+    ...(opts.quiet ? { quiet: true } : {}),
   };
   publish(event);
 }
@@ -117,6 +124,29 @@ export function LabPage() {
               LIQUIDATED T{tier} (x{LIQ_LEVERAGE[tier]})
             </button>
           ))}
+        </div>
+        <h3>LIQUIDATION in the middle of the round (Р-50 — the round is still running)</h3>
+        <div className="lab-grid">
+          {TIERS.map((tier) => (
+            <button
+              key={`liq-mid-${tier}`}
+              type="button"
+              className="btn btn--danger"
+              onClick={() => fireEvent("LIQUIDATION", tier, { stake: 100, net: -100, leverage: LIQ_LEVERAGE[tier], midRound: true })}
+            >
+              LIQUIDATED mid-round T{tier}
+            </button>
+          ))}
+        </div>
+        <h3>Settlement of a liquidation the player was already shown — the quiet summary, no second flash</h3>
+        <div className="lab-grid">
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() => fireEvent("LIQUIDATION", 2, { stake: 100, net: -100, leverage: 15, quiet: true })}
+          >
+            Quiet summary
+          </button>
         </div>
         <h3>EVEN</h3>
         <div className="lab-grid">

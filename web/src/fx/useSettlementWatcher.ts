@@ -22,9 +22,11 @@ const INTERVALS: Interval[] = ["HOURLY", "DAILY"];
  * `unseenResults.ts` and is shared with `useAwayReplay.ts`, so the two never double-fire.
  *
  * Moments therefore arrive at SETTLEMENT, for liquidated positions too (a liquidated round has a
- * history row like any other, payout 0). The old path below also fired a LIQUIDATION moment the
- * instant a running position was reported liquidated; that needs the pair's running round, which
- * the market-agnostic source does not have.
+ * history row like any other, payout 0). The mid-round LIQUIDATION moment — the instant a running position
+ * is reported liquidated — is not this hook's any more: it needs the player's running positions, not the
+ * settled ones, and lives in `useLiquidationWatcher.ts` (from `myPositions()`, once, across reloads and
+ * tabs). When that moment was already shown, this path turns the liquidated round's settlement into a quiet
+ * summary instead of a second flash (`unseenResults.ts`, `liquidationMoment.ts`).
  *
  * Legacy fallback — only for an `Api` that lacks `unseenResults` (a server or build that predates
  * it): the original `home()`-based detector, BTC only, kept as it was. Deviates from

@@ -71,6 +71,20 @@
   font-weight: 900;
 }
 
+.crowd-closed-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
 .crowd-overview__all summary {
   cursor: pointer;
   color: var(--accent-text);

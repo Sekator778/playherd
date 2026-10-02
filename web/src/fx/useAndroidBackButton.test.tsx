@@ -52,7 +52,7 @@ beforeEach(() => {
   removeMock.mockClear();
 });
 
-describe("useAndroidBackButton (player review fix item 4: hardware Back from /play/:asset used to exit the app)", () => {
+describe("useAndroidBackButton (player review fix item 4: hardware Back from /play/:marketId used to exit the app)", () => {
   it("registers a backButton listener on native platforms", async () => {
     render(
       <MemoryRouter initialEntries={["/play/btc"]}>

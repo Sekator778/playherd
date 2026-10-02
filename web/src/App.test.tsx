@@ -33,9 +33,9 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
   it("loads the Lobby: a ribbon of categories and a card for every market (Р-69), each with its own live numbers", async () => {
     renderApp("/");
     expect(await screen.findByRole("heading", { level: 1, name: "Markets" })).toBeInTheDocument();
-    // 18 markets in the mock, one of which (the closing ODDS market) is still open at load.
-    expect(await screen.findAllByRole("article")).toHaveLength(18);
-    expect(screen.getAllByText(/playing/).length).toBeGreaterThanOrEqual(18);
+    // 19 markets in the mock, one of which (the closing ODDS market) is still open at load.
+    expect(await screen.findAllByRole("article")).toHaveLength(19);
+    expect(screen.getAllByText(/playing/).length).toBeGreaterThanOrEqual(19);
     expect(screen.getByRole("tablist", { name: "Market categories" })).toBeInTheDocument();
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(
       expect.arrayContaining([expect.stringMatching(/^All/), expect.stringMatching(/^Crypto/), expect.stringMatching(/^Politics/), expect.stringMatching(/^Sports/)]),
@@ -56,7 +56,7 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     await user.click(screen.getByRole("tab", { name: /^Crypto/ }));
     expect(screen.getAllByRole("article")).toHaveLength(6);
     await user.click(screen.getByRole("tab", { name: /^Politics/ }));
-    expect(screen.getAllByRole("article")).toHaveLength(3);
+    expect(screen.getAllByRole("article")).toHaveLength(4);
   });
 
   it("a card's DOWN button opens the room with DOWN preselected", async () => {
@@ -103,6 +103,21 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     renderApp("/how-it-works");
     expect(screen.getByRole("heading", { level: 1, name: "How it works" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Leverage and liquidation" })).toBeInTheDocument();
+  });
+
+  it("the public Status page is at /status, open to everyone — in the mock build it says it is demo data", async () => {
+    renderApp("/status");
+    expect(await screen.findByRole("heading", { level: 1, name: "Status" })).toBeInTheDocument();
+    expect(screen.getByText(/runs on built-in demo data, not on a server/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Cancelled rounds" })).toBeInTheDocument();
+  });
+
+  it("the footer links to Status and to How it works from every page; How it works links to Status too", async () => {
+    renderApp("/how-it-works");
+    const footer = screen.getByRole("contentinfo");
+    expect(within(footer).getByRole("link", { name: "Status" })).toHaveAttribute("href", "/status");
+    expect(within(footer).getByRole("link", { name: "How it works" })).toHaveAttribute("href", "/how-it-works");
+    expect(screen.getByRole("link", { name: "Status page" })).toHaveAttribute("href", "/status");
   });
 
   it("shows a 404 state for an unknown route", () => {

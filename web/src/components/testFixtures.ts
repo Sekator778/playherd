@@ -116,7 +116,10 @@ export function catalogue(): MarketDto[] {
       source: "polymarket",
       priceDecimals: 6,
       maxLeverage: 10,
-      endsAtMs: NOW + 40 * 60_000,
+      // A sports game has no end date; its source's date is the kick-off, a little over two hours away
+      // (the 40 s keep "2h 05m" steady while the mock clock runs 60× real time under a slow test).
+      endsAtMs: null,
+      eventStartsAtMs: NOW + 125 * 60_000 + 40_000,
       price: { price: "0.640000", asOfMs: NOW - 500, change24h: null, stale: false },
       series: [
         seriesDto({ participantCount: 8, upStake: "800.000", downStake: "100.000", majorityDirection: "UP", bettingClosesAtMs: NOW + 30_000 }),

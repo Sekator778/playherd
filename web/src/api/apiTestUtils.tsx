@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from "react";
 import { ApiInstanceContext, SessionContext, type SessionState } from "./ApiContext";
-import type { Api, MarketDto, MarketsDto, PlayerSummaryDto } from "./contract";
+import type { Api, MarketDto, MarketsDto, PlayerSummaryDto, ServerInfoDto } from "./contract";
 
 export const TEST_PLAYER: PlayerSummaryDto = {
   playerId: "player-1",
@@ -73,5 +73,28 @@ export function marketsDto(markets: MarketDto[], serverTimeMs = 1_000): MarketsD
     serverTimeMs,
     categories: [{ id: "crypto", title: "Crypto", marketCount: markets.length }],
     markets,
+  };
+}
+
+/** What a live server answers for `serverInfo()`: the stand's own shape (3 and 15 minute rounds, 20 bots, an oracle
+ *  with a confirmed record and two waiting). */
+export function serverInfoDto(overrides: Partial<ServerInfoDto> = {}): ServerInfoDto {
+  return {
+    mode: "live",
+    priceSource: "live",
+    markets: 19,
+    roundDurationsSec: { HOURLY: 180, DAILY: 900 },
+    bots: 20,
+    oracle: {
+      network: "testnet11",
+      launcherId: "c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20",
+      lastConfirmedSeq: 412,
+      lastConfirmedHeight: 4_738_927,
+      pendingRecords: 2,
+      operatorBalanceMojos: "500000000000",
+      firstSeq: 1146,
+    },
+    serverTimeMs: 1_000,
+    ...overrides,
   };
 }

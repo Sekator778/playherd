@@ -6,6 +6,7 @@ import {
   axisValues,
   dataSpanMs,
   defaultRange,
+  describeMove,
   moveSinceOpen,
   placeOnScale,
   sliceRange,
@@ -160,13 +161,9 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
   // An axis label the bubble would cover is left out rather than drawn half-hidden under it.
   const axis = axisValues(domain).filter((value) => Math.abs(y(value) - bubbleY) > 15);
   const showSeconds = x1 - x0 <= 20 * 60_000;
-  const move = open ? moveSinceOpen(open.price, last.price, odds) : null;
-  const moveText = move
-    ? move.unit === "pts"
-      ? `${move.value > 0 ? "+" : ""}${move.value.toFixed(1)} pts`
-      : `${move.value > 0 ? "+" : ""}${(move.value * 100).toFixed(Math.abs(move.value) < 0.001 ? 3 : 2)}%`
-    : null;
-  const moveTone = move ? (move.value > 0 ? "up" : move.value < 0 ? "down" : "flat") : "flat";
+  const move = open ? describeMove(moveSinceOpen(open.price, last.price, odds)) : null;
+  const moveText = move ? move.text : null;
+  const moveTone = move ? move.tone : "flat";
 
   const summary =
     `${market.symbol} price, ${range ?? "recent"} view: ${price(first.price)} to ${price(last.price)}` +

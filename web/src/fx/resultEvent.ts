@@ -21,6 +21,10 @@ export interface ResultEvent {
   marketId: MarketId;
   symbol: string;
   interval: Interval;
+  /** The real length of the round in seconds (`ProfileRoundEntryDto.durationSec`, or the live round's own window):
+   *  the card names the series by it ("3 MIN" — never "Hourly"/"Daily"). Absent from a server that predates it:
+   *  the card then reads the market's series, and says nothing about the length once the market has left the list. */
+  durationSec?: number;
   /** `payout - stake`, signed — the ONLY number the card's headline ever shows (§0, §5). */
   netPlay: number;
   stakePlay: number;
@@ -29,6 +33,14 @@ export interface ResultEvent {
   balanceAfter: number;
   atMs: number;
   tier: Tier;
+  /** LIQUIDATION only: told the moment `myPositions()` first reported the position liquidated, while its round is
+   *  STILL RUNNING (Р-50: "ликвидация — сразу в середине раунда"). The card says so: the stake is lost, the
+   *  round is not over. */
+  midRound?: boolean;
+  /** The settlement of a round whose liquidation the player has ALREADY been shown (`midRound`): there is
+   *  nothing new to celebrate or mourn, so it is a quiet one-line summary (`QuietNotes`) — no flash, no stamp,
+   *  no sound, no vibration — and it still says the loss, signed. */
+  quiet?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +122,7 @@ export function resultEventFromHistoryEntry(
     marketId: entry.marketId ?? BTC_MARKET_ID, // a server that predates markets sends no marketId: it is BTC's
     symbol: entry.asset,
     interval: entry.interval,
+    durationSec: entry.durationSec,
     stakePlay: stake,
     leverage: entry.leverage,
     balanceBefore: opts.balanceBefore,
@@ -187,6 +200,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       marketId: curr.marketId ?? BTC_MARKET_ID, // see resultEventFromHistoryEntry
       symbol: curr.asset,
       interval,
+      durationSec: (curr.window.endMs - curr.window.startMs) / 1000,
       netPlay: -stake,
       stakePlay: stake,
       leverage: currPos.leverage,
@@ -213,6 +227,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       marketId: curr.marketId ?? BTC_MARKET_ID, // see resultEventFromHistoryEntry
       symbol: curr.asset,
       interval,
+      durationSec: (curr.window.endMs - curr.window.startMs) / 1000,
       netPlay: net,
       stakePlay: stake,
       leverage: currPos.leverage,
