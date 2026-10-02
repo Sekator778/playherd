@@ -125,7 +125,7 @@ class PricePipelineWiringTest {
         assertThat(delisting).isNotNull();
 
         seeder.seed(TestMarkets.btc()); // herd.mode=replay: returns at once, queues nothing, builds no client
-        assertThat(seeder.seedEmpty(List.of(TestMarkets.btc()))).isZero();
+        assertThat(seeder.seedMissing(List.of(TestMarkets.btc()))).isZero();
 
         assertThat(clients.builtCount()).isZero();
     }

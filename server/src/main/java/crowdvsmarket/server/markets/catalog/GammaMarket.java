@@ -15,6 +15,10 @@ import java.util.Optional;
  * @param endMs         {@code endDate}; for a game market this is usually the kick-off time, not an end
  *                      (the sample soccer markets of 2026-10-01 have {@code endDate == gameStartTime})
  * @param oneDayChange  {@code oneDayPriceChange}: the absolute change of outcome 0's probability in 24 h
+ * @param groupItemTitle the market's own short label inside its event, when Gamma gives one and it is not
+ *                      empty: a person ("Geraldo Alckmin"), a team ("Portugal"), a date ("October 31"), a range
+ *                      ("160-179"), a line ("O/U 3.5"), a kind of bet ("Match Winner") — measured 2026-10-02,
+ *                      polymarket_data_api.md §13.5; {@code ""} for a single-market event counts as absent
  */
 record GammaMarket(
         String id,
@@ -33,6 +37,7 @@ record GammaMarket(
         Double oneDayChange,
         String sportsMarketType,
         double volume24hr,
+        String groupItemTitle,
         GammaEvent event) {
 
     /** A game market has a start time (futures such as "wins the 2027 Champions League" have none). */
@@ -100,7 +105,7 @@ record GammaMarket(
                 GammaJson.bool(node, "closed", false), GammaJson.millis(GammaJson.text(node, "endDate")),
                 GammaJson.text(node, "gameStartTime"), tick == null ? null : BigDecimal.valueOf(tick), image,
                 GammaJson.number(node, "oneDayPriceChange"), GammaJson.text(node, "sportsMarketType"),
-                volume == null ? 0.0 : volume, event));
+                volume == null ? 0.0 : volume, GammaJson.text(node, "groupItemTitle"), event));
     }
 
     /** The markets of an answer's array ({@code markets} of a market listing, or an event's {@code markets}). */

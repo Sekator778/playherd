@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -47,34 +48,45 @@ import org.jboss.logging.Logger;
  * <p><b>History</b> is the 1-minute {@code candleSnapshot}. The rows are read by their own time
  * {@code t} — not {@code response.get(0)}, which for the window {@code [at − 60 s, at + 60 s]} is the
  * candle of the minute <i>before</i> the one asked about (the bug of the old
- * {@code LiveRoundPrices}, hl_multi_asset_live.md §4.2). Candles are trade prices, not mark prices —
- * good enough to fill a hole, which is what they are for.
+ * {@code LiveRoundPrices}, hl_multi_asset_live.md §4.2).
  *
- * <p><b>Boundary convention of history: the price at time {@code t} is the last trade at or before
- * {@code t}</b>, the same as for a live tick ({@link LiveMarketPrices}: {@code P(t)} is the last tick
- * with {@code at <= t}). A candle {@code [t, T]} says: its close is the last trade up to {@code T}
- * (a point at {@code T = t + 59 999 ms}); its low and high happened some time inside the minute (two
- * shape points at {@code t + 20 s} and {@code t + 40 s}, the low first when the candle closed up, the
- * high first when it closed down — the liquidation check needs the extremes, not their exact time);
- * its open is the <i>first</i> trade at or after {@code t}, so it is <b>not</b> the price at
- * {@code t}: that is the previous candle's close, one millisecond earlier. Hence a candle that has a
- * predecessor contributes three points; only the first row of an answer, which has no predecessor to
- * take the price at its start from, also contributes its open. So a round that ends at the minute
- * {@code end} closes on the last trade of the minute before it, never on the first trade after it
- * (measured 2026-10-02: {@code endTime = end} returns the candle that starts at {@code end} as its
- * last row, {@code endTime = end − 1} stops at the minute before — hl_multi_asset_live.md §4.1);
- * {@link #history} therefore asks with {@code endTime = toMs − 1}, and a point at or after {@code toMs}
- * is never made from a candle's open. The same holds at {@code start}, where the open of the round
- * is the previous minute's close.
+ * <p><b>Candles are trade prices, ticks are mark prices</b> (§3.4, §4.1, §10 p. 5): the mark is a median of
+ * the oracle, the book and other exchanges, and a quiet asset's last trade can sit a percent away from it. So
+ * the history is declared {@link HistoryKind#TRADE_PRICES} and {@link LiveMarketPrices} puts it to two uses only.
+ * <b>(1) The past of the first poll</b>: points older than every live tick of the market — what
+ * {@link HistorySeeder} seeds a new market with, so that the first running round has an opening price and the
+ * chart is not empty. <b>(2) Evidence</b>: whether the asset traded inside a hole between live ticks (a trade
+ * means it was not quiet) and its last trade before the hole ({@link History#lastTrade}), which is what lets a
+ * quiet asset's last <i>live</i> price be carried across a hole. A trade price is never put into a hole next to
+ * live ticks, and this source never carries a candle's close forward by itself — both used to, and a flat mark
+ * settled as DOWN on a close of an old trade, and a path got a dip that the liquidation check used.
  *
- * <p><b>Quiet assets.</b> An asset with no trades has no candle rows at the tail of an answer — a
- * missing last minute is the normal state of a quiet one (hl_multi_asset_live.md §4.3), and the
- * builder-dex stocks and indices are quiet outside their exchanges' hours. So that a hole behind a
- * restart does not cancel a round of such a market, {@link #history} asks from 30 minutes before the
- * hole (to find the last trade) and, for a tail that is at least 2 minutes old and therefore final,
- * carries the last candle's close forward in points 10 s apart (inside the 15 s staleness limit),
- * as the research recommends (§10.4). A tail younger than 2 minutes is not carried: its candle may
- * still appear.
+ * <p><b>What a candle gives.</b> Only a candle <i>with trades</i> ({@code n > 0}) holds a price: Hyperliquid's own
+ * filler candles for quiet minutes ({@code n = 0}, {@code o = h = l = c =} the previous close, §4.3) say nothing
+ * and are skipped, and a candle that is still open ({@code T} not yet past — its high and low change by the
+ * second, and its {@code T} is in the future) is skipped as well, so that a seed never quotes the high of the
+ * minute in progress as a fresh price.
+ *
+ * <p><b>Boundary convention: the price at time {@code t} is the last trade at or before {@code t}</b>, the same as
+ * for a live tick ({@link LiveMarketPrices}: {@code P(t)} is the last tick with {@code at <= t}). A candle
+ * {@code [t, T]} says: its close is the last trade up to {@code T} (a point at {@code T = t + 59 999 ms}); its low
+ * and high happened some time inside the minute (two shape points at {@code t + 20 s} and {@code t + 40 s}, the
+ * low first when the candle closed up, the high first when it closed down — a chart wants the extremes, not
+ * their exact time, which nobody knows); its open is the <i>first</i> trade at or after {@code t}, so it is
+ * <b>not</b> the price at {@code t}: that is the previous candle's close, one millisecond earlier. Hence a
+ * candle that has a predecessor contributes three points; only the first row of an answer, which has no
+ * predecessor to take the price at its start from, also contributes its open. A round that ends at the minute
+ * {@code end} closes on the last trade of the minute before it, never on the first trade after it (measured
+ * 2026-10-02: {@code endTime = end} returns the candle that starts at {@code end} as its last row,
+ * {@code endTime = end − 1} stops at the minute before — hl_multi_asset_live.md §4.1); {@link #history}
+ * therefore asks with {@code endTime = toMs − 1}.
+ *
+ * <p><b>The boundary price comes from the closed candle before the boundary, not from a shape point.</b> A shape
+ * point is a candle's low or high at an invented time; a boundary price taken from one is a wick, and one that
+ * falls between two shape points is stale. So {@link #historyOf} adds, for every boundary it is given, a point
+ * at exactly that time with the close of the last candle with trades that closed at or before it — when that
+ * was within one candle (60 s) of it; on a minute-aligned boundary that is the close one millisecond earlier.
+ * Round boundaries are minute-aligned ({@link RoundAlignmentCheck} refuses to start otherwise).
  */
 @ApplicationScoped
 @Unremovable
@@ -91,12 +103,8 @@ public class HyperliquidPriceSource implements PriceSource {
     static final long CANDLE_MS = 60_000L;
     static final long FIRST_EXTREME_OFFSET_MS = 20_000L;
     static final long SECOND_EXTREME_OFFSET_MS = 40_000L;
-    /** A history request starts this long before its hole, to find the last trade of a quiet asset. */
+    /** A history request starts this long before its range, to find the last trade of a quiet asset. */
     static final long LOOKBACK_MS = 30 * 60_000L;
-    /** Spacing of the points that carry a quiet asset's last close forward: inside the 15 s staleness limit. */
-    static final long CARRY_STEP_MS = 10_000L;
-    /** A candle tail this much older than now is final: no trade will appear in it any more. */
-    static final long SETTLED_AFTER_MS = 120_000L;
 
     private final Supplier<HyperliquidInfoApi> api;
     private final PricesConfig config;
@@ -149,7 +157,15 @@ public class HyperliquidPriceSource implements PriceSource {
     @Override
     public Map<String, Quote> poll(Feed feed, List<Market> markets) {
         String dex = FEED_XYZ.equals(feed.id()) ? "xyz" : "";
-        Answer answer = read(api.get().info(metaAndAssetCtxsRequest(dex)), markets);
+        Answer answer;
+        try {
+            answer = read(api.get().info(metaAndAssetCtxsRequest(dex)), markets);
+        } catch (RuntimeException e) {
+            for (Market market : markets) {
+                state.reportPollFailed(market.id()); // an answer that never came is no evidence of a delisting
+            }
+            throw e;
+        }
         long now = clock.getAsLong();
         for (Market market : answer.delisted()) {
             state.reportDelisted(market.id(), now);
@@ -171,10 +187,27 @@ public class HyperliquidPriceSource implements PriceSource {
     }
 
     @Override
+    public HistoryKind historyKind() {
+        return HistoryKind.TRADE_PRICES;
+    }
+
+    /** {@code candleSnapshot} weighs 20 plus 1 per 60 rows (hl_multi_asset_live.md §5.1; the rounding is UNVERIFIED, so up). */
+    @Override
+    public int historyWeight(long spanMs) {
+        long rows = (spanMs + LOOKBACK_MS + CANDLE_MS - 1) / CANDLE_MS;
+        return 20 + (int) ((rows + 59) / 60);
+    }
+
+    @Override
     public List<PricePoint> history(Market market, long fromMs, long toMs) {
+        return historyOf(market, fromMs, toMs).points();
+    }
+
+    @Override
+    public History historyOf(Market market, long fromMs, long toMs, long... boundariesMs) {
         // endTime = toMs - 1: the candle that starts at toMs holds trades after it (class comment: boundary convention)
         JsonNode rows = api.get().info(candleSnapshotRequest(market.sourceRef(), fromMs - LOOKBACK_MS, toMs - 1));
-        return historyPoints(rows, fromMs, toMs, clock.getAsLong());
+        return historyAnswer(rows, fromMs, toMs, clock.getAsLong(), boundariesMs);
     }
 
     /** The dex of a coin name: {@code "xyz"} for {@code xyz:NVDA}, empty for {@code BTC}. */
@@ -288,27 +321,57 @@ public class HyperliquidPriceSource implements PriceSource {
     }
 
     /**
+     * What a {@code candleSnapshot} answer says about {@code [fromMs, toMs]}: the points of its closed candles
+     * with trades ({@link #candlePoints}), a point at each boundary that the close of a candle before it can
+     * price ({@link #boundaryPoint}), and the last trade before the range ({@link #lastTradeBefore}).
+     *
+     * @param nowMs the clock: a candle whose {@code T} is not before it is still open and says nothing yet
+     */
+    static History historyAnswer(JsonNode rows, long fromMs, long toMs, long nowMs, long... boundariesMs) {
+        List<Candle> candles = candles(rows);
+        List<PricePoint> points = candlePoints(candles, fromMs, toMs, nowMs);
+        for (long boundary : boundariesMs) {
+            if (boundary < fromMs || boundary > toMs) {
+                continue;
+            }
+            Optional<PricePoint> priced = boundaryPoint(candles, boundary, nowMs);
+            if (priced.isPresent() && !priceAlreadyAt(points, boundary)) {
+                points.add(priced.get());
+            }
+        }
+        points.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
+        return new History(points, lastTradeBefore(candles, fromMs, nowMs));
+    }
+
+    /**
+     * On a minute-aligned boundary the close of the candle before it sits one millisecond earlier: that point
+     * <i>is</i> the price at the boundary, with its own true time, and nothing is added (the settlement's
+     * {@code sourceTs} stays the time of that close). Anywhere else the last point at or before the boundary is a
+     * wick of the minute around it, or a close that is too old to be the price now: a point is added.
+     */
+    private static boolean priceAlreadyAt(List<PricePoint> points, long boundaryMs) {
+        return points.stream().anyMatch(p -> p.atMs() >= boundaryMs - 1 && p.atMs() <= boundaryMs);
+    }
+
+    /**
      * The 1-minute candle rows as price points inside {@code [fromMs, toMs]}, oldest first, by the
      * boundary convention of the class comment: the close at {@code T}, the two extremes inside the
      * minute, and — for the first row only — the open. Rows are taken by their own {@code t} and
-     * sorted by it; a row that is not whole (a missing or garbage field) is skipped. The first row's
-     * open is not made into a point at or after {@code toMs}.
+     * sorted by it; a row that is not whole (a missing or garbage field) and a filler without trades are
+     * skipped. The first row's open is not made into a point at or after {@code toMs}. Every candle counts
+     * as closed here; {@link #historyAnswer} knows the clock.
      */
     static List<PricePoint> candlePoints(JsonNode rows, long fromMs, long toMs) {
+        return candlePoints(candles(rows), fromMs, toMs, Long.MAX_VALUE);
+    }
+
+    private static List<PricePoint> candlePoints(List<Candle> candles, long fromMs, long toMs, long nowMs) {
         List<PricePoint> out = new ArrayList<>();
-        if (rows == null || !rows.isArray()) {
-            return out;
-        }
-        List<Candle> candles = new ArrayList<>();
-        for (JsonNode row : rows) {
-            Candle candle = Candle.of(row);
-            if (candle != null) {
-                candles.add(candle);
-            }
-        }
-        candles.sort((a, b) -> Long.compare(a.t(), b.t()));
         for (int i = 0; i < candles.size(); i++) {
             Candle c = candles.get(i);
+            if (!c.closed(nowMs) || !c.hasTrades()) {
+                continue;
+            }
             boolean up = c.close().compareTo(c.open()) >= 0;
             if (i == 0 && c.t() < toMs) {
                 add(out, c.t(), c.open(), fromMs, toMs); // no earlier candle to take the price at t from
@@ -321,8 +384,58 @@ public class HyperliquidPriceSource implements PriceSource {
         return out;
     }
 
-    /** One whole candle row. */
-    private record Candle(long t, long closeAt, BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close) {
+    /**
+     * The price at {@code boundaryMs} from the candle <i>before</i> it: the close of the newest closed candle
+     * with trades that closed at or before the boundary, when that was at most one candle width earlier — "the
+     * last trade at or before the boundary", known from the minute candles up to the minute the boundary falls
+     * in. Empty when there is none that recent (a quiet asset has no price at the boundary).
+     */
+    static Optional<PricePoint> boundaryPoint(List<Candle> candles, long boundaryMs, long nowMs) {
+        Candle best = null;
+        for (Candle c : candles) {
+            if (c.closed(nowMs) && c.hasTrades() && c.closeAt() <= boundaryMs && (best == null || c.t() > best.t())) {
+                best = c;
+            }
+        }
+        if (best == null || boundaryMs - best.closeAt() > CANDLE_MS) {
+            return Optional.empty();
+        }
+        return Optional.of(new PricePoint(boundaryMs, best.close()));
+    }
+
+    /** The close of the newest closed candle with trades that closed before {@code fromMs}, at its closing time. */
+    static Optional<PricePoint> lastTradeBefore(List<Candle> candles, long fromMs, long nowMs) {
+        Candle best = null;
+        for (Candle c : candles) {
+            if (c.closed(nowMs) && c.hasTrades() && c.closeAt() < fromMs && (best == null || c.t() > best.t())) {
+                best = c;
+            }
+        }
+        return best == null ? Optional.empty() : Optional.of(new PricePoint(best.closeAt(), best.close()));
+    }
+
+    /** The whole rows of an answer, sorted by their own time; whatever is not a candle is left out. */
+    static List<Candle> candles(JsonNode rows) {
+        List<Candle> candles = new ArrayList<>();
+        if (rows == null || !rows.isArray()) {
+            return candles;
+        }
+        for (JsonNode row : rows) {
+            Candle candle = Candle.of(row);
+            if (candle != null) {
+                candles.add(candle);
+            }
+        }
+        candles.sort((a, b) -> Long.compare(a.t(), b.t()));
+        return candles;
+    }
+
+    /**
+     * One whole candle row. {@code trades} is the row's {@code n} (the number of trades), {@code -1} when the row
+     * has none: only an explicit 0 makes a row a filler.
+     */
+    record Candle(long t, long closeAt, BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close,
+                  long trades) {
 
         /** The row, or null when its time or any of its four prices is missing or garbage. */
         static Candle of(JsonNode row) {
@@ -334,40 +447,19 @@ public class HyperliquidPriceSource implements PriceSource {
             if (t == Long.MIN_VALUE || open == null || high == null || low == null || close == null) {
                 return null;
             }
-            return new Candle(t, row.path("T").asLong(t + CANDLE_MS - 1), open, high, low, close);
+            return new Candle(t, row.path("T").asLong(t + CANDLE_MS - 1), open, high, low, close,
+                    row.path("n").asLong(-1L));
         }
-    }
 
-    /**
-     * {@link #candlePoints} plus the carry-forward of a quiet asset (see the class comment): when the
-     * newest row closes more than {@link #CARRY_STEP_MS} before {@code toMs} and {@code toMs} itself
-     * is final ({@link #SETTLED_AFTER_MS} before {@code nowMs}), the last close continues in points
-     * {@link #CARRY_STEP_MS} apart up to {@code toMs}.
-     */
-    static List<PricePoint> historyPoints(JsonNode rows, long fromMs, long toMs, long nowMs) {
-        List<PricePoint> points = candlePoints(rows, fromMs, toMs);
-        if (rows == null || !rows.isArray() || toMs > nowMs - SETTLED_AFTER_MS) {
-            return points;
+        /** A minute with trades holds a price; a filler ({@code n = 0}) repeats the previous close. */
+        boolean hasTrades() {
+            return trades != 0;
         }
-        long newestT = Long.MIN_VALUE;
-        long closedAt = 0;
-        BigDecimal lastClose = null;
-        for (JsonNode row : rows) {
-            Candle c = Candle.of(row);
-            if (c != null && c.t() > newestT && c.close().signum() > 0) {
-                newestT = c.t();
-                closedAt = c.closeAt();
-                lastClose = c.close();
-            }
+
+        /** {@code T} is past: no trade will change the row any more (hl_multi_asset_live.md §4.1: closed means T < now). */
+        boolean closed(long nowMs) {
+            return closeAt < nowMs;
         }
-        if (lastClose == null || closedAt >= toMs - CARRY_STEP_MS) {
-            return points;
-        }
-        for (long at = Math.max(closedAt + CARRY_STEP_MS, fromMs); at <= toMs; at += CARRY_STEP_MS) {
-            points.add(new PricePoint(at, lastClose));
-        }
-        points.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
-        return points;
     }
 
     private static void add(List<PricePoint> out, long atMs, BigDecimal price, long fromMs, long toMs) {

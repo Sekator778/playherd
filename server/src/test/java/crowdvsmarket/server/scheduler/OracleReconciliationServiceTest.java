@@ -203,6 +203,25 @@ class OracleReconciliationServiceTest {
     }
 
     @Test
+    void reconcileNeverPollsOrOverwritesARecordFlaggedAsASeqCollision() {
+        long now = System.currentTimeMillis();
+        long seq = serverMeta.reserveOracleSeqRange(1);
+        oracleRecords.insert("reconcile-conflict-" + seq, seq, now / 1000, 5_000_000L, "0xhash" + seq, "replay",
+                now / 1000, now);
+        assertThat(oracleRecords.markConflict(seq, now)).isTrue(); // chainsvc holds somebody else's record under this seq
+        when(chainSvcClient.oracleRecordStatus(seq))
+                .thenReturn(new ChainSvcClient.OracleRecordState(seq, "confirmed", 123456L, "0xcoinid"));
+        org.mockito.Mockito.clearInvocations(chainSvcClient);
+
+        reconciliationService.reconcile();
+
+        verify(chainSvcClient, never()).oracleRecordStatus(seq); // not asked: it is not ours to follow
+        Rounds.OracleAnchorDto anchor = oracleRecords.findAnchorByRoundId("reconcile-conflict-" + seq).orElseThrow();
+        assertThat(anchor.state()).isEqualTo("conflict"); // and not "confirmed at 123456" for the other record
+        assertThat(anchor.height()).isNull();
+    }
+
+    @Test
     void reconcileSkipsWhenChainsvcUnreachable() {
         long now = System.currentTimeMillis();
         long seq = insertQueuedRecord("reconcile-unreachable-", now);

@@ -33,10 +33,20 @@ class OraclePublisherFormatTest {
     private final List<OracleRecordRepository.Row> pending = new ArrayList<>();
     private final List<Long> markedQueued = new ArrayList<>();
     private final Map<Long, String> markedKnown = new HashMap<>();
+    private final List<Long> markedConflict = new ArrayList<>();
+    /** What happened, in order: {@code "attempt 5"} (on record), {@code "post 5"} (reached the chain service). */
+    private final List<String> events = new ArrayList<>();
     private final OracleRecordRepository repository = mock(OracleRecordRepository.class);
-    private final FakeChainSvc chain = new FakeChainSvc();
+    private final FakeChainSvc chain = new FakeChainSvc() {
+        @Override
+        public synchronized OracleRecordsResult oracleRecords(List<OracleRecord> records) {
+            records.forEach(r -> events.add("post " + r.seq()));
+            return super.oracleRecords(records);
+        }
+    };
     private final OraclePublisherService service = new OraclePublisherService();
 
+    /** The repository as the real one behaves for these calls (V8): a stand-in over {@link #pending}. */
     @BeforeEach
     void wire() {
         when(repository.pending()).thenAnswer(inv -> List.copyOf(pending));
@@ -47,11 +57,36 @@ class OraclePublisherFormatTest {
             return null;
         }).when(repository).markQueued(anyList());
         doAnswer(inv -> {
+            List<Long> seqs = inv.getArgument(0);
+            long at = inv.getArgument(1);
+            for (long seq : seqs) {
+                events.add("attempt " + seq);
+                pending.replaceAll(r -> r.seq() != seq || r.postAttemptedAtMs() != null ? r
+                        : new OracleRecordRepository.Row(r.seq(), r.ts(), r.priceCents(), r.resultsHash(), r.source(),
+                                r.sourceTs(), r.market(), r.assetIndex(), at));
+            }
+            return null;
+        }).when(repository).markPostAttempted(anyList(), anyLong());
+        when(repository.markKnown(anyLong(), any(), any(), any(), anyLong())).thenAnswer(inv -> {
             long seq = inv.getArgument(0);
+            OracleRecordRepository.Row row = pending.stream().filter(r -> r.seq() == seq).findFirst().orElse(null);
+            if (row == null || row.postAttemptedAtMs() == null) {
+                return false; // the real one refuses a row that was never POSTed
+            }
             markedKnown.put(seq, inv.getArgument(1));
             pending.removeIf(r -> r.seq() == seq);
-            return null;
-        }).when(repository).markKnown(anyLong(), any(), any(), any(), anyLong());
+            return true;
+        });
+        when(repository.markConflict(anyLong(), anyLong())).thenAnswer(inv -> {
+            long seq = inv.getArgument(0);
+            OracleRecordRepository.Row row = pending.stream().filter(r -> r.seq() == seq).findFirst().orElse(null);
+            if (row == null || row.postAttemptedAtMs() != null) {
+                return false; // the real one flags only a row that was never POSTed
+            }
+            markedConflict.add(seq);
+            pending.removeIf(r -> r.seq() == seq); // and pending() leaves a conflict out
+            return true;
+        });
         service.oracleRecords = repository;
         service.chainSvc = chain;
         service.assetGuard = chain.assetGuard();
@@ -60,6 +95,18 @@ class OraclePublisherFormatTest {
     private static OracleRecordRepository.Row row(long seq, String market, int asset) {
         return new OracleRecordRepository.Row(seq, 1_790_000_000L + seq, 8_000_000L + seq, "0x" + "%064x".formatted(seq),
                 "live", 1_790_000_000L, market, asset);
+    }
+
+    /** A row this server POSTed in an earlier pass (the attempt is on record). */
+    private static OracleRecordRepository.Row attempted(long seq, String market, int asset) {
+        OracleRecordRepository.Row r = row(seq, market, asset);
+        return new OracleRecordRepository.Row(r.seq(), r.ts(), r.priceCents(), r.resultsHash(), r.source(), r.sourceTs(),
+                r.market(), r.assetIndex(), 1_790_000_000_000L);
+    }
+
+    /** A record chainsvc holds under {@code seq} that this server never sent — another writer's. */
+    private static ChainSvcClient.OracleRecord foreign(long seq) {
+        return new ChainSvcClient.OracleRecord(seq, 1_700_000_000L + seq, 5L, "0x" + "ab".repeat(32), "live", 1L);
     }
 
     private void pend(OracleRecordRepository.Row... rows) {
@@ -120,7 +167,9 @@ class OraclePublisherFormatTest {
 
         service.publishOnce();
 
-        assertThat(chain.postedSeqs()).containsExactly(1L); // BTC needs no answer to be tried; ETH is never sent
+        // nothing is POSTed: a row never sent is first asked about (is the seq free?), and nobody answers
+        assertThat(chain.postedSeqs()).isEmpty();
+        assertThat(chain.recordStatusReads()).isEqualTo(1);
         assertThat(pendingSeqs()).containsExactly(1L, 2L);
         assertThat(chain.publishedAsBtcByMistake()).isEmpty();
     }
@@ -211,19 +260,108 @@ class OraclePublisherFormatTest {
     @Test
     void aRecordChainsvcTookEarlierAndHasConfirmedSinceKeepsItsConfirmedState() {
         chain.confirmedUpTo = 1; // the chain already holds seq 1 (a record we sent whose answer never arrived)
-        pend(row(1, "BTC", 0), row(2, "BTC", 0));
+        pend(attempted(1, "BTC", 0), row(2, "BTC", 0)); // seq 1 was POSTed in an earlier pass: the held record is ours
 
         service.publishOnce();
 
         assertThat(markedQueued).containsExactly(2L);
         assertThat(markedKnown).containsExactly(Map.entry(1L, "confirmed"));
+        assertThat(markedConflict).isEmpty();
         assertThat(pending).isEmpty();
+    }
+
+    // ------------------------------------------------------ F2: "chainsvc holds seq N" is not "my record N"
+
+    @Test
+    void aSeqTheChainAlreadyHoldsThatWasNeverPostedIsACollisionNotAnAnchor() {
+        // herd.oracle.require-seq-floor=false: the chain holds 1..1146, the server issued seq 5 before it ever read the
+        // status. chainsvc skips a known seq whatever its content, so the POST would be answered with acceptedSeqs=[]
+        // and the status would say "confirmed": the record was stored as anchored at height H, but chainsvc never took it
+        chain.confirmedUpTo = 1146;
+        pend(row(5, "BTC", 0), row(1147, "BTC", 0));
+
+        service.publishOnce();
+
+        assertThat(markedConflict).containsExactly(5L);
+        assertThat(markedKnown).as("never marked confirmed").isEmpty();
+        assertThat(chain.postedSeqs()).as("the colliding record is not even sent").containsExactly(1147L);
+        assertThat(chain.held(5)).isNull();
+        assertThat(markedQueued).containsExactly(1147L);
+        assertThat(pending).as("a conflict is not pending").isEmpty();
+    }
+
+    @Test
+    void aSeqAnotherWriterTookIsACollisionWhateverStateItIsIn() {
+        chain.oracleRecords(List.of(foreign(7))); // queued at chainsvc by somebody else
+        chain.oracleRecords(List.of(foreign(8)));
+        chain.confirm(8);
+        events.clear();
+        pend(row(7, "BTC", 0), row(8, "BTC", 0), row(9, "BTC", 0));
+
+        service.publishOnce();
+
+        assertThat(markedConflict).containsExactly(7L, 8L);
+        assertThat(markedKnown).isEmpty();
+        assertThat(chain.held(7).resultsHash()).as("the other writer's record stays what it was").isEqualTo("0x" + "ab".repeat(32));
+        assertThat(chain.postedSeqs().stream().filter(seq -> seq >= 7)).containsExactly(7L, 8L, 9L); // two foreign + ours
+        assertThat(events).containsExactly("attempt 9", "post 9"); // only seq 9 was sent
+    }
+
+    @Test
+    void theAttemptIsOnRecordBeforeThePostSoALostAnswerCanBeToldFromACollision() {
+        pend(row(1, "BTC", 0), row(2, "BTC", 0));
+
+        service.publishOnce();
+
+        assertThat(events).containsExactly("attempt 1", "attempt 2", "post 1", "post 2");
+    }
+
+    @Test
+    void aFirstPostWhoseAnswerWasLostIsStillAKnownRecordAndNotACollision() {
+        // chainsvc persisted the batch, the answer never arrived: the record it holds IS ours — the seq was free when
+        // the row was asked about, and nothing but this POST can have taken it since
+        chain.loseTheResponseOfThePostWith(1);
+        pend(row(1, "BTC", 0));
+
+        service.publishOnce();
+
+        assertThat(markedConflict).isEmpty();
+        assertThat(markedKnown).containsExactly(Map.entry(1L, "queued"));
+        assertThat(events).containsExactly("attempt 1", "post 1");
+        assertThat(pending).isEmpty();
+    }
+
+    @Test
+    void aRowPostedBeforeThatIsANoOpForChainsvcNowIsKnownWithoutAskingFirst() {
+        chain.oracleRecords(List.of(new ChainSvcClient.OracleRecord(3, 1_790_000_003L, 8_000_003L,
+                "0x" + "%064x".formatted(3), "live", 1_790_000_000L))); // what the first POST of row 3 put there
+        events.clear();
+        pend(attempted(3, "BTC", 0));
+
+        service.publishOnce();
+
+        assertThat(markedKnown).containsExactly(Map.entry(3L, "queued"));
+        assertThat(markedConflict).isEmpty();
+        assertThat(chain.recordStatusReads()).as("only the question after the POST; none before it").isEqualTo(1);
+    }
+
+    @Test
+    void aRecordThatCannotBeFlaggedBecauseItChangedUnderUsIsStillNotSentAndNotMarkedKnown() {
+        chain.confirmedUpTo = 10;
+        pend(row(5, "BTC", 0));
+        // the row got an attempt on record between the check and the flag (a second pass of ours): markConflict refuses
+        when(repository.markConflict(anyLong(), anyLong())).thenReturn(false);
+
+        service.publishOnce();
+
+        assertThat(chain.postedSeqs()).isEmpty();
+        assertThat(markedKnown).isEmpty();
     }
 
     @Test
     void aRecordChainsvcAnswersUnknownForStaysPendingAndIsNotMarkedHandedOver() {
         chain.refuseAll = true; // reachable, but it takes nothing
-        pend(row(1, "BTC", 0), row(2, "BTC", 0));
+        pend(attempted(1, "BTC", 0), attempted(2, "BTC", 0)); // sent before: no question ahead of the POST
 
         service.publishOnce();
 
@@ -234,15 +372,20 @@ class OraclePublisherFormatTest {
     }
 
     @Test
-    void aPersistentRefusalCostsOneStatusReadPerChunkNotOnePerRecord() {
+    void aPersistentRefusalCostsOneStatusReadPerChunkNotOnePerRecordFromTheSecondPassOn() {
         chain.refuseAll = true;
         IntStream.rangeClosed(1, 45).forEach(i -> pend(row(i, "BTC", 0)));
 
         service.publishOnce();
 
         assertThat(chain.posts()).extracting(List::size).containsExactly(20, 20, 5);
-        assertThat(chain.recordStatusReads()).isEqualTo(3);
+        // the first pass asks once for every row it has never sent (is the seq free?) and once per chunk afterwards
+        assertThat(chain.recordStatusReads()).isEqualTo(45 + 3);
         assertThat(pending).hasSize(45);
+
+        service.publishOnce(); // every row has an attempt on record now: only the question per chunk is left
+
+        assertThat(chain.recordStatusReads()).isEqualTo(45 + 3 + 3);
     }
 
     @Test
@@ -253,7 +396,7 @@ class OraclePublisherFormatTest {
         chain.oracleRecords(List.of(new ChainSvcClient.OracleRecord(1, 1L, 1L, "0x" + "00".repeat(32), "live", 1L),
                 new ChainSvcClient.OracleRecord(2, 2L, 2L, "0x" + "00".repeat(32), "live", 2L)));
         chain.refuseAll = true;
-        pend(row(1, "BTC", 0), row(2, "BTC", 0), row(3, "BTC", 0), row(4, "BTC", 0));
+        pend(attempted(1, "BTC", 0), attempted(2, "BTC", 0), row(3, "BTC", 0), row(4, "BTC", 0));
 
         service.publishOnce();
 
@@ -273,13 +416,15 @@ class OraclePublisherFormatTest {
     }
 
     @Test
-    void anOutageEndsThePassAfterOneChunkInsteadOfTimingOutOnceForEveryChunk() {
+    void anOutageEndsThePassAtTheFirstQuestionInsteadOfTimingOutOnceForEveryRecordOrChunk() {
         chain.down = true;
         IntStream.rangeClosed(1, 45).forEach(i -> pend(row(i, "BTC", 0)));
 
         service.publishOnce();
 
-        assertThat(chain.posts()).hasSize(1);
+        assertThat(chain.recordStatusReads()).isEqualTo(1);
+        assertThat(chain.posts()).as("no POST without an answer to the question that precedes it").isEmpty();
+        assertThat(events).isEmpty(); // not even an attempt on record
         assertThat(pending).hasSize(45);
     }
 

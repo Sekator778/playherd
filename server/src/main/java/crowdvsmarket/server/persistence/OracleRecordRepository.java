@@ -52,25 +52,48 @@ public class OracleRecordRepository {
     }
 
     /** Records waiting for chainsvc, oldest first, every market's — with the {@code asset_index} the
-     *  wire format carries since record format 2 (docs/research/markets_architecture.md §7). This
-     *  query does not decide what may be sent: a record with an asset above 0 must not reach a chain
-     *  service that predates format 2 (it would publish it as a BTC price), and that check belongs to
-     *  {@code OraclePublisherService}, which knows what chainsvc says about itself. */
+     *  wire format carries since record format 2 (docs/research/markets_architecture.md §7) and the time
+     *  of the last POST attempt, if there was one (V8). This query does not decide what may be sent: a
+     *  record with an asset above 0 must not reach a chain service that predates format 2 (it would
+     *  publish it as a BTC price), and that check belongs to {@code OraclePublisherService}, which knows
+     *  what chainsvc says about itself. A row in state {@code conflict} (a seq the chain service held
+     *  before this server ever sent it, {@link #markConflict}) is not waiting for anything: it is never
+     *  sent. */
     public java.util.List<Row> pending() {
         return db.read(c -> db.queryList(c, """
-                SELECT seq, ts, price_cents, results_hash, source, source_ts, market, asset_index
+                SELECT seq, ts, price_cents, results_hash, source, source_ts, market, asset_index,
+                    post_attempted_at_ms
                 FROM oracle_records
-                WHERE chainsvc_queued = FALSE ORDER BY seq ASC
+                WHERE chainsvc_queued = FALSE AND state <> 'conflict' ORDER BY seq ASC
                 """, this::toRow));
     }
 
+    /** Never a row this server flagged as a collision: it stays unqueued on purpose. */
     public void markQueued(java.util.List<Long> seqs) {
         if (seqs.isEmpty()) {
             return;
         }
         db.tx(c -> {
             for (long seq : seqs) {
-                db.update(c, "UPDATE oracle_records SET chainsvc_queued = TRUE WHERE seq = ?", seq);
+                db.update(c, "UPDATE oracle_records SET chainsvc_queued = TRUE WHERE seq = ? AND state <> 'conflict'",
+                        seq);
+            }
+            return null;
+        });
+    }
+
+    /** Puts on record, BEFORE the POST, that this server is about to send these rows: the first attempt time
+     *  stays (a row already attempted keeps its value). Only a row with a value here may later be
+     *  {@link #markKnown marked known} — see V8. */
+    public void markPostAttempted(java.util.List<Long> seqs, long atMs) {
+        if (seqs.isEmpty()) {
+            return;
+        }
+        db.tx(c -> {
+            for (long seq : seqs) {
+                db.update(c, "UPDATE oracle_records SET post_attempted_at_ms = ? WHERE seq = ? "
+                        + "AND post_attempted_at_ms IS NULL AND NOT (chainsvc_queued = FALSE AND state = 'conflict')",
+                        atMs, seq);
             }
             return null;
         });
@@ -80,18 +103,35 @@ public class OracleRecordRepository {
      *  {@code confirmed} or {@code conflict} for it) although this server never saw the POST that
      *  put it there succeed — a response lost after chainsvc had persisted the batch. Marks the row
      *  handed over, so it is not resent on every tick, and keeps the state chainsvc reported, which is
-     *  exactly what {@link #updateReconciledState} would store on the next reconciliation pass. */
-    public void markKnown(long seq, String state, Long height, String coinId, long checkedAtMs) {
-        db.tx(c -> db.update(c, """
+     *  exactly what {@link #updateReconciledState} would store on the next reconciliation pass.
+     *
+     *  <p>Only for a row this server has POSTed before ({@code post_attempted_at_ms}, V8): the held
+     *  record is then the one it sent. A row that was never POSTed is not touched — chainsvc holds somebody
+     *  else's record under that seq ({@link #markConflict}) — and the answer is false. */
+    public boolean markKnown(long seq, String state, Long height, String coinId, long checkedAtMs) {
+        return db.tx(c -> db.update(c, """
                 UPDATE oracle_records SET chainsvc_queued = TRUE, state = ?, height = ?, coin_id = ?,
                     state_checked_at_ms = ?
-                WHERE seq = ?
-                """, state, height, coinId, checkedAtMs, seq));
+                WHERE seq = ? AND post_attempted_at_ms IS NOT NULL AND NOT (chainsvc_queued = FALSE AND state = 'conflict')
+                """, state, height, coinId, checkedAtMs, seq)) > 0;
     }
 
+    /** A seq collision: chainsvc holds a record under {@code seq} that this server never sent. The row gets state
+     *  {@code conflict} — what the round's {@code oracleAnchor} and the public journal show, with no height and
+     *  no coin: nothing of the other record is claimed — and stays unqueued: it is not pending, not reconciled,
+     *  not counted. Only a row never POSTed can be flagged (false for any other). */
+    public boolean markConflict(long seq, long checkedAtMs) {
+        return db.tx(c -> db.update(c, """
+                UPDATE oracle_records SET state = 'conflict', height = NULL, coin_id = NULL, state_checked_at_ms = ?,
+                    chainsvc_queued = FALSE
+                WHERE seq = ? AND post_attempted_at_ms IS NULL
+                """, checkedAtMs, seq)) > 0;
+    }
+
+    /** Rows waiting for chainsvc (a collision is not waiting for anything, see {@link #pending}). */
     public int pendingCount() {
-        Long n = db.read(c -> db.queryOne(c, "SELECT COUNT(*) AS n FROM oracle_records WHERE chainsvc_queued = FALSE",
-                rs -> rs.getLong("n")));
+        Long n = db.read(c -> db.queryOne(c, "SELECT COUNT(*) AS n FROM oracle_records "
+                + "WHERE chainsvc_queued = FALSE AND state <> 'conflict'", rs -> rs.getLong("n")));
         return n == null ? 0 : n.intValue();
     }
 
@@ -113,9 +153,10 @@ public class OracleRecordRepository {
      *  1c). {@code height}/{@code coinId} are nullable (only meaningful once {@code state} is
      *  {@code "confirmed"}). */
     public void updateReconciledState(long seq, String state, Long height, String coinId, long checkedAtMs) {
+        // never over a collision this server flagged: the seq's record on chainsvc is somebody else's
         db.tx(c -> db.update(c, """
                 UPDATE oracle_records SET state = ?, height = ?, coin_id = ?, state_checked_at_ms = ?
-                WHERE seq = ?
+                WHERE seq = ? AND NOT (chainsvc_queued = FALSE AND state = 'conflict')
                 """, state, height, coinId, checkedAtMs, seq));
     }
 
@@ -152,7 +193,8 @@ public class OracleRecordRepository {
 
     private Row toRow(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new Row(rs.getLong("seq"), rs.getLong("ts"), rs.getLong("price_cents"), rs.getString("results_hash"),
-                rs.getString("source"), rs.getLong("source_ts"), rs.getString("market"), rs.getInt("asset_index"));
+                rs.getString("source"), rs.getLong("source_ts"), rs.getString("market"), rs.getInt("asset_index"),
+                (Long) rs.getObject("post_attempted_at_ms"));
     }
 
     private ReconciliationRow toReconciliationRow(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -167,8 +209,15 @@ public class OracleRecordRepository {
                 rs.getString("state"));
     }
 
+    /** {@code postAttemptedAtMs}: when this server first put the row in a POST to chainsvc ({@code null}: never). */
     public record Row(long seq, long ts, long priceCents, String resultsHash, String source, long sourceTs,
-                        String market, int assetIndex) {
+                        String market, int assetIndex, Long postAttemptedAtMs) {
+
+        /** A row that was never POSTed. */
+        public Row(long seq, long ts, long priceCents, String resultsHash, String source, long sourceTs,
+                   String market, int assetIndex) {
+            this(seq, ts, priceCents, resultsHash, source, sourceTs, market, assetIndex, null);
+        }
     }
 
     /** {@code market}/{@code assetIndex}: which market's close price {@code priceCents} is — a

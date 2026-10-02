@@ -167,7 +167,9 @@ class PriceHttpClientsTest {
 
         List<PricePoint> points = source.history(TestMarkets.odds("PM1", "tok1"), 1_790_882_900_000L, 1_790_883_700_000L);
 
-        assertThat(points).hasSize(24); // 8 rows (7 buckets and the terminal tick), the gaps between them carried every 30 s (R1)
+        // 8 rows (7 buckets and the terminal tick), the gaps between the buckets carried every 30 s (R1) — but not the
+        // 311 s between the last bucket and the terminal tick: that is the materialisation lag, not a flat price (F6)
+        assertThat(points).hasSize(14);
         FakeHttpServer.Request request = server.requests().get(0);
         assertThat(request.method()).isEqualTo("GET");
         assertThat(path(request.pathAndQuery())).isEqualTo("/v2/prices-history");

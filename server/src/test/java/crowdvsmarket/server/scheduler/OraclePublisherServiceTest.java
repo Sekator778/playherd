@@ -3,6 +3,7 @@ package crowdvsmarket.server.scheduler;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 
 import crowdvsmarket.server.chain.ChainSvcClient;
@@ -16,6 +17,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.time.Duration;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -39,6 +41,13 @@ class OraclePublisherServiceTest {
     ServerMetaRepository serverMeta;
     @Inject
     Db db;
+
+    /** A seq no chain service holds yet: the question that precedes the first POST of a row is answered "free". */
+    @BeforeEach
+    void theSeqsAreFree() {
+        when(chainSvcClient.oracleRecordStatus(anyLong())).thenAnswer(
+                inv -> new ChainSvcClient.OracleRecordState(inv.getArgument(0), "unknown", null, null));
+    }
 
     private long insertPendingRecord(String roundIdPrefix) {
         long seq = serverMeta.reserveOracleSeqRange(1);

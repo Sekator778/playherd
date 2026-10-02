@@ -2,6 +2,7 @@ package crowdvsmarket.server.prices;
 
 import io.quarkus.arc.Unremovable;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -11,7 +12,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * <ul>
  *   <li>the poll reports a token that was <b>missing</b> from {@code /midpoints} (a closed market's
  *       token silently drops out of the batch answer, polymarket_data_api.md §5) and the time since
- *       when it has been missing — the catalog closes the market when that is 60 s;</li>
+ *       when it has been missing — the catalog closes the market when that is 60 s <i>and</i> enough
+ *       consecutive successful answers said so ({@link #missingAnswers}); an answer that has the token
+ *       ({@link #reportPresent}) or a poll that failed ({@link #reportPollFailed}) starts the count again, so
+ *       one partial answer followed by a CLOB that times out never closes a market for good;</li>
  *   <li>the catalog reports the market's {@code oneDayPriceChange} from Gamma, an <i>absolute</i>
  *       change in probability ({@code -0.04} = four points down) — measured 2026-10-02: for three open
  *       markets it equals the CLOB's price now minus the price about 24 hours earlier from the data
@@ -25,23 +29,44 @@ import java.util.concurrent.ConcurrentHashMap;
 @Unremovable
 public class PolymarketLiveState {
 
-    private final ConcurrentHashMap<String, Long> missingSince = new ConcurrentHashMap<>();
+    /** An unbroken run of answers in which the token was missing. */
+    private record Run(long sinceMs, long lastMs, int answers) {
+    }
+
+    private final ConcurrentHashMap<String, Run> runs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Double> oneDayChange = new ConcurrentHashMap<>();
 
     /** The token of this market was in the latest {@code /midpoints} answer. */
     public void reportPresent(String marketId) {
-        missingSince.remove(marketId);
+        runs.remove(marketId);
     }
 
-    /** The token was missing from an answer that did contain others; remembers the first such time. */
+    /** The token was missing from an answer that did contain others: one more answer in the run. */
     public void reportMissing(String marketId, long nowMs) {
-        missingSince.putIfAbsent(marketId, nowMs);
+        runs.merge(marketId, new Run(nowMs, nowMs, 1), (old, one) -> new Run(old.sinceMs(), nowMs, old.answers() + 1));
+    }
+
+    /** The poll that should have answered failed: an answer that never came proves nothing. */
+    public void reportPollFailed(String marketId) {
+        runs.remove(marketId);
     }
 
     /** Since when the token has been missing from every answer, if it is missing now. */
     public OptionalLong missingSince(String marketId) {
-        Long since = missingSince.get(marketId);
-        return since == null ? OptionalLong.empty() : OptionalLong.of(since);
+        Run run = runs.get(marketId);
+        return run == null ? OptionalLong.empty() : OptionalLong.of(run.sinceMs());
+    }
+
+    /** When the newest answer without the token came, if the token is missing now. */
+    public OptionalLong lastMissingAnswerAt(String marketId) {
+        Run run = runs.get(marketId);
+        return run == null ? OptionalLong.empty() : OptionalLong.of(run.lastMs());
+    }
+
+    /** How many consecutive successful answers have lacked the token (empty: none). */
+    public OptionalInt missingAnswers(String marketId) {
+        Run run = runs.get(marketId);
+        return run == null ? OptionalInt.empty() : OptionalInt.of(run.answers());
     }
 
     public void setOneDayChange(String marketId, Double absoluteChange) {
@@ -59,7 +84,7 @@ public class PolymarketLiveState {
 
     /** Forgets a market (it closed). */
     public void forget(String marketId) {
-        missingSince.remove(marketId);
+        runs.remove(marketId);
         oneDayChange.remove(marketId);
     }
 }

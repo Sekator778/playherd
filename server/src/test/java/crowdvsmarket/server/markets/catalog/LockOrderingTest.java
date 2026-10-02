@@ -173,6 +173,13 @@ class LockOrderingTest {
         }
     }
 
+    /** Three successful answers in a row, the first a minute ago and the newest three seconds ago: enough to close. */
+    private static void reportDelistedThrice(HyperliquidLiveState state, String id) {
+        state.reportDelisted(id, NOW - 60_000L);
+        state.reportDelisted(id, NOW - 30_000L);
+        state.reportDelisted(id, NOW - 3_000L);
+    }
+
     private void waitUntilTheWriterIsParked() {
         await().atMost(Duration.ofSeconds(10)).until(() -> listener.engine.hasQueuedThreads());
     }
@@ -187,7 +194,7 @@ class LockOrderingTest {
                 : Fixtures.json("hyperliquid/meta_and_asset_ctxs_main.json");
         new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state, HistorySeeder.disabled(),
                 () -> NOW).sync(NOW);
-        state.reportDelisted("ETH", NOW - 60_000L);
+        reportDelistedThrice(state, "ETH");
         HyperliquidCatalog catalog = new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state,
                 HistorySeeder.disabled(), () -> NOW);
 
@@ -315,7 +322,7 @@ class LockOrderingTest {
                 while (System.nanoTime() < deadline) {
                     catalog.sync(NOW);
                     if (!reported && listener.listed.get() == 3) {
-                        state.reportDelisted("DOGE", NOW - 60_000L); // once everything is listed
+                        reportDelistedThrice(state, "DOGE"); // once everything is listed
                         reported = true;
                     }
                     catalog.watch(NOW);

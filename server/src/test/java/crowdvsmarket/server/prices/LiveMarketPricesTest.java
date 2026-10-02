@@ -343,10 +343,12 @@ class LiveMarketPricesTest {
         assertThat(source.historyRequests).hasSize(1);
         assertThat(source.historyRequests.get(0)[0]).isEqualTo(END);
         // nothing from the source landed at or before the boundary: the tick that was fresh there, and the pin of
-        // its price at exactly END that the first round left when it settled
-        assertThat(store.series("BTC", END - 12_000, END + 1)).extracting(PricePoint::atMs)
-                .containsExactly(END - 12_000L, END);
-        assertThat(store.series("BTC", END, END + 1).get(0).raw()).isEqualByComparingTo("100");
+        // its price at exactly END that the first round left when it settled (a pin: no chart point, a price all same)
+        assertThat(store.series("BTC", END - 12_000, END + 1)).extracting(PricePoint::atMs).containsExactly(END - 12_000L);
+        TickRing.Window around = store.window("BTC", END - 12_001, END);
+        assertThat(around.atMs()).containsExactly(END - 12_000L, END);
+        assertThat(around.kind()).containsExactly(TickRing.LIVE, TickRing.PIN);
+        assertThat(Px.decode(around.px()[1])).isEqualByComparingTo("100");
         // and the first round still reads the very same price
         assertThat(prices.resolve(btc, window(btc)).close()).isEqualByComparingTo("100.00");
     }
@@ -447,7 +449,11 @@ class LiveMarketPricesTest {
 
         // START had a tick of its own (99): left alone; END had none: the closing price (100) is pinned there
         assertThat(store.series("BTC", START, START + 1)).extracting(p -> p.raw().intValue()).containsExactly(99);
-        assertThat(store.series("BTC", END, END + 1)).extracting(p -> p.raw().intValue()).containsExactly(100);
+        TickRing.Window atEnd = store.window("BTC", END - 1, END);
+        assertThat(atEnd.atMs()).containsExactly(END);
+        assertThat(atEnd.kind()).containsExactly(TickRing.PIN);
+        assertThat(Px.decode(atEnd.px()[0])).isEqualByComparingTo("100");
+        assertThat(store.series("BTC", END, END + 1)).isEmpty(); // a pin is not a tick
         assertThat(prices.resolve(btc, window(btc)).close()).isEqualByComparingTo("100.00"); // and the same again
     }
 
@@ -512,7 +518,11 @@ class LiveMarketPricesTest {
         RoundPriceData data = prices.resolve(btc, window(btc));
 
         assertThat(data.close()).isEqualByComparingTo("100.00");
-        assertThat(data.sourceTsMs()).isEqualTo(END); // the carried points reach the end of the round ...
+        // the carried points reach the end of the round, but the price was last SEEN by the tick at START + 40 s: that
+        // is the time the settlement reports, never the time of a copy (F4)
+        assertThat(data.sourceTsMs()).isEqualTo(START + 40_000L);
+        assertThat(store.series("BTC", START + 41_000L, END + 1)).extracting(PricePoint::atMs)
+                .startsWith(START + 50_000L).endsWith(END);
         assertThat(store.series("BTC", END + 1, END + 60_000)).isEmpty(); // ... and not a millisecond further
     }
 

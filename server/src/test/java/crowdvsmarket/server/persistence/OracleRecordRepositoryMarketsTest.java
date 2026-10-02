@@ -81,6 +81,7 @@ class OracleRecordRepositoryMarketsTest {
         long handedOver = insert("ETH", 3, "orm-test-ETH-1h-2");
         long alreadyKnown = insert("SOL", 7, "orm-test-SOL-1h-2");
         oracleRecords.markQueued(List.of(handedOver));
+        oracleRecords.markPostAttempted(List.of(alreadyKnown), 1_700_000_000_500L); // known only after a POST (V8)
         oracleRecords.markKnown(alreadyKnown, "confirmed", 4_737_632L, "0xcoin", 1_700_000_001_000L);
 
         assertThat(oracleRecords.pending()).extracting(OracleRecordRepository.Row::seq)

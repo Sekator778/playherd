@@ -277,16 +277,55 @@ class PolymarketPriceSourceTest {
     }
 
     @Test
-    void theRealSamplesTerminalTickIsReachedByTheCarryFromTheLastBucket() {
+    void theRealSamplesLagBeforeTheTerminalTickIsNotCarriedAcross() {
         JsonNode answer = Fixtures.json("polymarket/data_prices_history.json");
-        // the sample's buckets run to 1790883300 s, its terminal tick is at 1790883611 s (311 s later)
+        // the sample's buckets run to 1790883300 s, its terminal tick is at 1790883611 s (311 s later): the
+        // materialisation lag (the newest closed buckets are minutes late), not a quiet price. It used to be
+        // bridged with a flat 0.715 every 30 s; the price in it is unknown, so it stays a hole (F6).
+        long lastBucket = 1_790_883_300_000L;
+        long terminal = 1_790_883_611_000L;
 
         List<PricePoint> points = PolymarketPriceSource.historyPoints(answer, 0, Long.MAX_VALUE);
 
-        for (int i = 1; i < points.size(); i++) {
-            assertThat(points.get(i).atMs() - points.get(i - 1).atMs()).isLessThanOrEqualTo(30_000L);
+        assertThat(points).extracting(PricePoint::atMs).noneMatch(at -> at > lastBucket && at < terminal);
+        assertThat(points.get(points.size() - 1).atMs()).isEqualTo(terminal);
+        // before the lag the buckets are still carried every 30 s
+        assertThat(points.stream().filter(p -> p.atMs() <= lastBucket).count()).isEqualTo(7 + 6);
+    }
+
+    @Test
+    void aStretchEndingAtTheTerminalTickIsBridgedUpToTwoBucketsAndNotBeyond() {
+        // the terminal tick of a window that ended earlier sits about 81 s after the last bucket (measured 2026-10-02)
+        assertThat(timesAndPrices(PolymarketPriceSource.historyPoints(withTerminal(0, 0.5, 120, 0.6), T, T + 300_000L)))
+                .containsExactly("0s=0.5", "30s=0.5", "60s=0.5", "90s=0.5", "120s=0.6");
+        assertThat(PolymarketPriceSource.MAX_CARRY_TO_TERMINAL_MS).isEqualTo(120_000L);
+        // one second more is the lag: no flat price is invented across it
+        assertThat(timesAndPrices(PolymarketPriceSource.historyPoints(withTerminal(0, 0.5, 121, 0.6), T, T + 300_000L)))
+                .containsExactly("0s=0.5", "121s=0.6");
+        // the same stretch between two ordinary buckets is still bridged (R1): only the terminal tick is special
+        assertThat(PolymarketPriceSource.historyPoints(answer(0, 0.5, 121, 0.6), T, T + 300_000L)).hasSize(6);
+    }
+
+    @Test
+    void theLastPointIsCarriedToTheEndOfTheRangeWhenItIsTheTerminalTickWithinABucketOfIt() {
+        // a terminal tick at +311 s, the range ends at +350 s (39 s later): the price is the tick's until the end
+        JsonNode answer = withTerminal(0, 0.5, 311, 0.8);
+
+        assertThat(timesAndPrices(PolymarketPriceSource.historyPoints(answer, T, T + 350_000L)))
+                .containsExactly("0s=0.5", "311s=0.8", "341s=0.8"); // nothing across the 311 s before the tick
+    }
+
+    /** Like {@link #answer}, but the last row is the terminal tick ({@code resolution_seconds: 0}). */
+    private static JsonNode withTerminal(Object... secondsAndPrice) {
+        StringBuilder sb = new StringBuilder("{\"data\":[");
+        for (int i = 0; i < secondsAndPrice.length; i += 2) {
+            boolean last = i + 2 >= secondsAndPrice.length;
+            sb.append(i == 0 ? "" : ",").append("{\"timestamp\":")
+                    .append(T / 1000 + ((Number) secondsAndPrice[i]).longValue())
+                    .append(",\"price\":").append(secondsAndPrice[i + 1]).append(",\"resolution_seconds\":")
+                    .append(last ? 0 : 60).append("}");
         }
-        assertThat(points.get(points.size() - 1).atMs()).isEqualTo(1_790_883_611_000L);
+        return Fixtures.parse(sb.append("]}").toString());
     }
 
     @Test

@@ -117,8 +117,8 @@ class PolymarketCatalogTest {
         assertThat(iran.kind()).isEqualTo(MarketKind.ODDS);
         assertThat(iran.category()).isEqualTo(Category.POLITICS);
         assertThat(iran.title()).isEqualTo("Will the U.S. invade Iran before 2027?");
-        assertThat(iran.subtitle()).isEqualTo("Yes · Will the U.S. invade Iran before 2027?");
-        assertThat(iran.symbol()).isEqualTo("US");
+        assertThat(iran.subtitle()).isEqualTo("Yes"); // the event title is the question again: not repeated (L2)
+        assertThat(iran.symbol()).isEqualTo("IRAN"); // it was "US" (L1)
         assertThat(iran.iconUrl()).startsWith("https://polymarket-upload.s3");
         assertThat(iran.source()).isEqualTo("polymarket");
         assertThat(iran.sourceRef()).isEqualTo(token(politics.get("markets"), "665374")); // outcome 0's CLOB token
@@ -137,10 +137,35 @@ class PolymarketCatalogTest {
         assertThat(meta.has("gameStartMs")).isFalse();
 
         Market flavio = market("PM601826");
-        assertThat(flavio.symbol()).isEqualTo("FLÁVIO");
+        assertThat(flavio.symbol()).isEqualTo("BOLSONAR"); // the last capitalised word of groupItemTitle "Flávio Bolsonaro"
         assertThat(flavio.subtitle()).isEqualTo("Yes · Brazil Presidential Election");
         assertThat(flavio.endsAtMs()).isEqualTo(ms("2026-10-05T03:59:00Z"));
-        assertThat(market("PM3128888").symbol()).isEqualTo("US");
+        assertThat(market("PM3128888").symbol()).isEqualTo("IRANIAN"); // it was "US" as well, and so was Iran's
+    }
+
+    @Test
+    void theTickersOfTheMarketsListedInOnePassAreUniqueAmongAllTheActiveMarketsOfAllCategories() {
+        // a perp that already shows ticker IRAN, and a second market of the blockade event that wants IRANIAN
+        registry.add(new Market("T_IRAN", MarketKind.PERP, Category.CRYPTO, "IRAN", "Iran coin", null, null, "hyperliquid",
+                "IRAN", null, 10, 0, 8, MarketStatus.ACTIVE, 0L, null, null, null));
+
+        catalog(config(4, 0, true)).refresh(NOW);
+
+        List<String> symbols = registry.active().stream().map(Market::symbol).toList();
+        assertThat(symbols).doesNotHaveDuplicates();
+        assertThat(market("PM665374").symbol()).isEqualTo("INVADE"); // IRAN is taken: the next distinctive word
+        assertThat(symbols).doesNotContain("US");
+    }
+
+    @Test
+    void aClosedMarketsTickerIsFreeAgain() {
+        // the ticker is unique among the ACTIVE markets: a closed one does not keep it
+        registry.add(new Market("T_OLD", MarketKind.ODDS, Category.POLITICS, "IRAN", "old", null, null, "polymarket", "t",
+                null, 10, 4, 8, MarketStatus.CLOSED, 0L, 1L, "test", null));
+
+        catalog(config(1, 0, true)).refresh(NOW);
+
+        assertThat(market("PM665374").symbol()).isEqualTo("IRAN");
     }
 
     @Test
@@ -340,7 +365,8 @@ class PolymarketCatalogTest {
         Market portugal = market("PM4678642");
         // Gamma's endDate is 18:45, the kick-off, an hour before this listing: not an end
         assertThat(portugal.endsAtMs()).isNull();
-        assertThat(portugal.subtitle()).isEqualTo("Yes · Denmark vs. Portugal");
+        // the team that wins, then the league (L2) — it was "Yes · Denmark vs. Portugal"
+        assertThat(portugal.subtitle()).isEqualTo("Portugal to win · UEFA Nations League");
         assertThat(portugal.category()).isEqualTo(Category.SPORTS);
         JsonNode meta = Fixtures.parse(portugal.sourceMeta());
         assertThat(meta.get("gameStartTime").asText()).isEqualTo("2026-10-01 18:45:00+00");
@@ -386,7 +412,9 @@ class PolymarketCatalogTest {
         assertThat(registry.log).containsExactly("listed PM4642062", "listed PM3760412", "listed PM5073589");
         assertThat(market("PM4642062").symbol()).isEqualTo("FAZE");
         assertThat(market("PM3760412").symbol()).isEqualTo("STEELERS");
-        assertThat(market("PM5073589").symbol()).isEqualTo("PHILADEL");
+        assertThat(market("PM5073589").symbol()).isEqualTo("PHILLIES");
+        assertThat(market("PM3760412").subtitle()).isEqualTo("Steelers to win · NFL 2026");
+        assertThat(market("PM5073589").subtitle()).isEqualTo("Philadelphia Phillies to win · MLB");
         assertThat(market("PM3760412").endsAtMs()).isNull(); // a game: no end of its own
     }
 
@@ -424,12 +452,118 @@ class PolymarketCatalogTest {
                 10, Market.ODDS_LOT_EXP, 9, MarketStatus.ACTIVE, 0L, null, null, endsAtMs);
     }
 
+    /** Three successful answers in a row that lack the token: the first at {@code firstAt}, the last at {@code lastAt}. */
+    private static void missingRun(PolymarketLiveState state, String id, long firstAt, long lastAt) {
+        state.reportMissing(id, firstAt);
+        state.reportMissing(id, (firstAt + lastAt) / 2);
+        state.reportMissing(id, lastAt);
+    }
+
+    @Test
+    void aTokenReportedMissingByOneAnswerAndThenNothingNeverClosesTheMarketForGood() {
+        // F7: a partial /midpoints answer, then a CLOB that times out for a minute: the 60 s of wall time alone
+        // closed the market, and a closed id is never listed again
+        Market m = registry.add(activePm("PM1", "tok1", Category.POLITICS, null, null));
+        PolymarketCatalog catalog = catalog();
+
+        state.reportMissing("PM1", NOW); // the only successful answer; every poll after it failed
+
+        assertThat(catalog.closeReason(m, NOW + 60_000)).isNull();
+        assertThat(catalog.closeReason(m, NOW + 3_600_000L)).isNull();
+        assertThat(catalog.watch(NOW + 3_600_000L)).isZero();
+        assertThat(registry.byId("PM1").orElseThrow().isActive()).isTrue();
+    }
+
+    @Test
+    void twoAnswersAreNotEnoughEvenWhenTheNewestIsRecentAndAMinuteHasPassed() {
+        // the count and the age of the newest answer are two separate conditions: this one isolates the count
+        Market m = registry.add(activePm("PM1", "tok1", Category.POLITICS, null, null));
+        PolymarketCatalog catalog = catalog();
+
+        state.reportMissing("PM1", NOW);
+        state.reportMissing("PM1", NOW + 58_000);
+        assertThat(state.missingAnswers("PM1")).hasValue(2);
+        assertThat(catalog.closeReason(m, NOW + 60_000)).as("two answers, a minute, the newest 2 s old").isNull();
+
+        state.reportMissing("PM1", NOW + 59_000);
+        assertThat(state.missingAnswers("PM1")).hasValue(3);
+        assertThat(catalog.closeReason(m, NOW + 60_000)).isEqualTo(PolymarketCatalog.REASON_ABSENT);
+    }
+
+    @Test
+    void theNewestAnswerMustBeRecentAndTwoAnswersAreNotEnough() {
+        Market m = registry.add(activePm("PM1", "tok1", Category.POLITICS, null, null));
+        PolymarketCatalog catalog = catalog();
+
+        state.reportMissing("PM1", NOW);
+        state.reportMissing("PM1", NOW + 3_000);
+        assertThat(catalog.closeReason(m, NOW + 60_000)).as("two answers, the newest 57 s old").isNull();
+
+        state.reportMissing("PM1", NOW + 6_000);
+        assertThat(state.missingAnswers("PM1")).hasValue(3);
+        // three answers and a minute since the first, but the newest is 54 s old: nothing has said so since
+        assertThat(catalog.closeReason(m, NOW + 60_000)).isNull();
+
+        // the limit is 15 s (written out: a test that adds the constant to itself would follow it wherever it goes)
+        assertThat(PolymarketCatalog.TOKEN_ABSENT_EVIDENCE_MAX_AGE_MS).isEqualTo(15_000L);
+        state.reportMissing("PM1", NOW + 45_000);
+        assertThat(catalog.closeReason(m, NOW + 60_001)).as("the newest answer 15 s and 1 ms old").isNull();
+        assertThat(catalog.closeReason(m, NOW + 60_000)).as("the newest answer 15 s old")
+                .isEqualTo(PolymarketCatalog.REASON_ABSENT);
+    }
+
+    @Test
+    void aFailedPollOrAnAnswerWithTheTokenStartsTheCountAgain() throws Exception {
+        Market m = registry.add(activePm("PM1", "tok1", Category.POLITICS, null, null));
+        Market other = registry.add(activePm("PM2", "tok2", Category.POLITICS, null, null));
+        PolymarketCatalog catalog = catalog();
+        AtomicLong clock = new AtomicLong(NOW);
+        crowdvsmarket.server.prices.PolymarketPriceSource source = crowdvsmarket.server.prices.PipelineTestSupport
+                .polymarket(clob, new FakeApis.Data(), state, clock::get);
+        crowdvsmarket.server.prices.PriceSource.Feed feed = source.feeds().get(0);
+        List<Market> markets = List.of(m, other);
+
+        // PM1's token is missing from answers that do have PM2's
+        clob.midpoints.handler = body -> Fixtures.parse("{\"tok2\":\"0.5\"}");
+        for (int i = 0; i < 3; i++) {
+            source.poll(feed, markets);
+            clock.addAndGet(3_000);
+        }
+        assertThat(state.missingAnswers("PM1")).hasValue(3);
+
+        // the CLOB breaks: the poll throws, and what the answers before it said no longer stands
+        clob.midpoints.handler = body -> {
+            throw new IllegalStateException("HTTP 502");
+        };
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> source.poll(feed, markets))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(state.missingSince("PM1")).isEmpty();
+        assertThat(state.missingSince("PM2")).isEmpty();
+
+        // an answer that has none of the tokens is an outage, not a mass closing — and it clears the runs too
+        clob.midpoints.handler = body -> Fixtures.parse("{\"tok2\":\"0.5\"}");
+        source.poll(feed, markets);
+        assertThat(state.missingAnswers("PM1")).hasValue(1);
+        clob.midpoints.handler = body -> Fixtures.parse("{}");
+        source.poll(feed, markets);
+        assertThat(state.missingSince("PM1")).isEmpty();
+
+        // the token is back for one answer: the run is over
+        clob.midpoints.handler = body -> Fixtures.parse("{\"tok2\":\"0.5\"}");
+        source.poll(feed, markets);
+        source.poll(feed, markets);
+        clob.midpoints.handler = body -> Fixtures.parse("{\"tok1\":\"0.4\",\"tok2\":\"0.5\"}");
+        source.poll(feed, markets);
+        assertThat(state.missingSince("PM1")).isEmpty();
+        assertThat(catalog.watch(clock.addAndGet(120_000))).isZero();
+    }
+
     @Test
     void aTokenAbsentFromMidpointsForSixtySecondsClosesTheMarket() {
         Market m = registry.add(activePm("PM1", "tok1", Category.POLITICS, null, null));
         PolymarketCatalog catalog = catalog();
 
-        state.reportMissing("PM1", NOW);
+        missingRun(state, "PM1", NOW, NOW + 57_000); // the polls of 0 s, 28.5 s and 57 s all lacked the token
         assertThat(catalog.closeReason(m, NOW + 59_999)).isNull();
         assertThat(catalog.closeReason(m, NOW + 60_000)).isEqualTo(PolymarketCatalog.REASON_ABSENT);
         assertThat(catalog.watch(NOW + 60_000)).isEqualTo(1);
@@ -555,7 +689,10 @@ class PolymarketCatalogTest {
                         .toList());
         for (String id : activeIds(Category.POLITICS)) {
             assertThat(store.size(id)).as(id).isPositive();
-            assertThat(store.last(id).orElseThrow().atMs()).as(id).isLessThanOrEqualTo(NOW);
+            // a seeded point is no live tick: no quote before the first poll, and nothing after "now"
+            assertThat(store.last(id)).as(id).isEmpty();
+            List<crowdvsmarket.server.prices.PricePoint> seeded = store.series(id, 0, Long.MAX_VALUE);
+            assertThat(seeded.get(seeded.size() - 1).atMs()).as(id).isLessThanOrEqualTo(NOW);
         }
     }
 

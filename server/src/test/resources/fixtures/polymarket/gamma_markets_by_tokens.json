@@ -45,9 +45,17 @@
      "score": "1-2",
      "elapsed": "",
      "negRisk": true,
-     "volume24hr": 2939987.554724998
+     "volume24hr": 2939987.554724998,
+     "series": [
+      {
+       "slug": "soccer-unl",
+       "title": "UEFA Nations League"
+      }
+     ],
+     "ticker": "unl-den-prt-2026-10-01"
     }
-   ]
+   ],
+   "groupItemTitle": "Portugal"
   },
   {
    "id": "5140154",
@@ -95,9 +103,17 @@
      "period": "3/3",
      "score": "000-000|2-1|Bo3",
      "negRisk": false,
-     "volume24hr": 3613436.8294620006
+     "volume24hr": 3613436.8294620006,
+     "series": [
+      {
+       "slug": "dota-2",
+       "title": "Dota 2"
+      }
+     ],
+     "ticker": "dota2-aur1-liquid-2026-10-01"
     }
-   ]
+   ],
+   "groupItemTitle": "Match Winner"
   }
  ]
 }

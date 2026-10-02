@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 import org.jboss.logging.Logger;
@@ -24,6 +25,20 @@ import org.jboss.logging.Logger;
  * stored. The snapshot row is written after the memory is updated and its failure only logged: a
  * database hiccup costs the restart recovery of that poll, never the live price.
  *
+ * <p><b>Only a poll makes a quote.</b> The ring also holds ticks that are no poll's answer — history
+ * merged into a hole or before the first poll ({@link TickRing#HISTORY}), the price of a quiet asset
+ * carried across a hole ({@link TickRing#CARRIED}), and the boundary price a settled round pinned
+ * ({@link TickRing#PIN}) — and they are all kept out of what {@link #last} answers, so none of them can make a
+ * stale price look fresh to a bot or a bet slip; a pin is also kept out of {@link #series}, and every kind
+ * that is a copy knows the real observation behind it ({@link TickRing.Window}), which is what a settlement
+ * reports as the time its price came from.
+ *
+ * <p><b>Nothing is merged behind a boundary a round settled on.</b> {@link #pinBoundary} remembers, per
+ * market, the latest boundary pinned in this process, and every merge ({@link #mergeHistory},
+ * {@link #mergeCarried}, {@link #seedHistory}, {@link #fillHoles}) drops the points at or before it: whatever
+ * happens to the ticks afterwards, a price a settled round used stays the price there (Р-40). A restart
+ * forgets the pins; the next opening price then comes from the persisted close of the previous round (core).
+ *
  * <p>Besides the ticks the store remembers, per market, which feed delivered them (the staleness
  * and gap limits are the feed's) and the 24-hour change the source reported.
  */
@@ -39,6 +54,7 @@ public class TickStore {
     private final ConcurrentHashMap<String, TickRing> rings = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> feedOf = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Double> change24h = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> latestPinMs = new ConcurrentHashMap<>();
 
     @Inject
     public TickStore(SnapshotStore snapshots, PricesConfig config) {
@@ -53,7 +69,7 @@ public class TickStore {
     }
 
     /**
-     * Stores one poll of {@code source} (a feed id): each price becomes a tick of its market at
+     * Stores one poll of {@code source} (a feed id): each price becomes a live tick of its market at
      * {@code atMs}, and one row {@code (source, atMs, prices)} goes to {@code price_snapshots}.
      */
     public void append(String source, long atMs, Map<String, BigDecimal> prices) {
@@ -81,7 +97,7 @@ public class TickStore {
         }
     }
 
-    /** Rebuilds the rings from the table: every row of the last {@code retention}; returns the row count. */
+    /** Rebuilds the rings from the table (live ticks): every row of the last {@code retention}; returns the row count. */
     public int restore() {
         long cutoff = clock.getAsLong() - retentionMs;
         int rows = snapshots.replaySince(cutoff, snapshot -> {
@@ -113,20 +129,20 @@ public class TickStore {
         LOG.debugf("price buffer pruned: %d tick(s), %d snapshot row(s)", ticks, rows);
     }
 
-    /** The newest tick of the market. */
+    /** The newest <i>live</i> tick of the market: what a source last said, never a history point, a carry or a pin. */
     public Optional<PricePoint> last(String marketId) {
         TickRing ring = rings.get(marketId);
-        long[] last = ring == null ? null : ring.last();
+        long[] last = ring == null ? null : ring.lastLive();
         return last == null ? Optional.empty() : Optional.of(point(last[0], last[1]));
     }
 
-    /** Ticks with {@code fromMs <= atMs < toMs}, oldest first. */
+    /** Ticks with {@code fromMs <= atMs < toMs}, oldest first — live, history and carried ones, not the pins. */
     public List<PricePoint> series(String marketId, long fromMs, long toMs) {
         TickRing ring = rings.get(marketId);
         if (ring == null) {
             return List.of();
         }
-        TickRing.Window w = ring.range(fromMs, toMs);
+        TickRing.Window w = ring.range(fromMs, toMs, false);
         List<PricePoint> out = new ArrayList<>(w.atMs().length);
         for (int i = 0; i < w.atMs().length; i++) {
             out.add(point(w.atMs()[i], w.px()[i]));
@@ -134,17 +150,37 @@ public class TickStore {
         return out;
     }
 
-    /** How many ticks the market holds; for tests and diagnostics. */
+    /** How many ticks (of any kind) the market holds; for tests and diagnostics. */
     public int size(String marketId) {
         TickRing ring = rings.get(marketId);
         return ring == null ? 0 : ring.size();
     }
 
-    /** The last tick at or before {@code atMs}, however old: the raw material of a boundary price. */
+    /** The last tick (of any kind) at or before {@code atMs}, however old: the raw material of a boundary price. */
     public Optional<PricePoint> floor(String marketId, long atMs) {
         TickRing ring = rings.get(marketId);
         long[] tick = ring == null ? null : ring.floor(atMs);
         return tick == null ? Optional.empty() : Optional.of(point(tick[0], tick[1]));
+    }
+
+    /** True when a tick (of any kind) at or before {@code atMs} is at most {@code staleMs} older than it. */
+    boolean hasTickFreshAt(String marketId, long atMs, long staleMs) {
+        TickRing ring = rings.get(marketId);
+        long[] tick = ring == null ? null : ring.floor(atMs);
+        return tick != null && atMs - tick[0] <= staleMs;
+    }
+
+    /** The time of the market's oldest live tick, empty when it has none (no poll has answered for it yet). */
+    OptionalLong oldestLiveAt(String marketId) {
+        TickRing ring = rings.get(marketId);
+        long at = ring == null ? Long.MAX_VALUE : ring.oldestLiveAt();
+        return at == Long.MAX_VALUE ? OptionalLong.empty() : OptionalLong.of(at);
+    }
+
+    /** The latest boundary a settled round pinned for the market in this process, empty when none did. */
+    OptionalLong latestPin(String marketId) {
+        Long pin = latestPinMs.get(marketId);
+        return pin == null ? OptionalLong.empty() : OptionalLong.of(pin);
     }
 
     /** The feed that delivered this market's latest tick. */
@@ -166,15 +202,28 @@ public class TickStore {
     }
 
     /**
-     * Adds history to the market's ring without overwriting a tick that is already there, and
-     * without a snapshot row — a restart that needs it again asks the source again. Returns how many
-     * were added.
+     * Adds history to the market's ring without overwriting a tick that is already there, without a
+     * snapshot row — a restart that needs it again asks the source again — and never at or before the
+     * latest boundary a round pinned. Returns how many points were added.
      */
     int mergeHistory(String marketId, List<PricePoint> points) {
+        return mergeHistory(marketId, points, false);
+    }
+
+    /**
+     * The same, and with {@code preHistoryOnly} only points older than every live tick of the market: the
+     * rule for a source whose history is another kind of number than its ticks (Hyperliquid's candles are
+     * trade prices, its ticks are mark prices) — its history may be the past of the first poll, never a
+     * stretch between two polls (see {@code HyperliquidPriceSource}).
+     */
+    int mergeHistory(String marketId, List<PricePoint> points, boolean preHistoryOnly) {
         TickRing ring = ring(marketId);
+        long floorMs = latestPinMs.getOrDefault(marketId, Long.MIN_VALUE);
+        long before = preHistoryOnly ? ring.oldestLiveAt() : Long.MAX_VALUE;
         int added = 0;
         for (PricePoint p : points) {
-            if (Px.isStorable(p.raw()) && ring.insertIfAbsent(p.atMs(), Px.encode(p.raw()))) {
+            if (p.atMs() > floorMs && p.atMs() < before && Px.isStorable(p.raw())
+                    && ring.insertIfAbsent(p.atMs(), Px.encode(p.raw()), TickRing.HISTORY)) {
                 added++;
             }
         }
@@ -182,21 +231,31 @@ public class TickStore {
     }
 
     /**
-     * Seeds a market's ring with history older than every tick it already holds (the live ticks are
-     * authoritative: nothing is merged at or after the oldest of them), and remembers which feed
-     * prices the market until a live tick says so itself. Like {@link #mergeHistory} it never
-     * overwrites a tick and writes no snapshot row. Returns how many points were added.
+     * Adds the carried points of a quiet hole ({@link TickRing#CARRIED}); like a merge it never overwrites a
+     * tick, writes no row and stays behind the latest pinned boundary. Returns how many were added.
      */
-    int seedHistory(String marketId, String feedId, List<PricePoint> points) {
+    int mergeCarried(String marketId, List<PricePoint> points) {
         TickRing ring = ring(marketId);
-        long[] oldest = ring.first();
-        long before = oldest == null ? Long.MAX_VALUE : oldest[0];
+        long floorMs = latestPinMs.getOrDefault(marketId, Long.MIN_VALUE);
         int added = 0;
         for (PricePoint p : points) {
-            if (p.atMs() < before && Px.isStorable(p.raw()) && ring.insertIfAbsent(p.atMs(), Px.encode(p.raw()))) {
+            if (p.atMs() > floorMs && Px.isStorable(p.raw())
+                    && ring.insertIfAbsent(p.atMs(), Px.encode(p.raw()), TickRing.CARRIED)) {
                 added++;
             }
         }
+        return added;
+    }
+
+    /**
+     * Seeds a market's ring with history older than every live tick it holds (the live ticks are
+     * authoritative: nothing is merged at or after the oldest of them) and later than the latest pinned
+     * boundary, and remembers which feed prices the market until a live tick says so itself. Like
+     * {@link #mergeHistory} it never overwrites a tick and writes no snapshot row. Returns how many points
+     * were added.
+     */
+    int seedHistory(String marketId, String feedId, List<PricePoint> points) {
+        int added = mergeHistory(marketId, points, true);
         if (added > 0) {
             feedOf.putIfAbsent(marketId, feedId);
         }
@@ -204,12 +263,53 @@ public class TickStore {
     }
 
     /**
-     * Makes {@code px} (a {@link Px} price) the tick at exactly {@code atMs} unless a tick is already
-     * there: the boundary price of a settled round, fixed (see {@link LiveMarketPrices#resolve}). Like a
-     * merge it writes no snapshot row and never replaces a tick.
+     * History into the holes of the ring — for a source whose history is the same kind of number as its
+     * ticks: a point is added when it comes before the first tick, or when the two ticks around it (as they
+     * were when the call began) are more than {@code maxGapMs} apart. Live ticks stay as they are and the
+     * points between close ticks are left out, so a seed never interleaves with a feed that is working;
+     * nothing is added after the newest tick (a poll is about to be there). Never overwrites, writes no row,
+     * stays behind the latest pin. Returns how many points were added.
+     */
+    int fillHoles(String marketId, List<PricePoint> points, long maxGapMs) {
+        TickRing ring = ring(marketId);
+        long floorMs = latestPinMs.getOrDefault(marketId, Long.MIN_VALUE);
+        List<PricePoint> accepted = new ArrayList<>();
+        for (PricePoint p : points) {
+            if (p.atMs() <= floorMs || !Px.isStorable(p.raw())) {
+                continue;
+            }
+            long[] left = ring.floor(p.atMs());
+            long[] right = ring.after(p.atMs());
+            boolean inHole;
+            if (left != null && left[0] == p.atMs()) {
+                inHole = false; // a tick is there: history never overwrites it
+            } else if (left == null) {
+                inHole = true; // before the first tick
+            } else {
+                inHole = right != null && right[0] - left[0] > maxGapMs;
+            }
+            if (inHole) {
+                accepted.add(p);
+            }
+        }
+        int added = 0;
+        for (PricePoint p : accepted) {
+            if (ring.insertIfAbsent(p.atMs(), Px.encode(p.raw()), TickRing.HISTORY)) {
+                added++;
+            }
+        }
+        return added;
+    }
+
+    /**
+     * Makes {@code px} (a {@link Px} price) a {@link TickRing#PIN} at exactly {@code atMs} unless a tick is
+     * already there: the boundary price of a settled round, fixed (see {@link LiveMarketPrices#resolve}).
+     * Like a merge it writes no snapshot row and never replaces a tick; it also moves the latest pinned
+     * boundary of the market forward, behind which nothing is merged any more.
      */
     void pinBoundary(String marketId, long atMs, long px) {
-        ring(marketId).insertIfAbsent(atMs, px);
+        ring(marketId).insertIfAbsent(atMs, px, TickRing.PIN);
+        latestPinMs.merge(marketId, atMs, Math::max);
     }
 
     /** The ticks of a round window, see {@link TickRing#window}; empty when the market has no ring. */
@@ -222,6 +322,12 @@ public class TickStore {
     long[] tickAfter(String marketId, long atMs) {
         TickRing ring = rings.get(marketId);
         return ring == null ? null : ring.after(atMs);
+    }
+
+    /** Whether the first tick after {@code atMs} is a live one (false when there is none). */
+    boolean liveTickAfter(String marketId, long atMs) {
+        TickRing ring = rings.get(marketId);
+        return ring != null && ring.kindAfter(atMs) == TickRing.LIVE;
     }
 
     private TickRing ring(String marketId) {

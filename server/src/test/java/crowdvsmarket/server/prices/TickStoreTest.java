@@ -95,7 +95,7 @@ class TickStoreTest {
     }
 
     @Test
-    void pinBoundaryMakesATickAtExactlyTheTimeUnlessOneIsThereAndWritesNoRow() {
+    void pinBoundaryMakesAPinAtExactlyTheTimeUnlessATickIsThereAndWritesNoRow() {
         store.append("hyperliquid", T0, prices("BTC", "84000"));
         int rows = snapshots.rows.size();
 
@@ -103,10 +103,118 @@ class TickStoreTest {
         store.pinBoundary("BTC", T0, Px.encode(new BigDecimal("1"))); // a tick is there: the pin yields to it
         store.pinBoundary("ETH", T0, Px.encode(new BigDecimal("2697"))); // a market with no ring yet gets one
 
-        assertThat(store.series("BTC", 0, Long.MAX_VALUE)).extracting(PricePoint::atMs).containsExactly(T0, T0 + 10_000);
-        assertThat(store.series("BTC", T0, T0 + 1).get(0).raw()).isEqualByComparingTo("84000");
-        assertThat(store.last("ETH").orElseThrow().raw()).isEqualByComparingTo("2697");
+        // a pin is a price the ring knows (a window sees it) but not a tick: no quote, no chart point (F4)
+        TickRing.Window window = store.window("BTC", T0 - 1, T0 + 20_000);
+        assertThat(window.atMs()).containsExactly(T0, T0 + 10_000);
+        assertThat(window.px()).containsExactly(Px.encode(new BigDecimal("84000")), Px.encode(new BigDecimal("84000")));
+        assertThat(window.kind()).containsExactly(TickRing.LIVE, TickRing.PIN);
+        assertThat(store.series("BTC", 0, Long.MAX_VALUE)).extracting(PricePoint::atMs).containsExactly(T0);
+        assertThat(store.last("BTC").orElseThrow().atMs()).isEqualTo(T0);
+        assertThat(store.last("ETH")).isEmpty();
+        assertThat(store.series("ETH", 0, Long.MAX_VALUE)).isEmpty();
+        assertThat(store.window("ETH", T0 - 1, T0).px()).containsExactly(Px.encode(new BigDecimal("2697")));
+        assertThat(store.latestPin("BTC")).hasValue(T0 + 10_000);
+        assertThat(store.latestPin("ETH")).hasValue(T0);
+        assertThat(store.latestPin("SOL")).isEmpty();
         assertThat(snapshots.rows).hasSize(rows); // memory only, like a history merge
+    }
+
+    private static PricePoint pt(long at, String price) {
+        return new PricePoint(at, new BigDecimal(price));
+    }
+
+    @Test
+    void nothingIsMergedAtOrBeforeTheLatestBoundaryARoundSettledOn() {
+        // F3: in this process a history merge can never start before a boundary the pipeline itself pinned
+        store.append("hyperliquid", T0, prices("BTC", "100"));
+        store.append("hyperliquid", T0 + 120_000, prices("BTC", "100"));
+        store.pinBoundary("BTC", T0 + 60_000, Px.encode(new BigDecimal("100"))); // a round settled on this boundary
+
+        int filled = store.fillHoles("BTC", List.of(pt(T0 + 5_000, "99"), pt(T0 + 100_000, "103")), 30_000);
+        int history = store.mergeHistory("BTC", List.of(pt(T0 + 10_000, "99"), pt(T0 + 60_000, "98"),
+                pt(T0 + 60_001, "101"), pt(T0 + 90_000, "102")));
+        int carried = store.mergeCarried("BTC", List.of(pt(T0 + 20_000, "100"), pt(T0 + 70_000, "100")));
+
+        assertThat(filled).isEqualTo(1); // 100 000; 5 000 is before the pinned boundary
+        assertThat(history).isEqualTo(2); // 60 001 and 90 000: nothing at or before 60 000
+        assertThat(carried).isEqualTo(1); // 70 000
+        assertThat(store.series("BTC", T0 + 1, T0 + 60_000)).as("what is behind the boundary is as it was").isEmpty();
+        assertThat(store.latestPin("BTC")).hasValue(T0 + 60_000);
+        // a seed too: only older than the live ticks AND later than the pin — which leaves nothing
+        assertThat(store.seedHistory("BTC", "hyperliquid", List.of(pt(T0 - 5_000, "90")))).isZero();
+        // another market has no pin and is not affected
+        assertThat(store.mergeHistory("ETH", List.of(pt(T0, "1")))).isEqualTo(1);
+    }
+
+    @Test
+    void aPinAtAnExistingTickStillCountsAsThePinnedBoundary() {
+        store.append("hyperliquid", T0, prices("BTC", "100"));
+
+        store.pinBoundary("BTC", T0, Px.encode(new BigDecimal("100"))); // the tick is there: the pin yields to it
+
+        assertThat(store.latestPin("BTC")).hasValue(T0);
+        assertThat(store.mergeHistory("BTC", List.of(pt(T0 - 1, "99")))).isZero();
+    }
+
+    @Test
+    void lastAndTheOldestLiveTickAreThePollsAndNothingElse() {
+        store.mergeHistory("BTC", List.of(pt(T0 - 20_000, "99"), pt(T0 - 10_000, "99.5")));
+        assertThat(store.last("BTC")).isEmpty();
+        assertThat(store.oldestLiveAt("BTC")).isEmpty();
+        assertThat(store.size("BTC")).isEqualTo(2);
+
+        store.append("hyperliquid", T0, prices("BTC", "100"));
+        store.mergeCarried("BTC", List.of(pt(T0 + 10_000, "100"), pt(T0 + 20_000, "100")));
+        store.pinBoundary("BTC", T0 + 30_000, Px.encode(new BigDecimal("100")));
+
+        assertThat(store.last("BTC").orElseThrow().atMs()).isEqualTo(T0); // a quote is a poll, however fresh a copy looks
+        assertThat(store.oldestLiveAt("BTC")).hasValue(T0);
+        assertThat(store.series("BTC", 0, Long.MAX_VALUE)).extracting(PricePoint::atMs)
+                .containsExactly(T0 - 20_000, T0 - 10_000, T0, T0 + 10_000, T0 + 20_000); // no pin in the chart
+    }
+
+    @Test
+    void historyOnlyBeforeTheOldestLiveTickWhenThatIsAskedFor() {
+        store.append("hyperliquid", T0, prices("BTC", "100"));
+        store.append("hyperliquid", T0 + 60_000, prices("BTC", "100"));
+        List<PricePoint> points = List.of(pt(T0 - 10_000, "99"), pt(T0 + 30_000, "98"), pt(T0 + 90_000, "97"));
+
+        assertThat(store.mergeHistory("BTC", points, true)).isEqualTo(1); // the past of the first poll only
+        assertThat(store.series("BTC", T0 - 10_000, T0 + 100_000)).extracting(PricePoint::atMs)
+                .containsExactly(T0 - 10_000, T0, T0 + 60_000);
+        assertThat(store.mergeHistory("BTC", points, false)).isEqualTo(2); // a source of the same kind fills any hole
+    }
+
+    @Test
+    void fillHolesTakesPointsBeforeTheFirstTickAndInsideGapsOnlyAndNeverAfterTheNewestTickOrBetweenCloseOnes() {
+        store.append("hyperliquid", T0, prices("BTC", "100"));
+        store.append("hyperliquid", T0 + 10_000, prices("BTC", "100")); // 10 s apart: no hole
+        store.append("hyperliquid", T0 + 100_000, prices("BTC", "101")); // 90 s apart: a hole (the limit is 30 s)
+        List<PricePoint> points = List.of(pt(T0 - 60_000, "99"), pt(T0 + 5_000, "99.5"), pt(T0 + 10_000, "1"),
+                pt(T0 + 40_000, "100.2"), pt(T0 + 70_000, "100.4"), pt(T0 + 100_000, "2"), pt(T0 + 130_000, "103"));
+
+        int added = store.fillHoles("BTC", points, 30_000);
+
+        assertThat(added).isEqualTo(3); // before the first tick, and the two inside the 90 s hole
+        assertThat(store.series("BTC", T0 - 60_000, T0 + 200_000)).extracting(PricePoint::atMs)
+                .containsExactly(T0 - 60_000, T0, T0 + 10_000, T0 + 40_000, T0 + 70_000, T0 + 100_000);
+        // the live ticks are what they were, and a second call adds nothing more
+        assertThat(store.series("BTC", T0 + 10_000, T0 + 10_001).get(0).raw()).isEqualByComparingTo("100");
+        assertThat(store.fillHoles("BTC", points, 30_000)).isZero();
+        // an empty ring takes everything (nothing before the first tick, nothing after the newest)
+        assertThat(store.fillHoles("ETH", List.of(pt(T0, "1"), pt(T0 + 1_000, "2")), 30_000)).isEqualTo(2);
+    }
+
+    @Test
+    void aTickIsFreshAtATimeWhenOneOfAnyKindIsNotOlderThanTheLimit() {
+        store.append("hyperliquid", T0, prices("BTC", "100"));
+        store.pinBoundary("BTC", T0 + 60_000, Px.encode(new BigDecimal("100")));
+
+        assertThat(store.hasTickFreshAt("BTC", T0 + 15_000, 15_000)).isTrue();
+        assertThat(store.hasTickFreshAt("BTC", T0 + 15_001, 15_000)).isFalse();
+        assertThat(store.hasTickFreshAt("BTC", T0 + 60_000, 15_000)).isTrue(); // a pin is a price at its time
+        assertThat(store.hasTickFreshAt("BTC", T0 - 1, 15_000)).isFalse(); // nothing at or before
+        assertThat(store.hasTickFreshAt("ETH", T0, 15_000)).isFalse();
     }
 
     @Test

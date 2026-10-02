@@ -20,6 +20,14 @@ import crowdvsmarket.server.config.GameMode;
  * @param liveMode          {@code herd.mode=live}; in replay mode none of the pipeline runs
  * @param source            {@code herd.prices.source}: real sources or the deterministic walk
  * @param dailyRoundMs      length of the DAILY series round; the tick buffer covers twice that
+ * @param quietCarryMaxMs   {@code herd.prices.quiet-carry-max-ms}: the longest hole across which a quiet asset's
+ *                          last live price is carried (see {@link LiveMarketPrices}); a longer one is no flat line
+ * @param hyperliquidSeedBudgetPerMinute {@code herd.prices.hyperliquid.seed-budget-per-minute}: how much of
+ *                          Hyperliquid's 1200 weight a minute {@link HistorySeeder} may spend on seeding in
+ *                          one minute (the rest is polling, the catalog and settlement backfills)
+ * @param requireMinuteAlignedRounds {@code herd.prices.require-minute-aligned-rounds}: with real sources the
+ *                          server refuses to start unless every round boundary is on a whole minute
+ *                          ({@link RoundAlignmentCheck}); {@code false} only warns
  */
 public record PricesConfig(
         boolean liveMode,
@@ -38,7 +46,10 @@ public record PricesConfig(
         long syntheticMaxGapMs,
         long backfillCooldownMs,
         int connectTimeoutMs,
-        int readTimeoutMs) {
+        int readTimeoutMs,
+        long quietCarryMaxMs,
+        int hyperliquidSeedBudgetPerMinute,
+        boolean requireMinuteAlignedRounds) {
 
     /** {@code herd.prices.source}: {@code live} polls Hyperliquid and Polymarket,
      *  {@code synthetic} is the offline walk for CI, e2e and work without a network (Т-12). */
@@ -52,6 +63,19 @@ public record PricesConfig(
                 throw new IllegalArgumentException("herd.prices.source must be live or synthetic, got '" + raw + "'", e);
             }
         }
+    }
+
+    /** The settings that existed before the quiet-carry cap, the seed budget and the alignment check, with their defaults for those. */
+    public PricesConfig(boolean liveMode, SourceKind source, long dailyRoundMs, String hyperliquidUrl,
+                        String polymarketClobUrl, String polymarketGammaUrl, String polymarketDataUrl,
+                        long hyperliquidStaleMs, long hyperliquidXyzStaleMs, long hyperliquidMaxGapMs,
+                        long polymarketStaleMs, long polymarketMaxGapMs, long syntheticStaleMs, long syntheticMaxGapMs,
+                        long backfillCooldownMs, int connectTimeoutMs, int readTimeoutMs) {
+        this(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl, polymarketDataUrl,
+                hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs,
+                syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs,
+                Long.parseLong(DEFAULT_QUIET_CARRY_MAX_MS), Integer.parseInt(DEFAULT_HYPERLIQUID_SEED_BUDGET),
+                Boolean.parseBoolean(DEFAULT_REQUIRE_ALIGNED_ROUNDS));
     }
 
     // Defaults live here, as compile-time constants, so the @ConfigProperty annotations in the
@@ -74,6 +98,11 @@ public record PricesConfig(
     /** Connect 3 s, read 5 s: {@code resolve} blocks on these (markets_architecture.md §3.2). */
     public static final String DEFAULT_CONNECT_TIMEOUT_MS = "3000";
     public static final String DEFAULT_READ_TIMEOUT_MS = "5000";
+    /** Ten minutes: a flat line across a longer outage is more than a quiet asset (предложение, same as Polymarket's bucket carry). */
+    public static final String DEFAULT_QUIET_CARRY_MAX_MS = "600000";
+    /** 1200 a minute − 600 polling − 40 catalog = 560 spare; seeds may take 260 of it, so the first minute stays near 900 (see {@link HistorySeeder}). */
+    public static final String DEFAULT_HYPERLIQUID_SEED_BUDGET = "260";
+    public static final String DEFAULT_REQUIRE_ALIGNED_ROUNDS = "true";
 
     /** The tick buffer keeps 10 minutes more than two DAILY rounds (§3.2 rule 2). */
     public static final long RETENTION_EXTRA_MS = 600_000L;
@@ -87,7 +116,8 @@ public record PricesConfig(
                 Long.parseLong(DEFAULT_POLYMARKET_STALE_MS), Long.parseLong(DEFAULT_POLYMARKET_MAX_GAP_MS),
                 Long.parseLong(DEFAULT_SYNTHETIC_STALE_MS), Long.parseLong(DEFAULT_SYNTHETIC_MAX_GAP_MS),
                 Long.parseLong(DEFAULT_BACKFILL_COOLDOWN_MS), Integer.parseInt(DEFAULT_CONNECT_TIMEOUT_MS),
-                Integer.parseInt(DEFAULT_READ_TIMEOUT_MS));
+                Integer.parseInt(DEFAULT_READ_TIMEOUT_MS), Long.parseLong(DEFAULT_QUIET_CARRY_MAX_MS),
+                Integer.parseInt(DEFAULT_HYPERLIQUID_SEED_BUDGET), Boolean.parseBoolean(DEFAULT_REQUIRE_ALIGNED_ROUNDS));
     }
 
     /** The same settings with another mode and source. */
@@ -95,14 +125,39 @@ public record PricesConfig(
         return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
-                readTimeoutMs);
+                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds);
     }
 
     /** The same settings with other base URLs and timeouts — for a client talking to a local test server. */
     public PricesConfig withEndpoints(String baseUrl, int connectTimeoutMs, int readTimeoutMs) {
         return new PricesConfig(liveMode, source, dailyRoundMs, baseUrl, baseUrl, baseUrl, baseUrl, hyperliquidStaleMs,
                 hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs, syntheticStaleMs,
-                syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs);
+                syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs, quietCarryMaxMs,
+                hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds);
+    }
+
+    /** The same settings with another longest quiet carry. */
+    public PricesConfig withQuietCarryMaxMs(long maxMs) {
+        return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
+                polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
+                polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
+                readTimeoutMs, maxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds);
+    }
+
+    /** The same settings with another seed budget. */
+    public PricesConfig withHyperliquidSeedBudget(int weightPerMinute) {
+        return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
+                polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
+                polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
+                readTimeoutMs, quietCarryMaxMs, weightPerMinute, requireMinuteAlignedRounds);
+    }
+
+    /** The same settings with another daily round — for the budget arithmetic of a seed. */
+    public PricesConfig withDailyRoundMs(long dailyMs) {
+        return new PricesConfig(liveMode, source, dailyMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
+                polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
+                polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
+                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds);
     }
 
     /** {@code herd.mode} text → {@code liveMode}, with the same parser the rest of the server uses. */

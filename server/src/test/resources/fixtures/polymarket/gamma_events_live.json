@@ -61,7 +61,8 @@
      "sportsMarketType": "moneyline",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "Denmark"
     },
     {
      "id": "4678640",
@@ -91,7 +92,8 @@
      "sportsMarketType": "moneyline",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "Draw (Denmark vs. Portugal)"
     },
     {
      "id": "4678642",
@@ -121,9 +123,21 @@
      "sportsMarketType": "moneyline",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "Portugal"
     }
-   ]
+   ],
+   "series": [
+    {
+     "slug": "soccer-unl",
+     "title": "UEFA Nations League"
+    }
+   ],
+   "sport": {
+    "name": "UEFA Nations League",
+    "sport": "unl"
+   },
+   "ticker": "unl-den-prt-2026-10-01"
   },
   {
    "id": "1042356",
@@ -186,7 +200,8 @@
      "sportsMarketType": "moneyline",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "Wales"
     },
     {
      "id": "4678629",
@@ -216,7 +231,8 @@
      "sportsMarketType": "moneyline",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "Draw (Wales vs. Norway)"
     },
     {
      "id": "4678632",
@@ -246,9 +262,21 @@
      "sportsMarketType": "moneyline",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "Norway"
     }
-   ]
+   ],
+   "series": [
+    {
+     "slug": "soccer-unl",
+     "title": "UEFA Nations League"
+    }
+   ],
+   "sport": {
+    "name": "UEFA Nations League",
+    "sport": "unl"
+   },
+   "ticker": "unl-wal-nor-2026-10-01"
   },
   {
    "id": "1038938",
@@ -310,7 +338,8 @@
      "sportsMarketType": "child_moneyline",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "Map 1 Winner"
     },
     {
      "id": "4642061",
@@ -340,7 +369,8 @@
      "sportsMarketType": "child_moneyline",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "Map 2 Winner"
     },
     {
      "id": "4642062",
@@ -370,7 +400,8 @@
      "sportsMarketType": "moneyline",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "Match Winner"
     },
     {
      "id": "4642063",
@@ -400,9 +431,21 @@
      "sportsMarketType": "totals",
      "secondsDelay": 1,
      "clearBookOnStart": true,
-     "updatedAt": "2026-10-01T19:41:22.86784Z"
+     "updatedAt": "2026-10-01T19:41:22.86784Z",
+     "groupItemTitle": "O/U 2.5 Games"
     }
-   ]
+   ],
+   "series": [
+    {
+     "slug": "counter-strike",
+     "title": "Counter Strike"
+    }
+   ],
+   "sport": {
+    "name": "CS2",
+    "sport": "cs2"
+   },
+   "ticker": "cs2-faze-nemi1-2026-10-01"
   }
  ],
  "next_cursor": null

@@ -33,9 +33,17 @@
      "image": "https://polymarket-upload.s3.us-east-2.amazonaws.com/will-the-us-invade-iran-in-2025-0Eh3J0ku_Fbj.jpg",
      "icon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/will-the-us-invade-iran-in-2025-0Eh3J0ku_Fbj.jpg",
      "endDate": "2027-01-01T04:59:00Z",
-     "volume24hr": 497261.91215800017
+     "volume24hr": 497261.91215800017,
+     "series": [
+      {
+       "slug": "us-to-invade-iran",
+       "title": "US to invade Iran"
+      }
+     ],
+     "ticker": "will-the-us-invade-iran-before-2027"
     }
-   ]
+   ],
+   "groupItemTitle": ""
   },
   {
    "id": "562831",
@@ -72,9 +80,11 @@
      "startTime": "2026-11-03T12:00:00Z",
      "endDate": "2026-11-04T04:59:00Z",
      "negRisk": true,
-     "volume24hr": 463097.872312
+     "volume24hr": 463097.872312,
+     "ticker": "balance-of-power-2026-midterms"
     }
-   ]
+   ],
+   "groupItemTitle": "Republicans Sweep"
   },
   {
    "id": "601830",
@@ -111,9 +121,11 @@
      "startTime": "2026-10-04T12:00:00Z",
      "endDate": "2026-10-05T03:59:00Z",
      "negRisk": true,
-     "volume24hr": 1478250.049133
+     "volume24hr": 1478250.049133,
+     "ticker": "brazil-presidential-election"
     }
-   ]
+   ],
+   "groupItemTitle": "Geraldo Alckmin"
   },
   {
    "id": "601826",
@@ -151,9 +163,11 @@
      "startTime": "2026-10-04T12:00:00Z",
      "endDate": "2026-10-05T03:59:00Z",
      "negRisk": true,
-     "volume24hr": 1478250.049133
+     "volume24hr": 1478250.049133,
+     "ticker": "brazil-presidential-election"
     }
-   ]
+   ],
+   "groupItemTitle": "Flávio Bolsonaro"
   },
   {
    "id": "601819",
@@ -191,9 +205,11 @@
      "startTime": "2026-10-04T12:00:00Z",
      "endDate": "2026-10-05T03:59:00Z",
      "negRisk": true,
-     "volume24hr": 1478250.049133
+     "volume24hr": 1478250.049133,
+     "ticker": "brazil-presidential-election"
     }
-   ]
+   ],
+   "groupItemTitle": "Luiz Inácio Lula da Silva"
   },
   {
    "id": "601818",
@@ -229,9 +245,11 @@
      "startTime": "2026-10-04T12:00:00Z",
      "endDate": "2026-10-05T03:59:00Z",
      "negRisk": true,
-     "volume24hr": 1478250.049133
+     "volume24hr": 1478250.049133,
+     "ticker": "brazil-presidential-election"
     }
-   ]
+   ],
+   "groupItemTitle": "Tarcisio de Freitas"
   },
   {
    "id": "3128888",
@@ -268,9 +286,11 @@
      "icon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-announces-blockade-on-iran-byptptpt-20260622191049039-hE3ZTZ51JJy3.jpg",
      "endDate": "2027-01-01T04:59:00Z",
      "negRisk": false,
-     "volume24hr": 592347.036904
+     "volume24hr": 592347.036904,
+     "ticker": "us-announces-end-of-iranian-blockade-byptptpt-20260713152715080"
     }
-   ]
+   ],
+   "groupItemTitle": "October 31"
   },
   {
    "id": "601825",
@@ -308,9 +328,11 @@
      "startTime": "2026-10-04T12:00:00Z",
      "endDate": "2026-10-05T03:59:00Z",
      "negRisk": true,
-     "volume24hr": 1478250.049133
+     "volume24hr": 1478250.049133,
+     "ticker": "brazil-presidential-election"
     }
-   ]
+   ],
+   "groupItemTitle": "Renan Santos"
   },
   {
    "id": "4906127",
@@ -347,9 +369,11 @@
      "icon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-announces-blockade-on-iran-byptptpt-20260622191049039-hE3ZTZ51JJy3.jpg",
      "endDate": "2027-01-01T04:59:00Z",
      "negRisk": false,
-     "volume24hr": 592347.036904
+     "volume24hr": 592347.036904,
+     "ticker": "us-announces-end-of-iranian-blockade-byptptpt-20260713152715080"
     }
-   ]
+   ],
+   "groupItemTitle": "October 15"
   },
   {
    "id": "559681",
@@ -385,9 +409,11 @@
      "startTime": "2028-11-07T12:00:00Z",
      "endDate": "2028-11-08T04:59:00Z",
      "negRisk": true,
-     "volume24hr": 384397.26129
+     "volume24hr": 384397.26129,
+     "ticker": "democratic-presidential-nominee-2028"
     }
-   ]
+   ],
+   "groupItemTitle": "LeBron James"
   }
  ],
  "next_cursor": "mY6TmvHKg2Ka8ZHS4wHkfHgzob33d5XIM3b7N3h40Jd7InYiOjEsImsiOiJtYXJrZXRzIiwib2giOiI1NjczMWE5N2U1YzY1ZTk2N2RjZjJkZWE4M2RhOWI4ZjU1ZGRhNTk0NTJmNTI5MDZlZmNiN2JmNDY2Njc1MDBjIiwia2V5cyI6W3sidCI6ImZsb2F0IiwidiI6MTUwMDAwfSx7InQiOiJzdHJpbmciLCJ2IjoiNTU5NjgxIn1dfQ"

@@ -45,9 +45,17 @@
      "score": "1-2",
      "elapsed": "",
      "negRisk": true,
-     "volume24hr": 2939987.554724998
+     "volume24hr": 2939987.554724998,
+     "series": [
+      {
+       "slug": "soccer-unl",
+       "title": "UEFA Nations League"
+      }
+     ],
+     "ticker": "unl-den-prt-2026-10-01"
     }
-   ]
+   ],
+   "groupItemTitle": "Portugal"
   },
   {
    "id": "4678632",
@@ -94,9 +102,17 @@
      "score": "1-1",
      "elapsed": "",
      "negRisk": true,
-     "volume24hr": 1219729.5392089987
+     "volume24hr": 1219729.5392089987,
+     "series": [
+      {
+       "slug": "soccer-unl",
+       "title": "UEFA Nations League"
+      }
+     ],
+     "ticker": "unl-wal-nor-2026-10-01"
     }
-   ]
+   ],
+   "groupItemTitle": "Norway"
   },
   {
    "id": "4678620",
@@ -143,9 +159,17 @@
      "score": "2-0",
      "elapsed": "",
      "negRisk": true,
-     "volume24hr": 1111012.3980310003
+     "volume24hr": 1111012.3980310003,
+     "series": [
+      {
+       "slug": "soccer-unl",
+       "title": "UEFA Nations League"
+      }
+     ],
+     "ticker": "unl-grc-nld-2026-10-01"
     }
-   ]
+   ],
+   "groupItemTitle": "Netherlands"
   },
   {
    "id": "4642062",
@@ -191,9 +215,17 @@
      "period": "1/3",
      "score": "000-000|0-0|Bo3",
      "negRisk": false,
-     "volume24hr": 855544.917087
+     "volume24hr": 855544.917087,
+     "series": [
+      {
+       "slug": "counter-strike",
+       "title": "Counter Strike"
+      }
+     ],
+     "ticker": "cs2-faze-nemi1-2026-10-01"
     }
-   ]
+   ],
+   "groupItemTitle": "Match Winner"
   },
   {
    "id": "3760412",
@@ -235,7 +267,14 @@
      "endDate": "2026-10-02T00:15:00Z",
      "period": "NS",
      "negRisk": false,
-     "volume24hr": 1105903.151888
+     "volume24hr": 1105903.151888,
+     "series": [
+      {
+       "slug": "nfl-2026",
+       "title": "NFL 2026"
+      }
+     ],
+     "ticker": "nfl-pit-cle-2026-10-02"
     }
    ]
   },
@@ -279,7 +318,14 @@
      "startTime": "2026-10-02T00:00:00Z",
      "endDate": "2026-10-09T00:00:00Z",
      "negRisk": false,
-     "volume24hr": 590138.6506199997
+     "volume24hr": 590138.6506199997,
+     "series": [
+      {
+       "slug": "mlb",
+       "title": "MLB"
+      }
+     ],
+     "ticker": "mlb-phi-atl-2026-10-01"
     }
    ]
   },
@@ -315,9 +361,11 @@
      "icon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/uefa-champions-league-2025-26-which-teams-qualify-StbSIjaEx2St.png",
      "endDate": "2027-06-20T03:59:00Z",
      "negRisk": true,
-     "volume24hr": 495623.280058
+     "volume24hr": 495623.280058,
+     "ticker": "uefa-champions-league-2027-champion-20260701202025549"
     }
-   ]
+   ],
+   "groupItemTitle": "Shakhtar Donetsk"
   },
   {
    "id": "4679591",
@@ -364,9 +412,17 @@
      "score": "1-0",
      "elapsed": "",
      "negRisk": false,
-     "volume24hr": 921392.9355069997
+     "volume24hr": 921392.9355069997,
+     "series": [
+      {
+       "slug": "soccer-unl",
+       "title": "UEFA Nations League"
+      }
+     ],
+     "ticker": "unl-ger-ser-2026-10-01-more-markets"
     }
-   ]
+   ],
+   "groupItemTitle": "O/U 3.5"
   },
   {
    "id": "4678603",
@@ -413,9 +469,17 @@
      "score": "0-0",
      "elapsed": "",
      "negRisk": true,
-     "volume24hr": 585811.162254
+     "volume24hr": 585811.162254,
+     "series": [
+      {
+       "slug": "soccer-unl",
+       "title": "UEFA Nations League"
+      }
+     ],
+     "ticker": "unl-aze-lie-2026-10-01"
     }
-   ]
+   ],
+   "groupItemTitle": "Liechtenstein"
   },
   {
    "id": "4678613",
@@ -462,9 +526,17 @@
      "score": "1-0",
      "elapsed": "",
      "negRisk": true,
-     "volume24hr": 554138.6612929999
+     "volume24hr": 554138.6612929999,
+     "series": [
+      {
+       "slug": "soccer-unl",
+       "title": "UEFA Nations League"
+      }
+     ],
+     "ticker": "unl-ger-ser-2026-10-01"
     }
-   ]
+   ],
+   "groupItemTitle": "Germany"
   }
  ],
  "next_cursor": "utr2GsQeH9x6UIlduq4jXQ_ftqQ2BmyI57dexDXjlJh7InYiOjEsImsiOiJtYXJrZXRzIiwib2giOiI1NjczMWE5N2U1YzY1ZTk2N2RjZjJkZWE4M2RhOWI4ZjU1ZGRhNTk0NTJmNTI5MDZlZmNiN2JmNDY2Njc1MDBjIiwia2V5cyI6W3sidCI6ImZsb2F0IiwidiI6Mjk5MDkyLjYwODA3MDk5OTl9LHsidCI6InN0cmluZyIsInYiOiI0Njc4NjEzIn1dfQ"

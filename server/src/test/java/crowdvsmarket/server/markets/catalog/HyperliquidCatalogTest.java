@@ -287,12 +287,19 @@ class HyperliquidCatalogTest {
         return market("ETH");
     }
 
+    /** Three successful answers in a row that say "delisted": the first at {@code firstAt}, the last at {@code lastAt}. */
+    private static void delistedRun(HyperliquidLiveState state, String id, long firstAt, long lastAt) {
+        state.reportDelisted(id, firstAt);
+        state.reportDelisted(id, (firstAt + lastAt) / 2);
+        state.reportDelisted(id, lastAt);
+    }
+
     @Test
     void anAssetTheDexHasReportedDelistedForTenSecondsClosesItsMarketInPlainWords() {
         HyperliquidLiveState state = new HyperliquidLiveState();
         listedEth();
         HyperliquidCatalog catalog = catalog(state);
-        state.reportDelisted("ETH", NOW);
+        delistedRun(state, "ETH", NOW, NOW + 6_000); // the polls of 0, 3 and 6 s
 
         assertThat(catalog.watch(NOW + 9_999)).isZero(); // one odd answer must not close a market
         assertThat(market("ETH").isActive()).isTrue();
@@ -312,9 +319,9 @@ class HyperliquidCatalogTest {
         HyperliquidLiveState state = new HyperliquidLiveState();
         listedEth();
         HyperliquidCatalog catalog = catalog(state);
-        state.reportDelisted("ETH", NOW);
+        delistedRun(state, "ETH", NOW, NOW + 6_000);
         state.reportListed("ETH");
-        state.reportDelisted("ETH", NOW + 8_000);
+        delistedRun(state, "ETH", NOW + 8_000, NOW + 14_000);
 
         assertThat(catalog.watch(NOW + 12_000)).isZero();
         assertThat(catalog.watch(NOW + 18_000)).isEqualTo(1);
@@ -350,7 +357,7 @@ class HyperliquidCatalogTest {
         };
         listedEth();
         HyperliquidCatalog catalog = catalog(state);
-        state.reportDelisted("ETH", NOW - 60_000L);
+        delistedRun(state, "ETH", NOW - 60_000L, NOW - 3_000L);
 
         assertThat(catalog.watch(NOW)).isZero();
         assertThat(market("ETH").isActive()).isTrue();
@@ -387,10 +394,96 @@ class HyperliquidCatalogTest {
     }
 
     @Test
+    void oneAnswerThatSaysDelistedFollowedByPollsThatNeverCameDoesNotCloseTheMarketForGood() {
+        // F7: the wall-clock debounce alone closed ETH ten seconds after ONE answer, whatever happened to the polls
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        listedEth();
+        HyperliquidCatalog catalog = catalog(state);
+        state.reportDelisted("ETH", NOW); // the only answer: afterwards every poll fails (nothing more is reported)
+
+        assertThat(catalog.watch(NOW + 10_000)).isZero();
+        assertThat(catalog.watch(NOW + 60_000)).isZero();
+        assertThat(catalog.watch(NOW + 3_600_000L)).isZero();
+        assertThat(market("ETH").isActive()).isTrue();
+        assertThat(registry.closeReasons).isEmpty();
+    }
+
+    @Test
+    void twoAnswersAreNotEnoughAndAThirdOneIsNeededWithinTheFreshnessLimit() {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        listedEth();
+        HyperliquidCatalog catalog = catalog(state);
+        state.reportDelisted("ETH", NOW);
+        state.reportDelisted("ETH", NOW + 3_000);
+
+        assertThat(catalog.watch(NOW + 12_000)).as("two answers over twelve seconds").isZero();
+        state.reportDelisted("ETH", NOW + 6_000);
+        assertThat(state.delistedAnswers("ETH")).hasValue(3);
+        assertThat(catalog.watch(NOW + 12_000)).as("three, the newest 6 s old").isEqualTo(1);
+    }
+
+    @Test
+    void evidenceThatWentSilentIsNotEnoughEvenWhenItIsOldAndNumerous() {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        listedEth();
+        HyperliquidCatalog catalog = catalog(state);
+        delistedRun(state, "ETH", NOW, NOW + 6_000); // then the polls stopped answering
+
+        // the newest answer is 15 s and 1 ms old: whatever it said, nothing has confirmed it since (the numbers are
+        // written out: a test that adds the constant to itself would follow the constant wherever it goes)
+        assertThat(HyperliquidCatalog.DELISTED_EVIDENCE_MAX_AGE_MS).isEqualTo(15_000L);
+        assertThat(catalog.watch(NOW + 6_000 + 15_001)).isZero();
+        assertThat(market("ETH").isActive()).isTrue();
+        assertThat(catalog.watch(NOW + 6_000 + 15_000)).isEqualTo(1);
+    }
+
+    @Test
+    void aPollThatFailsStartsTheCountAgainSoAClosingNeedsThreeFreshAnswers() throws Exception {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        Market matic = registry.add(new Market("MATIC", MarketKind.PERP, Category.CRYPTO, "MATIC", "Polygon", null, null,
+                "hyperliquid", "MATIC", null, 20, 3, 8, crowdvsmarket.server.markets.MarketStatus.ACTIVE, 0L, null, null,
+                null));
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(NOW);
+        crowdvsmarket.server.prices.HyperliquidPriceSource source = crowdvsmarket.server.prices.PipelineTestSupport
+                .hyperliquid(api, clock::get, state);
+        crowdvsmarket.server.prices.PriceSource.Feed feed = source.feeds().get(0);
+        HyperliquidCatalog catalog = new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state,
+                HistorySeeder.disabled(), clock::get);
+        java.util.function.Function<com.fasterxml.jackson.databind.JsonNode, com.fasterxml.jackson.databind.JsonNode> good =
+                api.info.handler; // the main-dex sample, in which MATIC is delisted
+
+        source.poll(feed, List.of(matic));
+        clock.addAndGet(3_000);
+        source.poll(feed, List.of(matic));
+        assertThat(state.delistedAnswers("MATIC")).hasValue(2);
+
+        api.info.handler = body -> {
+            throw new IllegalStateException("HTTP 502"); // Hyperliquid has a bad minute
+        };
+        clock.addAndGet(3_000);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> source.poll(feed, List.of(matic)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(state.delistedSince("MATIC")).as("a failed poll proves nothing").isEmpty();
+
+        api.info.handler = good;
+        clock.addAndGet(3_000);
+        source.poll(feed, List.of(matic)); // the first answer after the failure: one, not three
+        clock.addAndGet(3_000);
+        assertThat(state.delistedAnswers("MATIC")).hasValue(1);
+        assertThat(catalog.watch(NOW + 60_000L)).as("a minute of wall time is not a minute of answers").isZero();
+        assertThat(market("MATIC").isActive()).isTrue();
+
+        source.poll(feed, List.of(matic));
+        source.poll(feed, List.of(matic)); // three in a row again
+        clock.addAndGet(10_000);
+        assertThat(catalog.watch(clock.get())).isEqualTo(1);
+    }
+
+    @Test
     void theWatchJobDoesNothingOutsideLiveMode() {
         HyperliquidLiveState state = new HyperliquidLiveState();
         listedEth();
-        state.reportDelisted("ETH", NOW - 60_000L);
+        delistedRun(state, "ETH", NOW - 60_000L, NOW - 3_000L);
         CatalogConfig replay = new CatalogConfig(false, false, CatalogConfig.parseNames(CatalogConfig.DEFAULT_CRYPTO),
                 List.of(), List.of(), List.of(), true, 3, 3, 10, true);
 
@@ -422,7 +515,10 @@ class HyperliquidCatalogTest {
                 .containsExactlyInAnyOrder("ETH", "SOL", "xyz:NVDA");
         for (String id : List.of("ETH", "SOL", "xyz_NVDA")) {
             assertThat(store.size(id)).as(id).isPositive();
-            assertThat(store.last(id).orElseThrow().atMs()).as(id).isLessThanOrEqualTo(NOW);
+            // closed candles only: nothing of the minute in progress, and a seeded point is no live tick
+            List<crowdvsmarket.server.prices.PricePoint> seeded = store.series(id, 0, Long.MAX_VALUE);
+            assertThat(seeded.get(seeded.size() - 1).atMs()).as(id).isLessThan(NOW);
+            assertThat(store.last(id)).as(id).isEmpty();
         }
         assertThat(store.size("BTC")).isZero();
     }

@@ -118,27 +118,26 @@ class HistorySeederTest {
     }
 
     private static PricesConfig withDaily(long seconds) {
-        PricesConfig d = PricesConfig.defaults();
-        return new PricesConfig(d.liveMode(), d.source(), seconds * 1000L, d.hyperliquidUrl(), d.polymarketClobUrl(),
-                d.polymarketGammaUrl(), d.polymarketDataUrl(), d.hyperliquidStaleMs(), d.hyperliquidXyzStaleMs(),
-                d.hyperliquidMaxGapMs(), d.polymarketStaleMs(), d.polymarketMaxGapMs(), d.syntheticStaleMs(),
-                d.syntheticMaxGapMs(), d.backfillCooldownMs(), d.connectTimeoutMs(), d.readTimeoutMs());
+        return PricesConfig.defaults().withDailyRoundMs(seconds * 1000L);
     }
 
     // ------------------------------------------------------------------------- what the ring gets
 
     @Test
-    void theHistoryLandsInTheRingAndTheLobbyHasAPriceAndAChartAtOnce() {
+    void theHistoryLandsInTheRingAndTheRoomHasAChartAtOnceButNoQuoteBeforeTheFirstPoll() {
         source.script = (m, from, to) -> every(10_000, from, to, 84_000);
 
         seeder.seed(btc);
 
         assertThat(store.size("BTC")).isEqualTo(91); // 15 minutes every 10 s, both ends
-        PriceQuote quote = PipelineTestSupport.livePrices(store, List.of(source), now::get).latest("BTC").orElseThrow();
-        assertThat(quote.raw()).isEqualByComparingTo("84000");
-        assertThat(quote.stale()).isFalse();
+        LiveMarketPrices prices = PipelineTestSupport.livePrices(store, List.of(source), now::get);
         assertThat(store.series("BTC", NOW - 900_000L, NOW + 1)).hasSize(91);
         assertThat(store.feedOf("BTC")).contains("hyperliquid"); // the staleness limit of the quote is its feed's own
+        // a seeded point is the past, not what the source says now: it makes no quote, however fresh its time looks
+        assertThat(prices.latest("BTC")).isEmpty();
+        store.append("hyperliquid", NOW + 1_000L, Map.of("BTC", new BigDecimal("84010")));
+        PriceQuote quote = prices.latest("BTC").orElseThrow();
+        assertThat(quote.raw()).isEqualByComparingTo("84010");
     }
 
     @Test
@@ -207,9 +206,9 @@ class HistorySeederTest {
                 PricesConfig.defaults().withMode(false, PricesConfig.SourceKind.LIVE), now::get, Runnable::run);
 
         replay.seed(btc);
-        assertThat(replay.seedEmpty(List.of(btc))).isZero();
+        assertThat(replay.seedMissing(List.of(btc))).isZero();
         HistorySeeder.disabled().seed(btc);
-        assertThat(HistorySeeder.disabled().seedEmpty(List.of(btc))).isZero();
+        assertThat(HistorySeeder.disabled().seedMissing(List.of(btc))).isZero();
 
         assertThat(source.requests).isEmpty();
     }
@@ -220,33 +219,35 @@ class HistorySeederTest {
         store.append("hyperliquid", NOW - 5_000L, Map.of("BTC", new BigDecimal("84000"))); // restored from the snapshots
         source.script = (m, from, to) -> every(10_000, from, to, 2_700);
 
-        int queued = seeder.seedEmpty(List.of(btc, eth));
+        int queued = seeder.seedMissing(List.of(btc, eth));
 
         assertThat(queued).isEqualTo(1);
         assertThat(source.markets).containsExactly("ETH");
         assertThat(store.size("ETH")).isEqualTo(91);
         assertThat(store.size("BTC")).isEqualTo(1);
-        assertThat(seeder.seedEmpty(List.of(btc, eth))).isZero(); // nothing is empty any more
+        assertThat(seeder.seedMissing(List.of(btc, eth))).isZero(); // nothing is empty any more
         assertThat(source.requests).hasSize(1);
     }
 
     @Test
-    void aMarketWhoseRingStaysEmptyIsTriedAgainOnlyAMinuteAfterTheLastAttempt() {
+    void aMarketWhoseRingStaysEmptyIsTriedAgainAMinuteAfterTheLastAttemptThenAfterTwoThenFour() {
         source.script = (m, from, to) -> List.of(); // the source has nothing for it (yet)
 
-        assertThat(seeder.seedEmpty(List.of(btc))).isEqualTo(1);
-        assertThat(seeder.seedEmpty(List.of(btc))).isZero(); // the poll comes every 3 s: not every 3 s
+        assertThat(seeder.seedMissing(List.of(btc))).isEqualTo(1);
+        assertThat(seeder.seedMissing(List.of(btc))).isZero(); // the poll comes every 3 s: not every 3 s
         now.addAndGet(59_999L);
-        assertThat(seeder.seedEmpty(List.of(btc))).isZero();
+        assertThat(seeder.seedMissing(List.of(btc))).isZero();
         now.addAndGet(1L);
-        assertThat(seeder.seedEmpty(List.of(btc))).isEqualTo(1);
+        assertThat(seeder.seedMissing(List.of(btc))).isEqualTo(1);
         assertThat(source.requests).hasSize(2);
 
+        now.addAndGet(119_999L); // the second miss doubles the wait
+        assertThat(seeder.seedMissing(List.of(btc))).isZero();
+        now.addAndGet(1L);
         source.script = (m, from, to) -> every(10_000, from, to, 84_000); // it has something now
-        now.addAndGet(60_000L);
-        assertThat(seeder.seedEmpty(List.of(btc))).isEqualTo(1);
-        now.addAndGet(120_000L);
-        assertThat(seeder.seedEmpty(List.of(btc))).isZero(); // seeded: the ring is not empty, no more requests
+        assertThat(seeder.seedMissing(List.of(btc))).isEqualTo(1);
+        now.addAndGet(600_000L);
+        assertThat(seeder.seedMissing(List.of(btc))).isZero(); // seeded: the ring is not empty, no more requests
         assertThat(source.requests).hasSize(3);
     }
 
@@ -256,7 +257,7 @@ class HistorySeederTest {
 
         seeder.seed(btc); // the catalog, right after it listed the market
         now.addAndGet(3_000L);
-        seeder.seedEmpty(List.of(btc)); // the first poll of its feed
+        seeder.seedMissing(List.of(btc)); // the first poll of its feed
 
         assertThat(source.requests).hasSize(1);
     }
@@ -267,7 +268,7 @@ class HistorySeederTest {
     void aFailingSourceIsAThrottledWarningNotAnErrorAndNotAnException() {
         RecordingLogger log = new RecordingLogger();
         HistorySeeder quiet = new HistorySeeder(new PriceSources(List.of(source)), store, PricesConfig.defaults(),
-                now::get, Runnable::run, new ThrottledLog(log, now::get, 60_000L));
+                now::get, (task, delay) -> task.run(), t -> new long[0], new ThrottledLog(log, now::get, 60_000L));
         source.script = (m, from, to) -> {
             throw new java.io.IOException("connection refused");
         };
@@ -314,7 +315,11 @@ class HistorySeederTest {
         // is the close of the minute before it (the boundary convention of the Hyperliquid history)
         assertThat(data.open()).isEqualByComparingTo(
                 new BigDecimal("84038.5")); // lot exponent 0 of BTC: 84038.50 rounds to 84038.50 at scale 2
-        assertThat(store.last("BTC").orElseThrow().atMs()).isLessThanOrEqualTo(NOW);
+        // closed candles only: the minute in progress (19:42) is not in the answer, so nothing reaches NOW, and a
+        // seeded point is no live tick — the lobby shows no quote until the first poll
+        List<PricePoint> seeded = store.series("BTC", 0, Long.MAX_VALUE);
+        assertThat(seeded.get(seeded.size() - 1).atMs()).isLessThan(NOW);
+        assertThat(store.last("BTC")).isEmpty();
     }
 
     /** One candle per minute from the one containing {@code startMs} to the one containing {@code endMs}, up 0.5 each. */
@@ -344,6 +349,230 @@ class HistorySeederTest {
         assertThat(store.feedOf("ETH")).contains("synthetic");
         RoundWindow running = new RoundWindow("ETH", Interval.HOURLY, WINDOW_START, WINDOW_END);
         assertThat(PipelineTestSupport.livePrices(store, List.of(walk), now::get).soFar(eth, running, NOW)).isPresent();
+    }
+
+    // ------------------------------------------- F6: a market with no price at a running window's start
+
+    /** The windows running at NOW on the stand: the DAILY one began at 19:30:00, the HOURLY one at 19:39:00. */
+    private static final long DAILY_START = WINDOW_START - 540_000L;
+    private static final long[] STARTS = {DAILY_START, WINDOW_START};
+
+    private HistorySeeder withCalendar(PriceSource... sources) {
+        return new HistorySeeder(new PriceSources(List.of(sources)), store, PricesConfig.defaults(), now::get,
+                (task, delay) -> task.run(), t -> STARTS);
+    }
+
+    /** What a source whose history is the same kind of number as its ticks says for any range: 0.50, every 10 s. */
+    private static List<PricePoint> midpoints(long fromMs, long toMs) {
+        return every(10_000, fromMs, toMs, 0.5);
+    }
+
+    @Test
+    void aMarketWhoseRingHoldsTicksButNoneFreshAtARunningStartIsSeededToo() {
+        // a restart that straddled the HOURLY window's start: the ring has the ticks from before the restart (stale at
+        // 19:39:00) and the polls since it (from 19:40:40) — and no tick fresh at the start, so no opening price
+        store.append("hyperliquid", WINDOW_START - 100_000L, Map.of("BTC", new BigDecimal("0.7")));
+        store.append("hyperliquid", WINDOW_START - 90_000L, Map.of("BTC", new BigDecimal("0.7")));
+        store.append("hyperliquid", WINDOW_START + 100_000L, Map.of("BTC", new BigDecimal("0.7")));
+        source.script = (m, from, to) -> midpoints(from, to);
+        HistorySeeder seeder = withCalendar(source);
+
+        assertThat(seeder.seedMissing(List.of(btc))).isEqualTo(1);
+
+        assertThat(source.requests).hasSize(1);
+        // the history landed in the hole around the start, and the ticks that were there are untouched
+        assertThat(store.hasTickFreshAt("BTC", WINDOW_START, 15_000)).isTrue();
+        assertThat(store.series("BTC", WINDOW_START - 90_001L, WINDOW_START - 89_999L).get(0).raw())
+                .isEqualByComparingTo("0.7"); // the live tick that was there, not the history point of the same time
+        assertThat(seeder.seedMissing(List.of(btc))).isZero(); // fresh now: nothing more to ask
+        assertThat(source.requests).hasSize(1);
+    }
+
+    @Test
+    void aMarketWithAFreshTickAtEveryRunningStartIsNeverSeeded() {
+        store.append("hyperliquid", DAILY_START - 3_000L, Map.of("BTC", new BigDecimal("84000")));
+        for (long at = DAILY_START; at <= NOW; at += 3_000L) {
+            store.append("hyperliquid", at, Map.of("BTC", new BigDecimal("84000")));
+        }
+
+        assertThat(withCalendar(source).seedMissing(List.of(btc))).isZero();
+
+        assertThat(source.requests).isEmpty();
+    }
+
+    @Test
+    void aStartThatOnlyAPinKnowsIsPricedAndNotSeeded() {
+        store.pinBoundary("BTC", WINDOW_START, Px.encode(new BigDecimal("84000")));
+        store.pinBoundary("BTC", DAILY_START, Px.encode(new BigDecimal("84000")));
+
+        assertThat(withCalendar(source).seedMissing(List.of(btc))).isZero();
+    }
+
+    /** Hyperliquid-shaped: its history is trade prices, so it is only ever the past of the first live tick. */
+    private static final class TradeSource implements PriceSource {
+
+        final List<long[]> requests = new ArrayList<>();
+
+        @Override
+        public String name() {
+            return "hyperliquid";
+        }
+
+        @Override
+        public List<Feed> feeds() {
+            return List.of(new Feed("hyperliquid", 15_000, 30_000, m -> m.source().equals("hyperliquid")));
+        }
+
+        @Override
+        public Map<String, Quote> poll(Feed feed, List<Market> markets) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<PricePoint> history(Market market, long fromMs, long toMs) {
+            requests.add(new long[] {fromMs, toMs});
+            return every(10_000, fromMs, toMs, 84_000);
+        }
+
+        @Override
+        public HistoryKind historyKind() {
+            return HistoryKind.TRADE_PRICES;
+        }
+    }
+
+    @Test
+    void aTradePriceSourceIsNotAskedWhenALiveTickLiesBeforeTheStartBecauseItsHistoryCouldNotGoThere() {
+        TradeSource trades = new TradeSource();
+        store.append("hyperliquid", DAILY_START - 100_000L, Map.of("BTC", new BigDecimal("84010"))); // live, stale at both starts
+        store.append("hyperliquid", WINDOW_START + 100_000L, Map.of("BTC", new BigDecimal("84020")));
+
+        int queued = withCalendar(trades).seedMissing(List.of(btc));
+
+        assertThat(queued).isZero(); // the hole between two polls is not the past of the first poll: a request would be waste
+        assertThat(trades.requests).isEmpty();
+    }
+
+    @Test
+    void aTradePriceSourceIsAskedWhenNoLiveTickLiesAtOrBeforeTheStartAndFillsOnlyTheTimeBeforeTheFirstOne() {
+        TradeSource trades = new TradeSource();
+        store.append("hyperliquid", WINDOW_START + 100_000L, Map.of("BTC", new BigDecimal("84020"))); // the first poll
+
+        int queued = withCalendar(trades).seedMissing(List.of(btc));
+
+        assertThat(queued).isEqualTo(1);
+        assertThat(trades.requests).hasSize(1);
+        assertThat(store.hasTickFreshAt("BTC", WINDOW_START, 15_000)).isTrue();
+        assertThat(store.series("BTC", 0, WINDOW_START + 100_000L)).isNotEmpty().allSatisfy(
+                p -> assertThat(p.atMs()).isLessThan(WINDOW_START + 100_000L));
+        assertThat(store.series("BTC", WINDOW_START + 100_000L, Long.MAX_VALUE)).extracting(PricePoint::atMs)
+                .containsExactly(WINDOW_START + 100_000L); // nothing was put over or after the live tick
+    }
+
+    @Test
+    void eachRunningStartIsTriedOnceAndANewWindowIsATryOfItsOwn() {
+        source.script = (m, from, to) -> midpoints(from, to);
+        long[][] starts = {STARTS};
+        HistorySeeder seeder = new HistorySeeder(new PriceSources(List.of(source)), store, PricesConfig.defaults(),
+                now::get, (task, delay) -> task.run(), t -> starts[0]);
+
+        assertThat(seeder.seedMissing(List.of(btc))).isEqualTo(1); // an empty ring
+        assertThat(seeder.seedMissing(List.of(btc))).isZero(); // seeded: fresh at both starts
+        // the next HOURLY window began 3 minutes later and the feed has been down since: nothing is fresh at its start
+        now.addAndGet(200_000L);
+        starts[0] = new long[] {DAILY_START, WINDOW_START + 240_000L};
+        assertThat(seeder.seedMissing(List.of(btc))).isEqualTo(1);
+        assertThat(source.requests).hasSize(2);
+    }
+
+    @Test
+    void aSeedStillWaitingInLineIsNeverDoubledByThePoll() {
+        List<Runnable> queue = new ArrayList<>();
+        HistorySeeder seeder = new HistorySeeder(new PriceSources(List.of(source)), store, PricesConfig.defaults(),
+                now::get, (task, delay) -> queue.add(task), t -> STARTS);
+
+        assertThat(seeder.seedMissing(List.of(btc))).isEqualTo(1);
+        now.addAndGet(120_000L); // the polls go on, the seed has not run
+        assertThat(seeder.seedMissing(List.of(btc))).isZero();
+        assertThat(seeder.seedMissing(List.of(btc))).isZero();
+
+        assertThat(queue).hasSize(1);
+    }
+
+    // ------------------------------------------ L3: the seeds of a start-up are staggered (the budget)
+
+    private List<long[]> scheduleTwelveHyperliquidSeeds(PricesConfig config) {
+        FakeApis.Hyperliquid api = new FakeApis.Hyperliquid(); // never asked: the seeds are only scheduled
+        HyperliquidPriceSource hl = PipelineTestSupport.hyperliquid(api, now::get);
+        List<long[]> scheduled = new ArrayList<>(); // {delay, weight}
+        HistorySeeder seeder = new HistorySeeder(new PriceSources(List.of(hl)), store, config, now::get,
+                (task, delay) -> scheduled.add(new long[] {delay, hl.historyWeight(seederSpan(config))}), t -> STARTS);
+        for (int i = 0; i < 12; i++) {
+            seeder.seed(TestMarkets.hl("M" + i, "COIN" + i, 0));
+        }
+        return scheduled;
+    }
+
+    private static long seederSpan(PricesConfig config) {
+        return Math.min(HistorySeeder.MAX_SEED_MS, Math.max(HistorySeeder.MIN_SEED_MS, config.dailyRoundMs()));
+    }
+
+    @Test
+    void twelveSeedsOnTheStandAreFiveSecondsApartAndTheirFirstMinuteStaysUnderTheBudget() {
+        PricesConfig stand = PricesConfig.defaults(); // rounds of 3 and 15 minutes: a seed is 45 rows, weight 21
+
+        List<long[]> scheduled = scheduleTwelveHyperliquidSeeds(stand);
+
+        assertThat(scheduled).extracting(s -> s[0]).containsExactly(0L, 5_000L, 10_000L, 15_000L, 20_000L, 25_000L,
+                30_000L, 35_000L, 40_000L, 45_000L, 50_000L, 55_000L);
+        long inTheFirstMinute = scheduled.stream().filter(s -> s[0] < 60_000L).mapToLong(s -> s[1]).sum();
+        assertThat(inTheFirstMinute).isEqualTo(12 * 21).isLessThanOrEqualTo(stand.hyperliquidSeedBudgetPerMinute());
+        assertThat(inTheFirstMinute + 600 + 40).as("polling 600, catalog 40: 892 of the 1200").isEqualTo(892);
+    }
+
+    @Test
+    void twelveSeedsWithTheProductionDurationsAreTwelveSecondsApartAndFiveFitInTheFirstMinute() {
+        PricesConfig production = PricesConfig.defaults().withDailyRoundMs(86_400_000L); // a seed is a day: weight 45
+
+        List<long[]> scheduled = scheduleTwelveHyperliquidSeeds(production);
+
+        assertThat(scheduled).extracting(s -> s[0]).startsWith(0L, 12_000L, 24_000L, 36_000L, 48_000L, 60_000L)
+                .endsWith(132_000L);
+        long inTheFirstMinute = scheduled.stream().filter(s -> s[0] < 60_000L).mapToLong(s -> s[1]).sum();
+        assertThat(inTheFirstMinute).isEqualTo(5 * 45); // unstaggered: 12 x 45 = 540 and 1180 of 1200 with the rest
+        assertThat(inTheFirstMinute + 600 + 40).as("865 of the 1200").isEqualTo(865).isLessThan(900);
+        assertThat(12 * 45 + 600 + 40).as("what it was").isEqualTo(1180);
+    }
+
+    @Test
+    void theSpacingFollowsTheBudgetSettingAndTheWeightOfTheSeed() {
+        HistorySeeder seeder = PipelineTestSupport.seeder(List.of(source), store, now::get);
+
+        assertThat(seeder.spacingMs(21)).isEqualTo(5_000L); // floor(260 / 21) = 12 a minute
+        assertThat(seeder.spacingMs(45)).isEqualTo(12_000L); // floor(260 / 45) = 5 a minute
+        assertThat(seeder.spacingMs(300)).as("one a minute at least").isEqualTo(60_000L);
+        assertThat(seeder.spacingMs(0)).as("a source with no weight").isEqualTo(HistorySeeder.OTHER_SPACING_MS);
+        HistorySeeder tight = new HistorySeeder(new PriceSources(List.of(source)), store,
+                PricesConfig.defaults().withHyperliquidSeedBudget(105), now::get, Runnable::run);
+        assertThat(tight.spacingMs(21)).isEqualTo(12_000L); // floor(105 / 21) = 5 a minute
+    }
+
+    @Test
+    void theQueuesOfTwoSourcesDoNotDelayEachOther() {
+        FakeApis.Hyperliquid api = new FakeApis.Hyperliquid();
+        HyperliquidPriceSource hl = PipelineTestSupport.hyperliquid(api, now::get);
+        FakeApis.Data data = new FakeApis.Data();
+        PolymarketPriceSource pm = PipelineTestSupport.polymarket(new FakeApis.Clob(), data, new PolymarketLiveState(),
+                now::get);
+        List<long[]> scheduled = new ArrayList<>(); // {delay, market index}
+        HistorySeeder seeder = new HistorySeeder(new PriceSources(List.of(hl, pm)), store, PricesConfig.defaults(),
+                now::get, (task, delay) -> scheduled.add(new long[] {delay}), t -> STARTS);
+
+        seeder.seed(TestMarkets.hl("A", "A", 0));
+        seeder.seed(TestMarkets.hl("B", "B", 0));
+        seeder.seed(TestMarkets.odds("PM1", "tok1"));
+        seeder.seed(TestMarkets.odds("PM2", "tok2"));
+
+        assertThat(scheduled).extracting(s -> s[0]).containsExactly(0L, 5_000L, 0L, 1_000L);
     }
 
     // ----------------------------------------------------- no lock is held while the source answers

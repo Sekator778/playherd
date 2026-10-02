@@ -336,84 +336,192 @@ class HyperliquidPriceSourceTest {
     }
 
     @Test
-    void aFlatFillerCandleAndGarbageRowsDoNoHarm() {
-        JsonNode rows = Fixtures.parse("[{\"t\":60000,\"T\":119999,\"o\":\"5.0\",\"h\":\"5.0\",\"l\":\"5.0\",\"c\":\"5.0\","
-                + "\"v\":\"0.0\",\"n\":0},{\"t\":\"oops\"},{\"t\":120000,\"o\":\"x\",\"h\":\"1\",\"l\":\"1\",\"c\":\"1\"}]");
+    void aFillerCandleHoldsNoPriceAndGarbageRowsDoNoHarm() {
+        String filler = "{\"t\":60000,\"T\":119999,\"o\":\"5.0\",\"h\":\"5.0\",\"l\":\"5.0\",\"c\":\"5.0\","
+                + "\"v\":\"0.0\",\"n\":0}";
+        String garbage = "{\"t\":\"oops\"},{\"t\":120000,\"o\":\"x\",\"h\":\"1\",\"l\":\"1\",\"c\":\"1\"}";
 
-        List<PricePoint> points = HyperliquidPriceSource.candlePoints(rows, 0, Long.MAX_VALUE);
-
-        assertThat(points).hasSize(4).allSatisfy(p -> assertThat(p.raw()).isEqualByComparingTo("5.0"));
+        // Hyperliquid fills a minute without trades with o = h = l = c = the previous close (§4.3): no trade, no price
+        assertThat(HyperliquidPriceSource.candlePoints(Fixtures.parse("[" + filler + "," + garbage + "]"), 0,
+                Long.MAX_VALUE)).isEmpty();
+        // the same row with trades, and a row that does not say how many (older answers) count as candles
+        String traded = filler.replace("\"n\":0", "\"n\":3");
+        String unnumbered = filler.replace(",\"n\":0", "");
+        assertThat(HyperliquidPriceSource.candlePoints(Fixtures.parse("[" + traded + "," + garbage + "]"), 0,
+                Long.MAX_VALUE)).hasSize(4).allSatisfy(p -> assertThat(p.raw()).isEqualByComparingTo("5.0"));
+        assertThat(HyperliquidPriceSource.candlePoints(Fixtures.parse("[" + unnumbered + "]"), 0, Long.MAX_VALUE))
+                .hasSize(4);
         assertThat(HyperliquidPriceSource.candlePoints(null, 0, 1)).isEmpty();
         assertThat(HyperliquidPriceSource.candlePoints(Fixtures.parse("{}"), 0, 1)).isEmpty();
     }
 
-    // ---------------------------------------------------------------- a quiet asset's empty tail
+    // ------------------------------------------- trade prices: what history is, and what it is never
 
     private static final long T_1800 = 1_790_877_600_000L; // 18:00:00 UTC, the second row of the BTC fixture
     private static final long LAST_CLOSE_AT = 1_790_877_719_999L; // the last fixture row (18:01) closes here, at 84792
 
     @Test
-    void anEmptyTailOfAFinalPeriodIsCarriedForwardFromTheLastCloseEveryTenSeconds() {
+    void historyIsDeclaredTradePricesAndWeighsWhatTheSeederPlansWith() {
+        HyperliquidPriceSource source = new HyperliquidPriceSource(() -> {
+            throw new AssertionError("no request expected");
+        }, PricesConfig.defaults(), () -> NOW);
+
+        assertThat(source.historyKind()).isEqualTo(PriceSource.HistoryKind.TRADE_PRICES);
+        // 20 plus 1 per 60 rows, rounded up; the request looks back 30 minutes more than the span
+        assertThat(source.historyWeight(900_000L)).isEqualTo(21); // the stand: 15 + 30 = 45 rows
+        assertThat(source.historyWeight(86_400_000L)).isEqualTo(45); // production: 1440 + 30 = 1470 rows -> 25
+        assertThat(source.historyWeight(0)).isEqualTo(21); // the 30 minutes alone: 30 rows
+    }
+
+    @Test
+    void theSourceNeverCarriesACandlesCloseForwardAcrossAStretchWithNoCandle() {
         JsonNode rows = Fixtures.json("hyperliquid/candle_snapshot_btc_1m.json");
         long to = T_1800 + 600_000L; // 18:10:00: eight minutes without a candle after the last row
 
-        List<PricePoint> points = HyperliquidPriceSource.historyPoints(rows, T_1800, to, to + 300_000L);
+        // it used to put the 84792 of 18:01 every 10 s into this stretch, a trade price between the marks of a
+        // feed that was down: a flat mark settled as DOWN on it
+        PriceSource.History answer = HyperliquidPriceSource.historyAnswer(rows, T_1800 + 300_000L, to, to + 600_000L);
 
-        List<PricePoint> carried = points.stream().filter(p -> p.atMs() > LAST_CLOSE_AT).toList();
-        assertThat(carried).hasSize(48);
-        assertThat(carried.get(0).atMs()).isEqualTo(LAST_CLOSE_AT + 10_000L);
-        assertThat(carried.get(carried.size() - 1).atMs()).isEqualTo(to - 1); // aligned boundaries get a point 1 ms before
-        assertThat(carried).allSatisfy(p -> assertThat(p.raw()).isEqualByComparingTo("84792"));
-        for (int i = 1; i < points.size(); i++) { // no stretch longer than the 20 s of a candle's own points
-            assertThat(points.get(i).atMs() - points.get(i - 1).atMs()).isLessThanOrEqualTo(20_001);
+        assertThat(answer.points()).isEmpty();
+        assertThat(HyperliquidPriceSource.historyAnswer(rows, T_1800, to, to + 600_000L).points()).hasSize(6) // the candles' own
+                .allSatisfy(p -> assertThat(p.atMs()).isLessThanOrEqualTo(LAST_CLOSE_AT));
+    }
+
+    @Test
+    void theLastTradeBeforeTheRangeIsTheCloseOfTheNewestCandleWithTradesBeforeIt() {
+        JsonNode rows = Fixtures.json("hyperliquid/candle_snapshot_btc_1m.json"); // 17:59, 18:00, 18:01
+        long from = T_1800 + 300_000L;
+
+        PriceSource.History quiet = HyperliquidPriceSource.historyAnswer(rows, from, from + 60_000L, from + 120_000L);
+
+        assertThat(quiet.lastTrade()).hasValueSatisfying(p -> {
+            assertThat(p.atMs()).isEqualTo(LAST_CLOSE_AT); // at the time it closed
+            assertThat(p.raw()).isEqualByComparingTo("84792");
+        });
+        // a candle that closes inside the range is not "before" it: it is a point of the answer
+        assertThat(HyperliquidPriceSource.historyAnswer(rows, T_1800 + 100_000L, T_1800 + 200_000L, NOW + 600_000L)
+                .lastTrade()).hasValueSatisfying(p -> assertThat(p.atMs()).isEqualTo(T_1800 + 59_999L));
+        assertThat(HyperliquidPriceSource.historyAnswer(Fixtures.parse("[]"), from, from + 1_000L, from + 120_000L)
+                .lastTrade()).isEmpty();
+    }
+
+    @Test
+    void aFillerIsNotALastTradeAndNeitherIsACandleStillOpen() {
+        // 18:00 traded (n=5) at 100; 18:01 and 18:02 are fillers at 100; 18:03 is still open (T is after now) at 101
+        JsonNode rows = Fixtures.parse("[{\"t\":" + T_1800 + ",\"T\":" + (T_1800 + 59_999) + ",\"o\":\"100\",\"h\":\"100\","
+                + "\"l\":\"100\",\"c\":\"100\",\"n\":5},"
+                + "{\"t\":" + (T_1800 + 60_000) + ",\"T\":" + (T_1800 + 119_999) + ",\"o\":\"100\",\"h\":\"100\",\"l\":\"100\","
+                + "\"c\":\"100\",\"n\":0},"
+                + "{\"t\":" + (T_1800 + 120_000) + ",\"T\":" + (T_1800 + 179_999) + ",\"o\":\"100\",\"h\":\"100\",\"l\":\"100\","
+                + "\"c\":\"100\",\"n\":0},"
+                + "{\"t\":" + (T_1800 + 180_000) + ",\"T\":" + (T_1800 + 239_999) + ",\"o\":\"101\",\"h\":\"101\",\"l\":\"101\","
+                + "\"c\":\"101\",\"n\":2}]");
+        long now = T_1800 + 200_000L; // 18:03:20: the last candle closes at 18:03:59.999
+
+        PriceSource.History answer = HyperliquidPriceSource.historyAnswer(rows, T_1800 + 250_000L, T_1800 + 600_000L, now);
+
+        assertThat(answer.points()).isEmpty();
+        assertThat(answer.lastTrade()).hasValueSatisfying(p -> {
+            assertThat(p.atMs()).isEqualTo(T_1800 + 59_999L); // 18:00, not a filler's 100 at 18:02, not the open 101
+            assertThat(p.raw()).isEqualByComparingTo("100");
+        });
+        assertThat(HyperliquidPriceSource.historyAnswer(rows, T_1800, T_1800 + 600_000L, now).points())
+                .extracting(PricePoint::atMs).doesNotContain(T_1800 + 239_999L, T_1800 + 180_000L + 20_000L);
+    }
+
+    // -------------------------------------------- the price at a boundary: the candle before it
+
+    /** One candle per minute from t = 60 000: minute k closes at 100 + k, its low is 90 + k, its high 110 + k. */
+    private static JsonNode minuteCandles(int count) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int k = 1; k <= count; k++) {
+            long t = k * 60_000L;
+            sb.append(k > 1 ? "," : "").append("{\"t\":").append(t).append(",\"T\":").append(t + 59_999)
+                    .append(",\"o\":\"").append(100 + k - 1).append("\",\"h\":\"").append(110 + k).append("\",\"l\":\"")
+                    .append(90 + k).append("\",\"c\":\"").append(100 + k).append("\",\"n\":4}");
+        }
+        return Fixtures.parse(sb.append("]").toString());
+    }
+
+    @Test
+    void aBoundaryInsideAMinuteGetsTheCloseOfTheCandleBeforeItNotTheLowOrHighOfTheOneAroundIt() {
+        JsonNode rows = minuteCandles(6); // 18:01..18:06 as minutes 1..6
+        long now = 10 * 60_000L;
+
+        // the boundaries of a round that is not aligned: +17 s, +30 s, +50 s into minute 3 (t = 180 000)
+        for (long offset : new long[] {17_000L, 30_000L, 50_000L}) {
+            long boundary = 180_000L + offset;
+            PriceSource.History answer = HyperliquidPriceSource.historyAnswer(rows, boundary - 60_000L, boundary + 60_000L,
+                    now, boundary);
+
+            PricePoint at = answer.points().stream().filter(p -> p.atMs() == boundary).findFirst().orElseThrow();
+            // minute 2 closed at 102: that is the last trade before minute 3 began. Minute 3's own shape points
+            // (low 93 at +20 s, high 113 at +40 s) are wicks at invented times, never the price at the boundary.
+            assertThat(at.raw()).as("price at +" + offset).isEqualByComparingTo("102");
         }
     }
 
     @Test
-    void aTailYoungerThanTwoMinutesIsNotCarriedItsCandleMayStillAppear() {
-        JsonNode rows = Fixtures.json("hyperliquid/candle_snapshot_btc_1m.json");
-        long to = T_1800 + 600_000L;
+    void aMinuteAlignedBoundaryIsPricedByTheCloseOneMillisecondBeforeItWithItsOwnTime() {
+        JsonNode rows = minuteCandles(6);
 
-        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, to, to + 119_999L)).hasSize(6); // candle points only
-        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, to, to + 120_000L).size()).isGreaterThan(6);
+        PriceSource.History answer = HyperliquidPriceSource.historyAnswer(rows, 120_000L, 300_000L, 10 * 60_000L,
+                180_000L, 300_000L);
+
+        // minute 2 (t = 120 000) closed at 179 999 at 102, minute 4 at 299 999 at 104: those points ARE the prices at the
+        // boundaries, one millisecond old, and nothing is made up at the boundaries themselves
+        assertThat(answer.points()).extracting(PricePoint::atMs).contains(179_999L, 299_999L)
+                .doesNotContain(180_000L, 300_000L);
+        assertThat(answer.points().stream().filter(p -> p.atMs() == 179_999L).findFirst().orElseThrow().raw())
+                .isEqualByComparingTo("102");
+        assertThat(answer.points().stream().filter(p -> p.atMs() == 299_999L).findFirst().orElseThrow().raw())
+                .isEqualByComparingTo("104");
     }
 
     @Test
-    void nothingIsCarriedWhenThereIsNothingToCarryOrNothingMissing() {
-        long to = T_1800 + 600_000L;
-        JsonNode rows = Fixtures.json("hyperliquid/candle_snapshot_btc_1m.json");
+    void noBoundaryPointWhenTheLastCloseIsOlderThanOneCandleOrTheBoundaryIsOutsideTheRange() {
+        // minute 1 and minute 2 traded, then nothing: the boundary at 5 minutes has no trade within a minute before it
+        JsonNode rows = minuteCandles(2);
+        long now = 10 * 60_000L;
 
-        assertThat(HyperliquidPriceSource.historyPoints(Fixtures.parse("[]"), T_1800, to, to + 600_000L)).isEmpty();
-        assertThat(HyperliquidPriceSource.historyPoints(null, T_1800, to, to + 600_000L)).isEmpty();
-        // the last row reaches the end of the range: no tail
-        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, LAST_CLOSE_AT, LAST_CLOSE_AT + 600_000L)).hasSize(6);
-        assertThat(HyperliquidPriceSource.historyPoints(rows, T_1800, LAST_CLOSE_AT + 5_000L, LAST_CLOSE_AT + 600_000L))
-                .hasSize(6); // closes within 10 s of the end: not worth a point
+        assertThat(HyperliquidPriceSource.historyAnswer(rows, 200_000L, 400_000L, now, 300_000L).points()).isEmpty();
+        // inside the range, the candle closed at 179 999: 1 s later is a price, 61.001 s later is too old for one
+        assertThat(HyperliquidPriceSource.historyAnswer(rows, 100_000L, 400_000L, now, 180_999L).points())
+                .extracting(PricePoint::atMs).contains(180_999L);
+        assertThat(HyperliquidPriceSource.historyAnswer(rows, 100_000L, 400_000L, now, 241_000L).points())
+                .extracting(PricePoint::atMs).doesNotContain(241_000L);
+        // a boundary outside [from, to] is not asked for
+        assertThat(HyperliquidPriceSource.historyAnswer(minuteCandles(6), 200_000L, 250_000L, now, 120_000L, 300_000L)
+                .points()).extracting(PricePoint::atMs).doesNotContain(120_000L, 300_000L);
     }
 
     @Test
-    void aRangeAfterTheLastRowIsCarriedFromItsOwnStart() {
-        JsonNode rows = Fixtures.json("hyperliquid/candle_snapshot_btc_1m.json");
-        long from = T_1800 + 300_000L; // 18:05:00, three minutes after the last candle
-        long to = from + 60_000L;
+    void historyOfPassesTheBoundariesToTheAnswerAndTheRequestStillStopsBeforeTheEnd() throws Exception {
+        FakeApis.Hyperliquid api = new FakeApis.Hyperliquid();
+        api.info.handler = body -> minuteCandles(6);
+        HyperliquidPriceSource source = new HyperliquidPriceSource(() -> api, PricesConfig.defaults(), () -> 10 * 60_000L);
+        Market btc = TestMarkets.btc();
 
-        List<PricePoint> points = HyperliquidPriceSource.historyPoints(rows, from, to, to + 600_000L);
+        PriceSource.History answer = source.historyOf(btc, 150_000L, 330_000L, 210_000L);
 
-        assertThat(points).extracting(PricePoint::atMs).startsWith(from, from + 10_000L).endsWith(to - 10_000L, to);
-        assertThat(points).hasSize(7);
-        assertThat(points).allSatisfy(p -> assertThat(p.raw()).isEqualByComparingTo("84792"));
+        assertThat(answer.points().stream().filter(p -> p.atMs() == 210_000L).findFirst().orElseThrow().raw())
+                .isEqualByComparingTo("102");
+        assertThat(api.info.requests.get(0).get("req").get("endTime").asLong()).isEqualTo(330_000L - 1);
     }
 
+    // ---------------------------------------------------------- the candle in progress is not seeded
+
     @Test
-    void aRowWithoutAUsableCloseIsNotTheOneCarried() {
-        // the newest row by time has no usable close: the newest usable one is carried
-        JsonNode rows = Fixtures.parse("[{\"t\":60000,\"T\":119999,\"o\":\"5\",\"h\":\"6\",\"l\":\"4\",\"c\":\"5.5\"},"
-                + "{\"t\":120000,\"T\":179999,\"o\":\"5\",\"h\":\"6\",\"l\":\"4\",\"c\":\"oops\"}]");
+    void aCandleThatIsStillOpenGivesNoPointsItsHighIsNotAFreshPrice() {
+        // minute 3 is in progress at now = 3 min 30 s: T = 239 999 is still in the future
+        JsonNode rows = minuteCandles(3);
+        long now = 180_000L + 30_000L;
 
-        List<PricePoint> points = HyperliquidPriceSource.historyPoints(rows, 60_000L, 300_000L, 900_000L);
+        List<PricePoint> points = HyperliquidPriceSource.historyAnswer(rows, 0, now, now).points();
 
-        assertThat(points.get(points.size() - 1).raw()).isEqualByComparingTo("5.5");
-        assertThat(points.get(points.size() - 1).atMs()).isEqualTo(299_999L);
+        assertThat(points).extracting(PricePoint::atMs).allSatisfy(at -> assertThat(at).isLessThan(180_000L + 59_999L));
+        assertThat(points).extracting(p -> p.raw().intValue()).doesNotContain(113, 93, 103); // minute 3: h, l, c
+        assertThat(points.get(points.size() - 1).atMs()).isEqualTo(179_999L); // the last closed candle's close
     }
 
     @Test

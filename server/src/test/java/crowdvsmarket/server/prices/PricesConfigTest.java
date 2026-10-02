@@ -12,7 +12,24 @@ class PricesConfigTest {
         return new PricesConfigProducer().pricesConfig(mode, source, dailySec, PricesConfig.DEFAULT_HYPERLIQUID_URL,
                 PricesConfig.DEFAULT_POLYMARKET_CLOB_URL, PricesConfig.DEFAULT_POLYMARKET_GAMMA_URL,
                 PricesConfig.DEFAULT_POLYMARKET_DATA_URL, 15_000, 20_000, 30_000, 30_000, 90_000, 5_000, 10_000, 60_000,
-                3_000, 5_000);
+                3_000, 5_000, 600_000L, 260, true);
+    }
+
+    @Test
+    void theNewSettingsHaveTheirDefaultsAndTheOldConstructorKeepsWorking() {
+        PricesConfig c = PricesConfig.defaults();
+
+        assertThat(c.quietCarryMaxMs()).isEqualTo(600_000L); // ten minutes
+        assertThat(c.hyperliquidSeedBudgetPerMinute()).isEqualTo(260); // 900 - 600 polling - 40 catalog
+        assertThat(c.requireMinuteAlignedRounds()).isTrue();
+        PricesConfig old = new PricesConfig(true, PricesConfig.SourceKind.LIVE, 900_000L, "h", "c", "g", "d", 15_000,
+                20_000, 30_000, 30_000, 90_000, 5_000, 10_000, 60_000, 3_000, 5_000); // the 17 components of before
+        assertThat(old.quietCarryMaxMs()).isEqualTo(600_000L);
+        assertThat(old.hyperliquidSeedBudgetPerMinute()).isEqualTo(260);
+        assertThat(old.requireMinuteAlignedRounds()).isTrue();
+        assertThat(c.withQuietCarryMaxMs(1_000L).quietCarryMaxMs()).isEqualTo(1_000L);
+        assertThat(c.withHyperliquidSeedBudget(100).hyperliquidSeedBudgetPerMinute()).isEqualTo(100);
+        assertThat(produce("live", "live", 900).quietCarryMaxMs()).isEqualTo(600_000L);
     }
 
     @Test

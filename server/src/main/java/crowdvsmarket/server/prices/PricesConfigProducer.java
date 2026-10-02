@@ -50,10 +50,17 @@ public class PricesConfigProducer {
             @ConfigProperty(name = "herd.prices.connect-timeout-ms",
                     defaultValue = PricesConfig.DEFAULT_CONNECT_TIMEOUT_MS) int connectTimeoutMs,
             @ConfigProperty(name = "herd.prices.read-timeout-ms",
-                    defaultValue = PricesConfig.DEFAULT_READ_TIMEOUT_MS) int readTimeoutMs) {
+                    defaultValue = PricesConfig.DEFAULT_READ_TIMEOUT_MS) int readTimeoutMs,
+            @ConfigProperty(name = "herd.prices.quiet-carry-max-ms",
+                    defaultValue = PricesConfig.DEFAULT_QUIET_CARRY_MAX_MS) long quietCarryMaxMs,
+            @ConfigProperty(name = "herd.prices.hyperliquid.seed-budget-per-minute",
+                    defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_SEED_BUDGET) int seedBudgetPerMinute,
+            @ConfigProperty(name = "herd.prices.require-minute-aligned-rounds",
+                    defaultValue = PricesConfig.DEFAULT_REQUIRE_ALIGNED_ROUNDS) boolean requireMinuteAlignedRounds) {
         return new PricesConfig(PricesConfig.isLiveMode(mode), PricesConfig.SourceKind.parse(source),
                 dailySec * 1000L, hyperliquidUrl, clobUrl, gammaUrl, dataUrl, hyperliquidStaleMs,
                 hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs,
-                syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs);
+                syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs,
+                quietCarryMaxMs, seedBudgetPerMinute, requireMinuteAlignedRounds);
     }
 }

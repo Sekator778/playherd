@@ -60,11 +60,19 @@ import org.jboss.logging.Logger;
  * <p><b>Closing</b> ({@code registry.close(id, reason, now)}): closed at the source (Gamma
  * {@code closed}, looked up by token at every refresh — with {@code closed=true}: a lookup by token
  * leaves closed markets out unless asked for them, measured 2026-10-02, polymarket_data_api.md §13);
- * the token absent from {@code /midpoints} for 60 s ({@link PolymarketLiveState}, reported by the
- * price source); the midpoint outside [0.03, 0.97]; less than 5 minutes to the end. The last three
+ * the token absent from {@code /midpoints} for 60 s over at least
+ * {@value #TOKEN_ABSENT_CONFIRMATIONS} consecutive successful answers, the newest of them recent
+ * ({@link PolymarketLiveState}, reported by the price source: a failed poll, or an answer that has the token,
+ * starts the count again — a closed market is closed for good, so one partial answer followed by a CLOB that
+ * times out is no reason); the midpoint outside [0.03, 0.97]; less than 5 minutes to the end. The last three
  * need no request, they are checked every 5 s from memory by {@link #watch}; a close asks for an
  * early top-up. The reason is shown to the players as it stands, so each is a plain sentence
  * ({@link #REASON_CLOSED} and its siblings).
+ *
+ * <p><b>Card texts.</b> A new market's ticker is unique among the active markets and its subtitle says what the
+ * outcome is, not the title again ({@link MarketLabels}). Gamma gives the market's own short label
+ * ({@code groupItemTitle}) and, for a game, the league (the event's series) and, from the live-games listing only,
+ * the teams with their abbreviations.
  *
  * <p><b>Locks.</b> {@code registry.list} and {@code registry.close} are called without any lock or
  * monitor held, from the scheduler's threads: the registry's listener (the game service) takes the
@@ -112,6 +120,10 @@ public class PolymarketCatalog {
     static final BigDecimal MID_MAX = new BigDecimal("0.90");
     static final BigDecimal MAX_SPREAD = new BigDecimal("0.05");
     static final long TOKEN_ABSENT_CLOSE_MS = 60_000L;
+    /** ... over at least this many consecutive answers (a failed poll or an answer with the token starts the count again). */
+    static final int TOKEN_ABSENT_CONFIRMATIONS = 3;
+    /** ... the newest of them no older than this: a market is not closed for good on evidence that went silent. */
+    static final long TOKEN_ABSENT_EVIDENCE_MAX_AGE_MS = 15_000L;
     static final BigDecimal CLOSE_BELOW = new BigDecimal("0.03");
     static final BigDecimal CLOSE_ABOVE = new BigDecimal("0.97");
     static final long CLOSE_BEFORE_END_MS = 5 * 60_000L;
@@ -412,13 +424,20 @@ public class PolymarketCatalog {
         }
         put(meta, "sportsMarketType", g.sportsMarketType());
         put(meta, "tickSize", g.tickSize() == null ? null : g.tickSize().toPlainString());
-        String eventTitle = g.event() == null ? null : g.event().title();
-        String subtitle = eventTitle == null ? g.outcome() : g.outcome() + " · " + eventTitle;
         // A game's endDate is usually its kick-off, not an end: no end is better than a wrong one.
         Long endsAt = config.inPlayFirst() && g.isGame() ? null : g.endMs();
-        return new NewMarket(idOf(g), MarketKind.ODDS, category, MarketLabels.symbol(g), g.question(), subtitle,
-                g.imageUrl(), PolymarketPriceSource.NAME, g.token(), meta.toString(), config.oddsMaxLeverage(),
-                Market.ODDS_LOT_EXP, endsAt);
+        return new NewMarket(idOf(g), MarketKind.ODDS, category, MarketLabels.symbol(g, activeSymbols()),
+                g.question(), MarketLabels.subtitle(g), g.imageUrl(), PolymarketPriceSource.NAME, g.token(),
+                meta.toString(), config.oddsMaxLeverage(), Market.ODDS_LOT_EXP, endsAt);
+    }
+
+    /** The tickers the active markets of every category show: a new market's ticker must not repeat one. */
+    private Set<String> activeSymbols() {
+        Set<String> symbols = new HashSet<>();
+        for (Market market : registry.active()) {
+            symbols.add(market.symbol());
+        }
+        return symbols;
     }
 
     private static void put(ObjectNode node, String key, String value) {
@@ -446,10 +465,18 @@ public class PolymarketCatalog {
         return closed;
     }
 
-    /** Why the market has to close now, or null. */
+    /**
+     * Why the market has to close now, or null. A token that is missing counts only as fresh evidence: it
+     * must have been missing from every answer for {@link #TOKEN_ABSENT_CLOSE_MS}, in at least
+     * {@link #TOKEN_ABSENT_CONFIRMATIONS} consecutive successful answers, the newest recent — one partial answer
+     * followed by a CLOB that times out must not close a market for good (a closed id is never listed again and
+     * its rounds are cancelled).
+     */
     String closeReason(Market market, long nowMs) {
         OptionalLong missing = state.missingSince(market.id());
-        if (missing.isPresent() && nowMs - missing.getAsLong() >= TOKEN_ABSENT_CLOSE_MS) {
+        if (missing.isPresent() && nowMs - missing.getAsLong() >= TOKEN_ABSENT_CLOSE_MS
+                && state.missingAnswers(market.id()).orElse(0) >= TOKEN_ABSENT_CONFIRMATIONS
+                && nowMs - state.lastMissingAnswerAt(market.id()).orElse(0L) <= TOKEN_ABSENT_EVIDENCE_MAX_AGE_MS) {
             return REASON_ABSENT;
         }
         Optional<PricePoint> last = store.last(market.id());

@@ -83,6 +83,55 @@ class SmallPiecesTest {
         assertThat(state.delistedSince("ETH")).hasValue(500); // markets do not share a clock
     }
 
+    @Test
+    void theHyperliquidStateCountsConsecutiveAnswersAndAFailedPollOrALiveAnswerStartsTheCountAgain() {
+        HyperliquidLiveState state = new HyperliquidLiveState();
+        assertThat(state.delistedAnswers("ETH")).isEmpty();
+        assertThat(state.lastDelistedAnswerAt("ETH")).isEmpty();
+
+        state.reportDelisted("ETH", 100);
+        state.reportDelisted("ETH", 3_100);
+        state.reportDelisted("ETH", 6_100);
+        assertThat(state.delistedAnswers("ETH")).hasValue(3);
+        assertThat(state.delistedSince("ETH")).hasValue(100);
+        assertThat(state.lastDelistedAnswerAt("ETH")).hasValue(6_100);
+
+        state.reportPollFailed("ETH"); // an answer that never came proves nothing about the asset
+        assertThat(state.delistedAnswers("ETH")).isEmpty();
+        assertThat(state.delistedSince("ETH")).isEmpty();
+        state.reportDelisted("ETH", 9_100);
+        assertThat(state.delistedAnswers("ETH")).hasValue(1);
+        assertThat(state.delistedSince("ETH")).hasValue(9_100); // a new run, a new clock
+
+        state.reportListed("ETH");
+        assertThat(state.delistedAnswers("ETH")).isEmpty();
+        state.reportPollFailed("SOL"); // for a market with no run: nothing happens
+        assertThat(state.delistedAnswers("SOL")).isEmpty();
+    }
+
+    @Test
+    void thePolymarketStateCountsConsecutiveAnswersWithoutTheTokenAndForgetsThemOnAFailedPollOrAPresentToken() {
+        PolymarketLiveState state = new PolymarketLiveState();
+        assertThat(state.missingAnswers("PM1")).isEmpty();
+
+        state.reportMissing("PM1", 100);
+        state.reportMissing("PM1", 3_100);
+        assertThat(state.missingAnswers("PM1")).hasValue(2);
+        assertThat(state.missingSince("PM1")).hasValue(100);
+        assertThat(state.lastMissingAnswerAt("PM1")).hasValue(3_100);
+
+        state.reportPollFailed("PM1");
+        assertThat(state.missingAnswers("PM1")).isEmpty();
+        assertThat(state.lastMissingAnswerAt("PM1")).isEmpty();
+
+        state.reportMissing("PM1", 9_000);
+        state.reportPresent("PM1");
+        assertThat(state.missingAnswers("PM1")).isEmpty();
+        state.reportMissing("PM1", 12_000);
+        assertThat(state.missingAnswers("PM1")).hasValue(1);
+        assertThat(state.missingSince("PM1")).hasValue(12_000);
+    }
+
     /** A source with one feed that handles the markets whose id starts with a prefix. */
     private static PriceSource source(String name, String prefix) {
         return new PriceSource() {

@@ -60,9 +60,11 @@ class BackfillEndToEndTest {
     }
 
     @Test
-    void aQuietAssetsRoundSettlesAfterTwoMinutesOnTheCarriedForwardLastClose() {
+    void aQuietAssetsRoundIsNeverSettledOnACarriedTradePrice() {
         // the same fixture, but the round runs 18:00:00 - 18:10:00 and the asset last traded at 18:01:59:
-        // its answer has no candle for the 8 minutes after that (hl_multi_asset_live.md §4.3)
+        // its answer has no candle for the 8 minutes after that (hl_multi_asset_live.md §4.3). The source used to
+        // carry that last close (a TRADE price) to the end of the round after two minutes and the round settled on
+        // it; with no live tick anywhere, nothing says the mark stayed there, so it never settles (F1)
         long start = 1_790_877_600_000L;
         long end = start + 600_000L;
         FakeApis.Hyperliquid api = new FakeApis.Hyperliquid();
@@ -70,12 +72,11 @@ class BackfillEndToEndTest {
         AtomicLong now = new AtomicLong(end + 1_000); // the scheduler settles a second after the end
         PriceSources sources = new PriceSources(List.of(new HyperliquidPriceSource(() -> api, PricesConfig.defaults(),
                 now::get)));
-        LiveMarketPrices prices = new LiveMarketPrices(Fixtures.tickStore(now::get), sources, PricesConfig.defaults(),
-                now::get);
+        TickStore store = Fixtures.tickStore(now::get);
+        LiveMarketPrices prices = new LiveMarketPrices(store, sources, PricesConfig.defaults(), now::get);
         RoundWindow window = new RoundWindow("BTC", Interval.HOURLY, start, end);
         Market btc = TestMarkets.btc();
 
-        // 1 s after the end the quiet tail may still fill: no carry-forward yet, the round is unavailable
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> prices.resolve(btc, window))
                 .isInstanceOf(PriceUnavailableException.class);
         assertThat(api.info.requests).hasSize(1);
@@ -86,24 +87,13 @@ class BackfillEndToEndTest {
                 .isInstanceOf(PriceUnavailableException.class);
         assertThat(api.info.requests).hasSize(1);
 
-        // ... and 2 minutes after the end, once the cooldown has passed, the tail is final and is carried
+        // ... and two minutes after the end, when the tail used to be "final" and carried, it is still no price
         now.set(end + 125_000);
-        RoundPriceData data = prices.resolve(btc, window);
-
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> prices.resolve(btc, window))
+                .isInstanceOf(PriceUnavailableException.class);
         assertThat(api.info.requests).hasSize(2);
-        assertThat(data.open()).isEqualByComparingTo("84871.00"); // the 18:00 candle's open
-        assertThat(data.close()).isEqualByComparingTo("84792.00"); // the last close, carried to the end
-        assertThat(data.sourceTsMs()).isEqualTo(end - 1); // a point 1 ms before the aligned end
-        assertThat(data.path()).hasSize(30);
-        assertThat(data.path().stream().map(Candle::low).min(BigDecimal::compareTo).orElseThrow())
-                .isEqualByComparingTo("84736.00"); // the 18:01 candle's real low
-        assertThat(data.path().stream().map(Candle::high).max(BigDecimal::compareTo).orElseThrow())
-                .isEqualByComparingTo("84883.00"); // the 18:00 candle's real high
-        // from 18:02 on the path is flat at the carried price
-        for (Candle c : data.path().subList(7, 30)) {
-            assertThat(c.high()).isEqualByComparingTo("84792.00");
-            assertThat(c.low()).isEqualByComparingTo("84792.00");
-        }
+        // nothing of the 18:02 - 18:10 stretch is in the ring: no carried close, no merged point
+        assertThat(store.series("BTC", 1_790_877_720_000L, end + 1)).isEmpty();
     }
 
     /** The round [19:30:00, 19:34:00] of 2026-10-01: {@code {"data":[…]}} with the buckets at the given seconds after its start. */

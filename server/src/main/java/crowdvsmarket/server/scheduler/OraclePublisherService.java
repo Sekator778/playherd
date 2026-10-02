@@ -7,6 +7,7 @@ import crowdvsmarket.server.persistence.OracleRecordRepository;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -67,6 +68,20 @@ import org.jboss.logging.Logger;
  * holds are marked handed over, with the state it reported (the questions stop at the first row it
  * does not hold: the POST itself was refused then). A chain service that cannot even answer that ends
  * the pass instead of timing out once per chunk.
+ *
+ * <p><b>"chainsvc holds seq N" is not "chainsvc holds my record N".</b> It keeps the first record it saw
+ * for a seq and takes a second one as the same no-op whatever its content, and its status answer carries no
+ * content — so a seq the server issued before it knew the chain service's {@code maxKnownSeq} (the floor
+ * arrives late, or a second writer shares the singleton) used to be marked confirmed at some height for a
+ * record chainsvc never took. Two things make the difference. (1) The attempt is on record before the POST
+ * ({@code oracle_records.post_attempted_at_ms}, V8) and {@code markKnown} refuses a row without one. (2) A row
+ * that was <i>never</i> POSTed is asked about before its first POST: if chainsvc holds the seq already, that
+ * record cannot be ours — the row is a <b>collision</b>: not sent, state {@code conflict} (which the round's
+ * {@code oracleAnchor} and the public journal then show, the web already words it), logged at ERROR, out of the
+ * pending set and the reconciliation. A row POSTed before whose answer was lost still ends as known: it is the
+ * only case in which the held record can be ours. What stays open — a first POST that never reached chainsvc,
+ * a record that took the seq in the meantime and a resend that is then a no-op — can only be closed by the
+ * status answer carrying the record's content; the server cannot see it.
  */
 @ApplicationScoped
 public class OraclePublisherService {
@@ -162,10 +177,35 @@ public class OraclePublisherService {
         return pending.subList(0, firstNonBtc);
     }
 
-    /** POSTs one chunk and records what chainsvc holds of it. @return false when chainsvc did not
+    /** Sends one chunk and records what chainsvc holds of it: first the collision check of the rows never sent
+     *  before, then the attempt on record, then the POST. @return false when chainsvc did not
      *  answer at all, so there is no point in going on with the next chunk this pass. */
     private boolean publishChunk(List<OracleRecordRepository.Row> chunk) {
-        List<ChainSvcClient.OracleRecord> records = chunk.stream()
+        long now = System.currentTimeMillis();
+        List<OracleRecordRepository.Row> toSend = new ArrayList<>(chunk.size());
+        for (OracleRecordRepository.Row row : chunk) {
+            if (row.postAttemptedAtMs() != null) {
+                toSend.add(row);
+                continue;
+            }
+            // never POSTed: whatever chainsvc holds under this seq was not put there by this server
+            ChainSvcClient.OracleRecordState remote = chainSvc.oracleRecordStatus(row.seq());
+            if (remote == null) {
+                return false; // chainsvc does not answer: no POST either, the next tick asks again
+            }
+            if (HELD_BY_CHAINSVC.contains(remote.state())) {
+                collision(row, remote, now);
+            } else {
+                toSend.add(row);
+            }
+        }
+        if (toSend.isEmpty()) {
+            return true;
+        }
+        // the attempt is on record BEFORE the POST: a row that chainsvc then holds without having named it in
+        // its answer (a lost response) can be told from one that was never sent
+        oracleRecords.markPostAttempted(toSend.stream().map(OracleRecordRepository.Row::seq).toList(), now);
+        List<ChainSvcClient.OracleRecord> records = toSend.stream()
                 .map(r -> new ChainSvcClient.OracleRecord(r.seq(), r.ts(), r.priceCents(), r.resultsHash(),
                         r.source(), r.sourceTs(), r.assetIndex()))
                 .toList();
@@ -179,8 +219,22 @@ public class OraclePublisherService {
             oracleRecords.markQueued(acceptedSeqs);
         }
         Set<Long> accepted = new HashSet<>(acceptedSeqs);
-        List<OracleRecordRepository.Row> notAccepted = chunk.stream().filter(r -> !accepted.contains(r.seq())).toList();
-        return notAccepted.isEmpty() || settleKnown(notAccepted, chunk.size());
+        List<OracleRecordRepository.Row> notAccepted = toSend.stream().filter(r -> !accepted.contains(r.seq())).toList();
+        return notAccepted.isEmpty() || settleKnown(notAccepted, toSend.size());
+    }
+
+    /**
+     * A seq collision (class javadoc): chainsvc holds a record under a seq whose record this server never sent.
+     * The row is not sent and is flagged {@code conflict}; the error line says what to look at.
+     */
+    private void collision(OracleRecordRepository.Row row, ChainSvcClient.OracleRecordState remote, long now) {
+        boolean flagged = oracleRecords.markConflict(row.seq(), now);
+        LOG.errorf("oracle seq collision: the chain service already holds a record under seq %d (state %s%s) although "
+                + "this server never sent it — the record of market %s (asset %d) is NOT published; its round's "
+                + "anchor and the public journal show 'conflict'. A second writer on this singleton, or a seq "
+                + "issued before the chain service's maxKnownSeq was known (herd.oracle.require-seq-floor=false)?%s",
+                row.seq(), remote.state(), remote.height() == null ? "" : ", height " + remote.height(), row.market(),
+                row.assetIndex(), flagged ? "" : " (the row could not be flagged: it changed under us)");
     }
 
     /**
@@ -203,7 +257,11 @@ public class OraclePublisherService {
             if (!HELD_BY_CHAINSVC.contains(remote.state())) {
                 break;
             }
-            oracleRecords.markKnown(row.seq(), remote.state(), remote.height(), remote.coinId(), now);
+            if (!oracleRecords.markKnown(row.seq(), remote.state(), remote.height(), remote.coinId(), now)) {
+                LOG.errorf("oracle record seq=%d is held by chainsvc (%s) but has no POST attempt on record: not marked "
+                        + "known", row.seq(), remote.state());
+                break;
+            }
             LOG.debugf("chainsvc already holds oracle record seq=%d (%s) — marked handed over", row.seq(),
                     remote.state());
             settled++;

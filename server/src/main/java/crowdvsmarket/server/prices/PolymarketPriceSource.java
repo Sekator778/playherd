@@ -25,23 +25,34 @@ import org.jboss.logging.Logger;
  * values come back as strings; the answer is not cached by Cloudflare and takes about 0.1 s.
  *
  * <p>A token that is missing from an answer that contains others is reported to
- * {@link PolymarketLiveState} (the catalog closes the market when it stays missing for 60 s). When
- * <i>none</i> of two or more requested tokens comes back that is taken for an outage of the CLOB
- * rather than for all those markets closing at once, and nothing is reported: a mass closing
- * cancels every round of every Polymarket market.
+ * {@link PolymarketLiveState} (the catalog closes the market when it stays missing for 60 s over several
+ * consecutive answers). When <i>none</i> of two or more requested tokens comes back that is taken for an
+ * outage of the CLOB rather than for all those markets closing at once, and nothing is reported (the
+ * reports so far are cleared): a mass closing cancels every round of every Polymarket market. A poll that
+ * fails clears the reports of its markets as well — closing a market needs successful answers that say so.
  *
  * <p><b>History</b> is the data API's 60-second buckets, {@code GET /v2/prices-history} (series of
- * order-book midpoints, §4.4); closed buckets there trail the present by about 5 minutes, but the
- * series ends with an exact tick, so a hole in a round that ended a minute ago may be filled only
- * minutes later — the scheduler's retry covers that. The grid is not gapless: a real 24-hour series
- * had 55 steps of 120 s and one of 329 s between its 1 436 points (polymarket_data_api.md §4.2), and
- * the bucket stamped exactly at a round's end may be the one that is missing. A midpoint series says
- * "the price is this until the next point", so {@link #historyPoints} carries each bucket's price
- * forward in steps of at most {@link #CARRY_STEP_MS} — to the next bucket when it is at most
- * {@link #MAX_CARRY_MS} away (a longer stretch stays a hole: ten minutes of silence is no flat line),
- * and to the end of the requested range when the last bucket is within one bucket width of it. The
- * carried points sit between two real ones with the older one's price, as a live tick would.
- * {@code change24h} is Gamma's absolute {@code oneDayPriceChange} (from {@link PolymarketLiveState})
+ * order-book midpoints, §4.4 — the same quantity as the live midpoints, so it may fill any hole,
+ * {@link HistoryKind#SAME_AS_LIVE}). The newest closed buckets trail the present: measured 2026-10-02, the last
+ * bucket of a window that ends now is 200–330 s old, and the series ends with an exact <i>terminal tick</i>
+ * ({@code resolution_seconds: 0}) — at the end of the window, 17 s before it for a window ending now and about
+ * 81 s after the last bucket for a window that ended earlier (polymarket_data_api.md §13.6). The grid is not
+ * gapless either: a real 24-hour series had 55 steps of 120 s and one of 329 s between its 1 436 points (§4.2),
+ * and the bucket stamped exactly at a round's end may be the one that is missing. A midpoint series says "the
+ * price is this until the next point", so {@link #historyPoints} carries each bucket's price forward in steps
+ * of at most {@link #CARRY_STEP_MS} — to the next bucket when it is at most {@link #MAX_CARRY_MS} away (a longer
+ * stretch stays a hole: ten minutes of silence is no flat line), and to the end of the requested range when the
+ * last point is within one bucket width of it. The carried points sit between two real ones with the older
+ * one's price, as a live tick would.
+ *
+ * <p><b>Not across the lag.</b> The stretch between the last closed bucket and the terminal tick is the
+ * materialisation lag, not a quiet price: the price moved in it, nobody knows how. It is bridged only when it
+ * is at most {@link #MAX_CARRY_TO_TERMINAL_MS} (two buckets); at the live edge it stays a hole. A seed that
+ * bridged it put a flat 0.50 over five minutes in which the price went to 0.80, and the first running round
+ * of the market opened on it. A round that begins inside the lag has no opening price until the buckets
+ * materialise; the settlement backfill asks again then.
+ *
+ * <p>{@code change24h} is Gamma's absolute {@code oneDayPriceChange} (from {@link PolymarketLiveState})
  * turned into the change relative to the price a day ago ({@link #relativeChange}).
  */
 @ApplicationScoped
@@ -61,7 +72,13 @@ public class PolymarketPriceSource implements PriceSource {
     static final long CARRY_STEP_MS = 30_000L;
     /** Two buckets further apart than this (10 minutes; the longest gap seen in real series was 329 s) are not bridged. */
     static final long MAX_CARRY_MS = 600_000L;
+    /** A stretch that ends at the terminal tick is bridged only up to two buckets: beyond that it is the lag, not a price. */
+    static final long MAX_CARRY_TO_TERMINAL_MS = 2 * BUCKET_MS;
     private static final int MAX_PAGES = 5;
+
+    /** One row of the history: a bucket, or the series' terminal tick ({@code resolution_seconds: 0}). */
+    record Bucket(PricePoint point, boolean terminal) {
+    }
 
     private final Supplier<PolymarketClobApi> clob;
     private final Supplier<PolymarketDataApi> data;
@@ -100,9 +117,17 @@ public class PolymarketPriceSource implements PriceSource {
         for (Market market : markets) {
             body.addObject().put("token_id", market.sourceRef());
         }
-        JsonNode answer = clob.get().midpoints(body);
-        if (answer == null || !answer.isObject()) {
-            throw new IOException("unexpected answer of POST /midpoints: " + answer);
+        JsonNode answer;
+        try {
+            answer = clob.get().midpoints(body);
+            if (answer == null || !answer.isObject()) {
+                throw new IOException("unexpected answer of POST /midpoints: " + answer);
+            }
+        } catch (IOException | RuntimeException e) {
+            for (Market market : markets) {
+                state.reportPollFailed(market.id()); // an answer that never came is no evidence of a closed market
+            }
+            throw e;
         }
         return parse(answer, markets);
     }
@@ -131,6 +156,9 @@ public class PolymarketPriceSource implements PriceSource {
             if (outage) {
                 LOG.warnf("POST /midpoints returned none of %d token(s): taken for an outage, no market reported missing",
                         markets.size());
+                for (Market market : markets) {
+                    state.reportPollFailed(market.id()); // an answer that lacks everything says nothing about one token
+                }
             } else {
                 for (Market market : missing) {
                     state.reportMissing(market.id(), now);
@@ -165,12 +193,12 @@ public class PolymarketPriceSource implements PriceSource {
         long start = Math.max(fromMs, toMs - MAX_WINDOW_MS);
         long startSeconds = Math.floorDiv(start, 1000L);
         long endSeconds = Math.floorDiv(toMs + 999L, 1000L);
-        List<PricePoint> buckets = new ArrayList<>();
+        List<Bucket> buckets = new ArrayList<>();
         String cursor = null;
         for (int page = 0; page < MAX_PAGES; page++) {
             JsonNode answer = data.get().pricesHistory(market.sourceRef(), startSeconds, endSeconds, BUCKET_SECONDS,
                     cursor);
-            buckets.addAll(bucketPoints(answer, fromMs, toMs));
+            buckets.addAll(buckets(answer, fromMs, toMs));
             JsonNode pagination = answer == null ? null : answer.path("pagination");
             if (pagination == null || !pagination.path("has_more").asBoolean(false)
                     || pagination.path("next_cursor").asText("").isEmpty()) {
@@ -178,7 +206,7 @@ public class PolymarketPriceSource implements PriceSource {
             }
             cursor = pagination.path("next_cursor").asText();
         }
-        buckets.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
+        buckets.sort((a, b) -> Long.compare(a.point().atMs(), b.point().atMs()));
         return carryForward(buckets, toMs); // once, over every page: "the last bucket" is the last of all of them
     }
 
@@ -188,12 +216,16 @@ public class PolymarketPriceSource implements PriceSource {
      * the last one), see the class comment.
      */
     static List<PricePoint> historyPoints(JsonNode answer, long fromMs, long toMs) {
-        return carryForward(bucketPoints(answer, fromMs, toMs), toMs);
+        return carryForward(buckets(answer, fromMs, toMs), toMs);
     }
 
     /** The rows of the answer as they are: one point per bucket (and the terminal tick), oldest first. */
     static List<PricePoint> bucketPoints(JsonNode answer, long fromMs, long toMs) {
-        List<PricePoint> out = new ArrayList<>();
+        return buckets(answer, fromMs, toMs).stream().map(Bucket::point).toList();
+    }
+
+    private static List<Bucket> buckets(JsonNode answer, long fromMs, long toMs) {
+        List<Bucket> out = new ArrayList<>();
         if (answer == null) {
             return out;
         }
@@ -205,26 +237,29 @@ public class PolymarketPriceSource implements PriceSource {
             }
             atMs *= 1000L;
             if (atMs >= fromMs && atMs <= toMs && price.signum() > 0) {
-                out.add(new PricePoint(atMs, price));
+                boolean terminal = row.path("resolution_seconds").asInt(BUCKET_SECONDS) == 0;
+                out.add(new Bucket(new PricePoint(atMs, price), terminal));
             }
         }
-        out.sort((a, b) -> Long.compare(a.atMs(), b.atMs()));
+        out.sort((a, b) -> Long.compare(a.point().atMs(), b.point().atMs()));
         return out;
     }
 
     /**
      * Adds, between every two neighbouring points at most {@link #MAX_CARRY_MS} apart, points
      * {@link #CARRY_STEP_MS} apart that repeat the earlier one's price; and the same from the last
-     * point up to {@code toMs} when it is within one bucket width of it. Longer stretches get nothing.
+     * point up to {@code toMs} when it is within one bucket width of it. Longer stretches get nothing, and a
+     * stretch that ends at the terminal tick gets something only when it is at most
+     * {@link #MAX_CARRY_TO_TERMINAL_MS} — beyond that it is the materialisation lag (class comment).
      */
-    static List<PricePoint> carryForward(List<PricePoint> points, long toMs) {
-        List<PricePoint> out = new ArrayList<>(points.size() * 2);
-        for (int i = 0; i < points.size(); i++) {
-            PricePoint p = points.get(i);
+    static List<PricePoint> carryForward(List<Bucket> buckets, long toMs) {
+        List<PricePoint> out = new ArrayList<>(buckets.size() * 2);
+        for (int i = 0; i < buckets.size(); i++) {
+            PricePoint p = buckets.get(i).point();
             out.add(p);
-            boolean last = i == points.size() - 1;
-            long until = last ? toMs : points.get(i + 1).atMs();
-            long reach = last ? BUCKET_MS : MAX_CARRY_MS;
+            boolean last = i == buckets.size() - 1;
+            long until = last ? toMs : buckets.get(i + 1).point().atMs();
+            long reach = last ? BUCKET_MS : (buckets.get(i + 1).terminal() ? MAX_CARRY_TO_TERMINAL_MS : MAX_CARRY_MS);
             if (until - p.atMs() > reach) {
                 continue; // a stretch that stays a hole
             }

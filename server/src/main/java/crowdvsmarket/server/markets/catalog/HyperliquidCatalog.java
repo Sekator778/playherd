@@ -49,10 +49,12 @@ import org.jboss.logging.Logger;
  *
  * <p><b>Delisting.</b> The price poll sees {@code isDelisted} in every answer for free and reports it
  * to {@link HyperliquidLiveState}; {@link #watch}, every few seconds and from memory, closes the
- * market of an asset that has been reported delisted for {@link #DELISTED_CLOSE_AFTER_MS} (so one
- * odd answer cannot close a market), through {@code MarketRegistry.close} with a reason in plain
- * words — it is shown to the players as it stands. A delisted asset's {@code markPx} is frozen and
- * the poll skips it, so without this its market would go stale and every round of it would wait an
+ * market of an asset that has been reported delisted for {@link #DELISTED_CLOSE_AFTER_MS} over at least
+ * {@value #DELISTED_CONFIRMATIONS} consecutive successful answers, the newest of them recent — so one
+ * odd answer cannot close a market, and neither can one answer followed by polls that fail (a failed poll
+ * starts the count again; a market that is closed stays closed) — through {@code MarketRegistry.close} with a
+ * reason in plain words — it is shown to the players as it stands. A delisted asset's {@code markPx} is frozen
+ * and the poll skips it, so without this its market would go stale and every round of it would wait an
  * hour for its refund. BTC is never closed.
  *
  * <p><b>Locks.</b> Neither {@link #sync} nor {@link #watch} holds any lock or monitor while it calls
@@ -78,8 +80,12 @@ public class HyperliquidCatalog {
     static final String JOB_WATCH = "catalog-hyperliquid-watch";
     /** Т-4: no market lets a player take more than 40x, whatever the perp allows. */
     static final int LEVERAGE_CAP = 40;
-    /** An asset must have been reported delisted by every answer for this long before its market is closed. */
+    /** An asset must have been reported delisted by every answer for this long before its market is closed ... */
     static final long DELISTED_CLOSE_AFTER_MS = 10_000L;
+    /** ... over at least this many consecutive successful answers (a failed poll or a live answer starts the count again) ... */
+    static final int DELISTED_CONFIRMATIONS = 3;
+    /** ... the newest of them no older than this: a market is not closed for good on evidence that went silent. */
+    static final long DELISTED_EVIDENCE_MAX_AGE_MS = 15_000L;
     /** Shown to the players as it stands. */
     static final String REASON_DELISTED = "The asset was delisted at the source";
 
@@ -142,7 +148,9 @@ public class HyperliquidCatalog {
                 continue;
             }
             OptionalLong since = state.delistedSince(market.id());
-            if (since.isEmpty() || nowMs - since.getAsLong() < DELISTED_CLOSE_AFTER_MS) {
+            if (since.isEmpty() || nowMs - since.getAsLong() < DELISTED_CLOSE_AFTER_MS
+                    || state.delistedAnswers(market.id()).orElse(0) < DELISTED_CONFIRMATIONS
+                    || nowMs - state.lastDelistedAnswerAt(market.id()).orElse(0L) > DELISTED_EVIDENCE_MAX_AGE_MS) {
                 continue;
             }
             LOG.infof("closing %s (%s): %s", market.id(), market.sourceRef(), REASON_DELISTED);

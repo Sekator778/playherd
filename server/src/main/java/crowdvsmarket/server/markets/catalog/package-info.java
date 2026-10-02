@@ -10,8 +10,11 @@
  * {@code herd.prices.source=synthetic}. Settings: {@link crowdvsmarket.server.markets.catalog.CatalogConfig}.
  *
  * <p>Every market a catalog lists is handed to the {@link crowdvsmarket.server.prices.HistorySeeder},
- * which fetches its last minutes of history in the background. The reason a catalog gives for closing
- * a market is shown to the players as it stands — a plain sentence. {@code registry.list} and
+ * which fetches its last minutes of history in the background, paced by the source's rate limit. The reason a
+ * catalog gives for closing a market is shown to the players as it stands — a plain sentence — and a market
+ * is closed only on fresh evidence: several consecutive successful answers, not one answer and then silence.
+ * An odds market's ticker (unique among the active markets) and subtitle are made by
+ * {@link crowdvsmarket.server.markets.catalog.MarketLabels}. {@code registry.list} and
  * {@code registry.close} are always called without any lock held: the registry's listener takes the
  * game engine's write lock, which the game service holds in read mode while it reads prices.
  */

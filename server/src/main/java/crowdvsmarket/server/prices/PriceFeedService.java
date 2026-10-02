@@ -131,13 +131,14 @@ public class PriceFeedService {
 
     /**
      * One poll of one feed: reads its markets' prices and stores them as one snapshot. First, every
-     * market of the feed whose ring is still empty — the first poll after a start with no snapshots
-     * (BTC on a fresh database), a market whose rows were pruned, one the source could not be asked
-     * about yet — is handed to the {@link HistorySeeder}, which fills the ring's past in the
-     * background, once a minute per market at most (the history ends right before the oldest tick,
-     * so this poll's tick lands on top of it). That is why the seeding is tied to the poll and not to
-     * start-up: with the scheduler off nothing is asked, and the first poll is the first moment the
-     * ring can be known to be empty for good.
+     * market of the feed that has no tick fresh at the start of a window running now — the first poll
+     * after a start with no snapshots (BTC on a fresh database), a market whose rows were pruned, a
+     * restart that straddled a round start, one the source could not be asked about yet — is handed to the
+     * {@link HistorySeeder}, which fills the ring's past in the background, once per running window (a failed
+     * try again after a minute and later; the history ends right before the oldest live tick, so this poll's
+     * tick lands on top of it). That is why the seeding is tied to the poll and not to start-up: with the
+     * scheduler off nothing is asked, and the first poll is the first moment the ring can be known to lack a
+     * price for good.
      */
     void pollFeed(String feedId) {
         PriceSources.Binding binding = sources.bindingById(feedId).orElse(null);
@@ -149,7 +150,7 @@ public class PriceFeedService {
             return;
         }
         try {
-            seeder.seedEmpty(markets);
+            seeder.seedMissing(markets);
         } catch (RuntimeException e) {
             failures.failure("seed " + feedId, "could not queue the price history seeding of " + feedId
                     + " (its markets start with the live polls)", e);
