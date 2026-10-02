@@ -68,6 +68,7 @@ class ChainSvcContractFixturesTest {
             Map.entry("OracleRecordsRequest", ChainSvcRestClient.OracleRecordsRequest.class),
             Map.entry("OracleRecordsResponse", ChainSvcRestClient.OracleRecordsResponse.class),
             Map.entry("OracleRecordStatusResponse", ChainSvcRestClient.OracleRecordStateResponse.class),
+            Map.entry("OracleRecordStatusResponse_without_content", ChainSvcRestClient.OracleRecordStateResponse.class),
             Map.entry("OracleStatusResponse", ChainSvcRestClient.OracleStatusResponse.class),
             Map.entry("WithdrawalRequestDto", ChainSvcRestClient.PlayWithdrawalRequest.class),
             Map.entry("WithdrawalAcceptedResponse", ChainSvcRestClient.PlayWithdrawalAcceptedResponse.class),
@@ -122,7 +123,7 @@ class ChainSvcContractFixturesTest {
         assertThat(onDisk)
                 .as("the fixtures chain/c2-svc writes and the DTOs this class knows must be the same set")
                 .containsExactlyInAnyOrderElementsOf(DTO_OF.keySet());
-        assertThat(onDisk).hasSize(16);
+        assertThat(onDisk).hasSize(17);
 
         for (Map.Entry<String, Class<?>> entry : new TreeMap<>(DTO_OF).entrySet()) {
             JsonNode fixture = readFixture(entry.getKey());
@@ -225,6 +226,7 @@ class ChainSvcContractFixturesTest {
 
         assertThat(dto.queued()).isEqualTo(json.get("queued").asInt());
         assertThat(dto.acceptedSeqs()).isEqualTo(List.of(205L));
+        assertThat(dto.conflictSeqs()).isEqualTo(List.of(204L));
         assertThat(mapper.readTree(mapper.writeValueAsString(dto))).isEqualTo(json);
     }
 
@@ -238,6 +240,26 @@ class ChainSvcContractFixturesTest {
         assertThat(dto.state()).isEqualTo(json.get("state").asText());
         assertThat(dto.height()).isEqualTo(json.get("height").asLong());
         assertThat(dto.coinId()).isEqualTo(json.get("coinId").asText());
+        assertThat(dto.resultsHash()).isEqualTo(json.get("resultsHash").asText());
+        assertThat(dto.priceCents()).isEqualTo(json.get("priceCents").asLong());
+        assertThat(dto.asset()).isEqualTo(json.get("asset").asInt());
+        assertThat(dto.ts()).isEqualTo(json.get("ts").asLong());
+        assertThat(mapper.readTree(mapper.writeValueAsString(dto))).isEqualTo(json);
+    }
+
+    /** chain_service.md §18: an entry confirmed before the chain service kept content answers with the four
+     *  content fields null — boxed types here, so "no content" is never read as price 0 / asset 0. */
+    @Test
+    void oracleRecordStatusWithoutContentFixtureRoundTrips() throws IOException {
+        JsonNode json = readFixture("OracleRecordStatusResponse_without_content");
+        ChainSvcRestClient.OracleRecordStateResponse dto =
+                mapper.treeToValue(json, ChainSvcRestClient.OracleRecordStateResponse.class);
+
+        assertThat(dto.state()).isEqualTo(json.get("state").asText());
+        assertThat(dto.resultsHash()).isNull();
+        assertThat(dto.priceCents()).isNull();
+        assertThat(dto.asset()).isNull();
+        assertThat(dto.ts()).isNull();
         assertThat(mapper.readTree(mapper.writeValueAsString(dto))).isEqualTo(json);
     }
 

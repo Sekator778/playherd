@@ -45,8 +45,10 @@ public interface ChainSvcRestClient {
     record OracleRecordsRequest(List<OracleRecordJson> records) {
     }
 
-    /** FIXED INTERFACE (b): {@code {queued:int, acceptedSeqs:[int]}}. */
-    record OracleRecordsResponse(int queued, List<Long> acceptedSeqs) {
+    /** FIXED INTERFACE (b): {@code {queued:int, acceptedSeqs:[int], conflictSeqs:[int]}} —
+     *  {@code conflictSeqs}: seqs of this request the chain service already holds with DIFFERENT
+     *  content (docs/research/chain_service.md §18); absent from a chain service older than that. */
+    record OracleRecordsResponse(int queued, List<Long> acceptedSeqs, List<Long> conflictSeqs) {
     }
 
     @POST
@@ -57,8 +59,11 @@ public interface ChainSvcRestClient {
                                          OracleRecordsRequest request);
 
     /** FIXED INTERFACE (b): {@code GET /v1/oracle/records/{seq}} →
-     *  {@code {seq, state, height, coinId}}. */
-    record OracleRecordStateResponse(long seq, String state, Long height, String coinId) {
+     *  {@code {seq, state, height, coinId, resultsHash, priceCents, asset, ts}}. The last four are the
+     *  content of the record the chain service holds under that seq — {@code null} (boxed types on
+     *  purpose) when it no longer has the content: entries confirmed before chain_service.md §18. */
+    record OracleRecordStateResponse(long seq, String state, Long height, String coinId, String resultsHash,
+                                       Long priceCents, Integer asset, Long ts) {
     }
 
     @GET

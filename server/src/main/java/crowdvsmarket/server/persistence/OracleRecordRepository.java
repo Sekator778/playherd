@@ -128,6 +128,17 @@ public class OracleRecordRepository {
                 """, checkedAtMs, seq)) > 0;
     }
 
+    /** A content collision: chainsvc says it holds a DIFFERENT record under a {@code seq} this server did
+     *  POST (its answer's {@code conflictSeqs}, or the content of {@code GET /v1/oracle/records/{seq}} —
+     *  docs/research/chain_service.md §18). Same outcome as {@link #markConflict}: state {@code conflict},
+     *  nothing of the other record claimed, never retried. Only a row not yet handed over can be flagged. */
+    public boolean markContentConflict(long seq, long checkedAtMs) {
+        return db.tx(c -> db.update(c, """
+                UPDATE oracle_records SET state = 'conflict', height = NULL, coin_id = NULL, state_checked_at_ms = ?
+                WHERE seq = ? AND chainsvc_queued = FALSE
+                """, checkedAtMs, seq)) > 0;
+    }
+
     /** Rows waiting for chainsvc (a collision is not waiting for anything, see {@link #pending}). */
     public int pendingCount() {
         Long n = db.read(c -> db.queryOne(c, "SELECT COUNT(*) AS n FROM oracle_records "

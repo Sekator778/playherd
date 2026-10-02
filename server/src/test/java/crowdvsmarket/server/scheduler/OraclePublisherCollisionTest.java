@@ -1,9 +1,11 @@
 package crowdvsmarket.server.scheduler;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import crowdvsmarket.server.chain.ChainSvcClient;
 import crowdvsmarket.server.chain.FakeChainSvc;
@@ -167,5 +169,64 @@ class OraclePublisherCollisionTest {
         assertThat(chain.postedSeqs()).containsExactly(seq);
         assertThat(oracleRecords.pending()).isEmpty();
         assertThat(anchor("down-", seq).state()).isEqualTo("unknown"); // handed over, not a conflict
+    }
+
+    // --- content collisions (docs/research/chain_service.md §18): the chain service says what it holds ---
+
+    /** The POST answer names the seq in {@code conflictSeqs}: another record sits under it. */
+    @Test
+    void aSeqNamedInConflictSeqsIsAConflictAndIsNeverSentAgain() {
+        long seq = serverMeta.reserveOracleSeqRange(1);
+        insert("content-", seq);
+        when(chainSvcClient.oracleRecordStatus(seq))
+                .thenReturn(new ChainSvcClient.OracleRecordState(seq, "unknown", null, null));
+        when(chainSvcClient.oracleRecords(anyList()))
+                .thenReturn(new ChainSvcClient.OracleRecordsResult(0, List.of(), List.of(seq)));
+
+        publisher.publishOnce();
+
+        assertThat(anchor("content-", seq).state()).isEqualTo("conflict");
+        assertThat(anchor("content-", seq).height()).isNull();
+        assertThat(oracleRecords.pending()).isEmpty();
+        clearInvocations(chainSvcClient);
+        publisher.publishOnce();
+        verify(chainSvcClient, never()).oracleRecords(anyList());
+    }
+
+    /** The lost-answer path: the chain service holds the seq, and the content it reports is not this record. */
+    @Test
+    void aHeldRecordWithOtherContentIsAConflictNotAKnownRecord() {
+        long seq = serverMeta.reserveOracleSeqRange(1);
+        insert("content-", seq);
+        when(chainSvcClient.oracleRecordStatus(seq))
+                .thenReturn(new ChainSvcClient.OracleRecordState(seq, "unknown", null, null))
+                .thenReturn(new ChainSvcClient.OracleRecordState(seq, "confirmed", 4_000_123L, "0xcoin",
+                        "0xsomebodyelse", 1L, 0, 1L));
+        when(chainSvcClient.oracleRecords(anyList()))
+                .thenReturn(new ChainSvcClient.OracleRecordsResult(0, List.of()));
+
+        publisher.publishOnce();
+
+        assertThat(anchor("content-", seq).state()).isEqualTo("conflict");
+        assertThat(anchor("content-", seq).height()).isNull();
+        assertThat(oracleRecords.pending()).isEmpty();
+    }
+
+    /** Control: the same path with this record's own content is the ordinary "already handed over". */
+    @Test
+    void aHeldRecordWithThisRecordsContentIsMarkedKnown() {
+        long seq = serverMeta.reserveOracleSeqRange(1);
+        insert("content-", seq);
+        when(chainSvcClient.oracleRecordStatus(seq))
+                .thenReturn(new ChainSvcClient.OracleRecordState(seq, "unknown", null, null))
+                .thenReturn(new ChainSvcClient.OracleRecordState(seq, "confirmed", 4_000_123L, "0xcoin",
+                        "0xHASH" + seq, 8_000_000L + seq, 0, 1L));
+        when(chainSvcClient.oracleRecords(anyList()))
+                .thenReturn(new ChainSvcClient.OracleRecordsResult(0, List.of()));
+
+        publisher.publishOnce();
+
+        assertThat(anchor("content-", seq).state()).isEqualTo("confirmed");
+        assertThat(anchor("content-", seq).height()).isEqualTo(4_000_123L);
     }
 }

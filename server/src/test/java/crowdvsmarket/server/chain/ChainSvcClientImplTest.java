@@ -47,7 +47,7 @@ class ChainSvcClientImplTest {
     @Test
     void oracleRecordsSendsBearerTokenAndMapsAcceptedSeqs() {
         when(rest.oracleRecords(any(), any()))
-                .thenReturn(new ChainSvcRestClient.OracleRecordsResponse(1, List.of(42L)));
+                .thenReturn(new ChainSvcRestClient.OracleRecordsResponse(1, List.of(42L), List.of(41L)));
 
         ChainSvcClient.OracleRecordsResult result = impl.oracleRecords(
                 List.of(new ChainSvcClient.OracleRecord(42L, 1000L, 500000L, "0xhash", "replay", 1000L)));
@@ -55,12 +55,25 @@ class ChainSvcClientImplTest {
         verify(rest).oracleRecords(eq("Bearer " + TOKEN), any());
         assertThat(result.queued()).isEqualTo(1);
         assertThat(result.acceptedSeqs()).containsExactly(42L);
+        assertThat(result.conflictSeqs()).containsExactly(41L);
+    }
+
+    /** A chain service older than chain_service.md §18 sends no conflictSeqs: read as "none". */
+    @Test
+    void oracleRecordsWithoutConflictSeqsMeansNoConflicts() {
+        when(rest.oracleRecords(any(), any()))
+                .thenReturn(new ChainSvcRestClient.OracleRecordsResponse(1, List.of(42L), null));
+
+        ChainSvcClient.OracleRecordsResult result = impl.oracleRecords(
+                List.of(new ChainSvcClient.OracleRecord(42L, 1000L, 500000L, "0xhash", "replay", 1000L)));
+
+        assertThat(result.conflictSeqs()).isEmpty();
     }
 
     @Test
     void oracleRecordsSendsEveryRecordsAssetAndABtcRecordIsAssetZero() {
         when(rest.oracleRecords(any(), any()))
-                .thenReturn(new ChainSvcRestClient.OracleRecordsResponse(2, List.of(42L, 43L)));
+                .thenReturn(new ChainSvcRestClient.OracleRecordsResponse(2, List.of(42L, 43L), List.of()));
 
         impl.oracleRecords(List.of(
                 new ChainSvcClient.OracleRecord(42L, 1000L, 500000L, "0xhash", "live", 1000L, 3),
@@ -88,7 +101,8 @@ class ChainSvcClientImplTest {
     @Test
     void oracleRecordStatusSendsBearerToken() {
         when(rest.oracleRecordStatus(any(), anyLong()))
-                .thenReturn(new ChainSvcRestClient.OracleRecordStateResponse(7L, "confirmed", 123456L, "0xcoin"));
+                .thenReturn(new ChainSvcRestClient.OracleRecordStateResponse(7L, "confirmed", 123456L, "0xcoin",
+                        "0xABCD", 8561200L, 3, 1790400000L));
 
         ChainSvcClient.OracleRecordState state = impl.oracleRecordStatus(7L);
 
@@ -96,6 +110,24 @@ class ChainSvcClientImplTest {
         assertThat(state.state()).isEqualTo("confirmed");
         assertThat(state.height()).isEqualTo(123456L);
         assertThat(state.coinId()).isEqualTo("0xcoin");
+        assertThat(state.resultsHash()).isEqualTo("0xABCD");
+        assertThat(state.priceCents()).isEqualTo(8561200L);
+        assertThat(state.asset()).isEqualTo(3);
+        assertThat(state.ts()).isEqualTo(1790400000L);
+        // the same record, whatever the case or the 0x prefix of the hash
+        assertThat(state.holdsAnotherRecordThan("abcd", 8561200L, 3)).isFalse();
+        // another hash, another price, another asset: not this record
+        assertThat(state.holdsAnotherRecordThan("0xabce", 8561200L, 3)).isTrue();
+        assertThat(state.holdsAnotherRecordThan("0xabcd", 8561201L, 3)).isTrue();
+        assertThat(state.holdsAnotherRecordThan("0xabcd", 8561200L, 4)).isTrue();
+    }
+
+    /** No content kept by the chain service (an entry from before §18): nothing can be said, so no collision. */
+    @Test
+    void aRecordStateWithoutContentNeverClaimsACollision() {
+        ChainSvcClient.OracleRecordState state = new ChainSvcClient.OracleRecordState(7L, "confirmed", 1L, "0xcoin");
+
+        assertThat(state.holdsAnotherRecordThan("0xabcd", 1L, 0)).isFalse();
     }
 
     @Test

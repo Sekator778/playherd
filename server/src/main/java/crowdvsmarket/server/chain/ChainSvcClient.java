@@ -40,7 +40,17 @@ public interface ChainSvcClient {
      *  {@link #oracleRecordStatus(long)} about the rest, instead of treating "not accepted" as "not
      *  held" (which resent a record chainsvc already had on every tick, forever). A chainsvc outage
      *  also comes back as an empty result — never as an exception. */
-    record OracleRecordsResult(int queued, List<Long> acceptedSeqs) {
+    record OracleRecordsResult(int queued, List<Long> acceptedSeqs, List<Long> conflictSeqs) {
+
+        public OracleRecordsResult {
+            acceptedSeqs = acceptedSeqs == null ? List.of() : List.copyOf(acceptedSeqs);
+            conflictSeqs = conflictSeqs == null ? List.of() : List.copyOf(conflictSeqs);
+        }
+
+        /** No conflicts reported (also the shape of a chain service older than §18). */
+        public OracleRecordsResult(int queued, List<Long> acceptedSeqs) {
+            this(queued, acceptedSeqs, List.of());
+        }
     }
 
     /** {@code GET /v1/oracle/status}. {@code stuckReason}/{@code conflicts} (task item 5, contract
@@ -83,8 +93,39 @@ public interface ChainSvcClient {
     /** FIXED INTERFACE (b)'s new {@code GET /v1/oracle/records/{seq}} — one record's own
      *  durable-delivery state, polled by {@code OracleReconciliationService} (task item 1c).
      *  {@code state} is one of {@code "queued"|"in_flight"|"confirmed"|"unknown"}; {@code height}/
-     *  {@code coinId} are only ever non-null once {@code state} is {@code "confirmed"}. */
-    record OracleRecordState(long seq, String state, Long height, String coinId) {
+     *  {@code coinId} are only ever non-null once {@code state} is {@code "confirmed"}.
+     *  {@code resultsHash}/{@code priceCents}/{@code asset}/{@code ts} are the content of the record the
+     *  chain service holds under that seq (chain_service.md §18) — all {@code null} when it has none. */
+    record OracleRecordState(long seq, String state, Long height, String coinId, String resultsHash,
+                              Long priceCents, Integer asset, Long ts) {
+
+        /** Without the held record's content (a chain service older than chain_service.md §18, or an
+         *  entry it confirmed before it kept content). */
+        public OracleRecordState(long seq, String state, Long height, String coinId) {
+            this(seq, state, height, coinId, null, null, null, null);
+        }
+
+        /**
+         * True when the chain service says what it holds under this seq and it is NOT the record with
+         * these values — a different record took the seq. False when the content matches, and false
+         * when the chain service no longer has the content (nothing can be said then).
+         */
+        public boolean holdsAnotherRecordThan(String ourResultsHash, long ourPriceCents, int ourAsset) {
+            if (resultsHash == null) {
+                return false;
+            }
+            return !hex(resultsHash).equals(hex(ourResultsHash))
+                    || (priceCents != null && priceCents != ourPriceCents)
+                    || (asset != null && asset != ourAsset);
+        }
+
+        private static String hex(String value) {
+            if (value == null) {
+                return "";
+            }
+            String v = value.toLowerCase(java.util.Locale.ROOT);
+            return v.startsWith("0x") ? v.substring(2) : v;
+        }
     }
 
     // --- Р-53: real on-chain PLAY withdraw/deposit (chainsvc FIXED INTERFACE, /v1/play/*) ---

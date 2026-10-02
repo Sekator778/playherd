@@ -51,8 +51,7 @@ public class ChainSvcClientImpl implements ChainSvcClient {
                     .toList();
             ChainSvcRestClient.OracleRecordsResponse response =
                     rest.oracleRecords(bearerToken(), new ChainSvcRestClient.OracleRecordsRequest(json));
-            List<Long> accepted = response.acceptedSeqs() == null ? List.of() : response.acceptedSeqs();
-            return new OracleRecordsResult(response.queued(), accepted);
+            return new OracleRecordsResult(response.queued(), response.acceptedSeqs(), response.conflictSeqs());
         } catch (Exception e) {
             LOG.warnf(e, "chainsvc /v1/oracle/records unreachable — will retry next tick");
             return new OracleRecordsResult(0, List.of());
@@ -63,7 +62,8 @@ public class ChainSvcClientImpl implements ChainSvcClient {
     public OracleRecordState oracleRecordStatus(long seq) {
         try {
             ChainSvcRestClient.OracleRecordStateResponse r = rest.oracleRecordStatus(bearerToken(), seq);
-            return new OracleRecordState(r.seq(), r.state(), r.height(), r.coinId());
+            return new OracleRecordState(r.seq(), r.state(), r.height(), r.coinId(), r.resultsHash(),
+                    r.priceCents(), r.asset(), r.ts());
         } catch (Exception e) {
             LOG.debugf(e, "chainsvc /v1/oracle/records/%d unreachable", seq);
             return null;

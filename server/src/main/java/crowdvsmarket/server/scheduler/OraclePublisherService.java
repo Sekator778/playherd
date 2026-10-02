@@ -219,7 +219,15 @@ public class OraclePublisherService {
             oracleRecords.markQueued(acceptedSeqs);
         }
         Set<Long> accepted = new HashSet<>(acceptedSeqs);
-        List<OracleRecordRepository.Row> notAccepted = toSend.stream().filter(r -> !accepted.contains(r.seq())).toList();
+        // chain_service.md §18: a seq chainsvc already holds with DIFFERENT content is named, not silently skipped
+        Set<Long> conflicting = new HashSet<>(result.conflictSeqs());
+        for (OracleRecordRepository.Row row : toSend) {
+            if (conflicting.contains(row.seq()) && !accepted.contains(row.seq())) {
+                contentCollision(row, "its answer to the POST names the seq in conflictSeqs", now);
+            }
+        }
+        List<OracleRecordRepository.Row> notAccepted = toSend.stream()
+                .filter(r -> !accepted.contains(r.seq()) && !conflicting.contains(r.seq())).toList();
         return notAccepted.isEmpty() || settleKnown(notAccepted, toSend.size());
     }
 
@@ -235,6 +243,18 @@ public class OraclePublisherService {
                 + "issued before the chain service's maxKnownSeq was known (herd.oracle.require-seq-floor=false)?%s",
                 row.seq(), remote.state(), remote.height() == null ? "" : ", height " + remote.height(), row.market(),
                 row.assetIndex(), flagged ? "" : " (the row could not be flagged: it changed under us)");
+    }
+
+    /**
+     * A content collision: chainsvc holds a DIFFERENT record under a seq this server posted. Flagged {@code
+     * conflict} like a seq collision — the record is not on chain and is never claimed to be.
+     */
+    private void contentCollision(OracleRecordRepository.Row row, String evidence, long now) {
+        boolean flagged = oracleRecords.markContentConflict(row.seq(), now);
+        LOG.errorf("oracle seq collision: the chain service holds ANOTHER record under seq %d (%s) — the record of "
+                + "market %s (asset %d) is NOT published; its round's anchor and the public journal show 'conflict'. "
+                + "A second writer on this singleton?%s", row.seq(), evidence, row.market(), row.assetIndex(),
+                flagged ? "" : " (the row could not be flagged: it changed under us)");
     }
 
     /**
@@ -256,6 +276,11 @@ public class OraclePublisherService {
             }
             if (!HELD_BY_CHAINSVC.contains(remote.state())) {
                 break;
+            }
+            if (remote.holdsAnotherRecordThan(row.resultsHash(), row.priceCents(), row.assetIndex())) {
+                contentCollision(row, "the content it reports for the seq is not this record", now);
+                settled++;
+                continue;
             }
             if (!oracleRecords.markKnown(row.seq(), remote.state(), remote.height(), remote.coinId(), now)) {
                 LOG.errorf("oracle record seq=%d is held by chainsvc (%s) but has no POST attempt on record: not marked "
