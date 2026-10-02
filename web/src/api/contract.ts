@@ -940,6 +940,9 @@ export interface ServerInfoDto {
   playAssetId?: string;
   /** Whether the browser test wallet (Р-45) is offered on the sign-in sheet. Absent → offered. */
   testWallet?: boolean;
+  /** False while the server is rebuilding its state after a failure: engine-backed calls answer
+   *  503 `ENGINE_NOT_READY` until it is true again. Absent → true. */
+  engineReady?: boolean;
   /**
    * Additive (task item 2, Р-55): a Reown/WalletConnect `projectId` set on the SERVER (env var),
    * overriding this build's own `VITE_WALLETCONNECT_PROJECT_ID` at runtime — lets Alex's Reown
