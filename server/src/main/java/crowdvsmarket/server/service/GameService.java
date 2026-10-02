@@ -28,8 +28,8 @@ import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.config.GameMode;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.PlayerDirectory;
-import crowdvsmarket.server.domain.RoundCalendar;
 import crowdvsmarket.server.domain.RoundProgress;
+import crowdvsmarket.server.domain.WinStreak;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Crowd;
@@ -41,7 +41,6 @@ import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.PlayChain;
 import crowdvsmarket.server.dto.Ratings;
 import crowdvsmarket.server.dto.Rounds;
-import crowdvsmarket.server.dto.ServerInfo;
 import crowdvsmarket.server.events.EventApplier;
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
@@ -98,8 +97,8 @@ import java.util.UUID;
  * a read/write lock lets those reads run concurrently with each other (never with a writer),
  * instead of a plain mutex serializing reads behind every other read too, which would otherwise
  * inflate p99 latency under exactly the concurrent-read load the bug report's test hammers.
- * {@code EngineRebuildService.rebuild()} — which discards and fully repopulates {@link EngineHub}
- * from scratch — takes the SAME write lock via {@link #runExclusively}, for the same reason a
+ * {@code EngineRebuildService.rebuild()} — which replaces {@link EngineHub}'s whole state with a
+ * freshly replayed one — takes the SAME write lock via {@link #runExclusively}, for the same reason a
  * rebuild used to run inside {@code synchronized(gameService)}: it must never interleave with any
  * other read or write here either.
  *
@@ -118,6 +117,19 @@ import java.util.UUID;
  * and applies the event to the engine inside it. If anything throws, the transaction rolls back and
  * the in-memory state is rebuilt from the event log before the exception propagates, so memory and
  * database can never disagree about a round. {@link #cancelRound} works the same way.
+ *
+ * <p><b>Fail-stop.</b> If that rebuild fails too, the engine is not ready ({@code
+ * EngineRebuildService#isReady}) until one succeeds: every method that changes anything and every read
+ * from the engine answers 503 {@code ENGINE_NOT_READY} (re-checked once the lock is held); what comes from
+ * the database or needs no engine ({@link #cancellations}, a settled {@link #round}, {@link
+ * #referencePrice}, ...) is answered as usual. The policy: {@code EngineRebuildService}'s javadoc.
+ *
+ * <p><b>Lock order</b> (no cycle, listings and closes may arrive at any moment): the {@code BotService}
+ * monitor, then {@link #engineLock}, then — a rebuild's reload, under the engine lock — the registry's
+ * write lock; the registry never holds its lock while it calls {@link #onListed}/{@link #onClosed}, and
+ * nothing here ever calls into {@code BotService}. The read model's cache monitor ({@code MarketViewService},
+ * which reads the engine through {@link #readEngine}) is taken before the engine's read lock, and nothing here
+ * ever calls into it either.
  */
 @ApplicationScoped
 public class GameService implements MarketListener {
@@ -137,7 +149,11 @@ public class GameService implements MarketListener {
     @Inject
     RoundProgress roundProgress;
     @Inject
-    RoundCalendar roundCalendar;
+    SeriesSeeder seeder;
+    @Inject
+    OpenBets openBets;
+    @Inject
+    RoundCancellations cancellations;
     @Inject
     PriceService priceService;
     @Inject
@@ -150,8 +166,6 @@ public class GameService implements MarketListener {
     WithdrawalDepositRepository withdrawalDeposits;
     @Inject
     OracleRecordRepository oracleRecords;
-    @Inject
-    crowdvsmarket.server.chain.OracleStatusCache oracleStatusCache;
     @Inject
     crowdvsmarket.server.persistence.ServerMetaRepository serverMeta;
     @Inject
@@ -178,16 +192,67 @@ public class GameService implements MarketListener {
     private final java.util.concurrent.locks.ReadWriteLock engineLock =
             new java.util.concurrent.locks.ReentrantReadWriteLock();
 
-    /** Used only by {@code EngineRebuildService.rebuild()}: runs {@code action} holding this
-     *  class's write lock, the same exclusive-access guarantee every mutating method below gets by
-     *  holding it themselves — a rebuild's {@code hub.resetEmpty()} + full event replay must never
-     *  interleave with any other read or write of {@link EngineHub} through this class. */
+    /** Used by {@code EngineRebuildService}: runs {@code action} holding this class's write lock, the
+     *  exclusive access every mutating method below gets by holding it — the swap of a rebuilt state
+     *  must never interleave with any other read or write of {@link EngineHub} through this class. Not
+     *  gated by the engine being ready: this is how it becomes ready. */
     public void runExclusively(Runnable action) {
         engineLock.writeLock().lock();
         try {
             action.run();
         } finally {
             engineLock.writeLock().unlock();
+        }
+    }
+
+    /** 503 {@code ENGINE_NOT_READY} while the engine's memory cannot be trusted (class javadoc). */
+    private void requireReady() {
+        if (!rebuildService.isReady()) {
+            throw ApiException.engineNotReady();
+        }
+    }
+
+    /** {@link #requireReady} for the read model ({@code MarketViewService}), which may answer from a cache:
+     *  a cached answer was built from memory that cannot be trusted any more, so it is not given either. */
+    public void requireEngineReady() {
+        requireReady();
+    }
+
+    /**
+     * The small, explicit read API of the engine for the read model ({@code MarketViewService}, which
+     * builds {@code markets}, {@code myPositions} and {@code crowdOverview}): runs {@code read} holding the
+     * engine's READ lock, like every read in this class — 503 {@code ENGINE_NOT_READY} while the engine is
+     * not ready. {@code read} must be a pure in-memory read: no database round trip, no network (nothing
+     * that can block holds the lock a settlement is waiting for).
+     */
+    public <T> T readEngine(java.util.function.Supplier<T> read) {
+        lockRead();
+        try {
+            return read.get();
+        } finally {
+            engineLock.readLock().unlock();
+        }
+    }
+
+    /** The write lock of every call that changes the engine, taken only while it is ready: the first
+     *  check answers at once, without queueing behind a rebuild; the second one counts (a recovery may
+     *  have failed while this call waited). The caller unlocks as usual, once this has returned. */
+    private void lockWrite() {
+        requireReady();
+        engineLock.writeLock().lock();
+        if (!rebuildService.isReady()) {
+            engineLock.writeLock().unlock();
+            throw ApiException.engineNotReady();
+        }
+    }
+
+    /** {@link #lockWrite} for the read lock, taken by every read that comes from the engine. */
+    private void lockRead() {
+        requireReady();
+        engineLock.readLock().lock();
+        if (!rebuildService.isReady()) {
+            engineLock.readLock().unlock();
+            throw ApiException.engineNotReady();
         }
     }
 
@@ -272,7 +337,7 @@ public class GameService implements MarketListener {
     }
 
     public PlayerTouchResult registerOrTouchPlayer(String walletAddress, long nowMs) {
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             Optional<String> existing = players.playerIdForWallet(walletAddress);
             String playerId;
@@ -281,10 +346,9 @@ public class GameService implements MarketListener {
                 playerId = UUID.randomUUID().toString();
                 String finalPlayerId = playerId;
                 int playerIndex = serverMeta.reserveNextPlayerIndex();
-                db.tx(c -> {
-                    players.insert(c, finalPlayerId, walletAddress, null, false, null, playerIndex, nowMs);
-                    return null;
-                });
+                // The directory's cache gets the row only after the commit (PlayerDirectory's javadoc).
+                players.cache(db.tx(c -> players.insert(c, finalPlayerId, walletAddress, null, false, null,
+                        playerIndex, nowMs)));
                 appendPlayerRegistered(playerId, nowMs);
             } else {
                 playerId = existing.get();
@@ -313,15 +377,13 @@ public class GameService implements MarketListener {
      *  {@code isBot=false}) by nothing else — bots skip the wallet-signature flow entirely, they
      *  are server-side only. */
     public Identity.PlayerSummaryDto createBotPlayer(String nickname, String strategy, long nowMs) {
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             String playerId = "bot-" + strategy.toLowerCase(java.util.Locale.ROOT) + "-" + UUID.randomUUID();
             String walletAddress = "txbot1" + playerId.replace("-", "").substring(0, Math.min(40, playerId.length()));
             int playerIndex = serverMeta.reserveNextPlayerIndex();
-            db.tx(c -> {
-                players.insert(c, playerId, walletAddress, nickname, true, strategy, playerIndex, nowMs);
-                return null;
-            });
+            players.cache(db.tx(c -> players.insert(c, playerId, walletAddress, nickname, true, strategy,
+                    playerIndex, nowMs)));
             appendPlayerRegistered(playerId, nowMs);
             return summary(playerId);
         } finally {
@@ -344,18 +406,30 @@ public class GameService implements MarketListener {
     private static final java.util.regex.Pattern NICKNAME_PATTERN =
             java.util.regex.Pattern.compile("[A-Za-z0-9 _.-]{3,24}");
 
-    public synchronized Identity.PlayerSummaryDto setNickname(String playerId, String nickname) {
+    /** Nicknames are not unique, so there is nothing to check-then-write; what this changes — the
+     *  {@code players} row and the directory's cache — is what sign-in, bot creation and a rebuild's
+     *  reload change under the engine write lock, and this takes it too (it used to be {@code
+     *  synchronized} on the service's own monitor, which excludes only another {@code setNickname}: a
+     *  reload between its UPDATE and its commit left the cache with the old nickname for good). The
+     *  cache gets the nickname after the commit. */
+    public Identity.PlayerSummaryDto setNickname(String playerId, String nickname) {
         String trimmed = nickname == null ? "" : nickname.strip();
         if (!NICKNAME_PATTERN.matcher(trimmed).matches()) {
             throw ApiException.invalidNickname(
                     "nickname must be 3-24 characters: letters, digits, space, '_', '.', '-' only");
         }
-        players.byId(playerId).orElseThrow(() -> ApiException.notFound("unknown player " + playerId));
-        db.tx(c -> {
-            players.updateNickname(c, playerId, trimmed);
-            return null;
-        });
-        return summary(playerId);
+        lockWrite();
+        try {
+            players.byId(playerId).orElseThrow(() -> ApiException.notFound("unknown player " + playerId));
+            db.tx(c -> {
+                players.updateNickname(c, playerId, trimmed);
+                return null;
+            });
+            players.cacheNickname(playerId, trimmed);
+            return summary(playerId);
+        } finally {
+            engineLock.writeLock().unlock();
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -370,7 +444,7 @@ public class GameService implements MarketListener {
     /** Whether the market's rounds are played on this server at all: every market in {@code
      *  mode=live}, only BTC in {@code mode=replay}, whatever the registry holds — the replay series
      *  is BTC's (§3.2 п.7, Т-12). */
-    private boolean runs(Market market) {
+    public boolean runs(Market market) {
         return config.mode() == GameMode.LIVE || Market.BTC_ID.equals(market.id());
     }
 
@@ -382,14 +456,21 @@ public class GameService implements MarketListener {
 
     /** Gives {@code market} its engines and, when its rounds are played, a series per interval
      *  seeded at the window containing "now" (§4 п.2) — never at the calendar's first window, which
-     *  would make the scheduler walk every window since the origin. Idempotent: a series that already
-     *  has a cursor keeps it. Called for a newly listed market, and by the scheduler for a running
-     *  market that has no series (a listing notification that arrived before this service was
-     *  registered as the registry's listener, or lost). */
-    public void ensureSeries(Market market) {
+     *  would make the scheduler walk every window since the origin, and never behind a window that
+     *  still holds a bet ({@link SeriesSeeder}). Idempotent: a series that already has a cursor keeps
+     *  it. Called for a newly listed market, and by the scheduler (with its own clock, {@code nowMs})
+     *  for a running market that has no series (a listing notification that came before this service
+     *  was the registry's listener, or was lost). A no-op while the engine is not ready — before the
+     *  first rebuild has finished the calendar has no origin yet: the rebuild creates the engines of
+     *  every market in the registry and seeds the running ones, and a listing must not throw out of
+     *  {@code MarketRegistry#list}, whose caller has committed it. */
+    public void ensureSeries(Market market, long nowMs) {
         engineLock.writeLock().lock();
         try {
-            ensureSeriesLocked(market, System.currentTimeMillis());
+            if (!rebuildService.isReady()) {
+                return;
+            }
+            ensureSeriesLocked(market, nowMs);
         } finally {
             engineLock.writeLock().unlock();
         }
@@ -405,8 +486,7 @@ public class GameService implements MarketListener {
         }
         for (Interval interval : Interval.values()) {
             if (!roundProgress.isSeeded(market.id(), interval)) {
-                roundProgress.seed(market.id(), interval,
-                        roundCalendar.windowContaining(market.id(), interval, nowMs));
+                roundProgress.seed(market.id(), interval, seeder.seedFor(hub, current, interval, nowMs));
             }
         }
     }
@@ -416,66 +496,37 @@ public class GameService implements MarketListener {
      *  that holds the engine lock and reads the registry. */
     @Override
     public void onListed(Market market) {
-        ensureSeries(market);
+        ensureSeries(market, System.currentTimeMillis());
     }
 
     /** {@link MarketListener}: a market was closed — cancel its betting round and its running round
      *  with a refund (reason {@code "market closed: <reason>"}, listed publicly like every
-     *  cancellation) and stop its series. Both windows are cancelled even when empty, so a round a
-     *  player still has open in the app resolves to a cancelled round, not to "unknown". */
+     *  cancellation) and stop its series ({@link RoundCancellations#closeSeries}). A no-op while the
+     *  engine is not ready, and a failure half-way starts a rebuild: either way the rebuild cancels,
+     *  with a refund, every open round of every market that is closed in the database. */
     @Override
     public void onClosed(Market market, String reason) {
         long nowMs = System.currentTimeMillis();
-        String why = "market closed: " + reason;
         engineLock.writeLock().lock();
         try {
-            hub.ensureMarket(market);
-            for (Interval interval : Interval.values()) {
-                Optional<RoundWindow> running = roundProgress.findNext(market.id(), interval);
-                if (running.isPresent()) {
-                    for (RoundWindow window : List.of(running.get(), RoundClock.next(running.get()))) {
-                        if (!roundResults.exists(window.roundId())) {
-                            cancelWindowLocked(market, window, why, nowMs, true);
-                        }
-                    }
-                }
-                roundProgress.remove(market.id(), interval);
+            if (!rebuildService.isReady()) {
+                return;
+            }
+            try {
+                hub.ensureMarket(market);
+                cancellations.closeSeries(eventApplier, hub, market, "market closed: " + reason, nowMs);
+            } catch (RuntimeException | Error e) {
+                recoverEngineState(e);
+                throw e;
             }
         } finally {
             engineLock.writeLock().unlock();
         }
     }
 
-    /** Restart safety net — the caller (the rebuild) holds the write lock: a market was closed in
-     *  the database but the process stopped before {@link #onClosed} cancelled its open rounds, so
-     *  the replayed bet book still holds bets whose stake is debited and that nobody would ever
-     *  settle. Looks at the windows that were running or open for betting when the market closed
-     *  (the cursor may have lagged a step behind the clock) and cancels, with a refund, those that
-     *  still hold bets. */
-    public void cancelStrandedRoundsLocked(long nowMs) {
-        for (Market market : marketRegistry.all()) {
-            if (market.isActive() || market.closedAtMs() == null) {
-                continue;
-            }
-            hub.ensureMarket(market);
-            for (Interval interval : Interval.values()) {
-                RoundWindow containing = roundCalendar.windowContaining(market.id(), interval, market.closedAtMs());
-                RoundWindow previous = new RoundWindow(market.id(), interval,
-                        containing.startMs() - (containing.endMs() - containing.startMs()), containing.startMs());
-                for (RoundWindow window : List.of(previous, containing, RoundClock.next(containing))) {
-                    if (hasBetsLocked(window) && !roundResults.exists(window.roundId())) {
-                        LOG.warnf("market %s closed while round %s still held bets — cancelling it with a refund",
-                                market.id(), window.roundId());
-                        cancelWindowLocked(market, window, "market closed: " + market.closeReason(), nowMs, false);
-                    }
-                }
-            }
-        }
-    }
-
     /** Whether any bet waits in {@code window}'s round. */
     public boolean hasPendingBets(RoundWindow window) {
-        engineLock.readLock().lock();
+        lockRead();
         try {
             return hasBetsLocked(window);
         } finally {
@@ -498,7 +549,7 @@ public class GameService implements MarketListener {
      */
     public RoundWindow firstWindowToResolve(RoundWindow from, long nowMs) {
         long stepMs = from.endMs() - from.startMs();
-        engineLock.readLock().lock();
+        lockRead();
         try {
             RoundWindow window = from;
             while (nowMs - window.endMs() > stepMs && !hasBetsLocked(window)) {
@@ -517,7 +568,7 @@ public class GameService implements MarketListener {
     public Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
         RoundWindow.RoundRef ref = parseRoundId(req.roundId());
         marketRegistry.require(ref.market()); // MARKET_NOT_FOUND without waiting for the lock
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             // Read again under the lock: a close announced while this call waited for it wins.
             Market market = marketRegistry.require(ref.market());
@@ -602,7 +653,7 @@ public class GameService implements MarketListener {
     public void cancelBet(String playerId, String roundId, long nowMs) {
         RoundWindow.RoundRef ref = parseRoundId(roundId);
         marketRegistry.require(ref.market());
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             RoundWindow bettingWindow = roundProgress.findNext(ref.market(), ref.interval())
                     .map(RoundClock::next)
@@ -631,7 +682,9 @@ public class GameService implements MarketListener {
      *   <li>Without any lock, asks the price source for the window's open, close and path — in
      *       {@code mode=live} that may go to the network, so it must never run under the engine
      *       lock. {@link PriceUnavailableException} propagates: the scheduler retries, and cancels the
-     *       round one hour after its end (Р-23).
+     *       round one hour after its end (Р-23). So does a price it cannot be settled on (an open or
+     *       close that is not positive, too long a path: {@link RoundPriceChecks}), found out here
+     *       and not inside the settlement transaction.
      *   <li>Under the write lock: looks at {@code round_results} again (the round may have been
      *       resolved or cancelled while prices were fetched — then nothing happens and {@code null} is
      *       returned), then runs ONE database transaction that appends the {@code RoundResolved} event,
@@ -645,12 +698,13 @@ public class GameService implements MarketListener {
      * @return the engine's report, or {@code null} when the round was already resolved or cancelled
      */
     public RoundReport resolveRound(RoundWindow window, long nowMs) throws PriceUnavailableException {
+        requireReady(); // no point in asking the price source while the engine cannot take the result
         Market market = marketRegistry.require(window.market());
         RoundPriceData data = resolvePrices(market, window); // phase 1 — no lock
         BigDecimal open = data.open().setScale(2, RoundingMode.HALF_UP);
         BigDecimal close = data.close().setScale(2, RoundingMode.HALF_UP);
 
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             if (roundResults.exists(window.roundId())) {
                 return null;
@@ -679,10 +733,10 @@ public class GameService implements MarketListener {
     }
 
     /** Phase 1 of {@link #resolveRound}: the settlement data of a finished window, in engine (lot)
-     *  prices. */
+     *  prices, checked before anything is locked ({@link RoundPriceChecks}). */
     private RoundPriceData resolvePrices(Market market, RoundWindow window) {
         if (config.mode() == GameMode.LIVE) {
-            return marketPrices.resolve(market, window);
+            return RoundPriceChecks.requireUsable(window, marketPrices.resolve(market, window), true);
         }
         if (!Market.BTC_ID.equals(market.id())) {
             throw new IllegalStateException("mode=replay plays BTC only, cannot resolve " + window.roundId());
@@ -690,28 +744,25 @@ public class GameService implements MarketListener {
         RoundPrices prices = priceService.replayPrices();
         List<Candle> path = prices.path(window);
         Candle last = path.get(path.size() - 1);
-        return new RoundPriceData(prices.openPrice(window), last.close(), path, last.openTimeMs());
+        return RoundPriceChecks.requireUsable(window, new RoundPriceData(prices.openPrice(window), last.close(), path,
+                last.openTimeMs()), false);
     }
 
-    /** One candle from {@code open} to {@code close}: the whole path of a round nobody bet on. */
-    private static Candle singleCandle(RoundWindow window, BigDecimal open, BigDecimal close) {
+    /** One candle from {@code open} to {@code close}: the whole path of a round nobody bet on. Also the
+     *  path of a running round with no tick yet inside it (package-private: the read model's too). */
+    static Candle singleCandle(RoundWindow window, BigDecimal open, BigDecimal close) {
         return new Candle(window.startMs(), window.endMs() - 1, open, open.max(close), open.min(close), close,
                 BigDecimal.ZERO, 0);
     }
 
     /** After a failed round operation the in-memory engine may be ahead of the database (the event
      *  was applied inside a transaction that then rolled back): rebuild it from the log so memory and
-     *  database agree again. The caller holds the write lock, which the rebuild needs. */
+     *  database agree again — and if that fails too, stop serving from it ({@link
+     *  EngineRebuildService#recoverAfterFailure}). The caller holds the write lock. */
     private void recoverEngineState(Throwable cause) {
         LOG.errorf(cause, "a round operation failed after the engine may have been changed — rebuilding the "
                 + "engine from the event log");
-        try {
-            rebuildService.rebuildStateLocked();
-        } catch (RuntimeException | Error rebuildFailure) {
-            cause.addSuppressed(rebuildFailure);
-            LOG.error("the engine rebuild after a failed round operation failed as well — the in-memory state "
-                    + "is undefined until the next restart", rebuildFailure);
-        }
+        rebuildService.recoverAfterFailure(cause);
     }
 
     /** Inside {@link #resolveRound}'s transaction: the settled result, the per-player history rows
@@ -821,7 +872,7 @@ public class GameService implements MarketListener {
      *  or currently open-for-betting round of its series; already-resolved rounds are rejected. */
     public Rounds.CancellationDto cancelRound(RoundWindow window, String reason, long nowMs) {
         Market market = marketRegistry.require(window.market());
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             if (roundResults.exists(window.roundId())) {
                 throw ApiException.badRequest("round " + window.roundId() + " is already resolved");
@@ -833,41 +884,16 @@ public class GameService implements MarketListener {
                         + window.interval());
             }
             hub.ensureMarket(market);
-            return cancelWindowLocked(market, window, reason, nowMs, true);
+            try {
+                // one transaction, like the settlement; never touches RoundProgress (the scheduler steps over)
+                return cancellations.cancel(eventApplier, hub, market, window, reason, nowMs);
+            } catch (RuntimeException | Error e) {
+                recoverEngineState(e);
+                throw e;
+            }
         } finally {
             engineLock.writeLock().unlock();
         }
-    }
-
-    /** Cancels {@code window} with a refund of every pending bet, in ONE transaction like the
-     *  settlement: the {@code RoundCancelled} event, its application to the engine (refunds, bet book
-     *  cleared) and the cancelled result row. Never touches {@code RoundProgress} — the scheduler
-     *  steps over the round when it sees the row. The caller holds the write lock.
-     *
-     *  @param rebuildOnFailure rebuild the engine from the log when the transaction fails (every
-     *                          caller but the rebuild itself) */
-    private Rounds.CancellationDto cancelWindowLocked(Market market, RoundWindow window, String reason, long nowMs,
-                                                      boolean rebuildOnFailure) {
-        int refundedBetCount = hub.engine(market.id(), window.interval()).betBook().betsFor(window.roundId()).size();
-        GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
-                window.endMs(), reason, nowMs, market.id());
-        var canonical = crowdvsmarket.server.util.ResultsHasher.build(market.id(), window.roundId(),
-                window.interval().name(), "CANCELLED", null, null, List.of(), null);
-        try {
-            db.tx(c -> {
-                eventStore.append(c, event, nowMs);
-                eventApplier.apply(event); // refunds every pending bet and clears the round's BetBook entry
-                roundResults.insertCancelled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
-                        window.endMs(), reason, nowMs, refundedBetCount, canonical.hash(), canonical.json());
-                return null;
-            });
-        } catch (RuntimeException | Error e) {
-            if (rebuildOnFailure) {
-                recoverEngineState(e);
-            }
-            throw e;
-        }
-        return new Rounds.CancellationDto(window.roundId(), reason, nowMs, refundedBetCount);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -888,7 +914,7 @@ public class GameService implements MarketListener {
                                            String viewerPlayerIdOrNull) {
         Market market = requireMarket(marketIdOrNull);
         Interval interval = toEngine(intervalDto);
-        engineLock.readLock().lock();
+        lockRead();
         try {
             hub.ensureMarket(market);
             RoundWindow runningWindow = runningWindowOf(market, interval);
@@ -903,14 +929,16 @@ public class GameService implements MarketListener {
         }
     }
 
+    /** {@code BTC-1h-<start>} is {@code 1h-<start>}: the id is made canonical before it is a key. */
     public Rounds.RoundDto round(String roundId, String viewerPlayerIdOrNull) {
+        roundId = parseRoundId(roundId).roundId();
         Optional<Rounds.RoundDto> settledOrCancelled = roundResults.findRoundDto(roundId);
         if (settledOrCancelled.isPresent()) {
             return settledOrCancelled.get();
         }
         RoundWindow window = windowFor(roundId);
         Market market = marketRegistry.require(window.market());
-        engineLock.readLock().lock();
+        lockRead();
         try {
             hub.ensureMarket(market);
             Optional<RoundWindow> running = roundProgress.findNext(market.id(), window.interval());
@@ -1013,16 +1041,16 @@ public class GameService implements MarketListener {
      *  <p>Prices come from {@link #soFar} — memory only, so this is safe under the read lock. When
      *  the window's open price is not known yet (the market was listed during this window, or the tick
      *  buffer is still empty after a restart) there is nothing to derive an entry price from: the DTO
-     *  then carries the latest tick as {@code openPrice} (or an all-zero price when there is none), no
-     *  positions and no crowd position — "pending" — instead of failing the whole {@code rounds}
-     *  call. */
+     *  then carries {@code openPrice = null} (contract.ts: "waiting for the opening price"; never a
+     *  zero, never the latest tick, which is not the round's open), no positions and no crowd
+     *  position, instead of failing the whole {@code rounds} call. */
     private Rounds.RoundDto buildRunningDto(Market market, RoundWindow window, long nowMs) {
         Rounds.RoundWindowDto windowDto = new Rounds.RoundWindowDto(toDto(window.interval()), window.startMs(),
                 window.endMs());
         Optional<RoundPriceData> soFar = soFar(market, window, nowMs);
         if (soFar.isEmpty()) {
-            return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(),
-                    pendingOpenPrice(market), List.of(), null);
+            return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(), null,
+                    List.of(), null);
         }
         MarketSpec spec = market.spec();
         BigDecimal openPrice = soFar.get().open();
@@ -1085,8 +1113,9 @@ public class GameService implements MarketListener {
 
     /** Open price and path so far of a running window, in engine (lot) prices; empty when the open
      *  price is not known yet. {@code mode=live}: {@link MarketPrices#soFar} (memory only, no
-     *  network). {@code mode=replay}: the replay series, BTC only. */
-    private Optional<RoundPriceData> soFar(Market market, RoundWindow window, long nowMs) {
+     *  network). {@code mode=replay}: the replay series, BTC only. Public: {@code MarketViewService}
+     *  reads a player's running positions off the same prices. */
+    public Optional<RoundPriceData> soFar(Market market, RoundWindow window, long nowMs) {
         if (config.mode() == GameMode.LIVE) {
             return marketPrices.soFar(market, window, nowMs);
         }
@@ -1103,15 +1132,6 @@ public class GameService implements MarketListener {
         }
         Candle last = path.get(path.size() - 1);
         return Optional.of(new RoundPriceData(open, last.close(), path, last.openTimeMs()));
-    }
-
-    /** What {@code RoundRunning.openPrice} carries while the open price is unknown: the latest tick
-     *  when there is one, otherwise an all-zero price with the market's decimals. */
-    private String pendingOpenPrice(Market market) {
-        Optional<PriceQuote> latest = config.mode() == GameMode.LIVE
-                ? marketPrices.latest(market.id()) : Optional.empty();
-        BigDecimal raw = latest.map(PriceQuote::raw).orElse(BigDecimal.ZERO);
-        return raw.setScale(market.priceDecimals(), RoundingMode.HALF_UP).toPlainString();
     }
 
     /** Stake-weighted average leverage of one side's bets, HALF_UP, clamped to 2..the market's cap
@@ -1141,8 +1161,10 @@ public class GameService implements MarketListener {
      *  read mid-rebuild. */
     public Rounds.BetFeedDto betFeed(String roundId, Long sinceSeqOrNull) {
         long sinceSeq = sinceSeqOrNull == null ? 0L : sinceSeqOrNull;
-        Market market = marketRegistry.require(parseRoundId(roundId).market());
-        engineLock.readLock().lock();
+        RoundWindow.RoundRef ref = parseRoundId(roundId);
+        roundId = ref.roundId(); // canonical, like round() and placeBet: the feed is keyed by it
+        Market market = marketRegistry.require(ref.market());
+        lockRead();
         try {
             crowdvsmarket.server.domain.BetFeed.Result result = betFeedStore.since(roundId, sinceSeq);
             List<Rounds.BetFeedEntryDto> entries = result.entries().stream()
@@ -1159,20 +1181,27 @@ public class GameService implements MarketListener {
     // Liquidation preview / reference price (Р-7, Р-33)
     // ---------------------------------------------------------------------------------------
 
-    /** The market's current raw price and when it was read: the replay series in {@code
-     *  mode=replay} (BTC only), the latest tick in {@code mode=live}.
+    /** The market's latest quote — the raw price and when it was read: the replay series in {@code
+     *  mode=replay} (BTC only), the latest tick in {@code mode=live}; empty when there is none. Memory
+     *  only. Public: the lobby ({@code MarketViewService}) shows the same price. */
+    public Optional<PriceQuote> latestQuote(Market market, long nowMs) {
+        if (config.mode() == GameMode.LIVE) {
+            return marketPrices.latest(market.id());
+        }
+        if (!Market.BTC_ID.equals(market.id())) {
+            return Optional.empty();
+        }
+        PriceService.Reference ref = priceService.replayReference(nowMs);
+        return Optional.of(new PriceQuote(ref.price(), ref.asOfMs(), null, false));
+    }
+
+    /** The market's current raw price and when it was read ({@link #latestQuote}).
      *
      *  @throws ApiException {@code PRICE_UNAVAILABLE} when there is none */
     private PriceQuote currentPrice(Market market) {
-        if (config.mode() == GameMode.LIVE) {
-            return marketPrices.latest(market.id()).orElseThrow(
-                    () -> ApiException.priceUnavailable("no price for market " + market.id() + " yet"));
-        }
-        if (!Market.BTC_ID.equals(market.id())) {
-            throw ApiException.priceUnavailable("market " + market.id() + " has no price in replay mode");
-        }
-        PriceService.Reference ref = priceService.replayReference(System.currentTimeMillis());
-        return new PriceQuote(ref.price(), ref.asOfMs(), null, false);
+        return latestQuote(market, System.currentTimeMillis()).orElseThrow(() -> ApiException.priceUnavailable(
+                config.mode() == GameMode.LIVE ? "no price for market " + market.id() + " yet"
+                        : "market " + market.id() + " has no price in replay mode"));
     }
 
     /** {@code referencePrice(marketId)} (§8): the market's current price as a raw string with its
@@ -1239,7 +1268,7 @@ public class GameService implements MarketListener {
      *  session). */
     public Ledger.PlayerAccountDto account(String playerId) {
         ensurePlayerKnown(playerId);
-        engineLock.readLock().lock();
+        lockRead();
         try {
             LedgerBook ledger = hub.ledger();
             PlayAmount balance;
@@ -1258,28 +1287,10 @@ public class GameService implements MarketListener {
     /** Bug fix: sum of {@code playerId}'s stakes across every not-yet-settled round of every
      *  running series (every market, both intervals) — the BETTING round (bet placed, round not
      *  started) and the RUNNING one (position opened, not yet resolved) each contribute at most one
-     *  bet per series (Р-13; Т-5: one position per player per round of a market). */
+     *  bet per series (Р-13; Т-5: one position per player per round of a market). It is the sum of
+     *  what {@code myPositions} lists ({@link OpenBets}: one walk for both). */
     private PlayAmount inPlayStake(String playerId) {
-        PlayAmount total = PlayAmount.ZERO;
-        for (RoundProgress.SeriesKey series : roundProgress.seededSeries()) {
-            Optional<EngineHub.MarketEngines> market = hub.findMarket(series.marketId());
-            Optional<RoundWindow> running = roundProgress.findNext(series.marketId(), series.interval());
-            if (market.isEmpty() || running.isEmpty()) {
-                continue;
-            }
-            GameEngine engine = market.get().engine(series.interval());
-            total = total.plus(stakeInRound(engine, running.get().roundId(), playerId));
-            total = total.plus(stakeInRound(engine, RoundClock.next(running.get()).roundId(), playerId));
-        }
-        return total;
-    }
-
-    private static PlayAmount stakeInRound(GameEngine engine, String roundId, String playerId) {
-        return engine.betBook().betsFor(roundId).stream()
-                .filter(b -> b.playerId().equals(playerId))
-                .map(Bet::stake)
-                .findFirst()
-                .orElse(PlayAmount.ZERO);
+        return openBets.stake(playerId);
     }
 
     private void ensurePlayerKnown(String playerId) {
@@ -1288,7 +1299,7 @@ public class GameService implements MarketListener {
 
     public Ledger.SeasonRecordDto seasonRecord(String playerId, String seasonIdOrNull) {
         Season season = seasonIdOrNull == null ? Season.of(Instant.now()) : parseSeason(seasonIdOrNull);
-        engineLock.readLock().lock();
+        lockRead();
         try {
             Optional<SeasonRecord> record = hub.ledger().seasonRecord(playerId, season);
             return record.map(sr -> new Ledger.SeasonRecordDto(sr.season().id(), sr.baselineBalance().toMoney().toPlainString(),
@@ -1312,7 +1323,7 @@ public class GameService implements MarketListener {
     public Paging.Page<Ledger.LedgerEntryDto> myLedger(String playerId, Paging.PageParams params) {
         long before = params.before() == null ? Long.MAX_VALUE : params.before();
         int limit = params.limitOrDefault();
-        engineLock.readLock().lock();
+        lockRead();
         try {
             List<LedgerEntry> all = hub.ledger().entries();
             List<Ledger.LedgerEntryDto> filtered = new ArrayList<>();
@@ -1379,6 +1390,7 @@ public class GameService implements MarketListener {
      * confirmation", the same discipline {@code OraclePublisherService} already follows).
      */
     public Ledger.WithdrawalRequestDto requestWithdrawal(String playerId, String amount, long nowMs) {
+        requireReady();
         if (!config.withdrawalEnabled()) {
             throw ApiException.withdrawalUnavailable();
         }
@@ -1406,7 +1418,7 @@ public class GameService implements MarketListener {
         }
         String requestId;
         String toAddress;
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             PlayAmount balance = hub.ledger().balance(playerId);
             if (amt.compareTo(balance) > 0) {
@@ -1459,7 +1471,7 @@ public class GameService implements MarketListener {
      *  WithdrawalConfirmed} — the escrow debit already happened at request time) and makes {@code
      *  coinId}/{@code height} public in the player's own withdrawal view (task requirement). */
     public void confirmWithdrawalOnChain(String requestId, String coinId, long height, long nowMs) {
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             if (!withdrawalAwaitingChain(requestId)) {
                 return;
@@ -1483,7 +1495,7 @@ public class GameService implements MarketListener {
      *  the escrowed amount, needs no {@code coinId}/{@code height}), recording {@code reason} only
      *  in the read model. */
     public void failWithdrawalOnChain(String requestId, String reason, long nowMs) {
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             if (!withdrawalAwaitingChain(requestId)) {
                 return;
@@ -1609,11 +1621,14 @@ public class GameService implements MarketListener {
      */
     public boolean creditOnChainDeposit(String playerId, int playerIndex, PlayAmount amount, String coinId,
                                          long height, long nowMs) {
+        // Before the coin is reserved: a coin reserved and then refused would be uncredited for good,
+        // while a refused call leaves it for the poller's next pass.
+        requireReady();
         boolean reserved = depositConfirmations.tryReserve(coinId, playerId, playerIndex, amount.mojos(), height, nowMs);
         if (!reserved) {
             return false;
         }
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             GameEvent.DepositConfirmedOnChain event =
                     new GameEvent.DepositConfirmedOnChain(playerId, playerIndex, amount.mojos(), coinId, height, nowMs);
@@ -1640,7 +1655,7 @@ public class GameService implements MarketListener {
         if (trimmedReason.isBlank()) {
             throw ApiException.badRequest("correction reason must not be blank");
         }
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             LedgerBook ledger = hub.ledger();
             crowdvsmarket.engine.ledger.WithdrawalRequest request = ledger.withdrawal(requestId)
@@ -1674,7 +1689,7 @@ public class GameService implements MarketListener {
         if (trimmedReason.isBlank()) {
             throw ApiException.badRequest("correction reason must not be blank");
         }
-        engineLock.writeLock().lock();
+        lockWrite();
         try {
             LedgerBook ledger = hub.ledger();
             crowdvsmarket.engine.ledger.DepositRequest request = ledger.deposit(requestId)
@@ -1711,7 +1726,7 @@ public class GameService implements MarketListener {
     public Paging.Page<Ledger.LedgerCorrectionDto> ledgerCorrections(Paging.PageParams params) {
         long before = params.before() == null ? Long.MAX_VALUE : params.before();
         int limit = params.limitOrDefault();
-        engineLock.readLock().lock();
+        lockRead();
         try {
             List<crowdvsmarket.engine.ledger.LedgerCorrection> all = hub.ledger().corrections();
             List<Ledger.LedgerCorrectionDto> filtered = new ArrayList<>();
@@ -1741,7 +1756,7 @@ public class GameService implements MarketListener {
      *  "anti-crowd" lines. {@code null}: BTC. */
     public Crowd.CrowdAccountDto crowdAccount(String marketIdOrNull) {
         Market market = requireMarket(marketIdOrNull);
-        engineLock.readLock().lock();
+        lockRead();
         try {
             EngineHub.MarketEngines engines = hub.ensureMarket(market);
             List<CrowdAccount.RoundResult> history = engines.crowd().history();
@@ -1804,7 +1819,7 @@ public class GameService implements MarketListener {
 
     public Ratings.RatingsDto ratings(String seasonIdOrNull) {
         Season season = seasonIdOrNull == null ? Season.of(Instant.now()) : parseSeason(seasonIdOrNull);
-        engineLock.readLock().lock();
+        lockRead();
         try {
             RatingBook ratingBook = new RatingBook(hub.ledger());
             Map<String, PlayerIdentity> identities = players.identitiesById();
@@ -1837,7 +1852,7 @@ public class GameService implements MarketListener {
         ensurePlayerKnown(playerId);
         Identity.PlayerSummaryDto player = summary(playerId);
         Ledger.SeasonRecordDto seasonRecord;
-        engineLock.readLock().lock();
+        lockRead();
         try {
             seasonRecord = hub.ledger().seasonRecord(playerId, Season.of(Instant.now()))
                     .map(sr -> new Ledger.SeasonRecordDto(sr.season().id(), sr.baselineBalance().toMoney().toPlainString(),
@@ -1848,7 +1863,10 @@ public class GameService implements MarketListener {
             engineLock.readLock().unlock();
         }
         List<Identity.ProfileRoundEntryDto> history = roundResults.playerHistory(playerId, PROFILE_HISTORY_LIMIT);
-        return new Identity.PublicProfileDto(player, seasonRecord, history);
+        // over every settled round of the player, not just the page above (Р-71)
+        WinStreak.Result streak = roundResults.playerStreak(playerId);
+        return new Identity.PublicProfileDto(player, seasonRecord, history,
+                new Identity.StreakDto(streak.current(), streak.best()));
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1895,7 +1913,7 @@ public class GameService implements MarketListener {
         // Held for the whole aggregate (each call below re-acquires this SAME read lock, which is
         // reentrant) so home() sees one consistent snapshot across rounds/crowd/ratings, not four
         // independent ones a concurrent write could interleave between.
-        engineLock.readLock().lock();
+        lockRead();
         try {
             Rounds.RoundsPairDto hourly = roundsPair(Enums.Interval.HOURLY, Market.BTC_ID, viewerPlayerIdOrNull);
             Rounds.RoundsPairDto daily = roundsPair(Enums.Interval.DAILY, Market.BTC_ID, viewerPlayerIdOrNull);
@@ -1908,47 +1926,4 @@ public class GameService implements MarketListener {
             engineLock.readLock().unlock();
         }
     }
-
-    // ---------------------------------------------------------------------------------------
-    // serverInfo() — additive method
-    // ---------------------------------------------------------------------------------------
-
-    public ServerInfo.ServerInfoDto serverInfo() {
-        // Bug fix: never call the chainsvc client synchronously here — read the background-
-        // refreshed cache instead (OracleStatusCache's own javadoc has the full story).
-        ChainSvcClient.OracleStatus status = oracleStatusCache.get();
-        int pendingRecords = status != null ? status.pendingRecords() : oracleRecords.pendingCount();
-        ServerInfo.OracleInfoDto oracle = new ServerInfo.OracleInfoDto(config.oracleNetwork(), config.oracleLauncherId(),
-                status == null ? null : status.lastConfirmedSeq(), status == null ? null : status.lastConfirmedHeight(),
-                pendingRecords, status == null ? null : status.operatorBalanceMojos());
-
-        ServerInfo.ReplayInfoDto replay = null;
-        if (config.mode() == crowdvsmarket.server.config.GameMode.REPLAY) {
-            List<Candle> candles = CandleLoaderCache.get();
-            replay = new ServerInfo.ReplayInfoDto(Instant.ofEpochMilli(candles.get(0).openTimeMs()).toString(),
-                    Instant.ofEpochMilli(candles.get(candles.size() - 1).closeTimeMs()).toString(), config.replaySpeedup());
-        }
-        ServerInfo.RoundDurationsDto durationsSec = new ServerInfo.RoundDurationsDto(
-                config.roundDurations().forInterval(crowdvsmarket.engine.market.Interval.HOURLY) / 1000,
-                config.roundDurations().forInterval(crowdvsmarket.engine.market.Interval.DAILY) / 1000);
-        return new ServerInfo.ServerInfoDto(config.mode().name().toLowerCase(java.util.Locale.ROOT), replay,
-                durationsSec, config.botsCount(), oracle, System.currentTimeMillis());
-    }
-
-    /** Предложение: tiny lazy cache so {@code serverInfo()} does not re-parse the 5 129-row CSV on
-     *  every call — {@code PriceService} already loads (and owns) the authoritative copy used for
-     *  actual round pricing; this is only for the two ISO timestamps shown in {@code serverInfo}. */
-    private static final class CandleLoaderCache {
-        private static volatile List<Candle> cached;
-
-        static List<Candle> get() {
-            List<Candle> c = cached;
-            if (c == null) {
-                c = crowdvsmarket.server.replay.CandleLoader.loadFromClasspath("/replay/btc_1m.csv");
-                cached = c;
-            }
-            return c;
-        }
-    }
 }
-

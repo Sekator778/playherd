@@ -747,15 +747,16 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         scheduler.tick(running.endMs());                       // betting becomes the running round
         assertThat(roundProgress.next(market.id(), HOURLY)).isEqualTo(betting);
 
-        // the open price is not known yet: "pending" — the latest tick, no positions, no crowd, no failure
+        // the open price is not known yet: "waiting for the opening price" — openPrice is null (neither a
+        // zero nor the latest tick, which is not the round's open), no positions, no crowd, no failure
         Rounds.RoundRunning pending = (Rounds.RoundRunning) gameService.roundsPair(Enums.Interval.HOURLY, market.id(), p)
                 .running();
         assertThat(pending.marketId()).isEqualTo("T_RUNNING");
-        assertThat(pending.openPrice()).isEqualTo("2500.000");
+        assertThat(pending.openPrice()).isNull();
         assertThat(pending.positions()).isEmpty();
         assertThat(pending.crowd()).isNull();
-        prices.clearLatest(market);
-        assertThat(((Rounds.RoundRunning) gameService.round(betting.roundId(), p)).openPrice()).isEqualTo("0.000");
+        prices.clearLatest(market);   // not even a latest tick changes that
+        assertThat(((Rounds.RoundRunning) gameService.round(betting.roundId(), p)).openPrice()).isNull();
 
         // open known: positions are derived from it, in raw units, and the crowd preview with them
         prices.setSoFar(market, "2500.000", "2520.000");

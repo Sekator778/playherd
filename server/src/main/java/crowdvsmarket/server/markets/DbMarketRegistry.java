@@ -101,7 +101,15 @@ public class DbMarketRegistry implements MarketRegistry {
                 listed.category(), listed.oracleIndex(), listed.lotExp(), listed.maxLeverage());
         MarketListener l = listener;
         if (l != null) {
-            l.onListed(listed);
+            try {
+                l.onListed(listed);
+            } catch (RuntimeException e) {
+                // The listing is committed and public whatever the listener makes of it: a failure there
+                // must not turn into an exception for the caller (a catalog would abandon the rest of
+                // its pass). The scheduler gives a running market without a series one.
+                LOG.errorf(e, "the market listener failed for the listing of %s — the market stays listed",
+                        listed.id());
+            }
         }
         return listed;
     }
@@ -130,7 +138,15 @@ public class DbMarketRegistry implements MarketRegistry {
         LOG.infof("market closed: %s (%s)", marketId, reason);
         MarketListener l = listener;
         if (l != null) {
-            l.onClosed(closed, reason);
+            try {
+                l.onClosed(closed, reason);
+            } catch (RuntimeException e) {
+                // Same as for a listing: the close is committed. What the listener did not manage to
+                // cancel is refunded by the engine rebuild its own failure handling starts (and by every
+                // later one: a closed market's open rounds are cancelled at each rebuild).
+                LOG.errorf(e, "the market listener failed for the closing of %s — the market stays closed",
+                        closed.id());
+            }
         }
     }
 
@@ -140,7 +156,9 @@ public class DbMarketRegistry implements MarketRegistry {
     }
 
     /** Re-reads the {@code markets} table (inserting BTC if its row is missing) and replaces the
-     *  in-memory copy. */
+     *  in-memory copy. The table is read first and the copy swapped after, so a failed read leaves
+     *  the registry as it was. */
+    @Override
     public void reload() {
         synchronized (writeLock) {
             markets = List.copyOf(db.tx(this::loadAll));

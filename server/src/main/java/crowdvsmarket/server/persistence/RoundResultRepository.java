@@ -2,6 +2,7 @@ package crowdvsmarket.server.persistence;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import crowdvsmarket.engine.market.Interval;
+import crowdvsmarket.server.domain.WinStreak;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Identity;
 import crowdvsmarket.server.dto.Paging;
@@ -157,10 +158,12 @@ public class RoundResultRepository {
      *  first, since fewer are left) on the next call, never lost. */
     public List<Identity.ProfileRoundEntryDto> unseenResults(String playerId, int limit) {
         return db.read(c -> db.queryList(c, """
-                SELECT round_id, market, interval, settled_at_ms, direction, leverage, stake_mojos, liquidated,
-                       direction_correct, payout_mojos
-                FROM player_round_history WHERE player_id = ? AND acked_at_ms IS NULL
-                ORDER BY settled_at_ms DESC LIMIT ?
+                SELECT h.round_id, h.market, h.interval, h.settled_at_ms, h.direction, h.leverage, h.stake_mojos,
+                       h.liquidated, h.direction_correct, h.payout_mojos,
+                       r.window_end_ms - r.window_start_ms AS duration_ms
+                FROM player_round_history h LEFT JOIN round_results r ON r.round_id = h.round_id
+                WHERE h.player_id = ? AND h.acked_at_ms IS NULL
+                ORDER BY h.settled_at_ms DESC LIMIT ?
                 """,
                 this::toHistoryEntry, playerId, limit));
     }
@@ -188,17 +191,44 @@ public class RoundResultRepository {
 
     public List<Identity.ProfileRoundEntryDto> playerHistory(String playerId, int limit) {
         return db.read(c -> db.queryList(c, """
-                SELECT round_id, market, interval, settled_at_ms, direction, leverage, stake_mojos, liquidated,
-                       direction_correct, payout_mojos
-                FROM player_round_history WHERE player_id = ? ORDER BY settled_at_ms DESC LIMIT ?
+                SELECT h.round_id, h.market, h.interval, h.settled_at_ms, h.direction, h.leverage, h.stake_mojos,
+                       h.liquidated, h.direction_correct, h.payout_mojos,
+                       r.window_end_ms - r.window_start_ms AS duration_ms
+                FROM player_round_history h LEFT JOIN round_results r ON r.round_id = h.round_id
+                WHERE h.player_id = ? ORDER BY h.settled_at_ms DESC LIMIT ?
                 """,
                 this::toHistoryEntry, playerId, limit));
     }
 
+    /**
+     * The win streak of {@code playerId} over ALL their settled rounds, newest first (Р-71, {@link
+     * WinStreak} has the rule): one pass over two columns, the newest round first — the order within one
+     * instant (rounds of several markets end together) is fixed by market and round id, so that the answer
+     * does not change from call to call. Flat rounds are left out in SQL: they are transparent to a streak.
+     * Cancelled rounds have no row here.
+     */
+    public WinStreak.Result playerStreak(String playerId) {
+        WinStreak.Counter counter = new WinStreak.Counter();
+        db.read(c -> db.queryList(c, """
+                SELECT stake_mojos, payout_mojos FROM player_round_history
+                WHERE player_id = ? AND payout_mojos <> stake_mojos
+                ORDER BY settled_at_ms DESC, market DESC, round_id DESC
+                """,
+                rs -> {
+                    counter.add(rs.getLong("stake_mojos"), rs.getLong("payout_mojos"));
+                    return Boolean.TRUE;
+                }, playerId));
+        return counter.result();
+    }
+
     private Identity.ProfileRoundEntryDto toHistoryEntry(java.sql.ResultSet rs) throws SQLException {
         String marketId = rs.getString("market");
+        long durationMs = rs.getLong("duration_ms");
+        // LEFT JOIN: a history row always has its round's result row (both are written in one
+        // transaction), so null cannot happen — but "unknown" is better told than guessed.
+        Long durationSec = rs.wasNull() ? null : durationMs / 1000L;
         return new Identity.ProfileRoundEntryDto(rs.getString("round_id"),
-                Enums.Interval.valueOf(rs.getString("interval")), marketId, market(marketId).symbol(),
+                Enums.Interval.valueOf(rs.getString("interval")), marketId, market(marketId).symbol(), durationSec,
                 rs.getLong("settled_at_ms"), Enums.Direction.valueOf(rs.getString("direction")),
                 rs.getInt("leverage"), java.math.BigDecimal.valueOf(rs.getLong("stake_mojos"), 3).toPlainString(),
                 rs.getBoolean("liquidated"), (Boolean) rs.getObject("direction_correct"),

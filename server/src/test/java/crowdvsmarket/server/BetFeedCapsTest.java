@@ -10,7 +10,6 @@ import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.service.GameService;
-import crowdvsmarket.server.testsupport.BettingWindows;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
@@ -27,18 +26,28 @@ import org.junit.jupiter.api.Test;
  * retained per round). Drives {@link GameService} directly with a controlled {@code nowMs}, same
  * pattern as {@code PlaceBetWindowBoundaryTest} — no HTTP, no waiting on the real scheduler.
  *
- * <p>{@code herd.bots.count=0}: these tests count exact feed entries, so bot activity (which would
- * add unpredictable extra rows to the SAME current betting round) is turned off entirely, unlike
- * {@code GameFlowIntegrationTest}'s lower-bound-only assertions.
+ * <p><b>The feed must hold exactly what this test put into it</b> — and once, in CI, it held one entry
+ * more, a bot's (status review 2026-10-01, §3.8: "Expected size: 3 but was: 4"). The cause is not a
+ * missing {@code herd.bots.count=0} (this class always had it) but the order of things at the start of a
+ * class: CI shares ONE Postgres between the applications Quarkus starts for the different profiles, so
+ * the application of this class started on the bots and the rows the previous class had left, and its
+ * live scheduler began planning those bots' bets at once; the per-class reset ({@code
+ * CleanDatabasePerTestClass}) then truncated the tables and rebuilt memory as two separate steps, and a
+ * bet of a leftover bot that fired in between was written into the freshly emptied {@code game_events}
+ * and replayed into this class's feed. The reset is now one step under the engine lock (so it cannot
+ * happen to any class), and this class additionally runs without a scheduler at all: no bot is ever
+ * ticked, nothing settles under it, and the windows it bets into do not move — which is why it reads the
+ * window open for betting straight from {@code RoundProgress} instead of waiting for one with time left
+ * ({@code BettingWindows}), and passes {@code nowMs} explicitly as it always did.
  */
 @QuarkusTest
-@TestProfile(BetFeedCapsTest.NoBotsProfile.class)
+@TestProfile(BetFeedCapsTest.NoBotsNoSchedulerProfile.class)
 class BetFeedCapsTest {
 
-    public static class NoBotsProfile implements QuarkusTestProfile {
+    public static class NoBotsNoSchedulerProfile implements QuarkusTestProfile {
         @Override
         public Map<String, String> getConfigOverrides() {
-            return Map.of("herd.bots.count", "0");
+            return Map.of("herd.bots.count", "0", "quarkus.scheduler.enabled", "false");
         }
     }
 
@@ -63,7 +72,7 @@ class BetFeedCapsTest {
 
     @Test
     void feedOrdersEntriesBySeqAndSupportsSinceSeqPagination() {
-        RoundWindow window = BettingWindows.fresh(roundProgress, Interval.HOURLY);
+        RoundWindow window = roundProgress.bettingWindow("BTC", Interval.HOURLY);
         long nowMs = window.startMs() - 1;
         String p1 = signUpPlayer("ord1");
         String p2 = signUpPlayer("ord2");
@@ -104,7 +113,7 @@ class BetFeedCapsTest {
 
     @Test
     void feedCapsOnePageAtPageSizeAndTotalRetentionAtMaxEntriesPerRound() {
-        RoundWindow window = BettingWindows.fresh(roundProgress, Interval.DAILY);
+        RoundWindow window = roundProgress.bettingWindow("BTC", Interval.DAILY);
         long nowMs = window.startMs() - 1;
         String soleBettor = signUpPlayer("cap");
 

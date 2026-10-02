@@ -1,39 +1,59 @@
 package crowdvsmarket.server.scheduler;
 
-import crowdvsmarket.engine.game.GameEngine;
-import crowdvsmarket.engine.market.Interval;
-import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.bots.BotService;
-import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.domain.RoundCalendar;
 import crowdvsmarket.server.domain.RoundProgress;
-import crowdvsmarket.server.events.EventApplier;
-import crowdvsmarket.server.events.EventStore;
-import crowdvsmarket.server.events.GameEvent;
-import crowdvsmarket.server.markets.DbMarketRegistry;
-import crowdvsmarket.server.markets.Market;
-import crowdvsmarket.server.persistence.RoundResultRepository;
+import crowdvsmarket.server.markets.MarketRegistry;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.util.LogThrottle;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
-import java.util.List;
-import java.util.Optional;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
  * "survive restarts": rebuilds every piece of in-memory state from durable storage, in this order
- * — origin epoch → player directory → market registry → a fresh {@link EngineHub} with the engines
- * of EVERY market in the registry (closed ones too: their history replays) → replay
- * {@code game_events} → seed {@link RoundProgress} for each running market → ensure the bot players
- * exist. Runs once at {@link StartupEvent}, and is also called directly by the restart-recovery
- * integration test to simulate a process restart without actually killing the JVM (same DB, same
- * code path), and — as {@link #rebuildStateLocked} — by {@code GameService} when a settlement
- * transaction failed and memory must be made to agree with the database again.
+ * — origin epoch → player directory → market registry → <b>a complete new engine state, built aside</b>
+ * ({@link EngineStateBuilder}: a fresh {@link EngineHub} with the engines of EVERY market in the
+ * registry, the replay of {@code game_events}, the cursor of every running series) → the swap of that
+ * state into the live singletons → the bot players ({@link #rebuild} only). Runs once at {@link
+ * StartupEvent}, and is also called directly by the restart-recovery integration test to simulate a
+ * process restart without actually killing the JVM (same DB, same code path), and — as {@link
+ * #recoverAfterFailure} — by {@code GameService} when a settlement transaction failed and memory must
+ * be made to agree with the database again.
+ *
+ * <p><b>Fail-stop.</b> Until the first rebuild has finished, and from the moment a failure may have
+ * left memory AHEAD of the database ({@link #recoverAfterFailure}: an event was applied inside a
+ * transaction that then rolled back) until a rebuild has succeeded, {@link #isReady} is false, and
+ * the game answers nothing from memory that cannot be trusted:
+ * <ul>
+ *   <li><b>Every call that changes anything</b> ({@code placeBet}, {@code cancelBet}, sign-in,
+ *       {@code setNickname}, withdrawals and deposit credits, settlements and cancellations, the
+ *       operator's actions) answers 503 {@code ENGINE_NOT_READY} and has changed nothing.
+ *   <li><b>Every read that comes from the engine</b> (balances and "in play", the ledger, ratings,
+ *       the crowd accounts, the running and betting round of a series, the bet feed, a profile's
+ *       season record, {@code home}) answers 503 too: in a failed recovery the memory may show a
+ *       settlement that the database never saw, and a result that is later taken back is worse than
+ *       an error. The last complete state is deliberately NOT served.
+ *   <li><b>Every read that comes from the database or needs no engine</b> (a settled or cancelled
+ *       round, the cancellations log, "unseen results", the status of a withdrawal or deposit, prices
+ *       and the liquidation preview, the server info) is answered as usual.
+ * </ul>
+ * The scheduler keeps trying the rebuild until it succeeds ({@link #retryPendingRebuild}, at most
+ * once every {@code herd.rebuild.retry-ms}); nothing else is needed to get the game back, and once it
+ * has, the state is what a restart would give.
+ *
+ * <p><b>Aside, then swap.</b> A rebuild never touches the live state until the new one is complete,
+ * so a failure — in the database read, half-way through the replay, in the seeding — leaves exactly
+ * what was there. That matters in both directions: a plain rebuild that fails (an operator's, a
+ * test's) leaves the game serving from the state it had, and a failed recovery leaves nothing
+ * half-built behind for a request to reach (the old in-place rebuild reset the hub first and could
+ * stop with an empty ledger, which handed a player who bet in that moment a second starter pack).
  */
 @ApplicationScoped
 public class EngineRebuildService {
@@ -45,36 +65,42 @@ public class EngineRebuildService {
     @Inject
     PlayerDirectory players;
     @Inject
-    DbMarketRegistry marketRegistry;
+    MarketRegistry marketRegistry;
     @Inject
     EngineHub hub;
     @Inject
     BetFeed betFeed;
     @Inject
-    EventStore eventStore;
-    @Inject
-    EventApplier eventApplier;
-    @Inject
     RoundProgress roundProgress;
     @Inject
-    RoundResultRepository roundResults;
+    EngineStateBuilder builder;
     @Inject
     BotService botService;
     @Inject
-    GameConfig config;
-
-    @Inject
     GameService gameService;
 
-    /** True once the first rebuild has finished: before it the engine is empty, no series is seeded
-     *  and nothing the scheduler does would mean anything. */
+    /** The least time between two attempts of {@link #retryPendingRebuild} (milliseconds): a rebuild
+     *  that cannot succeed (the database is down, an event cannot be replayed) must not read the whole
+     *  log, under the engine lock, every second. */
+    @ConfigProperty(name = "herd.rebuild.retry-ms", defaultValue = "2000")
+    long retryGapMs;
+
+    /** True while the in-memory state can be trusted: after the first rebuild has finished, and again
+     *  after every recovery that succeeded; false in between (class javadoc). */
     private volatile boolean ready;
+    /** A recovery was started and has not succeeded yet: the scheduler's cue to try again. Not set
+     *  before the first rebuild has finished — that one is the startup observer's, and a second one
+     *  next to it would only repeat its work. */
+    private volatile boolean recoveryPending;
+    private volatile long lastAttemptAtNanos;
+    private final LogThrottle retryFailureLog = new LogThrottle(60_000L);
 
     void onStart(@Observes StartupEvent ev) {
         rebuild();
     }
 
-    /** Whether {@link #rebuildStateLocked} has completed at least once in this process. */
+    /** Whether the in-memory state can be trusted — see the class javadoc for what is answered when
+     *  it cannot. */
     public boolean isReady() {
         return ready;
     }
@@ -86,8 +112,8 @@ public class EngineRebuildService {
      * plain {@code synchronized} monitor to a {@link java.util.concurrent.locks.ReentrantReadWriteLock}
      * so its many read paths, e.g. {@code home}/{@code ratings}, can run concurrently with each
      * other — see that class's javadoc) — so a rebuild can never interleave with a live bet/round-
-     * resolution/withdrawal, or with any read, and swap {@link EngineHub}'s engine references out
-     * from under an in-flight call.
+     * resolution/withdrawal, or with any read, and swap {@link EngineHub}'s state out from under an
+     * in-flight call.
      *
      * <p>{@link BotService#ensureBotsExist} runs deliberately <b>outside</b> that block: it is
      * idempotent and does not touch {@link EngineHub} directly (it goes through
@@ -96,12 +122,23 @@ public class EngineRebuildService {
      * opposite order (bots first, then {@code GameService} calls) — nesting the two here in the
      * other order would be a classic lock-order-inversion deadlock risk against a concurrently
      * running scheduler tick. For the same reason {@code GameService}'s failure recovery calls
-     * {@link #rebuildStateLocked} (no bots) and never this method.
+     * {@link #recoverAfterFailure} (no bots) and never this method.
+     *
+     * @throws RuntimeException when the new state cannot be built; the state in use is then untouched
      */
     public void rebuild() {
-        long now = System.currentTimeMillis();
-        gameService.runExclusively(this::rebuildStateLocked);
-        botService.ensureBotsExist(now);
+        rebuild(System.currentTimeMillis());
+    }
+
+    /** {@link #rebuild()} as of {@code nowMs} — for a test that drives the clock. */
+    public void rebuild(long nowMs) {
+        gameService.runExclusively(() -> rebuildStateLocked(nowMs));
+        botService.ensureBotsExist(nowMs);
+    }
+
+    /** {@link #rebuildStateLocked(long)} as of the current time. */
+    public void rebuildStateLocked() {
+        rebuildStateLocked(System.currentTimeMillis());
     }
 
     /**
@@ -113,62 +150,80 @@ public class EngineRebuildService {
      * row — its {@code window_end_ms} is where the next window to resolve starts — or, for a market
      * without one, from the window that contains "now" (docs/research/markets_architecture.md §4
      * п.2): never from the calendar origin, which for a market listed later would make the scheduler
-     * resolve every window since the origin. After a long stop the catch-up rule of the scheduler
-     * (§4 п.5) skips the empty windows in between.
+     * resolve every window since the origin — and never later than the earliest window that still
+     * holds a bet ({@code SeriesSeeder}). After a long stop the catch-up rule of the scheduler (§4
+     * п.5) skips the empty windows in between.
      */
-    public void rebuildStateLocked() {
-        long now = System.currentTimeMillis();
-        roundCalendar.init(now);
+    public void rebuildStateLocked(long nowMs) {
+        lastAttemptAtNanos = System.nanoTime();
+        roundCalendar.init(nowMs);
         players.reload();
         marketRegistry.reload();
 
-        hub.resetEmpty();
-        betFeed.reset();
-        roundProgress.clear();
-        List<Market> markets = marketRegistry.all();
-        for (Market market : markets) {
-            hub.ensureMarket(market);
-        }
-        List<GameEvent> events = eventStore.loadAll();
-        for (GameEvent event : events) {
-            eventApplier.apply(event);
-        }
-        gameService.cancelStrandedRoundsLocked(now);
+        EngineStateBuilder.Built built = builder.build(nowMs);
 
-        StringBuilder series = new StringBuilder();
-        for (Market market : gameService.runningMarkets()) {
-            for (Interval interval : Interval.values()) {
-                RoundWindow seed = seedFor(market, interval, now);
-                roundProgress.seed(market.id(), interval, seed);
-                series.append(' ').append(market.id()).append('/').append(interval).append(".next=")
-                        .append(seed.roundId());
-            }
-        }
+        // The swap of a state that is complete. The cursors go first: replaceAll checks its windows and
+        // assigns last, so if it were ever to throw, nothing would have changed; the two that follow
+        // cannot fail.
+        roundProgress.replaceAll(built.cursors());
+        hub.adopt(built.hub());
+        betFeed.adopt(built.betFeed());
         ready = true;
+        recoveryPending = false;
+        retryFailureLog.reset("retry");
         LOG.infof("engine rebuilt: %d event(s) replayed, markets=%d, players=%d, ledger-player-count=%d,%s",
-                events.size(), markets.size(), players.all().size(), hub.ledger().playerIds().size(), series);
+                built.eventsReplayed(), built.marketCount(), players.all().size(), hub.ledger().playerIds().size(),
+                built.description());
     }
 
-    private RoundWindow seedFor(Market market, Interval interval, long nowMs) {
-        Optional<Long> latestEnd = roundResults.latestWindowEnd(market.id(), interval);
-        if (latestEnd.isEmpty()) {
-            return roundCalendar.windowContaining(market.id(), interval, nowMs);
+    /**
+     * A round operation failed after the engine may have been changed (an event applied inside a
+     * transaction that rolled back): memory may be ahead of the database. From here on nothing is
+     * served from it ({@link #isReady} is false) until a rebuild has succeeded — this call tries one
+     * at once, and if it fails too the scheduler keeps trying ({@link #retryPendingRebuild}). Never
+     * throws: the caller rethrows the failure it is recovering from, with this one added to it as
+     * suppressed. <b>The caller holds the engine write lock.</b>
+     */
+    public void recoverAfterFailure(Throwable cause) {
+        ready = false;
+        recoveryPending = true;
+        try {
+            rebuildStateLocked(System.currentTimeMillis());
+        } catch (RuntimeException | Error rebuildFailure) {
+            cause.addSuppressed(rebuildFailure);
+            LOG.error("the engine rebuild after a failed round operation failed as well — the game answers 503 "
+                    + "until a rebuild succeeds, which the scheduler keeps trying", rebuildFailure);
         }
-        long stepMs = config.roundDurations().forInterval(interval);
-        RoundWindow seed = new RoundWindow(market.id(), interval, latestEnd.get(), latestEnd.get() + stepMs);
-        // The newest row can be the operator's cancellation of the betting round while the running
-        // round before it was never resolved (a stop in between): that round's bets would be
-        // stranded behind the cursor. Look two windows back and start at the earliest one that still
-        // holds bets and has no result.
-        GameEngine engine = hub.engine(market.id(), interval);
-        RoundWindow start = seed;
-        for (int back = 1; back <= 2; back++) {
-            RoundWindow earlier = new RoundWindow(market.id(), interval, seed.startMs() - back * stepMs,
-                    seed.startMs() - (back - 1) * stepMs);
-            if (!engine.betBook().betsFor(earlier.roundId()).isEmpty() && !roundResults.exists(earlier.roundId())) {
-                start = earlier;
+    }
+
+    /**
+     * The scheduler's cue, once per tick while {@link #isReady} is false: when a recovery is pending
+     * and the retry gap has passed, tries the rebuild again under the engine lock.
+     *
+     * @return whether the engine is ready now (it was, or this attempt made it so)
+     */
+    public boolean retryPendingRebuild() {
+        if (ready) {
+            return true;
+        }
+        if (!recoveryPending || System.nanoTime() - lastAttemptAtNanos < retryGapMs * 1_000_000L) {
+            return false;
+        }
+        gameService.runExclusively(() -> {
+            if (ready) {
+                return; // someone else recovered it while this call waited for the lock
             }
-        }
-        return start;
+            long nowMs = System.currentTimeMillis();
+            try {
+                rebuildStateLocked(nowMs);
+            } catch (RuntimeException | Error e) {
+                if (retryFailureLog.allow("retry", nowMs)) {
+                    LOG.error("the engine rebuild failed again — still answering 503, will retry", e);
+                } else {
+                    LOG.debugf("the engine rebuild failed again: %s", e.toString());
+                }
+            }
+        });
+        return ready;
     }
 }

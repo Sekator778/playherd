@@ -138,6 +138,15 @@ public final class ApiException extends RuntimeException {
         return new ApiException(Enums.ApiErrorCode.PRICE_UNAVAILABLE, 503, message);
     }
 
+    /** The game engine's in-memory state cannot be trusted right now — a recovery from a failed
+     *  settlement is still rebuilding it from the event log — so nothing that reads or changes it is
+     *  answered until that has succeeded ({@code EngineRebuildService}: fail-stop). Nothing was
+     *  changed by the call that gets this; it may simply be repeated. 503. */
+    public static ApiException engineNotReady() {
+        return new ApiException(Enums.ApiErrorCode.ENGINE_NOT_READY, 503,
+                "the game engine is recovering — nothing was changed, please try again in a moment");
+    }
+
     public Enums.ApiErrorCode code() {
         return code;
     }

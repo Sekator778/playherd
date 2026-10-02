@@ -8,8 +8,8 @@ import crowdvsmarket.server.prices.PricePoint;
 import crowdvsmarket.server.prices.PriceQuote;
 import crowdvsmarket.server.prices.PriceUnavailableException;
 import crowdvsmarket.server.prices.RoundPriceData;
-import io.quarkus.test.Mock;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Alternative;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -18,9 +18,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * A {@link MarketPrices} for tests: serves exactly the prices a test scripts and never touches a
- * network. Every {@code @QuarkusTest} in this module gets it instead of the production
- * implementation ({@link Mock} = an alternative with priority); it only matters in tests that run
- * {@code herd.mode=live}, the one mode that asks {@link MarketPrices} for anything.
+ * network. It is an {@link Alternative} that a test PROFILE opts into ({@code
+ * QuarkusTestProfile#getEnabledAlternatives}, as {@link LiveMarketsProfile} does) — it used to be a
+ * global {@code @Mock}, which replaced the production implementation in EVERY {@code @QuarkusTest}
+ * and so hid the real {@code LiveMarketPrices} from the pipeline's own wiring test. A test that does
+ * not ask for it gets the real bean. It only matters in tests that run {@code herd.mode=live}, the
+ * one mode that asks {@link MarketPrices} for anything.
  *
  * <p>Prices are scripted RAW (what a source quotes) and converted with the market's own lot
  * exponent, like the real pipeline does ({@link Market#toEngine}). A window with no script resolves
@@ -28,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * unavailable ({@link PriceUnavailableException}), exactly like a market whose source is down.
  * {@link #reset} between tests.
  */
-@Mock
+@Alternative
 @ApplicationScoped
 public class ScriptedMarketPrices implements MarketPrices {
 
@@ -37,8 +40,10 @@ public class ScriptedMarketPrices implements MarketPrices {
     private final Map<String, RoundPriceData> scripts = new ConcurrentHashMap<>();
     private final Map<String, RuntimeException> resolveFailures = new ConcurrentHashMap<>();
     private final Map<String, RoundPriceData> soFar = new ConcurrentHashMap<>();
+    private final Map<String, List<PricePoint>> series = new ConcurrentHashMap<>();
 
     public void reset() {
+        series.clear();
         latest.clear();
         defaults.clear();
         scripts.clear();
@@ -55,6 +60,17 @@ public class ScriptedMarketPrices implements MarketPrices {
     public void setPrice(Market market, String raw) {
         defaults.put(market.id(), new BigDecimal(raw));
         latest.put(market.id(), new PriceQuote(new BigDecimal(raw), System.currentTimeMillis(), null, false));
+    }
+
+    /** The market's latest tick exactly as a test describes it — price, time, 24-hour change, staleness. */
+    public void setQuote(Market market, String raw, long asOfMs, Double change24h, boolean stale) {
+        defaults.put(market.id(), new BigDecimal(raw));
+        latest.put(market.id(), new PriceQuote(new BigDecimal(raw), asOfMs, change24h, stale));
+    }
+
+    /** The ticks {@link #series} serves for the market, oldest first (what the price buffer would hold). */
+    public void setSeries(Market market, List<PricePoint> points) {
+        series.put(market.id(), List.copyOf(points));
     }
 
     /** The market's latest tick is older than the source's staleness limit. */
@@ -76,6 +92,12 @@ public class ScriptedMarketPrices implements MarketPrices {
                 market.toEngine(new BigDecimal(rawLow)), close, BigDecimal.ZERO, 0);
         scripts.put(key(market.id(), window.interval(), window.startMs()),
                 new RoundPriceData(open, close, List.of(candle), window.endMs() - 1));
+    }
+
+    /** Scripts one window with exactly {@code data} — for a source that hands over something odd (an
+     *  open that is not positive, a path of too many candles). */
+    public void scriptData(Market market, RoundWindow window, RoundPriceData data) {
+        scripts.put(key(market.id(), window.interval(), window.startMs()), data);
     }
 
     /** Resolving {@code window} of the market throws {@code failure}, until {@link #reset}. */
@@ -104,7 +126,8 @@ public class ScriptedMarketPrices implements MarketPrices {
 
     @Override
     public List<PricePoint> series(String marketId, long fromMs, long toMs) {
-        return List.of();
+        return series.getOrDefault(marketId, List.of()).stream()
+                .filter(p -> p.atMs() >= fromMs && p.atMs() < toMs).toList();
     }
 
     @Override

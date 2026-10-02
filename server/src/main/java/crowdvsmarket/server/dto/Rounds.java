@@ -116,10 +116,11 @@ public final class Rounds {
     }
 
     /** {@code openPrice} and every price in {@code positions}/{@code crowd} are raw strings of the
-     *  market (priceDecimals digits). Open price not known yet (the market just listed, or the tick
-     *  buffer is still empty after a restart): {@code openPrice} is the latest tick, or an
-     *  all-zero price when there is none, and {@code positions} is empty and {@code crowd} null —
-     *  nothing can be derived from an entry price that does not exist yet. */
+     *  market (priceDecimals digits). {@code openPrice} is {@code null} while the opening price is not
+     *  known yet (the market just listed, the tick buffer still empty after a restart, a source
+     *  outage across the boundary) — web/src/api/contract.ts: "show waiting for the opening price,
+     *  never a zero" — and then {@code positions} is empty and {@code crowd} null too: nothing can be
+     *  derived from an entry price that does not exist yet. */
     public record RoundRunning(String roundId, RoundWindowDto window, String marketId, String asset, String phase,
                                  String openPrice, List<PublicPositionDto> positions, CrowdRoundPositionDto crowd)
             implements RoundDto {

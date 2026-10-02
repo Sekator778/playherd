@@ -66,6 +66,20 @@ public final class BetFeed {
         byRound.clear();
     }
 
+    /** Takes over everything {@code built} holds — its rows and its sequence counter: the swap that
+     *  ends a rebuild, whose replay filled a feed of its own ({@code new BetFeed()}) while this one
+     *  went on serving. {@code built} must not be used afterwards. */
+    public void adopt(BetFeed built) {
+        // Both monitors, `built`'s first: nothing else ever holds both, so the order cannot deadlock.
+        synchronized (built) {
+            synchronized (this) {
+                seqCounter.set(built.seqCounter.get());
+                byRound.clear();
+                byRound.putAll(built.byRound);
+            }
+        }
+    }
+
     /** Appends one entry for {@code roundId} — called only from {@code EventApplier}'s
      *  {@code BetPlaced} case, live or replayed, so a bet edit (Р-13: a new bet by the same player
      *  replacing their still-pending one) shows as a new feed row too, never rewriting/removing the

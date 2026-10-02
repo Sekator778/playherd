@@ -1,7 +1,9 @@
 package crowdvsmarket.server.testsupport;
 
+import crowdvsmarket.server.bots.BotService;
 import crowdvsmarket.server.persistence.Db;
 import crowdvsmarket.server.scheduler.EngineRebuildService;
+import crowdvsmarket.server.service.GameService;
 import io.quarkus.arc.Arc;
 import io.quarkus.test.junit.callback.QuarkusTestBeforeEachCallback;
 import io.quarkus.test.junit.callback.QuarkusTestMethodContext;
@@ -78,20 +80,40 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
             return; // already reset for this class earlier in the run — leave this method's own
             // in-class fixtures (e.g. another @Test's players/bets in the SAME class) alone.
         }
+        resetDatabaseAndMemory();
+    }
+
+    /**
+     * The database emptied and the engine rebuilt from it. The truncation and the rebuild of memory are
+     * ONE step under the engine lock. Done one after the other they left a gap in which the live
+     * scheduler's bots — the application starts on whatever the previous class left in a shared
+     * database, bots included, before this hook can run — could still place a bet for a player the cache
+     * knew: the bet's event landed in the freshly truncated game_events and survived the rebuild
+     * (BetFeedCapsTest saw "3 expected, 4 found", the fourth a bot's; docs/reviews/2026-10-01-goals-vs-
+     * state.md §3.8). Under the lock such a bet either completes before the truncation (and is wiped
+     * with it) or finds the players reloaded (and is refused: unknown player).
+     */
+    public static void resetDatabaseAndMemory() {
         Db db = Arc.container().instance(Db.class).get();
-        db.tx(c -> {
-            db.update(c, TRUNCATE_SQL);
-            db.update(c, DELETE_LISTED_MARKETS_SQL);
-            db.update(c, REOPEN_BTC_SQL);
-            return null;
+        GameService gameService = Arc.container().instance(GameService.class).get();
+        EngineRebuildService rebuildService = Arc.container().instance(EngineRebuildService.class).get();
+        gameService.runExclusively(() -> {
+            db.tx(c -> {
+                db.update(c, TRUNCATE_SQL);
+                db.update(c, DELETE_LISTED_MARKETS_SQL);
+                db.update(c, REOPEN_BTC_SQL);
+                return null;
+            });
+            // Same code path a real restart uses: resets every in-memory singleton (EngineHub with its
+            // per-market ComparisonAccounts, BetFeed, RoundProgress, PlayerDirectory, the market
+            // registry) from the now-empty tables — necessary even when Quarkus itself did restart for
+            // this class (that restart's own StartupEvent-triggered rebuild ran against whatever the
+            // PREVIOUS class had left in the database, before this truncate), and doubly necessary when
+            // it did not.
+            rebuildService.rebuildStateLocked();
         });
-        // Same code path a real restart uses: resets every in-memory singleton (EngineHub with its
-        // per-market ComparisonAccounts, BetFeed, RoundProgress, PlayerDirectory, the market
-        // registry) from the now-empty tables,
-        // then BotService#ensureBotsExist creates exactly this class's own configured bot count —
-        // necessary even when Quarkus itself did restart for this class (that restart's own
-        // StartupEvent-triggered rebuild ran against whatever the PREVIOUS class had left in the
-        // database, before this truncate), and doubly necessary when it did not.
-        Arc.container().instance(EngineRebuildService.class).get().rebuild();
+        // ... and BotService#ensureBotsExist then creates exactly this class's own configured bot count
+        // (outside the engine lock, like EngineRebuildService#rebuild: it takes the BotService monitor).
+        Arc.container().instance(BotService.class).get().ensureBotsExist(System.currentTimeMillis());
     }
 }

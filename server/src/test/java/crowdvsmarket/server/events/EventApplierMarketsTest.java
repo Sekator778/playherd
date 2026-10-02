@@ -49,6 +49,27 @@ class EventApplierMarketsTest {
     }
 
     @Test
+    void anApplierOverAnotherStateChangesThatStateAndNeverTheLiveOne() {
+        // what a rebuild replays into while the live state keeps serving
+        EngineHub aside = new EngineHub();
+        aside.ensureMarket(new Market("ETH", MarketKind.PERP, "crypto", "ETH", "Ether", null, null, "synthetic", "ETH",
+                null, 25, 1, 1, MarketStatus.ACTIVE, 0L, null, null, null));
+        BetFeed asideFeed = new BetFeed();
+        EventApplier over = EventApplier.over(aside, asideFeed, applier.players);
+
+        over.apply(new GameEvent.PlayerRegistered("p2", START - 1_000));
+        over.apply(new GameEvent.BetPlaced("p2", Interval.HOURLY, START, END, Direction.UP, 5, 200_000L, START - 1, "ETH"));
+
+        assertThat(aside.engine("ETH", Interval.HOURLY).betBook().betsFor("ETH-1h-" + START)).hasSize(1);
+        assertThat(aside.ledger().playerIds()).contains("p2");
+        assertThat(asideFeed.latest("ETH-1h-" + START, 10)).hasSize(1);
+        // the live hub and feed did not hear of any of it
+        assertThat(hub.ledger().playerIds()).doesNotContain("p2");
+        assertThat(hub.engine("ETH", Interval.HOURLY).betBook().betsFor("ETH-1h-" + START)).isEmpty();
+        assertThat(applier.betFeed.latest("ETH-1h-" + START, 10)).isEmpty();
+    }
+
+    @Test
     void anEventWithoutAMarketIsBtc() {
         // the pre-markets constructor of every round event is BTC
         applier.apply(new GameEvent.BetPlaced("p1", Interval.HOURLY, START, END, Direction.UP, 10, 100_000L, START - 1));

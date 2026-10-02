@@ -18,6 +18,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * ({@link EngineHub}'s javadoc) — a nickname or a bot's strategy assignment has no effect on
  * ledger/crowd-account math, so it is written straight to its row and just re-read (not replayed)
  * at startup.
+ *
+ * <p><b>The cache never runs ahead of the table.</b> {@link #insert} and {@link #updateNickname}
+ * write the row inside the caller's transaction and touch no memory; the caller puts the result
+ * into the cache with {@link #cache}/{@link #cacheNickname} once the transaction has committed
+ * (a commit that fails would otherwise leave a player in memory that the database does not have).
+ * {@link #reload} reads the whole table first and swaps the cache in one step, so a failed read
+ * leaves it as it was, and a lock-free reader never sees a half-filled one.
  */
 @ApplicationScoped
 public final class PlayerDirectory {
@@ -25,11 +32,22 @@ public final class PlayerDirectory {
     @Inject
     Db db;
 
-    private final Map<String, Row> byId = new ConcurrentHashMap<>();
-    private final Map<String, String> idByWallet = new ConcurrentHashMap<>();
-    /** Р-53: reverse lookup for the deposit poller — chainsvc's {@code GET /v1/play/deposits}
-     *  reports each coin's {@code playerIndex}, never a {@code playerId}. */
-    private final Map<Integer, String> idByPlayerIndex = new ConcurrentHashMap<>();
+    /** The three lookups, always swapped together. */
+    private static final class Maps {
+        final Map<String, Row> byId = new ConcurrentHashMap<>();
+        final Map<String, String> idByWallet = new ConcurrentHashMap<>();
+        /** Р-53: reverse lookup for the deposit poller — chainsvc's {@code GET /v1/play/deposits}
+         *  reports each coin's {@code playerIndex}, never a {@code playerId}. */
+        final Map<Integer, String> idByPlayerIndex = new ConcurrentHashMap<>();
+
+        void put(Row row) {
+            byId.put(row.playerId(), row);
+            idByWallet.put(row.walletAddress(), row.playerId());
+            idByPlayerIndex.put(row.playerIndex(), row.playerId());
+        }
+    }
+
+    private volatile Maps maps = new Maps();
 
     public record Row(String playerId, String walletAddress, String nickname, boolean isBot, String botStrategy,
                         int playerIndex, long createdAtMs) {
@@ -43,75 +61,79 @@ public final class PlayerDirectory {
         }
     }
 
-    /** Reloads the whole cache from the DB — called once at startup, after the DB connection (and
-     *  Flyway migration) are ready, before the event replay that depends on some of these ids
-     *  already resolving to a wallet address for display purposes. */
+    /** Reloads the whole cache from the DB — called at startup and at every rebuild, after the DB
+     *  connection (and Flyway migration) are ready, before the event replay that depends on some of
+     *  these ids already resolving to a wallet address for display purposes. */
     public synchronized void reload() {
-        byId.clear();
-        idByWallet.clear();
-        idByPlayerIndex.clear();
         List<Row> rows = db.read(c -> db.queryList(c,
                 "SELECT player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, created_at_ms "
                         + "FROM players",
                 rs -> new Row(rs.getString("player_id"), rs.getString("wallet_address"), rs.getString("nickname"),
                         rs.getBoolean("is_bot"), rs.getString("bot_strategy"), rs.getInt("player_index"),
                         rs.getLong("created_at_ms"))));
+        Maps fresh = new Maps();
         for (Row row : rows) {
-            byId.put(row.playerId(), row);
-            idByWallet.put(row.walletAddress(), row.playerId());
-            idByPlayerIndex.put(row.playerIndex(), row.playerId());
+            fresh.put(row);
         }
+        maps = fresh;
     }
 
     public Optional<Row> byId(String playerId) {
-        return Optional.ofNullable(byId.get(playerId));
+        return Optional.ofNullable(maps.byId.get(playerId));
     }
 
     public Optional<String> playerIdForWallet(String walletAddress) {
-        return Optional.ofNullable(idByWallet.get(walletAddress));
+        return Optional.ofNullable(maps.idByWallet.get(walletAddress));
     }
 
     /** Р-53: resolves a chainsvc-reported {@code playerIndex} (deposit poller) back to a
      *  {@code playerId} — {@link Optional#empty()} if unknown (defensive; should not happen for a
      *  coin chainsvc itself derived from an index this server handed out). */
     public Optional<String> playerIdForIndex(int playerIndex) {
-        return Optional.ofNullable(idByPlayerIndex.get(playerIndex));
+        return Optional.ofNullable(maps.idByPlayerIndex.get(playerIndex));
     }
 
     public Collection<Row> all() {
-        return List.copyOf(byId.values());
+        return List.copyOf(maps.byId.values());
     }
 
     public List<Row> bots() {
-        return byId.values().stream().filter(Row::isBot).toList();
+        return maps.byId.values().stream().filter(Row::isBot).toList();
     }
 
-    /** Inserts a brand-new player row (within the caller's transaction) and updates the cache.
-     *  {@code playerIndex} must come from {@code ServerMetaRepository#reserveNextPlayerIndex()} —
-     *  allocated once, before this call, never re-derived (Р-53). */
-    public void insert(Connection c, String playerId, String walletAddress, String nickname, boolean isBot,
+    /** Inserts a brand-new player row within the caller's transaction and returns it; the cache is
+     *  not touched — pass the row to {@link #cache} after the commit. {@code playerIndex} must come
+     *  from {@code ServerMetaRepository#reserveNextPlayerIndex()} — allocated once, before this
+     *  call, never re-derived (Р-53). */
+    public Row insert(Connection c, String playerId, String walletAddress, String nickname, boolean isBot,
                         String botStrategy, int playerIndex, long atMs) throws SQLException {
         db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, "
                         + "player_index, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, atMs);
-        Row row = new Row(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, atMs);
-        byId.put(playerId, row);
-        idByWallet.put(walletAddress, playerId);
-        idByPlayerIndex.put(playerIndex, playerId);
+        return new Row(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, atMs);
     }
 
+    /** Puts a row {@link #insert} returned into the cache — after its transaction has committed. */
+    public void cache(Row row) {
+        maps.put(row);
+    }
+
+    /** Writes the nickname within the caller's transaction; the cache is not touched — call
+     *  {@link #cacheNickname} after the commit. */
     public void updateNickname(Connection c, String playerId, String nickname) throws SQLException {
         db.update(c, "UPDATE players SET nickname = ? WHERE player_id = ?", nickname, playerId);
-        Row prev = byId.get(playerId);
-        if (prev != null) {
-            byId.put(playerId, new Row(prev.playerId(), prev.walletAddress(), nickname, prev.isBot(),
-                    prev.botStrategy(), prev.playerIndex(), prev.createdAtMs()));
-        }
+    }
+
+    /** The cache's side of {@link #updateNickname}, after the commit. */
+    public void cacheNickname(String playerId, String nickname) {
+        Maps current = maps;
+        current.byId.computeIfPresent(playerId, (id, prev) -> new Row(prev.playerId(), prev.walletAddress(), nickname,
+                prev.isBot(), prev.botStrategy(), prev.playerIndex(), prev.createdAtMs()));
     }
 
     public Map<String, PlayerIdentity> identitiesById() {
         Map<String, PlayerIdentity> out = new java.util.HashMap<>();
-        for (Row row : byId.values()) {
+        for (Row row : maps.byId.values()) {
             out.put(row.playerId(), row.identity());
         }
         return out;

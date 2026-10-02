@@ -78,6 +78,35 @@ class EngineHubTest {
     }
 
     @Test
+    void adoptTakesOverTheLedgerAndEveryMarketOfAHubBuiltAsideInOneStep() {
+        EngineHub live = new EngineHub();
+        live.ensureMarket(market("OLD", 10, 0, MarketStatus.ACTIVE));
+        var liveLedger = live.ledger();
+        var liveBtcCrowd = live.crowdAccount("BTC");
+        // what a rebuild does: a hub of its own, filled while the live one goes on serving
+        EngineHub built = new EngineHub();
+        built.ensureMarket(market("ETH", 25, 1, MarketStatus.ACTIVE));
+        var builtLedger = built.ledger();
+        var builtEthCrowd = built.crowdAccount("ETH");
+        assertThat(live.findMarket("ETH")).as("nothing of it is visible before the swap").isEmpty();
+        assertThat(live.ledger()).isSameAs(liveLedger);
+
+        live.adopt(built);
+
+        assertThat(live.ledger()).isSameAs(builtLedger).isNotSameAs(liveLedger);
+        assertThat(live.findMarket("OLD")).as("the old markets are gone with the old state").isEmpty();
+        assertThat(live.crowdAccount("ETH")).isSameAs(builtEthCrowd);
+        assertThat(live.crowdAccount("BTC")).isNotSameAs(liveBtcCrowd);
+        assertThat(live.marketIds()).containsExactlyInAnyOrder("BTC", "ETH");
+        // every engine of the adopted state works on the adopted ledger — the two never mix
+        assertThat(live.engine("ETH", Interval.HOURLY).ledger()).isSameAs(live.ledger());
+        assertThat(live.engine("BTC", Interval.DAILY).ledger()).isSameAs(live.ledger());
+        // and a market ensured afterwards joins the adopted state, not the old one
+        live.ensureMarket(market("SOL", 10, 2, MarketStatus.ACTIVE));
+        assertThat(live.engine("SOL", Interval.HOURLY).ledger()).isSameAs(builtLedger);
+    }
+
+    @Test
     void anUnknownMarketIsAnErrorNotABtcFallback() {
         EngineHub hub = new EngineHub();
 

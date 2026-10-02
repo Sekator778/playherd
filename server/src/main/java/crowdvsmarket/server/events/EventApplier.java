@@ -46,6 +46,19 @@ public final class EventApplier {
     @Inject
     PlayerDirectory players;
 
+    /**
+     * An applier over a state other than the live one: what a rebuild replays the event log into
+     * (and then cancels the rounds of closed markets in) while the live state keeps serving, before
+     * the new state is swapped in. The bean itself always works on the live hub and feed.
+     */
+    public static EventApplier over(EngineHub hub, BetFeed betFeed, PlayerDirectory players) {
+        EventApplier applier = new EventApplier();
+        applier.hub = hub;
+        applier.betFeed = betFeed;
+        applier.players = players;
+        return applier;
+    }
+
     /** @return the event-specific result a live caller needs right away — a {@link RoundReport}
      *          for {@code RoundResolved}, the assigned id for {@code WithdrawalRequested}/
      *          {@code DepositRequested} (both mirror {@code LedgerBook}'s own generated

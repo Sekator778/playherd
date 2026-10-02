@@ -12,6 +12,9 @@ import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.service.MarketViewService;
+import crowdvsmarket.server.service.PriceSeriesService;
+import crowdvsmarket.server.service.ServerInfoService;
 import io.vertx.core.http.HttpServerRequest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.CookieParam;
@@ -42,13 +45,27 @@ public class RpcResource {
     /** Task item 2 (wave-1 security findings): "add a simple per-IP rate limit on
      *  authChallenge/authVerify/placeBet" — the three RPC methods a single caller could otherwise
      *  hammer for free (no session required for the first two; placeBet is the one mutating,
-     *  balance-affecting call under a signed-in session). See {@link RateLimiter}. */
+     *  balance-affecting call under a signed-in session). See {@link RateLimiter}.
+     *
+     *  <p>The read methods of the markets ({@code markets}, {@code priceSeries}, {@code myPositions}, {@code
+     *  crowdOverview}) are deliberately NOT in this set: every open lobby and room POLLS them every 2–3 s
+     *  (a per-IP bucket of 30 refilling at 0.5 a second would throttle a single honest tab, and every player
+     *  behind one NAT), and each is cheap by construction — answered from memory, {@code markets} from a
+     *  cache of about a second, {@code priceSeries} at most 600 points, {@code myPositions} for the one
+     *  session's own bets. Only what mutates, or can be hammered for free into a database or a chain call,
+     *  is limited. */
     private static final Set<String> RATE_LIMITED_METHODS = Set.of("authChallenge", "authVerify", "placeBet");
 
     @Inject
     ObjectMapper mapper;
     @Inject
     GameService gameService;
+    @Inject
+    MarketViewService marketView;
+    @Inject
+    PriceSeriesService priceSeriesService;
+    @Inject
+    ServerInfoService serverInfoService;
     @Inject
     AuthService authService;
     @Inject
@@ -97,6 +114,17 @@ public class RpcResource {
                 clearCookie = clearSessionCookie();
                 result = java.util.Map.of();
             }
+            // The markets read model (§8): `markets` and `crowdOverview` are public, `priceSeries(marketId,
+            // sinceMs?)` too; `myPositions` is the signed-in player's own. None is rate-limited (see
+            // RATE_LIMITED_METHODS: they are polled).
+            case "markets" -> result = marketView.markets(now);
+            case "priceSeries" -> result = priceSeriesService.priceSeries(requiredStr(args, 0, "marketId"),
+                    optionalLong(args, 1, "sinceMs"), now);
+            case "myPositions" -> {
+                requireSignedIn(playerId);
+                result = marketView.myPositions(playerId, now);
+            }
+            case "crowdOverview" -> result = marketView.crowdOverview();
             // `marketId` is the optional second argument (omitted → BTC, docs/research/markets_architecture.md §8).
             case "rounds" -> result = gameService.roundsPair(Enums.Interval.valueOf(str(args, 0)), str(args, 1), playerId);
             case "round" -> result = gameService.round(str(args, 0), playerId);
@@ -175,7 +203,7 @@ public class RpcResource {
             // corrections (Р-32/Р-43 pattern), unauthenticated exactly like "cancellations".
             case "ledgerCorrections" -> result = gameService.ledgerCorrections(pageParams(args, 0));
             case "home" -> result = gameService.home(playerId);
-            case "serverInfo" -> result = gameService.serverInfo();
+            case "serverInfo" -> result = serverInfoService.serverInfo();
             default -> throw ApiException.notFound("unknown RPC method: " + method);
         }
 
@@ -270,6 +298,21 @@ public class RpcResource {
     private Long longOrNull(JsonNode args, int i) {
         JsonNode n = at(args, i);
         return n.isNull() ? null : n.asLong();
+    }
+
+    /** Optional integral arg ({@code priceSeries}' {@code sinceMs}): omitted or JSON {@code null} is {@code null};
+     *  a number that is not an integer, or anything that is not a number, is a client error — unlike {@link
+     *  #longOrNull}'s lenient {@code asLong()}, under which {@code "abc"} would silently be 0 and ask for every
+     *  tick there is. */
+    private Long optionalLong(JsonNode args, int i, String name) {
+        JsonNode n = at(args, i);
+        if (n.isNull()) {
+            return null;
+        }
+        if (!n.isIntegralNumber() || !n.canConvertToLong()) {
+            throw ApiException.badRequest("invalid " + name);
+        }
+        return n.asLong();
     }
 
     /** {@code string[]} arg (e.g. {@code ackResults}' {@code roundIds}) — an absent/{@code null}

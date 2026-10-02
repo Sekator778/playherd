@@ -9,6 +9,11 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @ApplicationScoped
 public class GameConfig {
 
+    /** PLAY's asset id (the CAT's TAIL hash) as issued on testnet11 on 2026-09-25 — docs/research/
+     *  week1_testnet_results.md §3, the same number web/src/components/playAsset.ts falls back to. */
+    public static final String TESTNET11_PLAY_ASSET_ID =
+            "0x4b88ce9712e97e73ad3759541fc23d38704e31d27d6586c28be14ee716080b70";
+
     @ConfigProperty(name = "herd.mode")
     String modeRaw;
 
@@ -34,6 +39,22 @@ public class GameConfig {
 
     @ConfigProperty(name = "herd.operator.token")
     String operatorToken;
+
+    /** The domain a player signs at sign-in ("Domain: …" in the challenge text, {@code AuthService}): the
+     *  public domain of this deployment (compose passes {@code HERD_PUBLIC_DOMAIN}). It used to be the
+     *  literal {@code herd.local} in the code. */
+    @ConfigProperty(name = "herd.public-domain", defaultValue = "herd.local")
+    String publicDomain;
+
+    /** The PLAY CAT's asset id on the oracle network, for {@code serverInfo().playAssetId} (what a wallet
+     *  needs to show PLAY and to send a deposit). The default is the testnet11 issuance. */
+    @ConfigProperty(name = "herd.play.asset-id", defaultValue = TESTNET11_PLAY_ASSET_ID)
+    String playAssetId;
+
+    /** Whether the browser test wallet (Р-45) is offered on the sign-in sheet ({@code
+     *  serverInfo().testWallet}); a public deployment with real wallets only turns it off. */
+    @ConfigProperty(name = "herd.test-wallet.enabled", defaultValue = "true")
+    boolean testWalletEnabled;
 
     @ConfigProperty(name = "herd.session.cookie-name")
     String sessionCookieName;
@@ -135,6 +156,18 @@ public class GameConfig {
 
     public String operatorToken() {
         return operatorToken;
+    }
+
+    public String publicDomain() {
+        return publicDomain;
+    }
+
+    public String playAssetId() {
+        return playAssetId;
+    }
+
+    public boolean testWalletEnabled() {
+        return testWalletEnabled;
     }
 
     public String sessionCookieName() {

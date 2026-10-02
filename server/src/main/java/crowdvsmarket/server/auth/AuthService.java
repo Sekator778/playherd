@@ -49,7 +49,7 @@ public class AuthService {
         long expiresAt = now + config.challengeTtlMs();
         String address = req == null ? null : req.address();
         String message = MESSAGE_PREFIX
-                + "Domain: herd.local\n"
+                + "Domain: " + config.publicDomain().strip() + "\n"
                 + "Network: testnet11\n"
                 + "Address: " + (address == null ? "?" : address) + "\n"
                 + "Nonce: " + nonce + "\n"

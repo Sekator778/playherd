@@ -24,6 +24,22 @@ public final class Enums {
         BETTING, RUNNING, SETTLED, CANCELLED
     }
 
+    /** contract.ts `MarketKind` — mirrors {@code crowdvsmarket.server.markets.MarketKind}. */
+    public enum MarketKind {
+        PERP, ODDS
+    }
+
+    /** contract.ts `MarketDto.status` and the status of a {@code CrowdOverviewDto} row — mirrors
+     *  {@code crowdvsmarket.server.markets.MarketStatus}. */
+    public enum MarketStatus {
+        ACTIVE, CLOSED
+    }
+
+    /** contract.ts `MarketCrowdBriefDto.lastOutcome`: how the crowd's last traded round ended. */
+    public enum CrowdOutcome {
+        WIN, LOSS, LIQUIDATED
+    }
+
     /** contract.ts `LedgerEntryType` — mirrors {@code crowdvsmarket.engine.ledger.LedgerEntryType}.
      *  {@code OPERATOR_CORRECTION} (wave-2 security fix) is additive, not in contract.ts's union —
      *  same situation as {@code ApiErrorCode.INVALID_NICKNAME}/{@code RATE_LIMITED} below. */
@@ -94,6 +110,10 @@ public final class Enums {
         /** The market is {@code CLOSED} and takes no new bets. 409. */
         MARKET_CLOSED,
         /** No price for the market right now (nothing ticked yet / source down). 503. */
-        PRICE_UNAVAILABLE
+        PRICE_UNAVAILABLE,
+        /** Additive, not in contract.ts (the web client shows its message like any {@code OTHER}
+         *  code): the engine is being rebuilt from the event log after a failed settlement and does
+         *  not answer until that has succeeded. 503, nothing was changed. */
+        ENGINE_NOT_READY
     }
 }

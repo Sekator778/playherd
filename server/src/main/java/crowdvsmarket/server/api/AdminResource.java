@@ -7,6 +7,7 @@ import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.dto.ServerInfo;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.service.ServerInfoService;
 import crowdvsmarket.server.util.ConstantTimeTokens;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
@@ -31,6 +32,8 @@ public class AdminResource {
     GameConfig config;
     @Inject
     GameService gameService;
+    @Inject
+    ServerInfoService serverInfoService;
 
     private void requireOperator(String authorizationHeader) {
         String expected = "Bearer " + config.operatorToken();
@@ -109,7 +112,7 @@ public class AdminResource {
     @Produces(MediaType.APPLICATION_JSON)
     public AdminStatusDto status(@HeaderParam("Authorization") String auth) {
         requireOperator(auth);
-        ServerInfo.ServerInfoDto info = gameService.serverInfo();
+        ServerInfo.ServerInfoDto info = serverInfoService.serverInfo();
         Paging.Page<Rounds.CancellationDto> recentCancellations = gameService.cancellations(new Paging.PageParams(20, null));
         // Wave-2 security fix: same "journal of exceptional operator actions" pattern as
         // recentCancellations, for ledger corrections (Р-32/Р-43).

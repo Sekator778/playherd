@@ -214,6 +214,49 @@ class DbMarketRegistryTest {
         assertThat(registry.require(a.id()).closedAtMs()).isEqualTo(2_000L);
     }
 
+    /** A listener that throws on everything. */
+    private static final class Failing implements MarketListener {
+        final AtomicBoolean told = new AtomicBoolean();
+
+        @Override
+        public void onListed(Market market) {
+            told.set(true);
+            throw new IllegalStateException("the listener failed on the listing of " + market.id());
+        }
+
+        @Override
+        public void onClosed(Market market, String reason) {
+            told.set(true);
+            throw new IllegalStateException("the listener failed on the closing of " + market.id());
+        }
+    }
+
+    @Test
+    void aListenerThatThrowsNeitherUndoesNorHidesAListingOrAClose() {
+        // Review of the multi-market core, finding 5: a market listed before the engine's first rebuild
+        // had finished threw out of list() AFTER the row was committed and the snapshot updated, and a
+        // catalog's loop aborted with the rest of its markets unlisted. The commit is the fact; the
+        // listener's trouble is the listener's.
+        Failing listener = new Failing();
+        DbMarketRegistry registry = registry(listener);
+
+        Market a = registry.list(perp("A", Category.CRYPTO, 25, 1), 1_000L);   // does not throw
+
+        assertThat(listener.told).isTrue();
+        assertThat(registry.require(a.id())).isEqualTo(a);
+        assertThat(registry(null).require(a.id())).isEqualTo(a);                // committed
+        assertThat(registry.list(perp("A", Category.CRYPTO, 25, 1), 2_000L)).isEqualTo(a); // idempotent as ever
+
+        listener.told.set(false);
+        registry.close(a.id(), "closed at the source", 5_000L);                 // does not throw either
+
+        assertThat(listener.told).isTrue();
+        assertThat(registry.require(a.id()).status()).isEqualTo(MarketStatus.CLOSED);
+        assertThat(registry(null).require(a.id()).status()).isEqualTo(MarketStatus.CLOSED);
+        // and the next listing still gets the next oracle index
+        assertThat(registry.list(perp("B", Category.CRYPTO, 25, 1), 6_000L).oracleIndex()).isEqualTo(2);
+    }
+
     @Test
     void btcCannotBeClosed() {
         DbMarketRegistry registry = registry(null);

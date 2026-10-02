@@ -6,6 +6,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import org.jboss.logging.Logger;
 
 /**
  * Fallback {@link MarketRegistry} used only while no other implementation is on the classpath
@@ -15,6 +16,8 @@ import java.util.Optional;
 @DefaultBean
 @ApplicationScoped
 public class InMemoryMarketRegistry implements MarketRegistry {
+
+    private static final Logger LOG = Logger.getLogger(InMemoryMarketRegistry.class);
 
     private final List<Market> markets = new ArrayList<>();
     private volatile MarketListener listener;
@@ -67,7 +70,12 @@ public class InMemoryMarketRegistry implements MarketRegistry {
         }
         MarketListener l = listener;
         if (l != null) {
-            l.onListed(listed);
+            try {
+                l.onListed(listed);
+            } catch (RuntimeException e) {
+                LOG.errorf(e, "the market listener failed for the listing of %s — the market stays listed",
+                        listed.id());
+            }
         }
         return listed;
     }
@@ -85,7 +93,12 @@ public class InMemoryMarketRegistry implements MarketRegistry {
         }
         MarketListener l = listener;
         if (l != null) {
-            l.onClosed(closed, reason);
+            try {
+                l.onClosed(closed, reason);
+            } catch (RuntimeException e) {
+                LOG.errorf(e, "the market listener failed for the closing of %s — the market stays closed",
+                        closed.id());
+            }
         }
     }
 

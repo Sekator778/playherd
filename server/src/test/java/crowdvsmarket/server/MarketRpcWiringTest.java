@@ -77,6 +77,14 @@ class MarketRpcWiringTest extends LiveGameTestBase {
         assertThat(pair.path("betting").path("phase").asText()).isEqualTo("BETTING");
         assertThat(pair.path("betting").path("roundId").asText()).startsWith("T_RPC-1h-");
         assertThat(pair.path("running").path("marketId").asText()).isEqualTo("T_RPC");
+        // the opening price of a running round that nobody knows yet is an explicit JSON null (contract.ts:
+        // "waiting for the opening price"), with no positions and no crowd position — not a zero, not absent
+        assertThat(pair.path("running").path("phase").asText()).isEqualTo("RUNNING");
+        assertThat(pair.path("running").has("openPrice")).isTrue();
+        assertThat(pair.path("running").path("openPrice").isNull()).isTrue();
+        assertThat(pair.path("running").path("positions").isArray()).isTrue();
+        assertThat(pair.path("running").path("positions")).isEmpty();
+        assertThat(pair.path("running").path("crowd").isNull()).isTrue();
         // the argument left out, or null, is BTC, whose round ids keep the legacy form
         for (JsonNode btcPair : List.of(json(rpc(null, "rounds", "HOURLY")), json(rpc(null, "rounds", "HOURLY",
                 (Object) null)))) {

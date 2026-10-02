@@ -5,6 +5,7 @@ import crowdvsmarket.engine.round.RoundClock;
 import crowdvsmarket.engine.round.RoundWindow;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,9 +22,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Seeded at startup ({@code EngineRebuildService}) from the latest resolved round of the
  * series in {@code round_results} (its {@code window_end_ms} becomes the new {@code next.startMs()}),
  * or from the window containing "now" when the market has no round yet (§4 п.2 — never from the
- * calendar origin, which would make the scheduler resolve every window since then); a market
- * listed later is seeded the same way by {@code GameService.onListed}. A closed market's series is
- * {@linkplain #remove removed}.
+ * calendar origin, which would make the scheduler resolve every window since then) — and never
+ * behind a window that still holds a bet, which the scheduler must resolve or cancel ({@code
+ * SeriesSeeder}); a market listed later is seeded the same way by {@code GameService.onListed}. A
+ * closed market's series is {@linkplain #remove removed}.
  */
 @ApplicationScoped
 public final class RoundProgress {
@@ -32,7 +34,10 @@ public final class RoundProgress {
     public record SeriesKey(String marketId, Interval interval) {
     }
 
-    private final ConcurrentHashMap<SeriesKey, RoundWindow> next = new ConcurrentHashMap<>();
+    /** Replaced as a whole by {@link #replaceAll}; every other method reads the reference once and
+     *  works on that map, so an operation that races a replacement lands on the old cursors and
+     *  cannot leave the new ones half-changed. */
+    private volatile ConcurrentHashMap<SeriesKey, RoundWindow> next = new ConcurrentHashMap<>();
 
     /** Sets the cursor of {@code (marketId, interval)} to {@code window} — which must be a window of
      *  that very market and interval, or the series would silently drift into another one. */
@@ -107,9 +112,26 @@ public final class RoundProgress {
         next.remove(new SeriesKey(marketId, interval));
     }
 
-    /** Forgets every series — the first step of a rebuild. */
+    /** Forgets every series. */
     public void clear() {
-        next.clear();
+        next = new ConcurrentHashMap<>();
+    }
+
+    /** Replaces every cursor at once with {@code cursors} — the swap that ends a rebuild, whose
+     *  seeding was computed aside. A reader (the scheduler, the bots) sees the old cursors or the new
+     *  ones, never an empty map in between. The windows must belong to their series, like
+     *  {@link #seed}'s. */
+    public void replaceAll(Map<SeriesKey, RoundWindow> cursors) {
+        ConcurrentHashMap<SeriesKey, RoundWindow> fresh = new ConcurrentHashMap<>();
+        cursors.forEach((series, window) -> {
+            Objects.requireNonNull(window, "window");
+            if (!window.market().equals(series.marketId()) || window.interval() != series.interval()) {
+                throw new IllegalArgumentException("window " + window.roundId() + " does not belong to series "
+                        + series.marketId() + "/" + series.interval());
+            }
+            fresh.put(series, window);
+        });
+        next = fresh;
     }
 
     /** The series that currently run, in no particular order. */

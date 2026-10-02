@@ -33,4 +33,13 @@ public interface MarketRegistry {
     void close(String marketId, String reason, long nowMs);
 
     void setListener(MarketListener listener);
+
+    /**
+     * Re-reads the persisted markets, for an implementation that caches them. {@code
+     * EngineRebuildService} calls it at every rebuild, so that it needs to know no implementation
+     * by name. A default method (no-op) on purpose: an implementation that keeps nothing in memory,
+     * or a test double, stays valid without having to say so.
+     */
+    default void reload() {
+    }
 }

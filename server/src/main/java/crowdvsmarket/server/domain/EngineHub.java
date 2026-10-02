@@ -24,7 +24,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>A market gets its engines through {@link #ensureMarket}: for every market in the registry
  * (closed ones too — their history replays) at a rebuild, and for a newly listed one at listing
- * time. BTC is always present ({@link #resetEmpty}).
+ * time. BTC is always present ({@link #resetEmpty}). A rebuild fills a hub of its own and hands it
+ * over with {@link #adopt}.
  *
  * <p>Every mutating call in this codebase goes through {@code GameService}, which synchronizes on
  * this instance for the whole of one logical operation (persist event(s) + mutate this state +
@@ -68,20 +69,34 @@ public final class EngineHub {
         }
     }
 
-    private volatile LedgerBook ledger;
-    private final ConcurrentHashMap<String, MarketEngines> markets = new ConcurrentHashMap<>();
+    /** The ledger and the markets' engines of one moment: what {@link #adopt} swaps in one step. An
+     *  engine is built over the ledger of ITS state, so the two never mix. */
+    private static final class State {
+        final LedgerBook ledger = new LedgerBook();
+        final ConcurrentHashMap<String, MarketEngines> markets = new ConcurrentHashMap<>();
+    }
+
+    private volatile State state;
 
     public EngineHub() {
         resetEmpty();
     }
 
-    /** Discards all in-memory state and starts a brand-new ledger with BTC's engines only — the
-     *  first step of a rebuild ({@code EngineRebuildService}), immediately before every other
-     *  market is re-created with {@link #ensureMarket} and {@code game_events} is replayed. */
+    /** Discards all in-memory state and starts a brand-new ledger with BTC's engines only. A rebuild
+     *  no longer does this to the live hub (it builds a new hub aside and {@link #adopt}s it, so a
+     *  replay that fails half-way leaves nothing half-built behind); it is what a hub starts with. */
     public void resetEmpty() {
-        ledger = new LedgerBook();
-        markets.clear();
+        state = new State();
         ensureMarket(MarketSpec.BTC);
+    }
+
+    /** Takes over everything {@code built} holds — its ledger and every market's engines — in one
+     *  volatile write: the swap that ends a rebuild, once the replay and the seeding of a hub built
+     *  aside ({@code new EngineHub()} + {@link #ensureMarket} + the replay) have both succeeded.
+     *  {@code built} must not be used afterwards: this hub and it would share one state. The caller
+     *  holds the engine lock, so no reader of this hub is in the middle of a call. */
+    public void adopt(EngineHub built) {
+        state = built.state;
     }
 
     /** Creates the market's crowd account, two engines and comparison lines when it has none yet;
@@ -91,16 +106,17 @@ public final class EngineHub {
     }
 
     private MarketEngines ensureMarket(MarketSpec spec) {
-        return markets.computeIfAbsent(spec.id(), id -> new MarketEngines(spec, ledger));
+        State current = state;
+        return current.markets.computeIfAbsent(spec.id(), id -> new MarketEngines(spec, current.ledger));
     }
 
     public LedgerBook ledger() {
-        return ledger;
+        return state.ledger;
     }
 
     /** The market's engines, or empty when {@link #ensureMarket} never ran for it. */
     public Optional<MarketEngines> findMarket(String marketId) {
-        return Optional.ofNullable(markets.get(marketId));
+        return Optional.ofNullable(state.markets.get(marketId));
     }
 
     /** @throws IllegalStateException when the market has no engines — a programming error for a
@@ -123,6 +139,6 @@ public final class EngineHub {
     }
 
     public List<String> marketIds() {
-        return List.copyOf(markets.keySet());
+        return List.copyOf(state.markets.keySet());
     }
 }

@@ -37,6 +37,39 @@ class RoundProgressTest {
     }
 
     @Test
+    void replaceAllSwapsEveryCursorAtOnceAndKeepsNoneOfTheOldOnes() {
+        RoundProgress progress = new RoundProgress();
+        progress.seed("BTC", Interval.HOURLY, window("BTC", Interval.HOURLY, 600_000L));
+        progress.seed("OLD", Interval.DAILY, window("OLD", Interval.DAILY, 0L));
+
+        progress.replaceAll(java.util.Map.of(
+                new RoundProgress.SeriesKey("BTC", Interval.HOURLY), window("BTC", Interval.HOURLY, 1_200_000L),
+                new RoundProgress.SeriesKey("ETH", Interval.DAILY), window("ETH", Interval.DAILY, 60_000L)));
+
+        assertThat(progress.next("BTC", Interval.HOURLY).startMs()).isEqualTo(1_200_000L);
+        assertThat(progress.next("ETH", Interval.DAILY).startMs()).isEqualTo(60_000L);
+        assertThat(progress.isSeeded("OLD", Interval.DAILY)).isFalse();
+        assertThat(progress.seededSeries()).containsExactlyInAnyOrder(new RoundProgress.SeriesKey("BTC", Interval.HOURLY),
+                new RoundProgress.SeriesKey("ETH", Interval.DAILY));
+        // the cursors move as before afterwards
+        assertThat(progress.advance("BTC", Interval.HOURLY, window("BTC", Interval.HOURLY, 1_200_000L))).isTrue();
+        assertThat(progress.next("BTC", Interval.HOURLY).startMs()).isEqualTo(1_260_000L);
+    }
+
+    @Test
+    void replaceAllRejectsAWindowThatDoesNotBelongToItsSeriesAndChangesNothing() {
+        RoundProgress progress = new RoundProgress();
+        progress.seed("BTC", Interval.HOURLY, window("BTC", Interval.HOURLY, 600_000L));
+
+        assertThatThrownBy(() -> progress.replaceAll(java.util.Map.of(
+                new RoundProgress.SeriesKey("ETH", Interval.HOURLY), window("BTC", Interval.HOURLY, 0L))))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(progress.next("BTC", Interval.HOURLY).startMs()).isEqualTo(600_000L);
+        assertThat(progress.isSeeded("ETH", Interval.HOURLY)).isFalse();
+    }
+
+    @Test
     void unseededSeriesIsAnErrorForNextAndEmptyForFindNext() {
         RoundProgress progress = new RoundProgress();
 

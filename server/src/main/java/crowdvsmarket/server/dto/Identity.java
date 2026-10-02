@@ -11,13 +11,22 @@ public final class Identity {
                                      Boolean isBot) {
     }
 
+    /** {@code streak}: the win streak over ALL the player's settled rounds, not only the {@code history} page
+     *  (Р-71; {@code domain.WinStreak} has the rule). */
     public record PublicProfileDto(PlayerSummaryDto player, Ledger.SeasonRecordDto seasonRecord,
-                                     List<ProfileRoundEntryDto> history) {
+                                     List<ProfileRoundEntryDto> history, StreakDto streak) {
     }
 
-    /** {@code asset}: the market's symbol ("BTC", "NVDA"), {@code marketId}: its id — contract.ts. */
+    /** contract.ts {@code PublicProfileDto.streak}: the run of wins that ends at the newest settled round
+     *  ({@code current}) and the longest run there has ever been ({@code best}). */
+    public record StreakDto(int current, int best) {
+    }
+
+    /** {@code asset}: the market's symbol ("BTC", "NVDA"), {@code marketId}: its id; {@code durationSec}: the
+     *  real length of the round (its window in {@code round_results}), so a row can be labelled "3 MIN" even
+     *  after its market has left {@code markets()} — all contract.ts. */
     public record ProfileRoundEntryDto(String roundId, Enums.Interval interval, String marketId, String asset,
-                                         long settledAtMs, Enums.Direction direction, int leverage, String stake,
-                                         boolean liquidated, Boolean directionCorrect, String payout) {
+                                         Long durationSec, long settledAtMs, Enums.Direction direction, int leverage,
+                                         String stake, boolean liquidated, Boolean directionCorrect, String payout) {
     }
 }
