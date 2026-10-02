@@ -41,6 +41,14 @@
 //! as the chain made it: requests the winning version paid are paid (each with its own payout coin),
 //! requests it did not pay go back to the queue.
 //!
+//! **A batch never carries two payouts that are the same coin** (`docs/research/chain_service.md`
+//! §18.1): requests with the same recipient and the same amount create one coin twice, and the chain
+//! rejects such a spend. Whatever builds a batch -- a new one (`start_new_batch`), a rebuild
+//! (`rebuild_in_flight`), a replacement (`replace_in_mempool`) -- takes its requests from the queue
+//! through `WithdrawalQueueFile::take_batch`, which skips a request that repeats a payout already in the
+//! batch: it stays pending, in its place, and a later batch pays it. A batch an earlier version of this
+//! service built with such a pair (it can never be accepted) is rebuilt without the repeats.
+//!
 //! What *is* reused here (decision Р-53 follow-up, "treasury self-heal",
 //! `docs/research/chain_service.md` §13): the oracle's §12 principle "make
 //! the chain the source of truth for our own position" -- `tick()` (and
@@ -82,7 +90,8 @@ use crate::play_state_file::{load_play_state, save_play_state_atomic};
 use super::chain_client::PlayChainClient;
 use super::types::{WithdrawalRequest, WithdrawalStatusResponse};
 use super::withdrawal_queue::{
-    InFlightWithdrawalBatch, SupersededWithdrawalBatch, WithdrawalQueueFile, WithdrawalState,
+    InFlightWithdrawalBatch, SupersededWithdrawalBatch, TakenRequests, WithdrawalQueueFile, WithdrawalState,
+    is_collision_free, split_identical_payouts,
 };
 use super::withdrawal_spend::{MAX_WITHDRAWALS_PER_SPEND, build_play_withdrawal_batch};
 
@@ -653,6 +662,19 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
                 .context("clearing a stale 'replacement blocked' note from the in-flight batch")?;
         }
 
+        // A batch with two payouts that are the same coin (same recipient, same amount) was built by a version of
+        // this service from before `take_batch` kept such requests apart (§18.1): the chain rejects it
+        // (`DUPLICATE_OUTPUT`) however often it is pushed, and when the retries ran out every request in it,
+        // the innocent ones too, would be failed. Rebuild it now without the repeats; they go back to the queue.
+        if !is_collision_free(&in_flight.requests) {
+            tracing::warn!(
+                bundle_id = %in_flight.bundle_id,
+                "the in-flight withdrawal batch has two payouts that are the same coin, which the chain rejects -- \
+                 rebuilding it without the repeats, they go back to the queue (docs/research/chain_service.md §18.1)"
+            );
+            return self.rebuild_in_flight(queue, in_flight).await;
+        }
+
         // Task fix (`docs/research/chain_service.md` §15): mirrors
         // `oracle::publisher::advance_in_flight`'s own double-spend
         // handling exactly -- the treasury coin was just confirmed unspent
@@ -897,10 +919,13 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             );
         }
 
-        // The newly pending requests ride along, like in `rebuild_in_flight` ...
+        // The newly pending requests ride along, like in `rebuild_in_flight` -- except a request that would
+        // create the same payout coin as one the batch already carries (same recipient, same amount: the
+        // chain rejects a spend that creates a coin twice, §18.1): it stays pending for a later batch.
         let mut requests = in_flight.requests.clone();
         let room = MAX_WITHDRAWALS_PER_SPEND.saturating_sub(requests.len());
-        let mut merged: Vec<WithdrawalRequest> = if room > 0 { queue.take_batch(room) } else { Vec::new() };
+        let mut merged: TakenRequests =
+            if room > 0 { queue.take_batch(&in_flight.requests, room) } else { TakenRequests::default() };
         requests.extend(merged.iter().cloned());
 
         // ... unless the merged batch cannot be built (more than the treasury coin holds, say): then the
@@ -910,23 +935,23 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             .await;
         if prepared.is_err() && !merged.is_empty() {
             tracing::warn!("the merged replacement withdrawal batch could not be prepared -- replacing without the newly pending requests");
-            queue.pending.splice(0..0, std::mem::take(&mut merged));
+            queue.put_back(std::mem::take(&mut merged));
             requests = in_flight.requests.clone();
             prepared = self.prepare_replacement(&in_flight, &requests, treasury, &owner, &master_sk, old_cost).await;
         }
         let ready = match prepared {
             Ok(Prepared::Ready(ready)) => *ready,
             Ok(Prepared::Blocked(reason)) => {
-                queue.pending.splice(0..0, merged);
+                queue.put_back(merged);
                 return self.block_replacement(queue, in_flight, reason);
             }
             Ok(Prepared::FeeCoinsBusy) => {
-                queue.pending.splice(0..0, merged);
+                queue.put_back(merged);
                 tracing::info!("not replacing the withdrawal batch in the mempool yet: the fee-coin split is holding the wallet's only fee coin");
                 return Ok(WithdrawalTickOutcome::WaitingForConfirmation);
             }
             Err(e) => {
-                queue.pending.splice(0..0, merged);
+                queue.put_back(merged);
                 return Err(e);
             }
         };
@@ -1001,7 +1026,7 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
         if let Some(coin) = ready.newly_reserved {
             self.fee_allocator.release(coin.coin_id()).await;
         }
-        queue.pending.splice(0..0, merged);
+        queue.put_back(merged);
         // The replacement is not forgotten: the node may still hold it (parked in its conflict cache,
         // retried at every new block) and another node may include it. Kept as a version of the batch that
         // goes back in flight, so that if the chain takes it, the payouts it made are recognised.
@@ -1180,10 +1205,17 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             self.fee_allocator.release(old_fee_coin.coin_id()).await;
         }
 
-        let mut requests = in_flight.requests.clone();
+        // The batch's own requests, and the newly pending ones beside them -- except those that would create
+        // the same payout coin as a request already in the batch (same recipient, same amount: the chain rejects
+        // a spend that creates a coin twice, §18.1), which stay pending for a later batch. A batch built before
+        // that rule existed can itself carry two such requests (`split_identical_payouts`): the later ones go
+        // back to the front of `pending`, where they were before they were taken.
+        let (mut requests, same_payout_as_earlier) = split_identical_payouts(&in_flight.requests);
+        queue.pending.splice(0..0, same_payout_as_earlier);
         let room = MAX_WITHDRAWALS_PER_SPEND.saturating_sub(requests.len());
         if room > 0 {
-            requests.extend(queue.take_batch(room));
+            let merged = queue.take_batch(&requests, room);
+            requests.extend(merged.iter().cloned());
         }
         let batch_len = requests.len();
 
@@ -1268,8 +1300,13 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             );
         }
 
-        let batch = queue.take_batch(MAX_WITHDRAWALS_PER_SPEND);
+        // Never two requests that would create the same payout coin (same recipient, same amount) in one batch
+        // (§18.1): the later one waits for the next batch.
+        let taken = queue.take_batch(&[], MAX_WITHDRAWALS_PER_SPEND);
+        let batch = taken.to_vec();
         let batch_len = batch.len();
+        let repeats_waiting =
+            queue.pending.iter().filter(|p| batch.iter().any(|r| r.payout_key() == p.payout_key())).count();
 
         let draft = build_play_withdrawal_batch(treasury, &owner, &batch).context("building play withdrawal batch spend")?;
         let draft_cost = measure_bundle_cost(&draft.coin_spends).context("measuring draft spend cost")?;
@@ -1292,7 +1329,7 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
                 fee_mojos,
                 "dry-run (C2_PUSH=0/--dry-run): built play withdrawal batch spend, not broadcasting"
             );
-            queue.pending.splice(0..0, batch);
+            queue.put_back(taken);
             return Ok(WithdrawalTickOutcome::DryRun { requests: batch_len });
         }
 
@@ -1302,7 +1339,7 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
             // (`fee_reserve.rs`): wait a tick, the requests go back to `pending`, unsaved.
             Err(e) if e.downcast_ref::<FeeCoinsBusy>().is_some() => {
                 tracing::info!("not starting a withdrawal batch yet: the fee-coin split is holding the wallet's only fee coin");
-                queue.pending.splice(0..0, batch);
+                queue.put_back(taken);
                 return Ok(WithdrawalTickOutcome::WaitingForConfirmation);
             }
             Err(e) => return Err(e),
@@ -1339,6 +1376,14 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
         }
         queue.save_atomic(&self.data_dir, &self.operator_name).context("persisting push_tx outcome")?;
 
+        if repeats_waiting > 0 {
+            tracing::info!(
+                requests = batch_len,
+                repeats_waiting,
+                "withdrawal requests with the same recipient and amount as a request of this batch wait for a later \
+                 batch -- one spend cannot create the same payout coin twice (docs/research/chain_service.md §18.1)"
+            );
+        }
         Ok(WithdrawalTickOutcome::Broadcast { requests: batch_len, accepted: outcome.accepted })
     }
 }

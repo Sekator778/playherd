@@ -66,22 +66,65 @@ pub struct OracleRecordsRequest {
 /// `seq`s newly accepted this call -- a `seq` already known
 /// confirmed/in-flight/pending is silently omitted (idempotent re-POST, not
 /// an error), so this can be shorter than `req.records.len()`.
+///
+/// `conflictSeqs` (`docs/research/chain_service.md` §18.2) makes a collision visible without
+/// changing what is accepted: the `seq`s of this request that the service already holds with
+/// DIFFERENT content (any of `ts`, `priceCents`, `resultsHash`, `source`, `sourceTs`, `asset`
+/// differs) -- another server's record, or the same server's from before it learned the floor. The
+/// record of such a `seq` is not queued, exactly as before; a `seq` held with the SAME content is
+/// still the silent no-op of an idempotent resend and is not listed. Ascending, each `seq` once;
+/// empty when there is nothing to report. A `seq` of a request that carries it twice with different
+/// content is in both lists: the first was accepted, the second collided with it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OracleRecordsResponse {
     pub queued: usize,
     pub accepted_seqs: Vec<u64>,
+    pub conflict_seqs: Vec<u64>,
 }
 
 /// `GET /v1/oracle/records/{seq}` (FIXED INTERFACE (b)).
+///
+/// `resultsHash`, `priceCents`, `asset` and `ts` are the content of the record this service holds
+/// under `seq` (`docs/research/chain_service.md` §18.2) -- what a server compares with its own record to
+/// tell it from a foreign one that took the same `seq`: the queued or in-flight record, the
+/// confirmed one, or for `"conflict"` the record the chain has (like `height` and `coinId`). `null`
+/// exactly when the service holds no record under `seq` (`"unknown"`) or no longer has the content of
+/// one it holds: an entry confirmed before the service kept the content (every entry of a queue file
+/// written before `docs/research/chain_service.md` §18.2) answers as it always did, with the four
+/// fields `null`.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OracleRecordStatusResponse {
     pub seq: u64,
-    /// `"queued" | "in_flight" | "confirmed" | "unknown"`.
+    /// `"queued" | "in_flight" | "confirmed" | "conflict" | "unknown"`.
     pub state: &'static str,
     pub height: Option<u32>,
     pub coin_id: Option<String>,
+    /// `0x` + 32 bytes hex.
+    pub results_hash: Option<String>,
+    pub price_cents: Option<i64>,
+    pub asset: Option<u32>,
+    /// Unix seconds.
+    pub ts: Option<i64>,
+}
+
+impl OracleRecordStatusResponse {
+    /// An answer without record content (`unknown`, or a held record whose content is gone).
+    pub fn new(seq: u64, state: &'static str, height: Option<u32>, coin_id: Option<String>) -> Self {
+        Self { seq, state, height, coin_id, results_hash: None, price_cents: None, asset: None, ts: None }
+    }
+
+    /// The same answer carrying the held record's content, if the service still has it.
+    pub fn with_record(mut self, record: Option<OracleRecord>) -> Self {
+        if let Some(record) = record {
+            self.results_hash = Some(format!("0x{}", record.results_hash));
+            self.price_cents = Some(record.price_cents);
+            self.asset = Some(record.asset);
+            self.ts = Some(record.ts);
+        }
+        self
+    }
 }
 
 /// Validated, internal record shape -- what actually goes into the CLVM

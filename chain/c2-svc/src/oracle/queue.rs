@@ -38,6 +38,15 @@ pub struct ConfirmedRecordInfo {
     /// the confirming spend (the same coin `GET /v1/oracle/status` would
     /// track next).
     pub coin_id: String,
+    /// The record that was confirmed -- what the service answers to "is this seq yours?"
+    /// (`QueueFile::held_record`: `GET /v1/oracle/records/{seq}`'s content fields, and the
+    /// `conflictSeqs` of `POST /v1/oracle/records`, `docs/research/chain_service.md` §18.2).
+    /// `None` for an entry confirmed before the content was kept: a queue file written by an earlier
+    /// version has no such field (`#[serde(default)]`), and the entry keeps answering as it did, with
+    /// no content. Written out only when there is one, so a file that never had it reads and writes back
+    /// the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<OracleRecord>,
 }
 
 /// `GET /v1/oracle/records/{seq}`'s `state` (FIXED INTERFACE (b)), derived
@@ -237,6 +246,16 @@ pub struct QueueFile {
     pub chain_scan_checkpoint: Option<Coin>,
 }
 
+/// What `QueueFile::enqueue` did with a request's records.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EnqueueOutcome {
+    /// The `seq`s newly accepted into `pending`, in the order accepted (`acceptedSeqs`).
+    pub accepted: Vec<u64>,
+    /// The `seq`s the queue already holds with different content than the request's record for them,
+    /// ascending, each once (`conflictSeqs`) -- not queued.
+    pub conflicts: Vec<u64>,
+}
+
 /// What `QueueFile::reconcile_with_chain` actually changed -- returned so
 /// `Publisher` can decide whether the reconciled queue needs saving at all
 /// (most periodic scans, once caught up, change nothing: just one
@@ -368,6 +387,27 @@ impl QueueFile {
         RecordState::Unknown
     }
 
+    /// The record this queue holds under `seq`, when it still has its content -- the record `GET
+    /// /v1/oracle/records/{seq}` describes and the one `enqueue` compares an incoming record with
+    /// (`docs/research/chain_service.md` §18.2). Same precedence as `record_state`: confirmed, then
+    /// conflicting -- the record the CHAIN has, which is what `height`/`coinId` of that state describe
+    /// too --, then in flight, then pending. `None` when the seq is unknown, and when it is confirmed
+    /// without content: an entry from before the content was kept (`ConfirmedRecordInfo::record`).
+    pub fn held_record(&self, seq: u64) -> Option<OracleRecord> {
+        if let Some(info) = self.confirmed.get(&seq) {
+            return info.record;
+        }
+        if let Some(conflict) = self.conflicts.get(&seq) {
+            return Some(conflict.chain);
+        }
+        if let Some(in_flight) = &self.in_flight
+            && let Some(record) = in_flight.records.iter().find(|r| r.seq == seq)
+        {
+            return Some(*record);
+        }
+        self.pending.iter().find(|r| r.seq == seq).copied()
+    }
+
     /// Accepts every record in `incoming` that isn't already known
     /// confirmed/in-flight/pending (`record_state`), in ascending `seq`
     /// order. A record whose `seq` is already accounted for is ignored
@@ -376,20 +416,36 @@ impl QueueFile {
     /// below `last_accepted_seq` but was never actually recorded anywhere
     /// (backfill). Returns the `seq`s newly accepted, in the order accepted
     /// (`POST /v1/oracle/records`'s `acceptedSeqs`).
-    pub fn enqueue(&mut self, mut incoming: Vec<OracleRecord>) -> Vec<u64> {
+    ///
+    /// What is accepted is exactly that; what is *reported* is more
+    /// (`docs/research/chain_service.md` §18.2): an ignored record whose `seq` is held with DIFFERENT
+    /// content -- another server's record, or one the same server issued before it learned the floor --
+    /// is not a repeat but a collision, and its `seq` is in `EnqueueOutcome::conflicts`
+    /// (`conflictSeqs`). A seq held with the same content stays the silent no-op it was, and so does a
+    /// confirmed entry whose content was not kept (`held_record` is `None`): there is nothing to compare
+    /// with. A request that carries one `seq` twice with different content is compared in order, like two
+    /// requests: the first is accepted, the second collides with it.
+    pub fn enqueue(&mut self, mut incoming: Vec<OracleRecord>) -> EnqueueOutcome {
         incoming.sort_by_key(|r| r.seq);
-        let mut accepted = Vec::new();
+        let mut outcome = EnqueueOutcome::default();
         for record in incoming {
             if !matches!(self.record_state(record.seq), RecordState::Unknown) {
-                continue; // already confirmed / queued / in-flight: idempotent no-op
+                // already confirmed / queued / in-flight / conflicting: idempotent no-op -- unless it is
+                // a different record
+                if self.held_record(record.seq).is_some_and(|held| held != record)
+                    && outcome.conflicts.last() != Some(&record.seq)
+                {
+                    outcome.conflicts.push(record.seq);
+                }
+                continue;
             }
             if record.seq > self.last_accepted_seq.unwrap_or(0) {
                 self.last_accepted_seq = Some(record.seq);
             }
-            accepted.push(record.seq);
+            outcome.accepted.push(record.seq);
             self.pending.push(record);
         }
-        accepted
+        outcome
     }
 
     /// Takes up to `max` of the oldest pending records (ascending `seq`)
@@ -473,7 +529,11 @@ impl QueueFile {
                 Some(chain_record) if chain_record.record == record => {
                     self.confirmed.insert(
                         record.seq,
-                        ConfirmedRecordInfo { height: chain_record.height, coin_id: chain_record.coin_id.clone() },
+                        ConfirmedRecordInfo {
+                            height: chain_record.height,
+                            coin_id: chain_record.coin_id.clone(),
+                            record: Some(record),
+                        },
                     );
                     outcome.dropped_confirmed.push(record.seq);
                 }
@@ -575,7 +635,11 @@ impl QueueFile {
                 Some(chain_record) if chain_record.record == *record => {
                     self.confirmed.insert(
                         record.seq,
-                        ConfirmedRecordInfo { height: chain_record.height, coin_id: chain_record.coin_id.clone() },
+                        ConfirmedRecordInfo {
+                            height: chain_record.height,
+                            coin_id: chain_record.coin_id.clone(),
+                            record: Some(*record),
+                        },
                     );
                     confirmed.push(record.seq);
                 }
@@ -641,7 +705,11 @@ impl QueueFile {
                 let chain_record = &walk.confirmed[&record.seq];
                 self.confirmed.insert(
                     record.seq,
-                    ConfirmedRecordInfo { height: chain_record.height, coin_id: chain_record.coin_id.clone() },
+                    ConfirmedRecordInfo {
+                        height: chain_record.height,
+                        coin_id: chain_record.coin_id.clone(),
+                        record: Some(*record),
+                    },
                 );
                 outcome.dropped_confirmed.push(record.seq);
             }
@@ -662,5 +730,234 @@ impl QueueFile {
                 outcome.new_conflicts.push(record.seq);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::oracle::lineage::ChainRecord;
+    use crate::oracle::types::Source;
+
+    fn record(seq: u64) -> OracleRecord {
+        OracleRecord {
+            seq,
+            ts: 1_790_000_000 + seq as i64,
+            price_cents: 65_432_100,
+            results_hash: Bytes32::from([seq as u8; 32]),
+            source_flag: Source::Live.flag(),
+            source_ts: 1_789_999_000 + seq as i64,
+            asset: 0,
+        }
+    }
+
+    /// The six ways a record under the same `seq` can differ in content.
+    fn variants_of(record: OracleRecord) -> Vec<(&'static str, OracleRecord)> {
+        vec![
+            ("ts", OracleRecord { ts: record.ts + 1, ..record }),
+            ("priceCents", OracleRecord { price_cents: record.price_cents + 1, ..record }),
+            ("resultsHash", OracleRecord { results_hash: Bytes32::from([0xee; 32]), ..record }),
+            ("source", OracleRecord { source_flag: 1 - record.source_flag, ..record }),
+            ("sourceTs", OracleRecord { source_ts: record.source_ts + 1, ..record }),
+            ("asset", OracleRecord { asset: record.asset + 3, ..record }),
+        ]
+    }
+
+    fn in_flight_of(records: &[OracleRecord]) -> InFlightSpend {
+        InFlightSpend {
+            records: records.to_vec(),
+            spent_coin: Coin::new(Bytes32::from([3u8; 32]), Bytes32::from([4u8; 32]), 1),
+            next_coin: Coin::new(Bytes32::from([5u8; 32]), Bytes32::from([4u8; 32]), 1),
+            next_proof: ProofDto::Eve { parent_parent_coin_info: Bytes32::from([6u8; 32]), parent_amount: 1 },
+            bundle: SpendBundle::new(vec![], chia_bls::Signature::default()),
+            bundle_id: "0x00".into(),
+            fee_mojos: 0,
+            broadcast_at_unix: 0,
+            last_attempt_at_unix: 0,
+            attempts: 1,
+            last_push_accepted: true,
+            last_push_error: None,
+            superseded: Vec::new(),
+            replace_blocked: None,
+        }
+    }
+
+    fn confirmed_with(record: Option<OracleRecord>) -> ConfirmedRecordInfo {
+        ConfirmedRecordInfo { height: Some(4_765_102), coin_id: "0x01".into(), record }
+    }
+
+    /// A record held in `pending`: the same record again is the silent no-op of a resend; a record that differs
+    /// in ANY field is a collision -- reported, and still not queued.
+    #[test]
+    fn a_different_record_under_a_pending_seq_is_a_conflict_and_the_same_one_is_not() {
+        let mut queue = QueueFile::default();
+        assert_eq!(queue.enqueue(vec![record(7)]), EnqueueOutcome { accepted: vec![7], conflicts: vec![] });
+
+        assert_eq!(queue.enqueue(vec![record(7)]), EnqueueOutcome::default(), "a resend is silent");
+        for (field, different) in variants_of(record(7)) {
+            let outcome = queue.enqueue(vec![different]);
+            assert_eq!(outcome, EnqueueOutcome { accepted: vec![], conflicts: vec![7] }, "{field} differs");
+        }
+        assert_eq!(queue.pending, vec![record(7)], "what is held is untouched by every one of them");
+    }
+
+    /// The same for a record in flight.
+    #[test]
+    fn a_different_record_under_an_in_flight_seq_is_a_conflict() {
+        let mut queue = QueueFile { in_flight: Some(in_flight_of(&[record(1), record(2)])), ..QueueFile::default() };
+        assert_eq!(queue.enqueue(vec![record(1), record(2)]), EnqueueOutcome::default());
+        for (field, different) in variants_of(record(2)) {
+            assert_eq!(queue.enqueue(vec![different]).conflicts, vec![2], "{field} differs");
+        }
+        assert!(queue.pending.is_empty());
+    }
+
+    /// A confirmed record keeps its content (from this version on): the same record is silent, a different one a
+    /// conflict. An entry whose content was not kept -- every entry of a queue file written before -- cannot be
+    /// compared with anything: whatever comes is the silent no-op it always was.
+    #[test]
+    fn a_confirmed_seq_conflicts_only_when_its_content_is_known() {
+        let mut queue = QueueFile::default();
+        queue.confirmed.insert(1, confirmed_with(Some(record(1))));
+        queue.confirmed.insert(2, confirmed_with(None));
+
+        assert_eq!(queue.enqueue(vec![record(1), record(2)]), EnqueueOutcome::default());
+        for (field, different) in variants_of(record(1)) {
+            assert_eq!(queue.enqueue(vec![different]).conflicts, vec![1], "{field} differs");
+        }
+        for (field, different) in variants_of(record(2)) {
+            assert_eq!(queue.enqueue(vec![different]), EnqueueOutcome::default(), "{field}: no content to compare with");
+        }
+        assert!(queue.pending.is_empty());
+    }
+
+    /// A seq the chain walk found confirmed with other content than the service had queued (`conflicts`): the record
+    /// that counts is the chain's. The service's own record for it, sent again, is a collision -- it will never be
+    /// published --; the chain's, sent by whoever owns it, is a repeat.
+    #[test]
+    fn a_conflicting_seq_is_compared_with_the_record_the_chain_has() {
+        let (local, chain) = (record(5), OracleRecord { price_cents: 1, ..record(5) });
+        let mut queue = QueueFile::default();
+        queue.conflicts.insert(
+            5,
+            ConflictInfo { local, chain, chain_height: Some(10), chain_coin_id: "0x05".into() },
+        );
+        assert_eq!(queue.held_record(5), Some(chain));
+        assert_eq!(queue.enqueue(vec![chain]), EnqueueOutcome::default(), "the chain's own record is a repeat");
+        assert_eq!(queue.enqueue(vec![local]).conflicts, vec![5], "the record that lost to the chain's is a collision");
+    }
+
+    /// What is accepted does not change: a seq the queue knows nothing of is accepted (a late record below the
+    /// watermark included), whatever else the request carries; and the conflicts come back ascending, once each.
+    #[test]
+    fn a_request_mixes_new_repeated_and_colliding_records_and_a_seq_twice_is_compared_in_order() {
+        let mut queue = QueueFile { last_accepted_seq: Some(10), ..QueueFile::default() };
+        queue.pending = vec![record(4), record(9)];
+        queue.confirmed.insert(6, confirmed_with(Some(record(6))));
+
+        let colliding_9 = OracleRecord { ts: 5, ..record(9) };
+        let colliding_6 = OracleRecord { asset: 2, ..record(6) };
+        let outcome = queue.enqueue(vec![
+            colliding_9,
+            record(2), // late: below the watermark, unknown everywhere
+            record(4), // a repeat
+            colliding_6,
+            colliding_6, // the same collision twice: reported once
+            record(12),
+            record(12), // a repeat of what this very request just accepted
+            OracleRecord { price_cents: 9, ..record(12) }, // a different record under it: collides with the first
+        ]);
+        assert_eq!(outcome.accepted, vec![2, 12]);
+        assert_eq!(outcome.conflicts, vec![6, 9, 12]);
+        assert_eq!(queue.last_accepted_seq, Some(12));
+        assert_eq!(queue.pending, vec![record(4), record(9), record(2), record(12)]);
+    }
+
+    /// `held_record` answers in the order `record_state` does.
+    #[test]
+    fn held_record_follows_the_precedence_of_record_state() {
+        let a = record(1);
+        let (b, c, d) = (OracleRecord { ts: 2, ..a }, OracleRecord { ts: 3, ..a }, OracleRecord { ts: 4, ..a });
+        let mut queue = QueueFile::default();
+        assert_eq!(queue.held_record(1), None, "unknown");
+        queue.pending.push(a);
+        assert_eq!(queue.held_record(1), Some(a));
+        queue.in_flight = Some(in_flight_of(&[b]));
+        assert_eq!(queue.held_record(1), Some(b), "in flight before pending");
+        queue.conflicts.insert(1, ConflictInfo { local: b, chain: c, chain_height: None, chain_coin_id: "0x".into() });
+        assert_eq!(queue.held_record(1), Some(c), "the chain's record of a conflict before the in-flight one");
+        queue.confirmed.insert(1, confirmed_with(Some(d)));
+        assert_eq!(queue.held_record(1), Some(d), "confirmed before everything");
+        queue.confirmed.insert(1, confirmed_with(None));
+        assert_eq!(queue.held_record(1), None, "confirmed without content: nothing, not the record of a lower state");
+    }
+
+    fn chain_record(record: OracleRecord, height: u32) -> (u64, ChainRecord) {
+        (record.seq, ChainRecord { height: Some(height), coin_id: format!("0x{:02x}", record.seq), record })
+    }
+
+    fn walk_over(records: &[(OracleRecord, u32)], generations: Vec<WalkedGeneration>) -> LineageWalkOutcome {
+        LineageWalkOutcome {
+            confirmed: records.iter().map(|(record, height)| chain_record(*record, *height)).collect(),
+            tip_coin: Coin::new(Bytes32::from([9u8; 32]), Bytes32::from([4u8; 32]), 1),
+            generations_advanced: generations.len() as u64,
+            generations,
+            decode_warnings: Vec::new(),
+        }
+    }
+
+    /// Every way the chain reconciliation confirms a record writes the record down with its entry: a stale
+    /// pending record the chain already has, the records of an in-flight spend whose singleton coin the chain
+    /// consumed, and the records of an in-flight spend that the chain has all of identically.
+    #[test]
+    fn reconciliation_keeps_the_content_of_every_record_it_confirms() {
+        // a pending record the chain already has
+        let mut queue = QueueFile { pending: vec![record(1)], ..QueueFile::default() };
+        queue.reconcile_with_chain(&walk_over(&[(record(1), 100)], vec![]));
+        assert_eq!(
+            queue.confirmed[&1],
+            ConfirmedRecordInfo { height: Some(100), coin_id: "0x01".into(), record: Some(record(1)) }
+        );
+        assert!(queue.pending.is_empty());
+
+        // an in-flight spend whose singleton coin the walk saw consumed, announcing seq 2 and 3
+        let in_flight = in_flight_of(&[record(2), record(3)]);
+        let consumed = WalkedGeneration {
+            spent_coin: in_flight.spent_coin,
+            next_coin: in_flight.next_coin,
+            height: Some(101),
+            announced: Some(vec![2, 3]),
+        };
+        let mut queue = QueueFile { in_flight: Some(in_flight), ..QueueFile::default() };
+        queue.reconcile_with_chain(&walk_over(&[(record(2), 101), (record(3), 101)], vec![consumed]));
+        assert!(queue.in_flight.is_none());
+        for seq in [2, 3] {
+            assert_eq!(queue.confirmed[&seq].record, Some(record(seq)), "seq {seq}");
+        }
+
+        // an in-flight spend whose coin the walk did not see consumed, but whose records the chain all has
+        let mut queue = QueueFile { in_flight: Some(in_flight_of(&[record(4), record(5)])), ..QueueFile::default() };
+        queue.reconcile_with_chain(&walk_over(&[(record(4), 102), (record(5), 102)], vec![]));
+        assert!(queue.in_flight.is_none());
+        for seq in [4, 5] {
+            assert_eq!(queue.confirmed[&seq].record, Some(record(seq)), "seq {seq}");
+        }
+    }
+
+    /// The queue file format: a confirmed entry written before the content was kept has no `record` and loads
+    /// as `None`; an entry without content is written back without the key (so such a file reads and writes
+    /// back the same); one with content round-trips.
+    #[test]
+    fn a_confirmed_entry_from_before_the_content_was_kept_loads_and_is_written_back_unchanged() {
+        let old: ConfirmedRecordInfo =
+            serde_json::from_str(r#"{"height":4765102,"coin_id":"0xabc"}"#).expect("an entry of an old queue file");
+        assert_eq!(old, ConfirmedRecordInfo { height: Some(4_765_102), coin_id: "0xabc".into(), record: None });
+        let written = serde_json::to_value(&old).unwrap();
+        assert_eq!(written, serde_json::json!({"height": 4765102, "coin_id": "0xabc"}), "no `record: null` noise");
+
+        let with_content = confirmed_with(Some(OracleRecord { asset: 3, ..record(205) }));
+        let json = serde_json::to_string(&with_content).unwrap();
+        assert!(json.contains("\"record\""), "{json}");
+        assert_eq!(serde_json::from_str::<ConfirmedRecordInfo>(&json).unwrap(), with_content);
     }
 }

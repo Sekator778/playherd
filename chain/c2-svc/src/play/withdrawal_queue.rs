@@ -10,7 +10,7 @@
 //! lineage walk -- see `withdrawal_publisher.rs`'s module doc for why a
 //! shared generic type isn't worth the contortion).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -198,6 +198,48 @@ pub struct WithdrawalQueueFile {
     pub settled: BTreeMap<String, SettledRequest>,
 }
 
+/// Requests `WithdrawalQueueFile::take_batch` took out of `pending`, each with the place it had there,
+/// so that `put_back` can return them exactly (the requests that were not taken keep their order, and so
+/// do these when they go back).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TakenRequests {
+    /// `(index in pending before the take, the request)`, ascending by index.
+    items: Vec<(usize, WithdrawalRequest)>,
+}
+
+impl TakenRequests {
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// The taken requests, oldest first.
+    pub fn iter(&self) -> impl Iterator<Item = &WithdrawalRequest> {
+        self.items.iter().map(|(_, request)| request)
+    }
+
+    pub fn to_vec(&self) -> Vec<WithdrawalRequest> {
+        self.iter().cloned().collect()
+    }
+}
+
+/// Whether no two of `requests` would create the same payout coin (`WithdrawalRequest::payout_key`):
+/// whether one batch can carry all of them.
+pub fn is_collision_free(requests: &[WithdrawalRequest]) -> bool {
+    let mut seen = HashSet::new();
+    requests.iter().all(|request| seen.insert(request.payout_key()))
+}
+
+/// Splits `requests`, in order, into the ones one batch can carry together -- the first request with each
+/// payout key -- and the ones that would create the same coin as an earlier one.
+pub fn split_identical_payouts(requests: &[WithdrawalRequest]) -> (Vec<WithdrawalRequest>, Vec<WithdrawalRequest>) {
+    let mut seen = HashSet::new();
+    requests.iter().cloned().partition(|request| seen.insert(request.payout_key()))
+}
+
 /// What `WithdrawalQueueFile::enqueue` found under a `requestId`.
 enum Held {
     Nothing,
@@ -304,14 +346,44 @@ impl WithdrawalQueueFile {
         );
     }
 
-    /// Takes up to `max` of the oldest pending requests (FIFO, insertion
-    /// order) out of `pending` for `withdrawal_spend::
-    /// build_play_withdrawal_batch`. Does **not** touch `in_flight` -- same
-    /// "caller persists atomically in the same write" discipline as
-    /// `oracle::queue::QueueFile::take_batch`.
-    pub fn take_batch(&mut self, max: usize) -> Vec<WithdrawalRequest> {
-        let n = self.pending.len().min(max);
-        self.pending.drain(..n).collect()
+    /// Takes up to `room` of the oldest pending requests (FIFO, insertion order) out of `pending` for
+    /// `withdrawal_spend::build_play_withdrawal_batch`, **never two that would create the same coin**
+    /// (`WithdrawalRequest::payout_key`): a request whose recipient and amount equal those of a request
+    /// already in the batch -- one of `carried` (the requests the batch has already, when a rebuild or a
+    /// replacement merges newly pending ones into an in-flight batch; empty for a new batch) or one taken
+    /// earlier in this very call -- is skipped. It stays in `pending`, in its place among the others,
+    /// and goes into a later batch (`docs/research/chain_service.md` §18.1); nothing is dropped, failed
+    /// or paid twice, and the order of everything else is the arrival order. A spend that creates the same
+    /// coin twice is invalid, and one invalid batch would hold up every payout behind it.
+    ///
+    /// Does **not** touch `in_flight` -- same "caller persists atomically in the same write" discipline as
+    /// `oracle::queue::QueueFile::take_batch`. What is taken remembers where it came from:
+    /// `put_back` returns it to exactly those places.
+    pub fn take_batch(&mut self, carried: &[WithdrawalRequest], room: usize) -> TakenRequests {
+        let mut used: HashSet<(Bytes32, u64)> = carried.iter().map(WithdrawalRequest::payout_key).collect();
+        let mut taken = Vec::new();
+        let mut kept = Vec::with_capacity(self.pending.len());
+        for (index, request) in std::mem::take(&mut self.pending).into_iter().enumerate() {
+            // `insert` last, so that a key is only claimed by a request that is really taken.
+            if taken.len() < room && used.insert(request.payout_key()) {
+                taken.push((index, request));
+            } else {
+                kept.push(request);
+            }
+        }
+        self.pending = kept;
+        TakenRequests { items: taken }
+    }
+
+    /// Returns what `take_batch` took to the places in `pending` it came from -- for a batch that was
+    /// not made after all (dry run, the fee-coin split holding the wallet's only fee coin, a replacement
+    /// the node refused). Exact only if `pending` has not been changed since the take, which is so
+    /// wherever it is used: the publisher holds `queue_lock` for the whole tick, and `enqueue` works on a
+    /// copy of its own.
+    pub fn put_back(&mut self, taken: TakenRequests) {
+        for (index, request) in taken.items {
+            self.pending.insert(index.min(self.pending.len()), request);
+        }
     }
 
     pub fn pending_count(&self) -> usize {
@@ -347,7 +419,7 @@ mod tests {
     fn a_queue_file_from_before_the_replacement_fields_still_loads() {
         let mut queue = WithdrawalQueueFile::default();
         queue.enqueue(request("r1")).unwrap();
-        let batch = queue.take_batch(1);
+        let batch = queue.take_batch(&[], 1).to_vec();
         queue.in_flight = Some(InFlightWithdrawalBatch {
             payout_coin_ids: vec![Bytes32::from([3u8; 32])],
             requests: batch,
@@ -385,6 +457,128 @@ mod tests {
         assert_eq!(conflict.kind, ConflictKind::ContentNotRecorded);
     }
 
+    /// A request to the recipient `who` (a puzzle hash of repeated bytes) for `amount`.
+    fn payout(id: &str, who: u8, amount: u64) -> WithdrawalRequest {
+        WithdrawalRequest {
+            request_id: id.to_string(),
+            to_address: format!("txch1recipient{who}"),
+            to_puzzle_hash: Bytes32::from([who; 32]),
+            amount_mojos: amount,
+        }
+    }
+
+    const MAX_BATCH: usize = 20;
+
+    fn ids(requests: &[WithdrawalRequest]) -> Vec<&str> {
+        requests.iter().map(|r| r.request_id.as_str()).collect()
+    }
+
+    fn queue_of(requests: Vec<WithdrawalRequest>) -> WithdrawalQueueFile {
+        WithdrawalQueueFile { pending: requests, ..WithdrawalQueueFile::default() }
+    }
+
+    /// Two requests that create the same coin are never taken into one batch: the later one stays pending, in
+    /// its place among the others, and the next batch takes it -- which is again the first of its kind.
+    #[test]
+    fn take_batch_keeps_a_request_that_repeats_a_payout_pending_for_a_later_batch() {
+        let mut queue = queue_of(vec![
+            payout("a1", 1, 100),
+            payout("a2", 1, 100), // alice again, the same amount
+            payout("b", 2, 50),
+            payout("a3", 1, 100), // and again
+            payout("c", 3, 7),
+        ]);
+
+        let first = queue.take_batch(&[], MAX_BATCH);
+        assert_eq!(ids(&first.to_vec()), vec!["a1", "b", "c"], "arrival order, one request per payout");
+        assert_eq!(ids(&queue.pending), vec!["a2", "a3"], "the repeats stay pending in their order");
+
+        let second = queue.take_batch(&[], MAX_BATCH);
+        assert_eq!(ids(&second.to_vec()), vec!["a2"]);
+        let third = queue.take_batch(&[], MAX_BATCH);
+        assert_eq!(ids(&third.to_vec()), vec!["a3"]);
+        assert!(queue.pending.is_empty());
+        assert!(queue.take_batch(&[], MAX_BATCH).is_empty());
+    }
+
+    /// What a rebuild or a replacement merges into an in-flight batch is taken beside what the batch already
+    /// carries: a pending request that repeats one of those is left alone.
+    #[test]
+    fn take_batch_beside_a_carried_request_skips_the_one_that_repeats_it() {
+        let carried = vec![payout("w1", 1, 100)];
+        let mut queue = queue_of(vec![payout("w2", 1, 100), payout("w3", 2, 50), payout("w4", 1, 100), payout("w5", 3, 9)]);
+
+        let merged = queue.take_batch(&carried, MAX_BATCH);
+        assert_eq!(ids(&merged.to_vec()), vec!["w3", "w5"]);
+        assert_eq!(ids(&queue.pending), vec!["w2", "w4"]);
+    }
+
+    /// Only requests that are really taken count against the room: a skipped repeat does not use up a place.
+    #[test]
+    fn take_batch_counts_only_what_it_takes_against_the_room() {
+        let mut queue = queue_of(vec![payout("r1", 1, 100), payout("r2", 1, 100), payout("r3", 2, 50), payout("r4", 3, 7)]);
+        let taken = queue.take_batch(&[], 2);
+        assert_eq!(ids(&taken.to_vec()), vec!["r1", "r3"], "the skipped r2 does not use up a place");
+        assert_eq!(ids(&queue.pending), vec!["r2", "r4"]);
+
+        // With no room nothing is taken and nothing moves.
+        let none = queue.take_batch(&[], 0);
+        assert!(none.is_empty());
+        assert_eq!(ids(&queue.pending), vec!["r2", "r4"]);
+    }
+
+    /// The same recipient with another amount, or the same amount for another recipient, is another coin:
+    /// they share a batch. The address string is not what is compared, the puzzle hash is.
+    #[test]
+    fn only_the_recipient_and_the_amount_together_make_two_payouts_the_same_coin() {
+        let mut queue = queue_of(vec![
+            payout("same-recipient-other-amount-1", 1, 100),
+            payout("same-recipient-other-amount-2", 1, 101),
+            payout("same-amount-other-recipient", 2, 100),
+        ]);
+        assert_eq!(queue.take_batch(&[], MAX_BATCH).len(), 3);
+
+        let mut written_differently = payout("written-differently", 1, 100);
+        written_differently.to_address = "txch1another-spelling-of-the-same-hash".to_string();
+        let mut queue = queue_of(vec![payout("first", 1, 100), written_differently]);
+        let taken = queue.take_batch(&[], MAX_BATCH);
+        assert_eq!(ids(&taken.to_vec()), vec!["first"], "the same puzzle hash and amount is the same coin whatever the address string");
+        assert_eq!(ids(&queue.pending), vec!["written-differently"]);
+    }
+
+    /// A batch that is not made after all gives its requests back where they were: nothing is reordered, the
+    /// skipped ones included.
+    #[test]
+    fn put_back_restores_pending_exactly() {
+        let original = vec![
+            payout("p1", 1, 100),
+            payout("p2", 1, 100),
+            payout("p3", 2, 50),
+            payout("p4", 1, 100),
+            payout("p5", 3, 7),
+            payout("p6", 2, 50),
+            payout("p7", 4, 1),
+        ];
+        for carried in [vec![], vec![payout("in-flight", 3, 7)]] {
+            for room in [0, 1, 2, 3, 20] {
+                let mut queue = queue_of(original.clone());
+                let taken = queue.take_batch(&carried, room);
+                queue.put_back(taken);
+                assert_eq!(queue.pending, original, "carried {} room {room}", carried.len());
+            }
+        }
+    }
+
+    #[test]
+    fn identical_payouts_are_told_apart_in_a_list_of_requests() {
+        let requests = vec![payout("x1", 1, 100), payout("x2", 2, 100), payout("x3", 1, 100), payout("x4", 1, 101), payout("x5", 2, 100)];
+        assert!(!is_collision_free(&requests));
+        let (kept, repeats) = split_identical_payouts(&requests);
+        assert_eq!(ids(&kept), vec!["x1", "x2", "x4"]);
+        assert_eq!(ids(&repeats), vec!["x3", "x5"]);
+        assert!(is_collision_free(&kept) && is_collision_free(&[]));
+    }
+
     #[test]
     fn state_reports_every_lifecycle_stage() {
         let mut queue = WithdrawalQueueFile::default();
@@ -393,7 +587,7 @@ mod tests {
         queue.enqueue(request("r1")).unwrap();
         assert_eq!(queue.state("r1"), WithdrawalState::Queued);
 
-        let batch = queue.take_batch(10);
+        let batch = queue.take_batch(&[], 10).to_vec();
         queue.in_flight = Some(InFlightWithdrawalBatch {
             payout_coin_ids: vec![Bytes32::from([3u8; 32])],
             requests: batch,

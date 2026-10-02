@@ -188,8 +188,15 @@ async fn oracle_records<C: ChainClient>(
             OracleRecord::from_dto(dto).map_err(|reason| AppError(StatusCode::BAD_REQUEST, reason))?;
         records.push(record);
     }
-    let accepted_seqs = publisher.enqueue(records).await?;
-    Ok((StatusCode::ACCEPTED, Json(OracleRecordsResponse { queued: accepted_seqs.len(), accepted_seqs })))
+    let outcome = publisher.submit(records).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(OracleRecordsResponse {
+            queued: outcome.accepted.len(),
+            accepted_seqs: outcome.accepted,
+            conflict_seqs: outcome.conflicts,
+        }),
+    ))
 }
 
 /// `GET /v1/oracle/records/{seq}` (FIXED INTERFACE (b)).

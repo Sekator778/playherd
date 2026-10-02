@@ -32,9 +32,9 @@ use c2_svc::fee_allocator::{FeeCoinAllocator, fee_coin_of};
 use c2_svc::oracle::chain_client::{ChainClient, CoinRecordInfo, PushOutcome};
 use c2_svc::oracle::lineage::walk_lineage;
 use c2_svc::oracle::publisher::{Publisher, TickFailureState, TickOutcome};
-use c2_svc::oracle::queue::{QueueFile, ReconcileOutcome};
+use c2_svc::oracle::queue::{EnqueueOutcome, QueueFile, ReconcileOutcome};
 use c2_svc::oracle::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
-use c2_svc::oracle::types::{OracleRecord, Source};
+use c2_svc::oracle::types::{OracleRecord, OracleRecordStatusResponse, Source};
 use c2_svc::state_file::save_oracle_state_atomic;
 
 use oracle_golden::{SIX_ELEMENT_MESSAGE_HEX, announcing_coin_spend, fixed_record};
@@ -1155,7 +1155,10 @@ async fn status_reports_the_highest_seq_known_in_any_state_and_record_format_2()
     let low = |q: &mut QueueFile| {
         q.last_accepted_seq = Some(3);
         q.last_confirmed_seq = Some(2);
-        q.confirmed.insert(1, c2_svc::oracle::queue::ConfirmedRecordInfo { height: Some(1), coin_id: "0x01".into() });
+        q.confirmed.insert(
+            1,
+            c2_svc::oracle::queue::ConfirmedRecordInfo { height: Some(1), coin_id: "0x01".into(), record: None },
+        );
         q.pending = vec![record(2)];
     };
     let scenarios: Vec<(&str, MakeMaximum)> = vec![
@@ -1164,7 +1167,10 @@ async fn status_reports_the_highest_seq_known_in_any_state_and_record_format_2()
         (
             "confirmed map key",
             Box::new(|q| {
-                q.confirmed.insert(102, c2_svc::oracle::queue::ConfirmedRecordInfo { height: None, coin_id: "0x66".into() });
+                q.confirmed.insert(
+                    102,
+                    c2_svc::oracle::queue::ConfirmedRecordInfo { height: None, coin_id: "0x66".into(), record: None },
+                );
             }),
         ),
         (
@@ -2247,5 +2253,195 @@ async fn a_confirming_spend_that_cannot_be_read_is_not_guessed_at_for_a_bundle_w
     let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
     assert!(queue.in_flight.is_none());
     assert_eq!(queue.confirmed.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
+    Ok(())
+}
+
+// --- a collision is visible: `conflictSeqs` and the held content (`docs/research/chain_service.md` §18.2) -------
+
+/// `GET /v1/oracle/records/{seq}` carries the content of the record the service holds.
+fn assert_holds(status: &OracleRecordStatusResponse, record: &OracleRecord) {
+    assert_eq!(status.results_hash, Some(format!("0x{}", record.results_hash)), "{status:?}");
+    assert_eq!(status.price_cents, Some(record.price_cents), "{status:?}");
+    assert_eq!(status.asset, Some(record.asset), "{status:?}");
+    assert_eq!(status.ts, Some(record.ts), "{status:?}");
+}
+
+fn assert_holds_nothing(status: &OracleRecordStatusResponse) {
+    assert_eq!(
+        (&status.results_hash, status.price_cents, status.asset, status.ts),
+        (&None, None, None, None),
+        "{status:?}"
+    );
+}
+
+/// What `submit` says about `incoming`, and that it left the queue file exactly as it was.
+async fn submit_changing_nothing(fx: &Fixture, incoming: Vec<OracleRecord>) -> Result<EnqueueOutcome> {
+    let path = QueueFile::path(&fx.publisher.data_dir, "operator");
+    let before = std::fs::read(&path)?;
+    let outcome = fx.publisher.submit(incoming).await?;
+    assert_eq!(std::fs::read(&path)?, before, "{outcome:?} wrote the queue file");
+    Ok(outcome)
+}
+
+/// One record through its whole life -- queued, in flight, confirmed by the chain walk -- and at every stage the
+/// same two questions: a resend of the record is the silent no-op it always was, and a record that differs under the
+/// same `seq` is reported in `conflictSeqs`, not queued, and changes nothing. `GET` carries the content of what the
+/// service holds, so the server can tell its own record from the foreign one.
+#[tokio::test]
+async fn a_different_record_under_a_held_seq_is_reported_at_every_stage_and_never_queued() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    let mine = OracleRecord { asset: 3, ..record(1) };
+    let foreign = OracleRecord { price_cents: mine.price_cents + 1, ..mine };
+    let status = fx.publisher.record_status(1)?;
+    assert_eq!(status.state, "unknown");
+    assert_holds_nothing(&status);
+
+    // queued
+    assert_eq!(fx.publisher.submit(vec![mine]).await?, EnqueueOutcome { accepted: vec![1], conflicts: vec![] });
+    let status = fx.publisher.record_status(1)?;
+    assert_eq!(status.state, "queued");
+    assert_holds(&status, &mine);
+    assert_eq!(submit_changing_nothing(&fx, vec![mine]).await?, EnqueueOutcome::default());
+    assert_eq!(submit_changing_nothing(&fx, vec![foreign]).await?, EnqueueOutcome { accepted: vec![], conflicts: vec![1] });
+
+    // in flight
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 1, accepted: true });
+    let status = fx.publisher.record_status(1)?;
+    assert_eq!(status.state, "in_flight");
+    assert_holds(&status, &mine);
+    assert_eq!(submit_changing_nothing(&fx, vec![mine]).await?, EnqueueOutcome::default());
+    assert_eq!(submit_changing_nothing(&fx, vec![foreign]).await?, EnqueueOutcome { accepted: vec![], conflicts: vec![1] });
+
+    // confirmed: the chain walk reads the spend, the way every healthy batch is settled
+    let in_flight = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    confirm_in_flight(&fx.publisher.chain, &in_flight, 4_800_000);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: 1 });
+    let status = fx.publisher.record_status(1)?;
+    assert_eq!((status.state, status.height), ("confirmed", Some(4_800_000)));
+    assert_holds(&status, &mine);
+    assert_eq!(submit_changing_nothing(&fx, vec![mine]).await?, EnqueueOutcome::default());
+    assert_eq!(submit_changing_nothing(&fx, vec![foreign]).await?, EnqueueOutcome { accepted: vec![], conflicts: vec![1] });
+
+    // One request, several answers; and the plain `enqueue` still returns only what was accepted.
+    let outcome = fx.publisher.submit(vec![record(3), foreign, mine, record(2)]).await?;
+    assert_eq!(outcome, EnqueueOutcome { accepted: vec![2, 3], conflicts: vec![1] });
+    assert_eq!(fx.publisher.enqueue(vec![foreign, record(4)]).await?, vec![4]);
+    Ok(())
+}
+
+/// The same when the record is confirmed the other way a spend is settled: the confirming spend cannot be read, and a
+/// bundle that was never replaced is taken to be the one that confirmed (`settle_confirmed_in_flight`).
+#[tokio::test]
+async fn a_record_confirmed_without_a_readable_spend_keeps_its_content_too() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    let mine = record(1);
+    fx.publisher.enqueue(vec![mine]).await?;
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 1, accepted: true });
+    let next_coin = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight").next_coin;
+    fx.publisher.chain.set_confirmed(next_coin.coin_id(), 4_900_000);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: 1 });
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(queue.confirmed[&1].record, Some(mine));
+    assert_holds(&fx.publisher.record_status(1)?, &mine);
+    let different = OracleRecord { ts: mine.ts + 1, ..mine };
+    assert_eq!(fx.publisher.submit(vec![different]).await?.conflicts, vec![1]);
+    Ok(())
+}
+
+/// A seq the chain walk found on chain with other content than this service had queued is `conflict`: `GET` carries
+/// the record the CHAIN has, like the height and the coin it reports. The service's own record for it, sent again, is
+/// a collision; the chain's is a repeat.
+#[tokio::test]
+async fn a_conflicting_seq_answers_with_the_record_the_chain_has() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    let (gen1_coin, gen1_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        1_000_000,
+        &[record(1)],
+    )?;
+    fx.publisher.chain.set_confirmed(gen1_coin.coin_id(), 1_000_000);
+    save_oracle_state_atomic(
+        &fx.publisher.data_dir,
+        "operator",
+        &OracleState {
+            launcher_id: fx.launcher_id,
+            manager_synthetic_pk: fx.manager.synthetic_pk,
+            current_coin: gen1_coin,
+            current_proof_dto: gen1_proof.into(),
+            next_sequence: 2,
+        },
+    )?;
+    let mut queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let divergent = OracleRecord { price_cents: record(1).price_cents + 1, ..record(1) };
+    queue.pending = vec![divergent];
+    queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+    fx.publisher.bootstrap_from_chain().await?;
+
+    let status = fx.publisher.record_status(1)?;
+    assert_eq!((status.state, status.height), ("conflict", Some(1_000_000)));
+    assert_holds(&status, &record(1));
+    assert_ne!(status.price_cents, Some(divergent.price_cents), "not the record that lost");
+    assert_eq!(submit_changing_nothing(&fx, vec![record(1)]).await?, EnqueueOutcome::default());
+    assert_eq!(submit_changing_nothing(&fx, vec![divergent]).await?.conflicts, vec![1]);
+    Ok(())
+}
+
+/// A queue file written before the content was kept -- confirmed entries with a height and a coin and nothing else, as
+/// the stand's file is. It loads; its entries answer exactly as they did, with the four content fields `null`; a record
+/// sent for one of them is the silent no-op it was, whatever it contains (there is nothing to compare it with); and the
+/// file is written back with those entries unchanged -- while the records confirmed after the upgrade keep their content.
+#[tokio::test]
+async fn a_queue_file_written_before_the_content_was_kept_still_loads_and_answers_as_before() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    let old_file = r#"{
+  "pending": [],
+  "in_flight": null,
+  "last_accepted_seq": 3,
+  "last_confirmed_seq": 3,
+  "last_confirmed_height": 4765102,
+  "confirmed": {
+    "1": {"height": 4765100, "coin_id": "0x1111111111111111111111111111111111111111111111111111111111111111"},
+    "2": {"height": 4765101, "coin_id": "0x2222222222222222222222222222222222222222222222222222222222222222"},
+    "3": {"height": 4765102, "coin_id": "0x3333333333333333333333333333333333333333333333333333333333333333"}
+  },
+  "conflicts": {},
+  "chain_scan_checkpoint": null
+}"#;
+    std::fs::write(QueueFile::path(&fx.publisher.data_dir, "operator"), old_file)?;
+    let old_confirmed = serde_json::from_str::<serde_json::Value>(old_file)?["confirmed"].clone();
+
+    let status = fx.publisher.record_status(2)?;
+    assert_eq!((status.state, status.height), ("confirmed", Some(4_765_101)));
+    assert_eq!(status.coin_id.as_deref(), Some("0x2222222222222222222222222222222222222222222222222222222222222222"));
+    assert_holds_nothing(&status);
+    for seq in [1, 2, 3] {
+        assert_eq!(
+            submit_changing_nothing(&fx, vec![OracleRecord { asset: 7, ..record(seq) }, record(seq)]).await?,
+            EnqueueOutcome::default(),
+            "seq {seq}: no content to compare with, so nothing is reported -- and nothing queued"
+        );
+    }
+    assert_eq!(fx.publisher.status().await?.max_known_seq, 3);
+
+    // The next record is confirmed after the upgrade: it keeps its content, the old entries do not gain any.
+    assert_eq!(fx.publisher.submit(vec![record(4)]).await?, EnqueueOutcome { accepted: vec![4], conflicts: vec![] });
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 1, accepted: true });
+    let next_coin = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight").next_coin;
+    fx.publisher.chain.set_confirmed(next_coin.coin_id(), 4_765_200);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: 1 });
+
+    assert_holds(&fx.publisher.record_status(4)?, &record(4));
+    assert_eq!(fx.publisher.submit(vec![OracleRecord { ts: 1, ..record(4) }]).await?.conflicts, vec![4]);
+    assert_holds_nothing(&fx.publisher.record_status(1)?);
+    let written: serde_json::Value = serde_json::from_slice(&std::fs::read(QueueFile::path(&fx.publisher.data_dir, "operator"))?)?;
+    for seq in ["1", "2", "3"] {
+        assert_eq!(written["confirmed"][seq], old_confirmed[seq], "the old entry {seq} was written back unchanged");
+    }
+    assert!(written["confirmed"]["4"]["record"].is_object());
     Ok(())
 }

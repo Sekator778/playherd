@@ -21,8 +21,8 @@
 use c2_cli::keys::{TXCH_PREFIX, derive_wallet_key};
 use c2_svc::auth::{AuthVerifyRequest, AuthVerifyResponse, verify};
 use c2_svc::oracle::types::{
-    OracleRecordDto, OracleRecordStatusResponse, OracleRecordsRequest, OracleRecordsResponse, OracleStatusResponse,
-    Source,
+    OracleRecord, OracleRecordDto, OracleRecordStatusResponse, OracleRecordsRequest, OracleRecordsResponse,
+    OracleStatusResponse, Source,
 };
 use c2_svc::play::deposit::deposit_address;
 use c2_svc::play::types::{
@@ -113,20 +113,30 @@ fn write_contract_fixtures() {
         // wired through (a 0 would also pass if the component were missing).
         asset: 3,
     };
-    let records_request = OracleRecordsRequest { records: vec![record] };
+    let records_request = OracleRecordsRequest { records: vec![record.clone()] };
     write_fixture("OracleRecordsRequest", &records_request);
 
-    let records_response = OracleRecordsResponse { queued: 1, accepted_seqs: vec![205] };
+    // 205 accepted; 204 is held by the service with different content (`conflictSeqs`, chain_service.md
+    // §18.2). Non-empty on purpose, like the request's non-zero `asset`: a mirror that lacked the field, or
+    // typed it wrongly, would fail its round trip instead of passing on an empty list.
+    let records_response = OracleRecordsResponse { queued: 1, accepted_seqs: vec![205], conflict_seqs: vec![204] };
     write_fixture("OracleRecordsResponse", &records_response);
 
     // --- GET /v1/oracle/records/{seq} ---
-    let record_status = OracleRecordStatusResponse {
-        seq: 205,
-        state: "confirmed",
-        height: Some(4_737_632),
-        coin_id: Some(format!("0x{}", "cd".repeat(32))),
-    };
+    // Seq 205 of the request above, confirmed, with the content the service holds for it (chain_service.md
+    // §18.2): converted by the production path (`OracleRecord::from_dto`), answered by `with_record`.
+    let held = OracleRecord::from_dto(&record).expect("the fixture record is valid");
+    let record_status =
+        OracleRecordStatusResponse::new(205, "confirmed", Some(4_737_632), Some(format!("0x{}", "cd".repeat(32))))
+            .with_record(Some(held));
     write_fixture("OracleRecordStatusResponse", &record_status);
+    // The same seq when the service no longer has the content -- an entry confirmed before the content was
+    // kept: the four fields are `null`, never absent from the JSON and never a zero.
+    write_fixture(
+        "OracleRecordStatusResponse_without_content",
+        &OracleRecordStatusResponse::new(205, "confirmed", Some(4_737_632), Some(format!("0x{}", "cd".repeat(32))))
+            .with_record(None),
+    );
 
     // --- GET /v1/oracle/status ---
     let status = OracleStatusResponse {

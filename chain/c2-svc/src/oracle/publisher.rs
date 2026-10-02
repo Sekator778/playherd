@@ -82,7 +82,7 @@ use crate::state_file::{load_oracle_state, save_oracle_state_atomic};
 use super::chain_client::ChainClient;
 use super::lineage::{genesis_coin, tip_lineage_proof, walk_lineage};
 use super::queue::{
-    ConfirmedRecordInfo, InFlightSpend, QueueFile, ReconcileOutcome, RecordState, ResolvedInFlight,
+    ConfirmedRecordInfo, EnqueueOutcome, InFlightSpend, QueueFile, ReconcileOutcome, RecordState, ResolvedInFlight,
 };
 use super::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
 use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusResponse, RECORD_FORMAT};
@@ -312,19 +312,35 @@ impl<C: ChainClient> Publisher<C> {
     /// `POST /v1/oracle/records`'s handler: durably enqueues newly
     /// submitted records, deduped against records already known
     /// confirmed/in-flight/pending (see `QueueFile::enqueue`,
-    /// FIXED INTERFACE (b)). Returns the `seq`s newly accepted
+    /// FIXED INTERFACE (b)), and reports the collisions. `accepted` is the `seq`s newly accepted
     /// (`acceptedSeqs`); a resubmitted or already-known `seq` is silently
-    /// omitted, not an error.
-    pub async fn enqueue(&self, records: Vec<OracleRecord>) -> Result<Vec<u64>> {
+    /// omitted, not an error. `conflicts` (`conflictSeqs`, `docs/research/chain_service.md` §18.2) is
+    /// the `seq`s of this request that the service already holds with *different* content: not queued,
+    /// as always, but no longer silent -- the caller can tell its own record from a foreign one that
+    /// took the same `seq`, and the log says so too.
+    pub async fn submit(&self, records: Vec<OracleRecord>) -> Result<EnqueueOutcome> {
         let _guard = self.queue_lock.lock().await;
         let mut queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
-        let accepted = queue.enqueue(records);
-        if !accepted.is_empty() {
+        let outcome = queue.enqueue(records);
+        if !outcome.accepted.is_empty() {
             queue
                 .save_atomic(&self.data_dir, &self.operator_name)
                 .context("persisting newly queued oracle records")?;
         }
-        Ok(accepted)
+        if !outcome.conflicts.is_empty() {
+            tracing::warn!(
+                seqs = ?outcome.conflicts,
+                "POST /v1/oracle/records: seqs this service already holds with different content -- not queued, \
+                 reported in conflictSeqs (another server on this singleton, or a database that issued a seq \
+                 before it learned the floor; docs/research/chain_service.md §18.2)"
+            );
+        }
+        Ok(outcome)
+    }
+
+    /// `submit`, for a caller that only wants the `seq`s newly accepted.
+    pub async fn enqueue(&self, records: Vec<OracleRecord>) -> Result<Vec<u64>> {
+        Ok(self.submit(records).await?.accepted)
     }
 
     /// `GET /v1/oracle/records/{seq}`'s handler (FIXED INTERFACE (b)): a
@@ -333,19 +349,23 @@ impl<C: ChainClient> Publisher<C> {
     /// `queue_lock`'s).
     pub fn record_status(&self, seq: u64) -> Result<OracleRecordStatusResponse> {
         let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        // The held record's content rides along (`resultsHash`, `priceCents`, `asset`, `ts`,
+        // `docs/research/chain_service.md` §18.2) wherever the queue still has it.
+        let held = queue.held_record(seq);
         Ok(match queue.record_state(seq) {
             RecordState::Confirmed { height, coin_id } => {
-                OracleRecordStatusResponse { seq, state: "confirmed", height, coin_id: Some(coin_id) }
+                OracleRecordStatusResponse::new(seq, "confirmed", height, Some(coin_id)).with_record(held)
             }
             // Task fix (`docs/research/chain_service.md` §11): surfaced here
             // (per-record detail) as well as in `GET /v1/oracle/status`'s
-            // `conflicts` (list-level summary) -- "never silently".
+            // `conflicts` (list-level summary) -- "never silently". The content is the chain's, like
+            // the height and the coin.
             RecordState::Conflict { chain_height, chain_coin_id } => {
-                OracleRecordStatusResponse { seq, state: "conflict", height: chain_height, coin_id: Some(chain_coin_id) }
+                OracleRecordStatusResponse::new(seq, "conflict", chain_height, Some(chain_coin_id)).with_record(held)
             }
-            RecordState::InFlight => OracleRecordStatusResponse { seq, state: "in_flight", height: None, coin_id: None },
-            RecordState::Queued => OracleRecordStatusResponse { seq, state: "queued", height: None, coin_id: None },
-            RecordState::Unknown => OracleRecordStatusResponse { seq, state: "unknown", height: None, coin_id: None },
+            RecordState::InFlight => OracleRecordStatusResponse::new(seq, "in_flight", None, None).with_record(held),
+            RecordState::Queued => OracleRecordStatusResponse::new(seq, "queued", None, None).with_record(held),
+            RecordState::Unknown => OracleRecordStatusResponse::new(seq, "unknown", None, None),
         })
     }
 
@@ -1044,9 +1064,14 @@ impl<C: ChainClient> Publisher<C> {
         // *overall* high-water mark below.
         let confirmed_coin_id = format!("{}", in_flight.next_coin.coin_id());
         for record in &in_flight.records {
-            queue
-                .confirmed
-                .insert(record.seq, ConfirmedRecordInfo { height: confirmed_height, coin_id: confirmed_coin_id.clone() });
+            queue.confirmed.insert(
+                record.seq,
+                ConfirmedRecordInfo {
+                    height: confirmed_height,
+                    coin_id: confirmed_coin_id.clone(),
+                    record: Some(*record),
+                },
+            );
         }
         let confirmed_count = in_flight.records.len();
         queue.last_confirmed_seq = in_flight.records.iter().map(|r| r.seq).max().max(queue.last_confirmed_seq);

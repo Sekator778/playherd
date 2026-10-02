@@ -54,6 +54,17 @@ impl WithdrawalRequest {
             amount_mojos: dto.amount_mojos,
         })
     }
+
+    /// What this request's payout is on chain: the recipient's puzzle hash and the amount. Every payout of
+    /// a batch is a child of the one treasury coin and the CAT puzzle hash of a payout is a function of the
+    /// recipient's, so two requests with the same key create the *same coin* -- and a spend that creates
+    /// the same coin twice is invalid (`DUPLICATE_OUTPUT`, `chia-consensus` `conditions.rs`): one batch can
+    /// carry at most one request per key (`WithdrawalQueueFile::take_batch`,
+    /// `docs/research/chain_service.md` §18.1). The address string is no part of the key, only the puzzle
+    /// hash it decodes to.
+    pub fn payout_key(&self) -> (Bytes32, u64) {
+        (self.to_puzzle_hash, self.amount_mojos)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

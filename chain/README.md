@@ -136,6 +136,16 @@ see `docs/research/chain_service.md` §1. Write-ups:
     with another recipient or amount. Tested against the real consensus
     simulator with a model mempool (`tests/sim_chain/`, `tests/oracle_replace.rs`,
     `tests/withdrawal_replace.rs`).
+  - Identical payouts and visible `seq` collisions (`docs/research/chain_service.md`
+    §18): a withdrawal batch never carries two requests with the same recipient and
+    amount (the chain rejects a spend that creates the same coin twice,
+    `DUPLICATE_OUTPUT`) -- the later one stays queued and goes into the next batch
+    (`WithdrawalQueueFile::take_batch`); `POST /v1/oracle/records` lists the `seq`s the
+    service already holds with *different* content in `conflictSeqs` (what is accepted
+    is unchanged), and `GET /v1/oracle/records/{seq}` carries the held record's
+    `resultsHash`, `priceCents`, `asset` and `ts` -- `null` for a record confirmed
+    before the content was kept. Contract fixtures: `tests/contract/OracleRecordsResponse.json`,
+    `OracleRecordStatusResponse.json`, `OracleRecordStatusResponse_without_content.json`.
   - `Dockerfile` — multi-stage release build, build context `chain/` (needs
     the `c2-cli` path dependency + the shared `Cargo.lock` in scope).
   - `--dry-run` / `C2_PUSH=0` — builds and signs spends, never broadcasts or

@@ -13,6 +13,15 @@
 //! happened to target the treasury's own address with the same amount as the
 //! change (two identical `(puzzle_hash, amount)` outputs from the same
 //! parent would otherwise be indistinguishable by that search).
+//!
+//! **Two payouts that would be the same coin never share a batch** (`docs/research/chain_service.md`
+//! §18.1): the payouts are children of one parent, so two requests with the same recipient and amount
+//! create one coin twice, and the chain rejects such a spend (`DUPLICATE_OUTPUT`). The queue keeps them
+//! apart (`WithdrawalQueueFile::take_batch`); `build_play_withdrawal_batch` refuses a batch that has
+//! them. (The same collision with the *change* coin -- a payout to the treasury's own address of exactly
+//! the change amount -- is not guarded: it needs a request to the operator's own address, see §18.1.)
+
+use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
 use chia_bls::Signature;
@@ -75,6 +84,23 @@ pub fn build_play_withdrawal_batch(
     }
     if treasury.info.p2_puzzle_hash != owner.puzzle_hash {
         bail!("treasury PLAY CAT coin does not belong to this wallet (p2 puzzle hash mismatch)");
+    }
+    // Two payouts with the same recipient and amount are the same coin (`WithdrawalRequest::payout_key`),
+    // and a spend that creates a coin twice is invalid (`DUPLICATE_OUTPUT`): the batch would never be
+    // accepted. `WithdrawalQueueFile::take_batch` never puts two such requests in one batch, so this is a
+    // guard against a caller that does not go through it -- refused here, loudly, instead of an invalid
+    // bundle that the node rejects until the retries run out (`docs/research/chain_service.md` §18.1).
+    let mut first_with_key: HashMap<(Bytes32, u64), &str> = HashMap::new();
+    for r in requests {
+        if let Some(first) = first_with_key.insert(r.payout_key(), &r.request_id) {
+            bail!(
+                "withdrawal requests {first} and {} have the same recipient and the same amount ({} mojos): the batch \
+                 would create the same payout coin twice, which the chain rejects (DUPLICATE_OUTPUT) -- one of them \
+                 belongs in a later batch",
+                r.request_id,
+                r.amount_mojos
+            );
+        }
     }
 
     let mut total_out: u64 = 0;
@@ -206,5 +232,28 @@ mod tests {
             let expected = Coin::new(treasury_coin_id, cat_puzzle_hash(asset_id, recipient), request.amount_mojos).coin_id();
             assert_eq!(actual, expected, "payout coin id for {} must match an independent computation", request.request_id);
         }
+    }
+
+    /// Two requests with the same recipient and amount are the same payout coin, which the chain rejects
+    /// (`DUPLICATE_OUTPUT`, proved against the real consensus in `tests/withdrawal_replace.rs`): the builder
+    /// refuses them. Another amount, or another recipient, is another coin.
+    #[test]
+    fn a_batch_with_two_payouts_that_are_the_same_coin_is_refused() {
+        let mnemonic = generate_mnemonic().unwrap();
+        let owner = derive_wallet_key(&master_sk_from_mnemonic(&mnemonic), 0);
+        const TREASURY_SUPPLY: u64 = 1_000_000;
+        let funding_coin = Coin::new(Bytes32::from([9u8; 32]), owner.puzzle_hash, TREASURY_SUPPLY);
+        let treasury = build_issue_play(funding_coin, &owner, TREASURY_SUPPLY, 0).unwrap().cat;
+        let (alice, bob) = (Bytes32::from([1u8; 32]), Bytes32::from([2u8; 32]));
+
+        let same = [request("w1", alice, 5_000), request("w2", bob, 7_000), request("w3", alice, 5_000)];
+        let Err(refused) = build_play_withdrawal_batch(treasury, &owner, &same) else { panic!("two identical payouts must be refused") };
+        let text = format!("{refused:#}");
+        assert!(text.contains("w1") && text.contains("w3") && text.contains("DUPLICATE_OUTPUT"), "{text}");
+
+        let other_amount = [request("w1", alice, 5_000), request("w2", alice, 5_001)];
+        assert!(build_play_withdrawal_batch(treasury, &owner, &other_amount).is_ok());
+        let other_recipient = [request("w1", alice, 5_000), request("w2", bob, 5_000)];
+        assert!(build_play_withdrawal_batch(treasury, &owner, &other_recipient).is_ok());
     }
 }

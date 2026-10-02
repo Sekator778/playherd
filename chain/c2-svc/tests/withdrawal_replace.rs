@@ -14,6 +14,11 @@
 //! * after every step each request is in exactly one place, every request marked paid has its payout
 //!   coin on chain, and no recipient holds two payout coins -- (d); a fee coin reserved for a version
 //!   that lost is released -- (e).
+//!
+//! The last section is about requests that are the *same coin* -- same recipient, same amount, two
+//! withdrawals (`docs/research/chain_service.md` §18.1). The chain rejects a spend that creates one coin
+//! twice, so one batch carries at most one request per payout and the repeat waits for a later batch: in a
+//! new batch, in a rebuild, in a replacement, and through the random interleavings.
 
 mod log_capture;
 mod sim_chain;
@@ -25,13 +30,16 @@ use anyhow::Result;
 use chia_bls::SecretKey;
 use chia_consensus::validation_error::ErrorCode;
 use chia_protocol::{Bytes32, Coin, SpendBundle};
+use chia_sdk_driver::{Cat, CatInfo, CatSpend, SpendContext, SpendWithConditions, StandardLayer};
 use chia_sdk_test::{Simulator, SimulatorError};
+use chia_sdk_types::Conditions;
 use chia_sdk_utils::Address;
 
 use c2_cli::builders::issue::build_issue_play;
 use c2_cli::cat_chain::cat_puzzle_hash;
 use c2_cli::keys::{TXCH_PREFIX, WalletKey, derive_wallet_key, generate_mnemonic, master_sk_from_mnemonic};
 use c2_cli::keystore::KeyFile;
+use c2_cli::sign::sign_transaction;
 use c2_cli::state::PlayCoinState;
 use c2_svc::fee_allocator::{FeeCoinAllocator, fee_coin_of};
 use c2_svc::fee_reserve::FeeCoinPolicy;
@@ -39,7 +47,7 @@ use c2_svc::oracle::chain_client::ChainClient;
 use c2_svc::oracle::publisher::TickFailureState;
 use c2_svc::play::types::WithdrawalRequest;
 use c2_svc::play::withdrawal_publisher::{WithdrawalPublisher, WithdrawalTickOutcome};
-use c2_svc::play::withdrawal_queue::{InFlightWithdrawalBatch, WithdrawalQueueFile};
+use c2_svc::play::withdrawal_queue::{InFlightWithdrawalBatch, WithdrawalQueueFile, is_collision_free};
 use c2_svc::play_state_file::{load_play_state, save_play_state_atomic};
 
 use sim_chain::SimChain;
@@ -85,6 +93,18 @@ fn request(n: u64) -> WithdrawalRequest {
         to_puzzle_hash,
         // distinct amounts, so no two payouts of one batch are the same coin
         amount_mojos: 10_000 + 1_000 * n,
+    }
+}
+
+/// Request `w-{id}` to the recipient `who` for `amount`. The same `who` and `amount` under two ids are two
+/// withdrawals that create the same payout coin.
+fn payout(id: u64, who: u8, amount: u64) -> WithdrawalRequest {
+    let to_puzzle_hash = Bytes32::from([0xD0 + who; 32]);
+    WithdrawalRequest {
+        request_id: format!("w-{id}"),
+        to_address: Address::new(to_puzzle_hash, TXCH_PREFIX.to_string()).encode().unwrap(),
+        to_puzzle_hash,
+        amount_mojos: amount,
     }
 }
 
@@ -153,6 +173,30 @@ impl World {
             assert!(self.publisher.enqueue(request(n)).await?, "w-{n} is new");
         }
         Ok(())
+    }
+
+    /// `w-{n}` for each `n`, made by `make` (`request`, or `repeating_request`).
+    async fn enqueue_made(&self, ns: std::ops::RangeInclusive<u64>, make: fn(u64) -> WithdrawalRequest) -> Result<()> {
+        for n in ns {
+            let request = make(n);
+            assert!(self.publisher.enqueue(request).await?, "w-{n} is new");
+        }
+        Ok(())
+    }
+
+    async fn enqueue_requests(&self, requests: &[WithdrawalRequest]) -> Result<()> {
+        for request in requests {
+            assert!(self.publisher.enqueue(request.clone()).await?, "{} is new", request.request_id);
+        }
+        Ok(())
+    }
+
+    fn pending_ids(&self) -> Vec<String> {
+        self.queue().pending.iter().map(|r| r.request_id.clone()).collect()
+    }
+
+    fn in_flight_ids(&self) -> Vec<String> {
+        self.in_flight().requests.iter().map(|r| r.request_id.clone()).collect()
     }
 
     fn age_in_flight(&self, secs: i64) {
@@ -488,6 +532,257 @@ async fn an_earlier_rebuilt_version_that_wins_is_settled_like_a_replaced_one() -
     Ok(())
 }
 
+// --- requests that are the same coin (docs/research/chain_service.md §18.1) ---------------------------------
+
+/// The premise of the rule, on the real consensus: a spend that creates the same CAT coin twice is rejected
+/// (`DUPLICATE_OUTPUT`), one that differs only in an amount is valid. Built by hand -- the publisher's own
+/// builder refuses the first.
+#[tokio::test]
+async fn the_chain_rejects_a_spend_that_creates_the_same_payout_coin_twice() -> Result<()> {
+    let w = world(Options::default())?;
+    let play = load_play_state(&w.publisher.data_dir, "operator")?;
+    let treasury = Cat::new(play.coin, Some(play.lineage_proof()?), CatInfo::new(play.asset_id, None, w.owner.puzzle_hash));
+    let alice = Bytes32::from([0xD1; 32]);
+
+    let bundle_paying = |first: u64, second: u64| -> Result<SpendBundle> {
+        let mut ctx = SpendContext::new();
+        let conditions = Conditions::new()
+            .create_coin(alice, first, ctx.hint(alice)?)
+            .create_coin(alice, second, ctx.hint(alice)?)
+            .create_coin(w.owner.puzzle_hash, SUPPLY - first - second, ctx.hint(w.owner.puzzle_hash)?);
+        let p2_spend = StandardLayer::new(w.owner.synthetic_pk).spend_with_conditions(&mut ctx, conditions)?;
+        Cat::spend_all(&mut ctx, &[CatSpend::new(treasury, p2_spend)])?;
+        let coin_spends = ctx.take();
+        let signature = sign_transaction(&coin_spends, std::slice::from_ref(&w.owner.synthetic_sk))?;
+        Ok(SpendBundle::new(coin_spends, signature))
+    };
+    let on_a_copy_of_the_chain = |bundle: SpendBundle| w.publisher.chain.with_sim(|sim| sim.clone().new_transaction(bundle));
+
+    on_a_copy_of_the_chain(bundle_paying(5_000, 5_001)?).expect("two payouts to alice of different amounts are valid");
+    match on_a_copy_of_the_chain(bundle_paying(5_000, 5_000)?) {
+        Err(SimulatorError::Validation(ErrorCode::DuplicateOutput)) => {}
+        other => panic!("two identical payouts must be rejected as DUPLICATE_OUTPUT, got {other:?}"),
+    }
+    Ok(())
+}
+
+/// Alice asks twice for the same amount. The first spend carries her first request (and bob's), the second
+/// spend her second: both are paid, each by its own coin, in two spends, and nobody is failed or paid twice.
+#[tokio::test]
+async fn two_identical_withdrawals_are_both_paid_in_two_spends() -> Result<()> {
+    let w = world(Options::default())?;
+    let (w1, w2, w3) = (payout(1, 1, 5_000), payout(2, 1, 5_000), payout(3, 2, 7_000));
+    w.enqueue_requests(&[w1.clone(), w2.clone(), w3.clone()]).await?;
+
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 2, accepted: true });
+    assert_eq!(w.in_flight_ids(), vec!["w-1", "w-3"], "arrival order, one request per payout");
+    assert_eq!(w.pending_ids(), vec!["w-2"], "the repeat waits");
+    assert_eq!(w.publisher.status("w-2")?.state, "queued");
+    let first = w.in_flight();
+    assert!(is_collision_free(&first.requests));
+    // The real consensus takes the batch: it is valid.
+    w.publisher.chain.confirm(first.bundle.name())?;
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 2 });
+
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: true });
+    assert_eq!(w.in_flight_ids(), vec!["w-2"]);
+    let second = w.in_flight();
+    assert_eq!(second.spent_coin, first.next_coin, "the second spend is made from the treasury coin the first one left");
+    w.publisher.chain.confirm(second.bundle.name())?;
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 1 });
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Idle);
+
+    // Alice holds two coins of 5,000 -- one from each spend --, bob one of 7,000, and every request is
+    // marked with the coin that is its own.
+    let alice_coins = w.payouts_on_chain(&w1);
+    assert_eq!(alice_coins.len(), 2);
+    assert_ne!(alice_coins[0].parent_coin_info, alice_coins[1].parent_coin_info, "two spends made them");
+    let queue = w.queue();
+    let marked: std::collections::BTreeSet<Bytes32> = [&w1, &w2].iter().map(|r| queue.confirmed[&r.request_id].0).collect();
+    assert_eq!(marked, alice_coins.iter().map(Coin::coin_id).collect(), "two requests, two different payout coins");
+    assert_eq!(w.payouts_on_chain(&w3).len(), 1);
+    assert_eq!(w.treasury_on_chain(), SUPPLY - 17_000, "nothing was paid beyond the three requests");
+    assert!(queue.failed.is_empty() && queue.pending.is_empty() && queue.in_flight.is_none());
+    assert_eq!(w.publisher.chain.pushes().len(), 2, "two spends and nothing else was pushed");
+    Ok(())
+}
+
+/// Three requests for the same payout, and a fourth for someone else: three spends, the repeats one at a time
+/// in arrival order, the other recipient in the first.
+#[tokio::test]
+async fn three_identical_withdrawals_are_paid_in_three_spends_in_arrival_order() -> Result<()> {
+    let w = world(Options::default())?;
+    let requests = [payout(1, 1, 5_000), payout(2, 1, 5_000), payout(3, 1, 5_000), payout(4, 2, 7_000)];
+    w.enqueue_requests(&requests).await?;
+
+    for (expected_in_flight, expected_pending) in
+        [(vec!["w-1", "w-4"], vec!["w-2", "w-3"]), (vec!["w-2"], vec!["w-3"]), (vec!["w-3"], vec![])]
+    {
+        assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: expected_in_flight.len(), accepted: true });
+        assert_eq!(w.in_flight_ids(), expected_in_flight);
+        assert_eq!(w.pending_ids(), expected_pending);
+        w.publisher.chain.confirm(w.in_flight().bundle.name())?;
+        assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: expected_in_flight.len() });
+    }
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Idle);
+
+    let alice_coins = w.payouts_on_chain(&requests[0]);
+    assert_eq!(alice_coins.len(), 3);
+    let parents: std::collections::BTreeSet<Bytes32> = alice_coins.iter().map(|c| c.parent_coin_info).collect();
+    assert_eq!(parents.len(), 3, "three spends made them");
+    let queue = w.queue();
+    for r in &requests[..3] {
+        assert!(alice_coins.iter().any(|c| c.coin_id() == queue.confirmed[&r.request_id].0), "{} has its own coin", r.request_id);
+    }
+    assert_eq!(w.treasury_on_chain(), SUPPLY - 3 * 5_000 - 7_000);
+    assert!(queue.failed.is_empty());
+
+    // Only identical requests: one per spend, from the very first batch.
+    let w = world(Options::default())?;
+    w.enqueue_requests(&[payout(1, 1, 5_000), payout(2, 1, 5_000), payout(3, 1, 5_000)]).await?;
+    for expected in ["w-1", "w-2", "w-3"] {
+        assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: true });
+        assert_eq!(w.in_flight_ids(), vec![expected]);
+        w.publisher.chain.confirm(w.in_flight().bundle.name())?;
+        assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 1 });
+    }
+    assert_eq!(w.payouts_on_chain(&payout(1, 1, 5_000)).len(), 3);
+    Ok(())
+}
+
+/// A request that repeats the payout of the batch in flight arrives while the batch's first push was refused:
+/// the rebuild merges the newly pending requests -- but not the repeat, which would make the rebuilt spend
+/// invalid and hold up everything behind it. The next batch pays it.
+#[tokio::test]
+async fn an_identical_request_arriving_while_a_batch_is_in_flight_is_not_merged_into_its_rebuild() -> Result<()> {
+    let w = world(Options { estimate: Some(1_000), ..Options::default() })?;
+    w.enqueue_requests(&[payout(1, 1, 5_000)]).await?;
+    w.publisher.chain.refuse_next_push("INVALID_FEE_TOO_CLOSE_TO_ZERO");
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: false });
+    w.enqueue_requests(&[payout(2, 1, 5_000), payout(3, 2, 7_000), payout(4, 1, 5_000)]).await?;
+
+    assert!(matches!(w.tick().await, WithdrawalTickOutcome::Rebuilt { requests: 2, accepted: true, .. }));
+    assert_eq!(w.in_flight_ids(), vec!["w-1", "w-3"]);
+    assert_eq!(w.pending_ids(), vec!["w-2", "w-4"], "the repeats wait, in their order");
+    assert!(is_collision_free(&w.in_flight().requests));
+    // the rebuilt bundle is valid: the real consensus takes it
+    w.publisher.chain.confirm(w.in_flight().bundle.name())?;
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 2 });
+
+    for expected in ["w-2", "w-4"] {
+        assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: true });
+        assert_eq!(w.in_flight_ids(), vec![expected]);
+        w.publisher.chain.confirm(w.in_flight().bundle.name())?;
+        assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 1 });
+    }
+    assert_eq!(w.payouts_on_chain(&payout(1, 1, 5_000)).len(), 3, "w-1, w-2 and w-4 are each paid once");
+    assert_eq!(w.payouts_on_chain(&payout(3, 2, 7_000)).len(), 1);
+    assert_eq!(w.treasury_on_chain(), SUPPLY - 3 * 5_000 - 7_000);
+    assert!(w.queue().failed.is_empty());
+    Ok(())
+}
+
+/// The same while the batch waits in the node's mempool: the replacement merges what arrived meanwhile, except
+/// a request that repeats a payout the batch already makes.
+#[tokio::test]
+async fn an_identical_request_arriving_while_a_batch_waits_in_the_mempool_is_not_merged_into_its_replacement() -> Result<()> {
+    let w = world(Options::default())?;
+    w.enqueue_requests(&[payout(1, 1, 5_000)]).await?;
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: true });
+    let old = w.in_flight();
+    w.enqueue_requests(&[payout(2, 1, 5_000), payout(3, 2, 7_000), payout(4, 1, 5_000), payout(5, 3, 9_000)]).await?;
+
+    w.age_in_flight(200);
+    assert!(matches!(w.tick().await, WithdrawalTickOutcome::Replaced { requests: 3, .. }));
+    assert_eq!(w.in_flight_ids(), vec!["w-1", "w-3", "w-5"]);
+    assert_eq!(w.pending_ids(), vec!["w-2", "w-4"]);
+    let replacement = w.in_flight();
+    assert_eq!(replacement.spent_coin, old.spent_coin, "the same treasury coin");
+    assert!(is_collision_free(&replacement.requests));
+    // The node holds the replacement and the real consensus takes it.
+    assert!(w.publisher.chain.mempool_holds(replacement.bundle.name()));
+    w.publisher.chain.confirm(replacement.bundle.name())?;
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 3 });
+
+    for expected in ["w-2", "w-4"] {
+        assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: true });
+        assert_eq!(w.in_flight_ids(), vec![expected]);
+        w.publisher.chain.confirm(w.in_flight().bundle.name())?;
+        assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 1 });
+    }
+    assert_eq!(w.payouts_on_chain(&payout(1, 1, 5_000)).len(), 3);
+    assert_eq!(w.treasury_on_chain(), SUPPLY - 3 * 5_000 - 7_000 - 9_000);
+    assert!(w.queue().failed.is_empty() && w.queue().pending.is_empty());
+    Ok(())
+}
+
+/// A replacement the node refuses gives back what it merged -- and the queue is exactly what it was: the
+/// repeat that was skipped is still in front of the requests that went past it.
+#[tokio::test]
+async fn a_refused_replacement_leaves_the_queue_exactly_as_it_was_repeats_included() -> Result<()> {
+    let w = world(Options::default())?;
+    w.enqueue_requests(&[payout(1, 1, 5_000)]).await?;
+    w.tick().await;
+    let old = w.in_flight();
+    w.enqueue_requests(&[payout(2, 1, 5_000), payout(3, 2, 7_000), payout(4, 3, 9_000)]).await?;
+    let pending_before = w.queue().pending;
+    w.age_in_flight(200);
+
+    w.publisher.chain.refuse_next_push("INVALID_FEE_TOO_CLOSE_TO_ZERO");
+    assert!(matches!(w.tick().await, WithdrawalTickOutcome::ReplacementBlocked { .. }));
+    let queue = w.queue();
+    assert_eq!(queue.in_flight.as_ref().unwrap().bundle_id, old.bundle_id, "the old batch is still the one in flight");
+    assert_eq!(queue.pending, pending_before, "the same requests in the same order, w-2 first");
+
+    // The old batch confirms; w-2, w-3 and w-4 no longer share a batch with a repeat and go out together.
+    w.publisher.chain.confirm(old.bundle.name())?;
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 1 });
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 3, accepted: true });
+    assert_eq!(w.in_flight_ids(), vec!["w-2", "w-3", "w-4"]);
+    w.publisher.chain.confirm(w.in_flight().bundle.name())?;
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 3 });
+    assert_eq!(w.payouts_on_chain(&payout(1, 1, 5_000)).len(), 2);
+    Ok(())
+}
+
+/// A batch built by a version of this service from before the rule existed, with two payouts that are the same
+/// coin, is stuck: the chain rejects it however often it is pushed. It is rebuilt without the repeat, which goes
+/// back to the queue and is paid by the next batch -- nobody in it is failed.
+#[tokio::test]
+async fn a_batch_with_two_identical_payouts_from_before_the_rule_is_rebuilt_without_the_repeat() -> Result<()> {
+    let w = world(Options { estimate: Some(1_000), ..Options::default() })?;
+    w.enqueue_requests(&[payout(1, 1, 5_000)]).await?;
+    w.publisher.chain.refuse_next_push("DUPLICATE_OUTPUT");
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: false });
+
+    // What the old version left in its queue file: a batch that carries w-1 and w-2, a second withdrawal of the
+    // same amount to the same recipient. The bundle the old version built for it was invalid and the node refused
+    // it (`DUPLICATE_OUTPUT`) -- here the refusal is injected and the bundle is the valid one for w-1; what the
+    // publisher looks at is the request list.
+    let mut queue = w.queue();
+    let in_flight = queue.in_flight.as_mut().unwrap();
+    in_flight.requests.push(payout(2, 1, 5_000));
+    in_flight.payout_coin_ids.push(in_flight.payout_coin_ids[0]);
+    in_flight.last_push_error = Some("Failed to include transaction 0xabc, error DUPLICATE_OUTPUT".to_string());
+    queue.save_atomic(&w.publisher.data_dir, "operator").unwrap();
+    assert!(!is_collision_free(&w.in_flight().requests));
+    w.enqueue_requests(&[payout(3, 2, 7_000)]).await?;
+
+    assert!(matches!(w.tick().await, WithdrawalTickOutcome::Rebuilt { requests: 2, accepted: true, .. }));
+    assert_eq!(w.in_flight_ids(), vec!["w-1", "w-3"]);
+    assert_eq!(w.pending_ids(), vec!["w-2"], "the repeat went back to the queue");
+    assert_eq!(w.in_flight().superseded.len(), 1);
+    w.publisher.chain.confirm(w.in_flight().bundle.name())?;
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 2 });
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Broadcast { requests: 1, accepted: true });
+    w.publisher.chain.confirm(w.in_flight().bundle.name())?;
+    assert_eq!(w.tick().await, WithdrawalTickOutcome::Confirmed { requests: 1 });
+    assert_eq!(w.payouts_on_chain(&payout(1, 1, 5_000)).len(), 2, "w-1 and w-2 are each paid once");
+    assert_eq!(w.treasury_on_chain(), SUPPLY - 2 * 5_000 - 7_000);
+    assert!(w.queue().failed.is_empty());
+    Ok(())
+}
+
 // --- random interleavings ---------------------------------------------------------------------------------
 
 struct Rng(u64);
@@ -509,10 +804,17 @@ impl Rng {
     }
 }
 
+/// The walk's requests that repeat each other's payouts: three recipients and two amounts, so that among any
+/// few requests most share their recipient and amount with another (`n` and `n + 6` are the same coin).
+fn repeating_request(n: u64) -> WithdrawalRequest {
+    payout(n, (n % 3) as u8 + 1, 5_000 + 1_000 * (n % 2))
+}
+
 /// After every step: every request is in exactly one place; every request the queue calls paid has its own
-/// payout coin on chain; no request has two payout coins on chain; a batch in flight spends the treasury
-/// coin the state is at.
-fn assert_invariants(w: &World, requested: u64, context: &str) {
+/// payout coin on chain, and none that were paid share one; a payout was never made more often than it was
+/// asked for; no batch -- the one in flight and every earlier version of it -- carries two payouts that are
+/// the same coin; a batch in flight spends the treasury coin the state is at.
+fn assert_invariants(w: &World, requested: u64, make: fn(u64) -> WithdrawalRequest, context: &str) {
     let queue = w.queue();
     let mut places: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     for r in &queue.pending {
@@ -529,19 +831,45 @@ fn assert_invariants(w: &World, requested: u64, context: &str) {
     for id in queue.failed.keys() {
         places.entry(id.clone()).or_default().push("failed");
     }
+    let mut asked_for: BTreeMap<(Bytes32, u64), usize> = BTreeMap::new();
     for n in 1..=requested {
-        let req = request(n);
+        *asked_for.entry(make(n).payout_key()).or_default() += 1;
+    }
+    let mut marked: BTreeMap<(Bytes32, u64), Vec<Bytes32>> = BTreeMap::new();
+    for n in 1..=requested {
+        let req = make(n);
         let here = places.get(&req.request_id).cloned().unwrap_or_default();
         assert_eq!(here.len(), 1, "{context}: {} is in {here:?} (must be in exactly one place)", req.request_id);
         let on_chain = w.payouts_on_chain(&req);
-        assert!(on_chain.len() <= 1, "{context}: {} was paid {} times on chain", req.request_id, on_chain.len());
+        assert!(
+            on_chain.len() <= asked_for[&req.payout_key()],
+            "{context}: the payout of {} exists {} times on chain, it was asked for {} times",
+            req.request_id,
+            on_chain.len(),
+            asked_for[&req.payout_key()]
+        );
         if let Some((coin_id, _)) = queue.confirmed.get(&req.request_id) {
-            assert_eq!(on_chain.len(), 1, "{context}: {} is marked paid but its payout is not on chain", req.request_id);
-            assert_eq!(on_chain[0].coin_id(), *coin_id, "{context}: {} is marked with a coin that is not its payout", req.request_id);
+            assert!(
+                on_chain.iter().any(|coin| coin.coin_id() == *coin_id),
+                "{context}: {} is marked paid with a coin that is not one of its payouts on chain",
+                req.request_id
+            );
+            marked.entry(req.payout_key()).or_default().push(*coin_id);
         }
+    }
+    for (key, coins) in &marked {
+        let distinct: std::collections::BTreeSet<_> = coins.iter().collect();
+        assert_eq!(distinct.len(), coins.len(), "{context}: two requests for {key:?} are marked with the same payout coin");
     }
     if let Some(f) = &queue.in_flight {
         assert_eq!(f.spent_coin, load_play_state(&w.publisher.data_dir, "operator").unwrap().coin, "{context}");
+        assert!(is_collision_free(&f.requests), "{context}: the batch in flight carries two payouts that are the same coin");
+        for version in &f.superseded {
+            assert!(
+                is_collision_free(&version.requests),
+                "{context}: an earlier version of the batch carries two payouts that are the same coin"
+            );
+        }
     }
 }
 
@@ -553,9 +881,14 @@ struct Coverage {
     rebuilt: usize,
     broadcasts: usize,
     confirmed: usize,
+    /// Steps after which a batch was in flight while a pending request repeated one of its payouts.
+    repeats_waiting: usize,
 }
 
-async fn random_walk(seed: u64) -> Result<Coverage> {
+/// `repeating`: the walk submits `repeating_request`s, most of which repeat another's payout, instead of
+/// `request`s, each of which is a coin of its own.
+async fn random_walk(seed: u64, repeating: bool) -> Result<Coverage> {
+    let make: fn(u64) -> WithdrawalRequest = if repeating { repeating_request } else { request };
     let mut coverage = Coverage::default();
     let mut rng = Rng::new(seed);
     let w = world(Options {
@@ -566,9 +899,9 @@ async fn random_walk(seed: u64) -> Result<Coverage> {
         ..Options::default()
     })?;
     let chain = &w.publisher.chain;
-    chain.set_validate_on_push(false); // every bundle that confirms is validated for real anyway
-    let treasury_ph = cat_puzzle_hash(w.asset_id, w.owner.puzzle_hash);
-    let _ = treasury_ph;
+    // Every bundle that confirms is validated for real anyway. With repeating requests the node model validates
+    // every push too (signature included), so a batch the chain would reject shows up as a refused push.
+    chain.set_validate_on_push(repeating);
     let mut requested = 0u64;
 
     for step in 0..50 {
@@ -577,7 +910,7 @@ async fn random_walk(seed: u64) -> Result<Coverage> {
         match rng.below(100) {
             0..=17 => {
                 let n = 1 + rng.below(4);
-                w.enqueue(requested + 1..=requested + n).await?;
+                w.enqueue_made(requested + 1..=requested + n, make).await?;
                 requested += n;
             }
             18..=37 => tick_now = true,
@@ -630,7 +963,13 @@ async fn random_walk(seed: u64) -> Result<Coverage> {
                 }
             }
         }
-        assert_invariants(&w, requested, &context);
+        assert_invariants(&w, requested, make, &context);
+        let queue = w.queue();
+        if let Some(batch) = &queue.in_flight
+            && queue.pending.iter().any(|p| batch.requests.iter().any(|r| r.payout_key() == p.payout_key()))
+        {
+            coverage.repeats_waiting += 1;
+        }
     }
 
     // Settle: blocks keep coming, the publisher keeps ticking.
@@ -651,7 +990,7 @@ async fn random_walk(seed: u64) -> Result<Coverage> {
                 assert!(text.contains("connection reset by peer"), "seed {seed} settle {round}: {text}");
             }
         }
-        assert_invariants(&w, requested, &format!("seed {seed} settle {round}"));
+        assert_invariants(&w, requested, make, &format!("seed {seed} settle {round}"));
     }
 
     let queue = w.queue();
@@ -659,12 +998,27 @@ async fn random_walk(seed: u64) -> Result<Coverage> {
     assert!(queue.failed.is_empty(), "seed {seed}: {:?}", queue.failed);
     assert_eq!(queue.confirmed.len() as u64, requested, "seed {seed}");
     let mut paid = 0;
+    let mut asked_for: BTreeMap<(Bytes32, u64), usize> = BTreeMap::new();
     for n in 1..=requested {
-        let req = request(n);
-        assert_eq!(w.payouts_on_chain(&req).len(), 1, "seed {seed}: {} paid exactly once", req.request_id);
+        let req = make(n);
+        *asked_for.entry(req.payout_key()).or_default() += 1;
         paid += req.amount_mojos;
     }
+    for n in 1..=requested {
+        let req = make(n);
+        assert_eq!(
+            w.payouts_on_chain(&req).len(),
+            asked_for[&req.payout_key()],
+            "seed {seed}: every request for the payout of {} is paid exactly once",
+            req.request_id
+        );
+    }
     assert_eq!(w.treasury_on_chain(), SUPPLY - paid, "seed {seed}: the treasury holds exactly what is left");
+    // The model node validated every push of the repeating walk: not one was refused as a duplicate output.
+    for push in chain.pushes() {
+        let error = push.outcome.and_then(|outcome| outcome.error).unwrap_or_default();
+        assert!(!error.to_ascii_uppercase().contains("DUPLICATE"), "seed {seed}: a pushed batch was refused: {error}");
+    }
 
     // (e) nothing stays reserved with nothing in flight.
     let mut wallet_coins: Vec<Coin> = chain.with_sim(|sim| sim.unspent_coins(w.owner.puzzle_hash, false));
@@ -691,7 +1045,7 @@ async fn random_walk(seed: u64) -> Result<Coverage> {
 async fn random_interleavings_never_pay_twice_and_never_lose_a_payout() -> Result<()> {
     let mut total = Coverage::default();
     for seed in 1..=16 {
-        let walk = random_walk(seed).await?;
+        let walk = random_walk(seed, false).await?;
         total.replaced += walk.replaced;
         total.blocked += walk.blocked;
         total.earlier_version_won += walk.earlier_version_won;
@@ -704,5 +1058,31 @@ async fn random_interleavings_never_pay_twice_and_never_lose_a_payout() -> Resul
     assert!(total.blocked >= 3, "{total:?}");
     assert!(total.earlier_version_won >= 2, "an earlier version of a batch never won: {total:?}");
     assert!(total.broadcasts >= 20 && total.confirmed >= 10, "{total:?}");
+    Ok(())
+}
+
+/// The same orders, with requests that mostly repeat each other's payout (same recipient, same amount): after
+/// every step a request that repeats a payout of the batch in flight waits in the queue, no batch -- the one in
+/// flight and every earlier version of it -- carries two payouts that are the same coin, nothing marked paid
+/// shares its coin with another, and no payout is made more often than it was asked for; at the end every
+/// request is paid exactly once, each by a coin of its own, and the treasury holds exactly what is left. The
+/// model node validates every push, so a batch the chain would reject would be a refused push here.
+#[tokio::test]
+async fn random_interleavings_with_repeating_requests_pay_each_request_once_in_batches_the_chain_accepts() -> Result<()> {
+    let mut total = Coverage::default();
+    for seed in 1..=10 {
+        let walk = random_walk(seed, true).await?;
+        total.replaced += walk.replaced;
+        total.blocked += walk.blocked;
+        total.earlier_version_won += walk.earlier_version_won;
+        total.rebuilt += walk.rebuilt;
+        total.broadcasts += walk.broadcasts;
+        total.confirmed += walk.confirmed;
+        total.repeats_waiting += walk.repeats_waiting;
+    }
+    println!("random withdrawal interleavings with repeating requests covered: {total:?}");
+    assert!(total.repeats_waiting >= 20, "the walks barely met a repeat waiting behind a batch: {total:?}");
+    assert!(total.replaced >= 3, "too few replacements to mean anything: {total:?}");
+    assert!(total.broadcasts >= 15 && total.confirmed >= 10, "{total:?}");
     Ok(())
 }

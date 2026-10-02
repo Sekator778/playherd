@@ -2,5 +2,9 @@
   "seq": 205,
   "state": "confirmed",
   "height": 4737632,
-  "coinId": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+  "coinId": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "resultsHash": "0xabababababababababababababababababababababababababababababababab",
+  "priceCents": 8561200,
+  "asset": 3,
+  "ts": 1790400000
 }
