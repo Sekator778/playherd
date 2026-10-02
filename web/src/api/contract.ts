@@ -13,6 +13,10 @@
  * challenge/verify sign-in flow) are marked "предложение" and cite the research file they come
  * from, per this project's rule that non-sourced technical choices must be flagged.
  *
+ * On the wire: an optional field (`name?:`) may be absent OR JSON `null` — the server writes its
+ * absent values as `null`; treat the two alike. Decimal strings are parsed as numbers, never
+ * compared as text.
+ *
  * Sources: docs/product/decisions.md (Р-1…Р-57), docs/research/round_engine_design.md,
  * docs/research/week1_wallet_auth.md (§4 for the challenge/verify flow, "Реализация" section for
  * the real WalletConnect/Sage wiring — Р-55), docs/product/ux_walkthrough.md.
@@ -253,6 +257,9 @@ export interface PositionDto {
   size: string; // position size in lots, 8dp (PositionSizing.SIZE_SCALE; one lot = 10^(priceDecimals-2) units, Т-3)
   entryPrice: PriceStr;
   liquidationPrice: PriceStr;
+  /** Signed, in PLAY (1 PLAY of stake is 1 USD of margin). RUNNING: the unrealised P&L at the
+   *  latest price, 2 decimals — null once the position is liquidated on the path so far. SETTLED:
+   *  `payout - stake` exactly, 3 decimals. */
   pnl: UsdStr | null;
   /**
    * Additive (2026-09-25 UI bug fix — see `docs/product/ux_spec.md` §4/§7, "net result"): the
