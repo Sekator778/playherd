@@ -158,6 +158,11 @@ services:
       HERD_ORACLE_REQUIRE_SEQ_FLOOR: ${HERD_ORACLE_REQUIRE_SEQ_FLOOR:-true}
       # The domain in the text a player signs at sign-in (was hard-coded herd.local).
       HERD_PUBLIC_DOMAIN: ${HERD_PUBLIC_DOMAIN:-herd.local}
+      # What serverInfo tells the web: whether the sign-in sheet offers the browser test wallet
+      # (Р-45), and the PLAY asset id of this deployment (empty → the server's default, the
+      # testnet11 issuance).
+      HERD_TEST_WALLET_ENABLED: ${HERD_TEST_WALLET_ENABLED:-true}
+      HERD_PLAY_ASSET_ID: ${HERD_PLAY_ASSET_ID:-0x4b88ce9712e97e73ad3759541fc23d38704e31d27d6586c28be14ee716080b70}
       HERD_DB_USER: herd
       # Task item 3: same value as `db`'s own POSTGRES_PASSWORD above (tools/stand.sh generates
       # it into .env once, reused by both, same "one shared secret, two env var names" pattern as
