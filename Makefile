@@ -48,7 +48,7 @@ SNAPSHOT_ARGS ?= --rev HEAD
 .PHONY: help check build test \
         test-java build-java test-chain lint-chain build-chain \
         web-deps test-web build-web apk \
-        stand-up stand-down stand-status stand-logs tunnel tunnel-up tunnel-url tunnel-down e2e verify-oracle \
+        test-tools stand-up stand-down stand-status stand-logs tunnel tunnel-up tunnel-url tunnel-down e2e verify-oracle \
         snapshot
 
 help: ## list targets
@@ -94,6 +94,10 @@ apk: web-deps ## Android debug APK (Capacitor); HERD_APP_URL=https://host points
 	cd web && export HERD_APP_URL='$(HERD_APP_URL)' && npm run build:capacitor && npx cap sync android && cd android && ./gradlew assembleDebug
 
 # --- local stand (docker compose project "herd", via tools/stand.sh) and e2e ---
+
+# Tests of the stand script that need neither docker nor a network (a fake `docker`). Not part of `check`: no CI job runs them.
+test-tools: ## tests of tools/stand.sh (its reachability check of the price venues); no docker, no network
+	bash tools/test-stand.sh
 
 stand-up: ## start the local stand on :8480
 	tools/stand.sh up

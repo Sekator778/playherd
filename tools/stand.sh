@@ -19,9 +19,13 @@ DEFAULT_WEB_PORT=8480
 # declared in the compose file and is never touched by this script.
 DB_VOLUME=herd_pg_live
 ARCHIVE_DB_VOLUME=herd_pg
-# Where the server fetches live prices (the default of quarkus.rest-client.hyperliquid.url in
-# server/src/main/resources/application.properties) — used only for the reachability check after `up`.
+# Where the server fetches live prices over REST — used only for the reachability check after `up`: Hyperliquid (the default
+# of herd.prices.hyperliquid.url), and the two exchanges of the crypto markets, Coinbase Exchange (herd.prices.coinbase.url,
+# the same ticker request the server's REST fallback makes) and Kraken (herd.prices.kraken.url), each of them a venue that
+# HERD_PRICES_DISABLED_VENUES can switch off. The venue's WebSocket is a different address and is not probed here.
 PRICE_SOURCE_URL=https://api.hyperliquid.xyz/info
+COINBASE_PROBE_URL=https://api.exchange.coinbase.com/products/BTC-USD/ticker
+KRAKEN_PROBE_URL=https://api.kraken.com/0/public/Time
 
 cd "${ROOT_DIR}"
 
@@ -159,22 +163,50 @@ setting() {
   echo "${value:-${default}}"
 }
 
-# The stand plays on live prices by default, so the `server` container must reach the price source —
-# on this Mac a bridge network has no internet unless masquerading is on for it (see
+# Whether HERD_PRICES_DISABLED_VENUES names the venue (comma-separated; blanks and case ignored, as the server reads it).
+venue_disabled() {
+  local venue="$1" part
+  while IFS= read -r part; do
+    part=$(printf '%s' "${part}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    if [[ "${part}" == "${venue}" ]]; then
+      return 0
+    fi
+  done < <(printf '%s\n' "$(setting HERD_PRICES_DISABLED_VENUES '')" | tr ',' '\n')
+  return 1
+}
+
+# One reachability probe from inside the `server` container: <venue> <url> [<JSON body>: then a POST, else a GET].
+# A venue that HERD_PRICES_DISABLED_VENUES switches off is not probed. Never fatal: a warning, as for any venue.
+probe_price_source() {
+  local venue="$1" url="$2" body="${3:-}" code
+  if venue_disabled "${venue}"; then
+    log "live prices: ${venue} is switched off (HERD_PRICES_DISABLED_VENUES), not probed"
+    return 0
+  fi
+  local args=(-sS -m 10 -o /dev/null -w '%{http_code}')
+  if [[ -n "${body}" ]]; then
+    args+=(-X POST -H 'Content-Type: application/json' -d "${body}")
+  fi
+  if code=$("${COMPOSE[@]}" exec -T server curl "${args[@]}" "${url}" 2>&1) && [[ "${code}" == "200" ]]; then
+    log "live prices: the server container reaches ${url} (${venue}, HTTP 200)"
+  else
+    log "WARNING live prices: the server container cannot reach ${url} (${venue}: ${code:-no answer})"
+    log "  The stand would have no live prices from ${venue}. Check outbound access of the container (docker-compose.yml,"
+    log "  network herd_default), or switch the venue off with HERD_PRICES_DISABLED_VENUES=${venue} in .env"
+    log "  (or HERD_PRICES_SOURCE=synthetic to run without external sources)."
+  fi
+}
+
+# The stand plays on live prices by default, so the `server` container must reach every venue it prices from — Hyperliquid
+# (perpetuals of the stocks, indices and commodities, the spot pair of HYPE), Coinbase and Kraken (the crypto markets and
+# their backups) — on this Mac a bridge network has no internet unless masquerading is on for it (see
 # docker-compose.yml, network herd_default; that fix was not verified without a running stand).
 # Reported once the stand is up, never fatal.
 check_price_source() {
   [[ "$(setting HERD_MODE live)" == "live" && "$(setting HERD_PRICES_SOURCE live)" == "live" ]] || return 0
-  local code
-  if code=$("${COMPOSE[@]}" exec -T server curl -sS -m 10 -o /dev/null -w '%{http_code}' \
-      -X POST -H 'Content-Type: application/json' -d '{"type":"meta"}' "${PRICE_SOURCE_URL}" 2>&1) \
-      && [[ "${code}" == "200" ]]; then
-    log "live prices: the server container reaches ${PRICE_SOURCE_URL} (HTTP 200)"
-  else
-    log "WARNING live prices: the server container cannot reach ${PRICE_SOURCE_URL} (${code:-no answer})"
-    log "  The stand would have no live prices. Check outbound access of the container (docker-compose.yml,"
-    log "  network herd_default), or set HERD_PRICES_SOURCE=synthetic in .env to run without external sources."
-  fi
+  probe_price_source hyperliquid "${PRICE_SOURCE_URL}" '{"type":"meta"}'
+  probe_price_source coinbase "${COINBASE_PROBE_URL}"
+  probe_price_source kraken "${KRAKEN_PROBE_URL}"
 }
 
 cmd_up() {
@@ -244,24 +276,31 @@ print_urls() {
   echo
 }
 
-case "${1:-}" in
-  up) cmd_up ;;
-  down) cmd_down ;;
-  logs) shift; cmd_logs "$@" ;;
-  status) cmd_status ;;
-  reset) cmd_reset ;;
-  *)
-    cat >&2 <<EOF
+main() {
+  case "${1:-}" in
+    up) cmd_up ;;
+    down) cmd_down ;;
+    logs) shift; cmd_logs "$@" ;;
+    status) cmd_status ;;
+    reset) cmd_reset ;;
+    *)
+      cat >&2 <<EOF
 Usage: $(basename "$0") up|down|logs [service]|status|reset
 
   up      build (if needed) and start db+chainsvc+server+web, wait until healthy, check that the
-          server reaches the live price source, print URLs
+          server reaches the live price sources (Hyperliquid, Coinbase, Kraken), print URLs
   down    stop and remove containers (keeps the herd_pg_live volume and ~/.c2/testnet11)
   logs    follow logs (optionally for one service: "logs server")
   status  show container health + live GET of serverInfo
   reset   like down, but also removes the herd_pg_live volume (fresh DB on next up); the old
           replay-epoch volume herd_pg is never touched
 EOF
-    exit 1
-    ;;
-esac
+      exit 1
+      ;;
+  esac
+}
+
+# Run only when executed; `source tools/stand.sh` (tools/test-stand.sh) just defines the functions.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
