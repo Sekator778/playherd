@@ -3,15 +3,20 @@ package crowdvsmarket.server.prices;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,8 +24,9 @@ import org.junit.jupiter.api.Test;
 /**
  * {@link JdkWebSocketTransport} against a real WebSocket on the loopback interface ({@link LocalWebSocketServer}) and the
  * JDK's own client: whole messages whatever the framing, the order of a burst, a 20 kB message (what Hyperliquid's
- * {@code allMids} is), the end of a connection reported as it was, a refused connection as an {@code IOException}, and
- * every callback on a virtual thread.
+ * {@code allMids} is), the end of a connection reported as it was, a refused connection as an {@code IOException}, every
+ * callback on a virtual thread, and a handshake the caller stopped waiting for (a server slower than the wait, an interrupt)
+ * called off so that it leaves no orphan socket.
  */
 class JdkWebSocketTransportTest {
 
@@ -189,6 +195,77 @@ class JdkWebSocketTransportTest {
 
         assertThatThrownBy(() -> transport.connect(nobody, Duration.ofSeconds(2), handler))
                 .isInstanceOf(IOException.class).hasMessageContaining("could not open");
+    }
+
+    // ------------------------------------------------------------------ a handshake that finishes after the caller gave up
+
+    @Test
+    void aHandshakeThatTakesLongerThanTheCallerWaitsIsAnIOExceptionAndIsCalledOffNotLeftToOpenAnOrphanSocket() throws Exception {
+        server.delayHandshake(800); // the server answers the upgrade request 800 ms after it has read it
+
+        // the caller waits 200 ms (the JDK's own limit, 5 s, is far off): it gives up
+        assertThatThrownBy(() -> transport.open(server.uri(), TIMEOUT, 200, handler)).isInstanceOf(IOException.class)
+                .hasMessageContaining("took more than 200 ms");
+
+        assertThat(server.awaitClientGone(3_000)).as("the client's connection is over, not left to open when the answer comes")
+                .isTrue();
+        assertThat(server.leftDuringHandshake).as("and it was dropped at once, before the slow server answered").isTrue();
+    }
+
+    @Test
+    void aConnectAttemptThatIsInterruptedWhileTheHandshakeIsSlowIsCalledOffToo() throws Exception {
+        server.delayHandshake(800);
+        AtomicReference<Throwable> thrown = new AtomicReference<>();
+        Thread caller = Thread.ofPlatform().start(() -> {
+            try {
+                transport.connect(server.uri(), TIMEOUT, handler);
+            } catch (Throwable e) {
+                thrown.set(e);
+            }
+        });
+        Thread.sleep(200); // it is waiting for the handshake
+        caller.interrupt();
+        caller.join(5_000);
+
+        assertThat(thrown.get()).as("the interrupt is reported as it is").isInstanceOf(InterruptedException.class);
+        assertThat(server.awaitClientGone(3_000)).as("no orphan socket is left behind").isTrue();
+        assertThat(server.leftDuringHandshake).isTrue();
+    }
+
+    @Test
+    void aHandshakeThatCompletedAtTheMomentTheCallerGaveUpHasItsSocketAborted() {
+        // the race the JDK's cancel cannot win: the future completed after the wait ran out and before it was called off
+        WebSocket socket = mock(WebSocket.class);
+        CompletableFuture<WebSocket> completed = CompletableFuture.completedFuture(socket);
+
+        JdkWebSocketTransport.abandon(completed);
+
+        verify(socket).abort();
+        assertThat(completed.isCancelled()).as("a future that is done stays what it was").isFalse();
+    }
+
+    @Test
+    void aHandshakeThatIsStillGoingOnIsCancelledAndOneThatFailedIsLeftAlone() {
+        CompletableFuture<WebSocket> pending = new CompletableFuture<>();
+        CompletableFuture<WebSocket> failed = CompletableFuture.failedFuture(new IOException("refused"));
+
+        JdkWebSocketTransport.abandon(pending);
+        JdkWebSocketTransport.abandon(failed); // no socket, nothing to abort, nothing thrown
+
+        assertThat(pending.isCancelled()).isTrue();
+        assertThat(failed.isCompletedExceptionally()).isTrue();
+    }
+
+    @Test
+    void aHandshakeThatCompletesInTimeIsAnOrdinaryConnectionAndIsNotAborted() throws Exception {
+        server.delayHandshake(300);
+
+        WebSocketTransport.Connection connection = transport.open(server.uri(), TIMEOUT, 3_000, handler);
+
+        assertThat(server.awaitClient(5_000)).isTrue();
+        connection.sendText("still here");
+        await().atMost(TIMEOUT).until(() -> server.received.size() == 1);
+        assertThat(server.awaitClientGone(500)).as("a connection somebody holds stays open").isFalse();
     }
 
     @Test

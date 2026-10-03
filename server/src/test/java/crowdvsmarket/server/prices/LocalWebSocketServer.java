@@ -7,6 +7,8 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -29,8 +31,12 @@ final class LocalWebSocketServer implements AutoCloseable {
     private final ServerSocket server;
     private final Thread acceptor;
     private final CountDownLatch connected = new CountDownLatch(1);
+    private final CountDownLatch gone = new CountDownLatch(1);
     private volatile Socket socket;
     private volatile OutputStream out;
+    private volatile long handshakeDelayMs;
+    /** The client closed its connection while the (delayed) handshake was still unanswered. */
+    volatile boolean leftDuringHandshake;
     /** The text messages the client sent, in order. */
     final List<String> received = new CopyOnWriteArrayList<>();
     /** How many ping frames the client sent. */
@@ -53,6 +59,16 @@ final class LocalWebSocketServer implements AutoCloseable {
         return connected.await(timeoutMs, TimeUnit.MILLISECONDS);
     }
 
+    /** The server answers the next opening handshake this long after it has read the request: a slow server. */
+    void delayHandshake(long millis) {
+        handshakeDelayMs = millis;
+    }
+
+    /** Waits until the client's connection is over — it closed, was dropped or aborted; false if it is still open. */
+    boolean awaitClientGone(long timeoutMs) throws InterruptedException {
+        return gone.await(timeoutMs, TimeUnit.MILLISECONDS);
+    }
+
     private void serve() {
         try {
             Socket client = server.accept();
@@ -60,6 +76,10 @@ final class LocalWebSocketServer implements AutoCloseable {
             InputStream in = client.getInputStream();
             OutputStream output = client.getOutputStream();
             String request = readHeaders(in);
+            if (handshakeDelayMs > 0 && clientLeftWithin(client, in, handshakeDelayMs)) {
+                leftDuringHandshake = true;
+                return; // the client called the handshake off: nothing to answer
+            }
             String key = null;
             for (String line : request.split("\r\n")) {
                 if (line.toLowerCase().startsWith("sec-websocket-key:")) {
@@ -76,6 +96,25 @@ final class LocalWebSocketServer implements AutoCloseable {
             readFrames(in);
         } catch (Exception e) {
             // closed by the test
+        } finally {
+            gone.countDown(); // whatever ended it: the client closed, was dropped, aborted — or never came
+        }
+    }
+
+    /**
+     * Waits {@code millis} for the client to say or do anything: true when it closed its end (or reset the connection) in the
+     * meantime, false when the time was up with the client still there. A client sends nothing between its request and our answer.
+     */
+    private static boolean clientLeftWithin(Socket client, InputStream in, long millis) throws IOException {
+        client.setSoTimeout((int) millis);
+        try {
+            return in.read() < 0;
+        } catch (SocketTimeoutException e) {
+            return false;
+        } catch (SocketException e) { // reset by the peer
+            return true;
+        } finally {
+            client.setSoTimeout(0);
         }
     }
 

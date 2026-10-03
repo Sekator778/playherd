@@ -8,6 +8,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -38,6 +39,8 @@ public class JdkWebSocketTransport implements WebSocketTransport {
 
     /** A send that has not finished after this long means the connection is not going anywhere. */
     private static final long SEND_TIMEOUT_MS = 10_000L;
+    /** How long past the handshake timeout {@link #connect} waits for the JDK to report a handshake that is still not done. */
+    static final long WAIT_GRACE_MS = 2_000L;
 
     private final Object lock = new Object();
     private ExecutorService executor; // with client, created by the first connection; guarded by lock
@@ -45,16 +48,45 @@ public class JdkWebSocketTransport implements WebSocketTransport {
 
     @Override
     public Connection connect(URI uri, Duration timeout, Handler handler) throws IOException, InterruptedException {
-        HttpClient http = client();
+        return open(uri, timeout, timeout.toMillis() + WAIT_GRACE_MS, handler);
+    }
+
+    /**
+     * {@link #connect} with the time the caller waits for the handshake given: the JDK's own limit is {@code timeout}
+     * (the whole opening handshake, response headers included); the caller waits that and {@link #WAIT_GRACE_MS} more, for
+     * a future the JDK did not fail in time. A test gives a shorter wait to make a handshake that finishes late.
+     */
+    Connection open(URI uri, Duration timeout, long waitMs, Handler handler) throws IOException, InterruptedException {
+        CompletableFuture<WebSocket> opening = client().newWebSocketBuilder().connectTimeout(timeout)
+                .buildAsync(uri, new Listener(handler));
         try {
-            WebSocket socket = http.newWebSocketBuilder().connectTimeout(timeout)
-                    .buildAsync(uri, new Listener(handler)).get(timeout.toMillis() + 2_000L, TimeUnit.MILLISECONDS);
-            return new Link(socket);
+            return new Link(opening.get(waitMs, TimeUnit.MILLISECONDS));
         } catch (ExecutionException e) {
             throw new IOException("could not open " + uri + ": " + e.getCause(), e.getCause());
         } catch (TimeoutException e) {
-            throw new IOException("opening " + uri + " took more than " + timeout.toMillis() + " ms", e);
+            abandon(opening);
+            throw new IOException("opening " + uri + " took more than " + waitMs + " ms", e);
+        } catch (InterruptedException e) {
+            abandon(opening);
+            throw e;
         }
+    }
+
+    /**
+     * The caller will not wait for this handshake any more (it timed out, or the thread was interrupted): calls it off, and
+     * makes sure that a WebSocket it opens anyway is nobody's orphan. {@code cancel} makes the JDK drop the connection of a
+     * handshake that is still going on (measured on JDK 21: the listener gets {@code onError} "connection closed locally" at
+     * once, and a server that answers later writes into a closed socket); a handshake that completed in the meantime has
+     * a WebSocket that no one holds, and {@code whenComplete} aborts it — whether it completed before this call (the callback
+     * runs at once) or in the instant between the two lines.
+     */
+    static void abandon(CompletableFuture<WebSocket> opening) {
+        opening.whenComplete((socket, error) -> {
+            if (socket != null) {
+                socket.abort();
+            }
+        });
+        opening.cancel(true);
     }
 
     private HttpClient client() {
