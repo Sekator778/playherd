@@ -79,7 +79,8 @@ export type RoundId = string;
  */
 export type MarketId = string;
 
-/** `PERP`: a Hyperliquid perpetual's mark price in USD. `ODDS`: the probability (0..1) of one
+/** `PERP`: the USD price of an asset, whatever the venue — a Hyperliquid perpetual's mark price, the mid of a
+ *  Coinbase or Hyperliquid spot market (the market's `source` says which). `ODDS`: the probability (0..1) of one
  *  outcome of a Polymarket market (Т-2). Same round mechanics for both. */
 export type MarketKind = "PERP" | "ODDS";
 
@@ -340,7 +341,7 @@ interface RoundBase {
    *  readable for good. Same values as the market's `MarketDto` fields. */
   kind: MarketKind;
   priceDecimals: number;
-  source: "hyperliquid" | "polymarket" | "synthetic";
+  source: "hyperliquid" | "coinbase" | "polymarket" | "synthetic";
 }
 
 export interface RoundBetting extends RoundBase {
@@ -781,7 +782,7 @@ export interface MarketDto {
   /** The market's index in the on-chain oracle record (0 = BTC; `GET /api/markets/registry.json`
    *  is the public list) — shown next to "Anchored on Chia". */
   oracleIndex?: number;
-  source: "hyperliquid" | "polymarket" | "synthetic";
+  source: "hyperliquid" | "coinbase" | "polymarket" | "synthetic";
   /** Null until the first tick arrives. */
   price: MarketPriceDto | null;
   /** One entry per series, shortest first. */

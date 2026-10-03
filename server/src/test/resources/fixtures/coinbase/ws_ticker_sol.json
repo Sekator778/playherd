@@ -1,0 +1,19 @@
+{
+ "type": "ticker",
+ "sequence": 32856549259,
+ "product_id": "SOL-USD",
+ "price": "119.32",
+ "open_24h": "121.79",
+ "volume_24h": "698349.94708086",
+ "low_24h": "117.07",
+ "high_24h": "123.36",
+ "volume_30d": "28789005.14111599",
+ "best_bid": "119.310",
+ "best_bid_size": "25.52182724",
+ "best_ask": "119.320",
+ "best_ask_size": "3.77141233",
+ "side": "buy",
+ "time": "2026-10-03T11:08:42.391523Z",
+ "trade_id": 356586911,
+ "last_size": "0.419"
+}

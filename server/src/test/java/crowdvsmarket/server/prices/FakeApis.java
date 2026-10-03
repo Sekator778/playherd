@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.function.Function;
 
 /**
- * Scripted stand-ins for the four REST clients: each records the requests it got and answers with
+ * Scripted stand-ins for the REST clients: each records the requests it got and answers with
  * whatever its handler returns (or throws). The tests of the sources and catalogs never open a
  * socket.
  */
@@ -41,6 +41,25 @@ public final class FakeApis {
         /** The requests whose {@code type} is {@code type}. */
         public List<JsonNode> requestsOfType(String type) {
             return info.requests.stream().filter(r -> type.equals(r.path("type").asText())).toList();
+        }
+    }
+
+    public static class Coinbase implements CoinbaseExchangeApi {
+
+        public record CandlesCall(String product, int granularitySeconds, String start, String end) {
+        }
+
+        public final Script<String, JsonNode> ticker = new Script<>();
+        public final Script<CandlesCall, JsonNode> candles = new Script<>();
+
+        @Override
+        public JsonNode ticker(String product) {
+            return ticker.call(product);
+        }
+
+        @Override
+        public JsonNode candles(String product, int granularitySeconds, String start, String end) {
+            return candles.call(new CandlesCall(product, granularitySeconds, start, end));
         }
     }
 

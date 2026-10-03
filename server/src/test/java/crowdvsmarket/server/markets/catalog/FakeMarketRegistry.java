@@ -82,6 +82,18 @@ public class FakeMarketRegistry implements MarketRegistry {
 
     @Override
     public void close(String marketId, String reason, long nowMs) {
+        if (Market.BTC_ID.equals(marketId)) {
+            throw new IllegalArgumentException("BTC cannot be closed, except by closeReplaced"); // as the real registry
+        }
+        closeMarket(marketId, reason, nowMs);
+    }
+
+    @Override
+    public void closeReplaced(String marketId, String reason, long nowMs) {
+        closeMarket(marketId, reason, nowMs);
+    }
+
+    private void closeMarket(String marketId, String reason, long nowMs) {
         Market closed;
         synchronized (this) {
             Market existing = markets.get(marketId);

@@ -518,6 +518,28 @@ class StandJournalTests(unittest.TestCase):
         self.assertIn("[records-journal]", text)
         self.assertIn("asset 3 (ETH): 1", text)
 
+    def test_a_stand_whose_btc_moved_to_coinbase_verifies_both_eras(self) -> None:
+        # BTC's price moved from Hyperliquid to Coinbase ("Moved to a new price source: Coinbase"): the old BTC row
+        # (asset 0) is closed but stays in the registry, the new market cb_BTC has an index of its own and the source
+        # "coinbase". The verifier reads the registry for ids and indexes only — no source is special, none needs to be
+        # known — so rounds of both eras verify, and each is labelled with its own market.
+        rounds = [Round(1), Round(2), Round(3, market="cb_BTC", asset=9), Round(4, market="cb_BTC", asset=9)]
+        registry = [
+            {"index": 0, "id": "BTC", "kind": "PERP", "symbol": "BTC", "priceDecimals": 2, "source": "hyperliquid",
+             "sourceRef": "BTC", "listedAtMs": 0},
+            {"index": 9, "id": "cb_BTC", "kind": "PERP", "symbol": "BTC", "priceDecimals": 2, "source": "coinbase",
+             "sourceRef": "BTC-USD", "listedAtMs": 5},
+            {"index": 10, "id": "hls_HYPE", "kind": "PERP", "symbol": "HYPE", "priceDecimals": 4,
+             "source": "hyperliquid", "sourceRef": "@107", "listedAtMs": 6},
+        ]
+        coinset = chain_of([r.message() for r in rounds])
+        result, code = run(coinset, FakeStand(rounds, registry=registry), strict=True)
+        check = result["stand_check"]
+        self.assertEqual(check["mismatches"], [])
+        self.assertEqual({c["seq"]: c["asset_label"] for c in check["checked"]},
+                         {1: "asset 0 (BTC)", 2: "asset 0 (BTC)", 3: "asset 9 (cb_BTC)", 4: "asset 9 (cb_BTC)"})
+        self.assertEqual(code, 0)
+
     def test_a_stand_whose_epoch_starts_mid_chain(self) -> None:
         # The chain holds 8 records; this stand's database starts at seq 5 — 1..4 are from an
         # earlier database against the same singleton. They are checked on chain only. A hole at

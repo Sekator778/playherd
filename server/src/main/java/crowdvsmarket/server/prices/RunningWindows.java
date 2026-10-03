@@ -27,7 +27,9 @@ public class RunningWindows {
      */
     public long[] startsAt(long nowMs) {
         try {
-            // the boundaries do not depend on the market: any valid id names a window of the one clock
+            // the boundaries do not depend on the market: any valid id names a window of the one clock — also while the
+            // registry's BTC row is closed (its price moved to another source): this is arithmetic on the calendar's
+            // origin, nothing here reads the registry or needs an active market
             long daily = calendar.windowContaining(Market.BTC_ID, Interval.DAILY, nowMs).startMs();
             long hourly = calendar.windowContaining(Market.BTC_ID, Interval.HOURLY, nowMs).startMs();
             return daily == hourly ? new long[] {daily} : new long[] {daily, hourly};

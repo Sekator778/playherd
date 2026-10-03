@@ -28,6 +28,20 @@ public final class TestMarkets {
         return perp(id, coin, Category.CRYPTO, 20, lotExp, 1);
     }
 
+    /** A Coinbase market as the spot catalog lists it: {@code cb_BTC} priced by the product {@code BTC-USD}. */
+    public static Market coinbase(String symbol, int lotExp, int oracleIndex) {
+        return new Market("cb_" + symbol, MarketKind.PERP, Category.CRYPTO, symbol, symbol, null, null, "coinbase",
+                symbol + "-USD", "{\"product\":\"" + symbol + "-USD\",\"quote\":\"USD\"}", 20, lotExp, oracleIndex,
+                MarketStatus.ACTIVE, 0L, null, null, null);
+    }
+
+    /** A Hyperliquid spot market as the spot catalog lists it: {@code hls_HYPE} priced by the pair {@code @107}. */
+    public static Market hlSpot(String symbol, String pair, int lotExp, int oracleIndex) {
+        return new Market("hls_" + symbol, MarketKind.PERP, Category.CRYPTO, symbol, symbol, null, null, "hyperliquid",
+                pair, "{\"spot\":true,\"pair\":\"" + symbol + "/USDC\"}", 10, lotExp, oracleIndex, MarketStatus.ACTIVE,
+                0L, null, null, null);
+    }
+
     /** A Polymarket ODDS market priced by {@code token}. */
     public static Market odds(String id, String token) {
         return new Market(id, MarketKind.ODDS, Category.POLITICS, "PM", "Will it?", "Yes", null, "polymarket", token,

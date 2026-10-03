@@ -58,7 +58,7 @@ public record PricesConfig(
         double hyperliquidMaxBasis,
         long hyperliquidMaxHealMs) {
 
-    /** {@code herd.prices.source}: {@code live} polls Hyperliquid and Polymarket,
+    /** {@code herd.prices.source}: {@code live} reads Hyperliquid, Coinbase and Polymarket,
      *  {@code synthetic} is the offline walk for CI, e2e and work without a network (Т-12). */
     public enum SourceKind {
         LIVE, SYNTHETIC;
@@ -237,7 +237,7 @@ public record PricesConfig(
         return 2 * dailyRoundMs + RETENTION_EXTRA_MS;
     }
 
-    /** Hyperliquid and Polymarket are polled (mode=live, source=live). */
+    /** The real sources run — Hyperliquid, Coinbase, Polymarket (mode=live, source=live). */
     public boolean liveSources() {
         return liveMode && source == SourceKind.LIVE;
     }

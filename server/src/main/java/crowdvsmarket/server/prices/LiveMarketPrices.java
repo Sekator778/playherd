@@ -61,8 +61,10 @@ import org.jboss.logging.Logger;
  * pin or a carried copy standing for a live tick, and a window's start is the left edge when the live tick before it
  * is still fresh at the start — is healed by the 1-minute candles that overlap it, all or nothing: every minute of
  * the gap has a closed candle with trades; the live price on each side lies inside the range of its own minute's
- * candle, widened by {@link PricesConfig#hyperliquidMaxBasis()}; and the gap is not longer than
- * {@link PricesConfig#hyperliquidMaxHealMs()}. What a candle contributes is what the liquidation check needs, its
+ * candle, widened by the feed's own tolerance ({@link PriceSource.Feed#maxBasis}: {@link PricesConfig#hyperliquidMaxBasis()}
+ * for Hyperliquid's perpetuals, one setting each for Coinbase and for Hyperliquid spot, {@link SpotPricesConfig}); and
+ * the gap is not longer than {@link PricesConfig#hyperliquidMaxHealMs()}. What a candle contributes is what the
+ * liquidation check needs, its
  * low and its high (a third and two thirds into the minute) and its close at the end of the minute — points at
  * most 20.001 s apart, so a fully covered gap satisfies the maximum gap of 30 s and a candle missing from the answer
  * breaks it. The bridge covers the whole gap up to the live tick on the right, also the part behind the window's end:
@@ -468,7 +470,8 @@ public class LiveMarketPrices implements MarketPrices {
         // the boundary prices of this window the source priced itself (the close of the candle before the boundary)
         List<PricePoint> atBoundaries = answer.points().stream()
                 .filter(p -> p.atMs() == window.startMs() || p.atMs() == window.endMs()).toList();
-        BigDecimal maxBasis = BigDecimal.valueOf(config.hyperliquidMaxBasis());
+        Double feedBasis = assessment.feed().maxBasis(); // each venue has its own measured tolerance
+        BigDecimal maxBasis = BigDecimal.valueOf(feedBasis != null ? feedBasis : config.hyperliquidMaxBasis());
         for (int i = 0; i < holes.size(); i++) {
             Hole hole = holes.get(i);
             long fillFrom = Math.max(hole.fromMs(), pinned);

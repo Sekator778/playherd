@@ -44,8 +44,9 @@ import org.jboss.logging.Logger;
  * or one whose id would not be a legal market id is <b>known bad</b>: warned about once and not
  * asked for again until restart. Anything transient (the source unreachable, no usable price) is
  * simply tried again at the next run, every minute, until every configured name is listed or known
- * bad; after that a run costs nothing (no request). BTC is in the registry from the V7 migration
- * and is never listed again.
+ * bad; after that a run costs nothing (no request) — and with {@code herd.markets.crypto} empty, which is the default now
+ * that the crypto markets have their own venues ({@link SpotCatalog}), the default dex is not asked at all. BTC is in the
+ * registry from the V7 migration and is never listed again.
  *
  * <p><b>Delisting.</b> The price poll sees {@code isDelisted} in every answer for free and reports it
  * to {@link HyperliquidLiveState}; {@link #watch}, every few seconds and from memory, closes the
@@ -55,7 +56,8 @@ import org.jboss.logging.Logger;
  * starts the count again; a market that is closed stays closed) — through {@code MarketRegistry.close} with a
  * reason in plain words — it is shown to the players as it stands. A delisted asset's {@code markPx} is frozen
  * and the poll skips it, so without this its market would go stale and every round of it would wait an
- * hour for its refund. BTC is never closed.
+ * hour for its refund. BTC is never closed here: the only thing that closes BTC is the replacement of its price source
+ * ({@link SpotCatalog}, {@code MarketRegistry.closeReplaced}).
  *
  * <p><b>Locks.</b> Neither {@link #sync} nor {@link #watch} holds any lock or monitor while it calls
  * {@code registry.list} / {@code registry.close}: the registry's listener (the game service) takes
@@ -144,8 +146,9 @@ public class HyperliquidCatalog {
     int watch(long nowMs) {
         int closed = 0;
         for (Market market : registry.active()) {
-            if (!HyperliquidPriceSource.NAME.equals(market.source()) || Market.BTC_ID.equals(market.id())) {
-                continue;
+            if (!HyperliquidPriceSource.NAME.equals(market.source()) || Market.BTC_ID.equals(market.id())
+                    || HyperliquidPriceSource.isSpotRef(market.sourceRef())) {
+                continue; // BTC is never closed here; a spot pair is no perpetual: nothing reports it delisted
             }
             OptionalLong since = state.delistedSince(market.id());
             if (since.isEmpty() || nowMs - since.getAsLong() < DELISTED_CLOSE_AFTER_MS

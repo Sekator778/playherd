@@ -1,0 +1,19 @@
+{
+ "type": "ticker",
+ "sequence": 24381720404,
+ "product_id": "DOGE-USD",
+ "price": "0.09282",
+ "open_24h": "0.09649",
+ "volume_24h": "111776514.20000000",
+ "low_24h": "0.09035",
+ "high_24h": "0.09772",
+ "volume_30d": "7212680101.60000000",
+ "best_bid": "0.09281",
+ "best_bid_size": "13421.7",
+ "best_ask": "0.09284",
+ "best_ask_size": "13756.3",
+ "side": "sell",
+ "time": "2026-10-03T11:08:10.661981Z",
+ "trade_id": 175305396,
+ "last_size": "0.4"
+}

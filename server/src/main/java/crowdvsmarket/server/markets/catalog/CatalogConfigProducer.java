@@ -5,6 +5,7 @@ import io.quarkus.runtime.Startup;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
+import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
@@ -20,7 +21,9 @@ public class CatalogConfigProducer {
     @Startup // read at start-up, so that a bad value stops the server instead of the first catalog run
     CatalogConfig catalogConfig(
             PricesConfig prices,
-            @ConfigProperty(name = "herd.markets.crypto", defaultValue = CatalogConfig.DEFAULT_CRYPTO) String crypto,
+            // Optional: SmallRye takes an empty value for none, and an empty default is no default for a String — the
+            // default of this list is empty (no Hyperliquid perpetual: the crypto markets have their own venues)
+            @ConfigProperty(name = "herd.markets.crypto") Optional<String> crypto,
             @ConfigProperty(name = "herd.markets.stocks", defaultValue = CatalogConfig.DEFAULT_STOCKS) String stocks,
             @ConfigProperty(name = "herd.markets.indices", defaultValue = CatalogConfig.DEFAULT_INDICES) String indices,
             @ConfigProperty(name = "herd.markets.commodities", defaultValue = CatalogConfig.DEFAULT_COMMODITIES)
@@ -36,10 +39,18 @@ public class CatalogConfigProducer {
             @ConfigProperty(name = "herd.markets.polymarket.in-play-first",
                     defaultValue = CatalogConfig.DEFAULT_IN_PLAY_FIRST) boolean inPlayFirst,
             @ConfigProperty(name = "herd.markets.polymarket.game-cooldown",
-                    defaultValue = CatalogConfig.DEFAULT_GAME_COOLDOWN) String gameCooldown) {
-        return new CatalogConfig(prices.liveSources(), prices.syntheticSource(), CatalogConfig.parseNames(crypto),
-                CatalogConfig.parseNames(stocks), CatalogConfig.parseNames(indices),
-                CatalogConfig.parseNames(commodities), polymarketEnabled, politicsCount, sportsCount,
-                oddsMaxLeverage, inPlayFirst, CatalogConfig.parseDurationMs(gameCooldown));
+                    defaultValue = CatalogConfig.DEFAULT_GAME_COOLDOWN) String gameCooldown,
+            @ConfigProperty(name = "herd.markets.coinbase", defaultValue = CatalogConfig.DEFAULT_COINBASE)
+            String coinbase,
+            @ConfigProperty(name = "herd.markets.hyperliquid-spot",
+                    defaultValue = CatalogConfig.DEFAULT_HYPERLIQUID_SPOT) String hyperliquidSpot,
+            @ConfigProperty(name = "herd.markets.spot.max-leverage",
+                    defaultValue = CatalogConfig.DEFAULT_SPOT_MAX_LEVERAGE) String spotMaxLeverage) {
+        return new CatalogConfig(prices.liveSources(), prices.syntheticSource(),
+                CatalogConfig.parseNames(crypto.orElse(CatalogConfig.DEFAULT_CRYPTO)), CatalogConfig.parseNames(stocks),
+                CatalogConfig.parseNames(indices), CatalogConfig.parseNames(commodities), polymarketEnabled,
+                politicsCount, sportsCount, oddsMaxLeverage, inPlayFirst, CatalogConfig.parseDurationMs(gameCooldown),
+                CatalogConfig.parseNames(coinbase), CatalogConfig.parseNames(hyperliquidSpot),
+                CatalogConfig.parseLeverages(spotMaxLeverage));
     }
 }

@@ -44,6 +44,7 @@ import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.events.EventApplier;
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
+import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketListener;
 import crowdvsmarket.server.markets.MarketRegistry;
@@ -446,9 +447,28 @@ public class GameService implements MarketListener {
     // Markets: lookup and series lifecycle (Р-69, docs/research/markets_architecture.md §3.1, §4)
     // ---------------------------------------------------------------------------------------
 
-    /** The market named by an optional market argument; absent means BTC (contract.ts). */
+    /** The market named by an optional market argument; absent means BTC (contract.ts), see {@link #defaultMarket}. */
     private Market requireMarket(String marketIdOrNull) {
-        return marketRegistry.require(marketIdOrNull == null ? Market.BTC_ID : marketIdOrNull);
+        return marketIdOrNull == null ? defaultMarket() : marketRegistry.require(marketIdOrNull);
+    }
+
+    /**
+     * What "no market" means — the bitcoin pair (contract.ts: {@code marketId} omitted → BTC; {@code home},
+     * {@code btcReferencePrice}). Normally the registry's {@code BTC} row. When that row was closed because its price
+     * moved to another source ("Moved to a new price source: Coinbase", {@code MarketRegistry#closeReplaced}), it is
+     * the active crypto market of symbol {@code BTC} that took over — a closed market has no running rounds and no
+     * price, and an omitted market must not mean "nothing" for as long as the game runs. With no such market (a replaced
+     * BTC whose successor is not listed yet, an operator who closed it) the closed row itself, as before: its own answers
+     * ({@code MARKET_CLOSED}) say what happened.
+     */
+    private Market defaultMarket() {
+        Market btc = marketRegistry.require(Market.BTC_ID);
+        if (btc.isActive()) {
+            return btc;
+        }
+        return marketRegistry.active().stream()
+                .filter(m -> Category.CRYPTO.equals(m.category()) && btc.symbol().equals(m.symbol())).findFirst()
+                .orElse(btc);
     }
 
     /** Whether the market's rounds are played on this server at all: every market in {@code
@@ -1231,9 +1251,9 @@ public class GameService implements MarketListener {
                 quote.asOfMs());
     }
 
-    /** The BTC alias of {@link #referencePrice}, kept for callers that predate markets. */
+    /** The BTC alias of {@link #referencePrice}, kept for callers that predate markets ({@link #defaultMarket}). */
     public Betting.MarketReferenceDto btcReferencePrice() {
-        return referencePrice(Market.BTC_ID);
+        return referencePrice(defaultMarket().id());
     }
 
     public Betting.LiquidationPreviewDto previewLiquidation(Betting.LiquidationPreviewRequest req) {
@@ -1913,16 +1933,18 @@ public class GameService implements MarketListener {
     private static final int HOME_TOP_N = 5; // предложение — not fixed by contract.ts
 
     /** {@code home} keeps describing BTC (docs/research/markets_architecture.md §8): its pairs, its crowd
-     *  account; the other markets have their own calls. */
+     *  account; the other markets have their own calls. BTC is {@link #defaultMarket}: after its price moved to
+     *  another source, the market that took it over. */
     public Home.HomeSummaryDto home(String viewerPlayerIdOrNull) {
         // Held for the whole aggregate (each call below re-acquires this SAME read lock, which is
         // reentrant) so home() sees one consistent snapshot across rounds/crowd/ratings, not four
         // independent ones a concurrent write could interleave between.
         lockRead();
         try {
-            Rounds.RoundsPairDto hourly = roundsPair(Enums.Interval.HOURLY, Market.BTC_ID, viewerPlayerIdOrNull);
-            Rounds.RoundsPairDto daily = roundsPair(Enums.Interval.DAILY, Market.BTC_ID, viewerPlayerIdOrNull);
-            Crowd.CrowdAccountDto crowd = crowdAccount(Market.BTC_ID);
+            String bitcoin = defaultMarket().id();
+            Rounds.RoundsPairDto hourly = roundsPair(Enums.Interval.HOURLY, bitcoin, viewerPlayerIdOrNull);
+            Rounds.RoundsPairDto daily = roundsPair(Enums.Interval.DAILY, bitcoin, viewerPlayerIdOrNull);
+            Crowd.CrowdAccountDto crowd = crowdAccount(bitcoin);
             Ratings.RatingsDto ratings = ratings(null);
             List<Ratings.RichEntryDto> topRich = ratings.rich().stream().limit(HOME_TOP_N).toList();
             List<Ratings.ProphetEntryDto> topProphets = ratings.prophets().stream().limit(HOME_TOP_N).toList();

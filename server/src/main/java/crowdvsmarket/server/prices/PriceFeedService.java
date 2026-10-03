@@ -17,12 +17,16 @@ import org.jboss.logging.Logger;
 /**
  * Polls the price sources on their schedules and hands every answer to {@link TickStore}
  * (docs/research/markets_architecture.md §3.2 rule 1): Hyperliquid's default dex every 3 s and dex
- * {@code xyz} every 6 s (together 600 of the 1200 weight units a minute the IP is allowed), the
- * Polymarket midpoints every 3 s, the synthetic walk every second. Every job runs with
+ * {@code xyz} every 6 s (together 600 of the 1200 weight units a minute the IP is allowed — while a dex has an active
+ * market: with none, nothing is asked), the Polymarket midpoints every 3 s, the synthetic walk every second, and the
+ * two streamed spot feeds, Coinbase and Hyperliquid spot, every 2 s — which cost no request: their sources answer from
+ * the newest quote the WebSocket delivered, and read REST only for a market whose quote is stale
+ * ({@link CoinbasePriceSource}, {@link HyperliquidSpotPriceSource}). Every job runs with
  * {@code concurrentExecution = SKIP}: a poll that hangs on a slow source is not stacked up behind
  * itself, the next ones are skipped until it returns (the HTTP timeouts are 3 s connect, 5 s read).
  * The periods are the defaults of {@code herd.prices.hyperliquid.poll-every},
- * {@code herd.prices.hyperliquid.xyz-poll-every}, {@code herd.prices.polymarket.poll-every} and
+ * {@code herd.prices.hyperliquid.xyz-poll-every}, {@code herd.prices.polymarket.poll-every},
+ * {@code herd.prices.coinbase.poll-every}, {@code herd.prices.hyperliquid.spot-poll-every} and
  * {@code herd.prices.synthetic.poll-every}.
  *
  * <p>Everything here happens only with {@code herd.mode=live}: the jobs of the real sources with
@@ -39,12 +43,16 @@ public class PriceFeedService {
     static final String HYPERLIQUID_EVERY = "${herd.prices.hyperliquid.poll-every:3s}";
     static final String HYPERLIQUID_XYZ_EVERY = "${herd.prices.hyperliquid.xyz-poll-every:6s}";
     static final String POLYMARKET_EVERY = "${herd.prices.polymarket.poll-every:3s}";
+    static final String COINBASE_EVERY = "${herd.prices.coinbase.poll-every:2s}";
+    static final String HYPERLIQUID_SPOT_EVERY = "${herd.prices.hyperliquid.spot-poll-every:2s}";
     static final String SYNTHETIC_EVERY = "${herd.prices.synthetic.poll-every:1s}";
     static final String PRUNE_EVERY = "10m";
 
     static final String JOB_HYPERLIQUID = "price-feed-hyperliquid";
     static final String JOB_HYPERLIQUID_XYZ = "price-feed-hyperliquid-xyz";
     static final String JOB_POLYMARKET = "price-feed-polymarket";
+    static final String JOB_COINBASE = "price-feed-coinbase";
+    static final String JOB_HYPERLIQUID_SPOT = "price-feed-hyperliquid-spot";
     static final String JOB_SYNTHETIC = "price-feed-synthetic";
     static final String JOB_PRUNE = "price-feed-prune";
 
@@ -110,6 +118,22 @@ public class PriceFeedService {
     void pollPolymarket() {
         if (config.liveSources()) {
             pollFeed(PolymarketPriceSource.FEED);
+        }
+    }
+
+    @Scheduled(every = COINBASE_EVERY, concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
+            identity = JOB_COINBASE)
+    void pollCoinbase() {
+        if (config.liveSources()) {
+            pollFeed(CoinbasePriceSource.FEED);
+        }
+    }
+
+    @Scheduled(every = HYPERLIQUID_SPOT_EVERY, concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
+            identity = JOB_HYPERLIQUID_SPOT)
+    void pollHyperliquidSpot() {
+        if (config.liveSources()) {
+            pollFeed(HyperliquidSpotPriceSource.FEED);
         }
     }
 

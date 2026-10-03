@@ -10,9 +10,10 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * The price sources that are switched on by {@code herd.prices.source}: {@code live} activates the
- * Hyperliquid and Polymarket sources, {@code synthetic} only the synthetic walk. Nothing of the
- * other group is touched — their beans are never even instantiated, so no REST client is built.
+ * The price sources that are switched on by {@code herd.prices.source}: {@code live} activates the Hyperliquid
+ * (perpetuals and spot), Coinbase and Polymarket sources, {@code synthetic} only the synthetic walk. Nothing of the
+ * other group is touched — their beans are never even instantiated, so no REST client is built and no WebSocket
+ * is opened.
  */
 @ApplicationScoped
 @Unremovable

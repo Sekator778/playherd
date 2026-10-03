@@ -1,0 +1,19 @@
+{
+ "type": "ticker",
+ "sequence": 22866892667,
+ "product_id": "XRP-USD",
+ "price": "1.4825",
+ "open_24h": "1.5312",
+ "volume_24h": "87656067.91317400",
+ "low_24h": "1.4459",
+ "high_24h": "1.555",
+ "volume_30d": "3308160343.88389100",
+ "best_bid": "1.4824",
+ "best_bid_size": "1536.400129",
+ "best_ask": "1.4825",
+ "best_ask_size": "1996.639797",
+ "side": "buy",
+ "time": "2026-10-03T11:08:44.433243Z",
+ "trade_id": 253266702,
+ "last_size": "0.000003"
+}

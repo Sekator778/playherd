@@ -134,7 +134,7 @@ services:
       # live = markets and prices from the sources; replay = the old accelerated BTC-only history,
       # for tests and offline use (HERD_MODE=replay in .env).
       HERD_MODE: ${HERD_MODE:-live}
-      # live = Hyperliquid + Polymarket; synthetic = deterministic random walk, no network (what
+      # live = Hyperliquid + Coinbase + Polymarket; synthetic = deterministic random walk, no network (what
       # docker-compose.ci.yml uses). Ignored when HERD_MODE=replay.
       HERD_PRICES_SOURCE: ${HERD_PRICES_SOURCE:-live}
       HERD_ROUND_HOURLY_SEC: ${HERD_ROUND_HOURLY_SEC:-180} # Р-46: test-mode "hourly" round = 3 min
@@ -143,8 +143,13 @@ services:
       HERD_BOTS_COUNT: ${HERD_BOTS_COUNT:-20} # Р-46: 20 labelled bots
       HERD_BOTS_MARKETS_PER_ROUND: ${HERD_BOTS_MARKETS_PER_ROUND:-3} # Т-8: pairs each bot plays per round
       # Market lists by category (Т-1/Т-10, §10); names are the source's own (`xyz:` = Hyperliquid's
-      # xyz dex). Polymarket politics/sports markets are picked from the live catalog.
-      HERD_MARKETS_CRYPTO: "${HERD_MARKETS_CRYPTO:-BTC,ETH,SOL,XRP,DOGE,HYPE}"
+      # xyz dex). Polymarket politics/sports markets are picked from the live catalog. Crypto is priced by
+      # the asset's own venue: Coinbase Exchange USD products (BTC-USD …) and the Hyperliquid spot pair HYPE/USDC,
+      # each with the leverage cap of the pair; HERD_MARKETS_CRYPTO lists Hyperliquid *perpetuals* (empty: none).
+      HERD_MARKETS_CRYPTO: "${HERD_MARKETS_CRYPTO:-}"
+      HERD_MARKETS_COINBASE: "${HERD_MARKETS_COINBASE:-BTC-USD,ETH-USD,SOL-USD,XRP-USD,DOGE-USD}"
+      HERD_MARKETS_HYPERLIQUID_SPOT: "${HERD_MARKETS_HYPERLIQUID_SPOT:-HYPE}"
+      HERD_MARKETS_SPOT_MAX_LEVERAGE: "${HERD_MARKETS_SPOT_MAX_LEVERAGE:-BTC:40,ETH:25,SOL:20,XRP:20,DOGE:10,HYPE:10}"
       HERD_MARKETS_STOCKS: "${HERD_MARKETS_STOCKS:-xyz:NVDA,xyz:TSLA}"
       HERD_MARKETS_INDICES: "${HERD_MARKETS_INDICES:-xyz:SP500,xyz:XYZ100}"
       HERD_MARKETS_COMMODITIES: "${HERD_MARKETS_COMMODITIES:-xyz:GOLD,xyz:BRENTOIL}"

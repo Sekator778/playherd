@@ -52,7 +52,7 @@ class HyperliquidCatalogTest {
 
     @Test
     void listsEveryDefaultNameTheRegistryDoesNotKnow() {
-        int pending = catalog(CatalogConfig.defaults()).sync(NOW);
+        int pending = catalog(TestCatalogConfigs.withCryptoPerpetuals()).sync(NOW);
 
         assertThat(pending).isZero();
         assertThat(registry.log).containsExactlyInAnyOrder("listed ETH", "listed SOL", "listed XRP", "listed DOGE",
@@ -65,7 +65,7 @@ class HyperliquidCatalogTest {
 
     @Test
     void aListedMarketCarriesTheParametersOfItsAssetAtListingTime() {
-        catalog(CatalogConfig.defaults()).sync(NOW);
+        catalog(TestCatalogConfigs.withCryptoPerpetuals()).sync(NOW);
 
         Market eth = market("ETH");
         assertThat(eth.kind()).isEqualTo(MarketKind.PERP);
@@ -96,7 +96,7 @@ class HyperliquidCatalogTest {
 
     @Test
     void xyzNamesBecomeIdsWithAnUnderscoreAndSymbolsWithoutThePrefix() {
-        catalog(CatalogConfig.defaults()).sync(NOW);
+        catalog(TestCatalogConfigs.withCryptoPerpetuals()).sync(NOW);
 
         Market nvda = market("xyz_NVDA");
         assertThat(nvda.category()).isEqualTo(Category.STOCKS);
@@ -120,7 +120,7 @@ class HyperliquidCatalogTest {
 
     @Test
     void theLeverageIsCappedAtFortyAndALotExponentNeverGoesBelowZero() {
-        catalog(CatalogConfig.defaults()).sync(NOW);
+        catalog(TestCatalogConfigs.withCryptoPerpetuals()).sync(NOW);
 
         assertThat(market("xyz_SP500").maxLeverage()).isEqualTo(40); // the dex allows 50x
         assertThat(market("xyz_SP500").lotExp()).isZero(); // 7676.3
@@ -130,7 +130,7 @@ class HyperliquidCatalogTest {
 
     @Test
     void oneRequestPerDexNotPerMarket() {
-        catalog(CatalogConfig.defaults()).sync(NOW);
+        catalog(TestCatalogConfigs.withCryptoPerpetuals()).sync(NOW);
 
         assertThat(api.info.requests).hasSize(2);
         assertThat(api.info.requests.get(0).toString()).isEqualTo("{\"type\":\"metaAndAssetCtxs\"}");
@@ -139,7 +139,7 @@ class HyperliquidCatalogTest {
 
     @Test
     void onceEverythingIsListedARunCostsNoRequest() {
-        HyperliquidCatalog catalog = catalog(CatalogConfig.defaults());
+        HyperliquidCatalog catalog = catalog(TestCatalogConfigs.withCryptoPerpetuals());
         catalog.sync(NOW);
         api.info.requests.clear();
 
@@ -259,7 +259,7 @@ class HyperliquidCatalogTest {
 
     @Test
     void theScheduledRunDoesNothingOutsideLiveMode() {
-        CatalogConfig replay = new CatalogConfig(false, false, CatalogConfig.parseNames(CatalogConfig.DEFAULT_CRYPTO),
+        CatalogConfig replay = new CatalogConfig(false, false, CatalogConfig.parseNames(CatalogConfig.LEGACY_CRYPTO),
                 List.of(), List.of(), List.of(), true, 3, 3, 10, true);
 
         catalog(replay).run();
@@ -278,12 +278,12 @@ class HyperliquidCatalogTest {
     // ------------------------------------------------------------- a delisted asset closes its market (G2)
 
     private HyperliquidCatalog catalog(HyperliquidLiveState state) {
-        return new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state, HistorySeeder.disabled(),
+        return new HyperliquidCatalog(registry, TestCatalogConfigs.withCryptoPerpetuals(), () -> api, state, HistorySeeder.disabled(),
                 () -> NOW);
     }
 
     private Market listedEth() {
-        catalog(CatalogConfig.defaults()).sync(NOW);
+        catalog(TestCatalogConfigs.withCryptoPerpetuals()).sync(NOW);
         return market("ETH");
     }
 
@@ -378,7 +378,7 @@ class HyperliquidCatalogTest {
         crowdvsmarket.server.prices.HyperliquidPriceSource source = crowdvsmarket.server.prices.PipelineTestSupport
                 .hyperliquid(api, clock::get, state);
         crowdvsmarket.server.prices.PriceSource.Feed feed = source.feeds().get(0);
-        HyperliquidCatalog catalog = new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state,
+        HyperliquidCatalog catalog = new HyperliquidCatalog(registry, TestCatalogConfigs.withCryptoPerpetuals(), () -> api, state,
                 HistorySeeder.disabled(), clock::get);
 
         for (int i = 0; i < 4; i++) { // the polls of 0, 3, 6 and 9 s, each answered with MATIC delisted
@@ -447,7 +447,7 @@ class HyperliquidCatalogTest {
         crowdvsmarket.server.prices.HyperliquidPriceSource source = crowdvsmarket.server.prices.PipelineTestSupport
                 .hyperliquid(api, clock::get, state);
         crowdvsmarket.server.prices.PriceSource.Feed feed = source.feeds().get(0);
-        HyperliquidCatalog catalog = new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state,
+        HyperliquidCatalog catalog = new HyperliquidCatalog(registry, TestCatalogConfigs.withCryptoPerpetuals(), () -> api, state,
                 HistorySeeder.disabled(), clock::get);
         java.util.function.Function<com.fasterxml.jackson.databind.JsonNode, com.fasterxml.jackson.databind.JsonNode> good =
                 api.info.handler; // the main-dex sample, in which MATIC is delisted
@@ -484,13 +484,13 @@ class HyperliquidCatalogTest {
         HyperliquidLiveState state = new HyperliquidLiveState();
         listedEth();
         delistedRun(state, "ETH", NOW - 60_000L, NOW - 3_000L);
-        CatalogConfig replay = new CatalogConfig(false, false, CatalogConfig.parseNames(CatalogConfig.DEFAULT_CRYPTO),
+        CatalogConfig replay = new CatalogConfig(false, false, CatalogConfig.parseNames(CatalogConfig.LEGACY_CRYPTO),
                 List.of(), List.of(), List.of(), true, 3, 3, 10, true);
 
         new HyperliquidCatalog(registry, replay, () -> api, state, HistorySeeder.disabled(), () -> NOW).watchJob();
         assertThat(market("ETH").isActive()).isTrue();
 
-        new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state, HistorySeeder.disabled(),
+        new HyperliquidCatalog(registry, TestCatalogConfigs.withCryptoPerpetuals(), () -> api, state, HistorySeeder.disabled(),
                 () -> NOW).watchJob();
         assertThat(market("ETH").isActive()).isFalse();
     }

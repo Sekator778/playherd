@@ -19,10 +19,12 @@ import java.math.RoundingMode;
  * @param title       "Bitcoin"; for {@code ODDS} the market question
  * @param subtitle    {@code ODDS}: the outcome the price refers to plus context; {@code PERP}: null
  * @param iconUrl     source image when there is one; null otherwise
- * @param source      hyperliquid | polymarket | synthetic
- * @param sourceRef   Hyperliquid coin name ("BTC", "xyz:NVDA") or Polymarket CLOB token id
+ * @param source      hyperliquid | coinbase | polymarket | synthetic
+ * @param sourceRef   Hyperliquid coin name ("BTC", "xyz:NVDA") or spot pair name ("@107": {@code sourceMeta} says
+ *                    {@code "spot":true}), Coinbase product id ("BTC-USD"), or Polymarket CLOB token id
  * @param sourceMeta  JSON with whatever the source's catalog needs later (may be null)
- * @param oracleIndex append-only index published on chain as the record's asset; BTC = 0
+ * @param oracleIndex append-only index published on chain as the record's asset; the migration's BTC row is 0 (when
+ *                    BTC's price moved to another source that row was closed and the new market has its own index)
  */
 public record Market(
         String id,

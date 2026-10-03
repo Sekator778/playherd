@@ -163,7 +163,7 @@ export const variant =
 const direction = lit("UP", "DOWN");
 const interval = lit("HOURLY", "DAILY");
 const kind = lit("PERP", "ODDS");
-const source = lit("hyperliquid", "polymarket", "synthetic");
+const source = lit("hyperliquid", "coinbase", "polymarket", "synthetic");
 
 export const playerSummary = obj<PlayerSummaryDto>({ playerId: nonEmptyStr, nickname: str, walletAddress: nonEmptyStr, displayName: nonEmptyStr, isBot: opt(bool) });
 

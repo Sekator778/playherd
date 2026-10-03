@@ -70,7 +70,7 @@ class PipelineSmokeTest {
         polymarketCatalog = new PolymarketCatalog(registry, CatalogConfig.defaults(),
                 crowdvsmarket.server.prices.PricesConfig.defaults(), () -> gamma, () -> clob, state, store, now::get);
 
-        new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> hl, now::get).sync(now.get());
+        new HyperliquidCatalog(registry, TestCatalogConfigs.withCryptoPerpetuals(), () -> hl, now::get).sync(now.get());
         polymarketCatalog.refresh(now.get());
     }
 

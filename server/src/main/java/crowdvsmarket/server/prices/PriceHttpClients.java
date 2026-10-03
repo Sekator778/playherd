@@ -13,8 +13,8 @@ import org.eclipse.microprofile.rest.client.RestClientBuilder;
 import org.jboss.logging.Logger;
 
 /**
- * The REST clients of the price pipeline and the catalogs, built on first use with the base URL of
- * their {@code herd.prices.*} key and the pipeline's timeouts — connect 3 s, read 5 s — because
+ * The REST clients of the price pipeline and the catalogs (Hyperliquid, Coinbase, Polymarket), built on first use with
+ * the base URL of their {@code herd.prices.*} key and the pipeline's timeouts — connect 3 s, read 5 s — because
  * {@link LiveMarketPrices#resolve} blocks on them. Built here rather than injected with
  * {@code @RestClient} because the timeouts of an injected client come from
  * {@code quarkus.rest-client.*} keys in {@code application.properties}, which this pipeline leaves
@@ -55,22 +55,33 @@ public class PriceHttpClients {
     private final PricesConfig config;
     private final List<Object> built = new ArrayList<>();
     private final Lazy<HyperliquidInfoApi> hyperliquid;
+    private final Lazy<CoinbaseExchangeApi> coinbase;
     private final Lazy<PolymarketClobApi> clob;
     private final Lazy<PolymarketDataApi> data;
     private final Lazy<PolymarketGammaApi> gamma;
 
     @Inject
-    public PriceHttpClients(PricesConfig config) {
+    public PriceHttpClients(PricesConfig config, SpotPricesConfig spot) {
         this.config = config;
         this.hyperliquid = new Lazy<>(HyperliquidInfoApi.class, config::hyperliquidUrl);
+        this.coinbase = new Lazy<>(CoinbaseExchangeApi.class, spot::coinbaseUrl);
         this.clob = new Lazy<>(PolymarketClobApi.class, config::polymarketClobUrl);
         this.data = new Lazy<>(PolymarketDataApi.class, config::polymarketDataUrl);
         this.gamma = new Lazy<>(PolymarketGammaApi.class, config::polymarketGammaUrl);
     }
 
+    /** The clients with the default Coinbase address. */
+    public PriceHttpClients(PricesConfig config) {
+        this(config, SpotPricesConfig.defaults());
+    }
+
     /** Each accessor returns a supplier that builds the client on its first {@code get()}. */
     public Supplier<HyperliquidInfoApi> hyperliquid() {
         return hyperliquid;
+    }
+
+    public Supplier<CoinbaseExchangeApi> coinbase() {
+        return coinbase;
     }
 
     public Supplier<PolymarketClobApi> clob() {

@@ -4,6 +4,8 @@
  * notifies the game core. {@link crowdvsmarket.server.markets.catalog.HyperliquidCatalog} lists the
  * configured perpetuals from Hyperliquid's own parameters and closes the market of an asset the
  * exchange delisted,
+ * {@link crowdvsmarket.server.markets.catalog.SpotCatalog} lists the crypto markets priced by Coinbase and by
+ * Hyperliquid's spot market and retires the market each of them replaces (BTC included),
  * {@link crowdvsmarket.server.markets.catalog.PolymarketCatalog} keeps the configured number of
  * politics and sports odds markets — in sports only the markets that say who wins a game, and none of a game
  * a market of which it closed within the last hours — and closes them when they stop being tradable,

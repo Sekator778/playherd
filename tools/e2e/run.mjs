@@ -135,10 +135,23 @@ async function main() {
     return summarize();
   }
 
-  // --- 2. find the currently open-for-betting HOURLY round ---
+  // --- 2. find the currently open-for-betting HOURLY round of the bitcoin pair. Its market id depends on where
+  //     its price comes from — BTC (Hyperliquid, or the offline walk) or cb_BTC (Coinbase, once the stand has
+  //     "moved to a new price source" and the BTC row is closed) — so the pair is looked up, never assumed. ---
+  let marketId;
+  try {
+    const lobby = await players[0].rpc("markets");
+    const btc = lobby.markets.find((m) => m.symbol === "BTC" && m.category === "crypto" && m.status === "ACTIVE");
+    if (!btc) throw new Error("markets() lists no active BTC market");
+    marketId = btc.id;
+    check("found the active BTC market", true, `marketId=${marketId} source=${btc.source}`);
+  } catch (e) {
+    fail("find the active BTC market", e);
+    return summarize();
+  }
   let roundsPair;
   try {
-    roundsPair = await players[0].rpc("rounds", "HOURLY");
+    roundsPair = await players[0].rpc("rounds", "HOURLY", marketId);
     check("fetched HOURLY rounds pair", true, `betting=${roundsPair.betting.roundId} (${roundsPair.betting.phase})`);
   } catch (e) {
     fail("fetch HOURLY rounds pair", e);
@@ -187,7 +200,7 @@ async function main() {
   //     (recentBets) — verify that shape directly, that the aggregate reflects the bets just
   //     placed, and that another player's bet is visible (by design) in recentBets pre-start. ---
   try {
-    const pairAfterBets = await players[0].rpc("rounds", "HOURLY");
+    const pairAfterBets = await players[0].rpc("rounds", "HOURLY", marketId);
     const betting = pairAfterBets.betting;
     const hasLiveAggregate =
       "upStake" in betting && "downStake" in betting && "upCount" in betting && "downCount" in betting;

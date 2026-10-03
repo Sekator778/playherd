@@ -22,7 +22,10 @@ import org.jboss.logging.Logger;
  * The offline catalog ({@code herd.prices.source=synthetic}, markets_architecture.md Т-12): lists the
  * configured PERP names ({@code herd.markets.crypto|stocks|indices|commodities}) with the built-in
  * {@link SyntheticParams parameter table} (BTC 40x at 84000, ETH 25x at 2700, … unknown names 10x at
- * 100) and {@code herd.markets.politics.count} + {@code herd.markets.sports.count} synthetic ODDS
+ * 100) — with no {@code herd.markets.crypto} configured, the six crypto markets the list had before the crypto markets
+ * moved to their venues ({@link CatalogConfig#syntheticPerpNames}): the walk keeps its own ids ({@code ETH}, never
+ * {@code cb_ETH}) and has nothing to do with the Coinbase and Hyperliquid spot lists — and
+ * {@code herd.markets.politics.count} + {@code herd.markets.sports.count} synthetic ODDS
  * markets {@code PMSYN1…} (politics first, then sports) whose probabilities start between 0.3 and
  * 0.7. No HTTP. The start price goes into {@code sourceMeta} as {@code {"start":"…"}}, which
  * {@link SyntheticPriceSource} walks from. BTC already exists (the V7 migration) and is left as it is.
@@ -73,7 +76,7 @@ public class SyntheticCatalog {
     /** Lists whatever is not listed yet; returns how many markets this pass added. */
     int sync(long nowMs) {
         int added = 0;
-        for (CatalogConfig.PerpName wanted : config.perpNames()) {
+        for (CatalogConfig.PerpName wanted : config.syntheticPerpNames()) {
             String id = MarketNames.idOf(wanted.name());
             if (!LEGAL_ID.matcher(id).matches() || registry.byId(id).isPresent()) {
                 continue;

@@ -29,8 +29,19 @@ public interface MarketRegistry {
     Market list(NewMarket market, long nowMs);
 
     /** Marks an active market closed, persists it and notifies the listener. No-op when the
-     *  market is unknown or already closed. */
+     *  market is unknown or already closed. BTC cannot be closed this way — see {@link #closeReplaced}. */
     void close(String marketId, String reason, long nowMs);
+
+    /**
+     * {@link #close} for a market that another market takes over: the catalog of the new price source calls it
+     * (the reason is what the players read: "Moved to a new price source: Coinbase") and lists the new market only
+     * after it has returned and the old one is seen to be closed, so that two active markets never share a symbol. The
+     * market's open rounds are cancelled with a refund, as for any closing. It is the <b>only</b> way BTC can be
+     * closed: BTC is the pair the game started with — its row is the migration's, with oracle index 0 — and neither
+     * delisting nor anything else may close it; here its row stays in the registry, closed, and its rounds and oracle
+     * records stay readable.
+     */
+    void closeReplaced(String marketId, String reason, long nowMs);
 
     void setListener(MarketListener listener);
 

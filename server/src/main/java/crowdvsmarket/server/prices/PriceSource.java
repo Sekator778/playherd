@@ -15,8 +15,11 @@ import java.util.function.Predicate;
  * {@link LiveMarketPrices} asks the source for history when a round window has a hole.
  *
  * <p>Implementations: {@link HyperliquidPriceSource} (feeds {@code hyperliquid} and
- * {@code hyperliquid:xyz}), {@link PolymarketPriceSource}, {@link SyntheticPriceSource}. The first
- * two are active with {@code herd.prices.source=live}, the third with {@code synthetic}.
+ * {@code hyperliquid:xyz}), {@link HyperliquidSpotPriceSource} ({@code hyperliquid:spot}),
+ * {@link CoinbasePriceSource} ({@code coinbase}), {@link PolymarketPriceSource}, {@link SyntheticPriceSource}. All
+ * but the last are active with {@code herd.prices.source=live}, the last with {@code synthetic}. The Coinbase and the
+ * Hyperliquid spot source keep the latest quote of each market from a WebSocket stream ({@link StreamSupervisor}) and
+ * answer a poll from memory; only when the stream is down or silent do they read the same venue over REST.
  */
 public interface PriceSource {
 
@@ -35,15 +38,25 @@ public interface PriceSource {
      * @param staleMs  a tick older than this at a boundary no longer says what the price is
      * @param maxGapMs two neighbouring ticks of a round window further apart than this are a hole
      * @param handles  which markets this feed prices
+     * @param maxBasis how far a live tick of this feed may lie outside the range of its own minute's candle, relative
+     *                 to the tick, for the candles to bridge a gap between two live ticks ({@link GapBridge}); only a
+     *                 feed of a {@link HistoryKind#TRADE_PRICES} source has a use for it. {@code null}: the tolerance of
+     *                 Hyperliquid's perpetuals, {@code herd.prices.hyperliquid.max-basis} — each venue is measured on
+     *                 its own, the tolerance is not a property of the pipeline.
      */
-    record Feed(String id, long staleMs, long maxGapMs, Predicate<Market> handles) {
+    record Feed(String id, long staleMs, long maxGapMs, Predicate<Market> handles, Double maxBasis) {
+
+        public Feed(String id, long staleMs, long maxGapMs, Predicate<Market> handles) {
+            this(id, staleMs, maxGapMs, handles, null);
+        }
     }
 
     /**
      * What the numbers of {@link #history} are, compared with the ticks of {@link #poll}.
      * {@link #SAME_AS_LIVE}: the same quantity (Polymarket's midpoint buckets against its live midpoints) — a
      * history point may stand between two ticks. {@link #TRADE_PRICES}: another one (Hyperliquid's candles are
-     * trade prices, its ticks are mark prices) — history is the past of the first tick, and it bridges a gap between
+     * trade prices, its ticks are mark prices; Coinbase's and Hyperliquid spot's candles are trade prices, their ticks
+     * are mids of the best bid and ask) — history is the past of the first tick, and it bridges a gap between
      * two live ticks only as a whole, when every bar of the gap is there and the live prices around it lie inside
      * their own bars ({@link LiveMarketPrices}, {@code GapBridge}); it is never put between two live ticks otherwise.
      */
@@ -119,7 +132,11 @@ public interface PriceSource {
         }
     }
 
-    /** The source's name: {@code hyperliquid}, {@code polymarket} or {@code synthetic}. */
+    /**
+     * The source's name, what a market's {@code source} says: {@code hyperliquid}, {@code coinbase}, {@code polymarket}
+     * or {@code synthetic}. Sources of one venue share the name, and with it the pace of {@link HistorySeeder}'s
+     * queue (Hyperliquid's perpetuals and its spot pairs draw on one request budget).
+     */
     String name();
 
     List<Feed> feeds();

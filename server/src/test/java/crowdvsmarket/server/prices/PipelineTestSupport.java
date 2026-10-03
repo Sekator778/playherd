@@ -23,6 +23,29 @@ public final class PipelineTestSupport {
         return new HyperliquidPriceSource(() -> api, PricesConfig.defaults(), state, clock);
     }
 
+    /** The Coinbase source over scripted REST and WebSocket layers; its stream is stepped by the test ({@code source.supervisor().step(now)}). */
+    public static CoinbasePriceSource coinbase(CoinbaseExchangeApi api, WebSocketTransport transport, LongSupplier clock) {
+        return new CoinbasePriceSource(() -> api, SpotPricesConfig.defaults(), transport, clock, false);
+    }
+
+    /** The Hyperliquid spot source over scripted layers; the periodic context read runs on the calling thread. */
+    public static HyperliquidSpotPriceSource hyperliquidSpot(HyperliquidInfoApi api, WebSocketTransport transport,
+                                                             LongSupplier clock) {
+        return new HyperliquidSpotPriceSource(() -> api, SpotPricesConfig.defaults(), transport, clock, Runnable::run,
+                false);
+    }
+
+    /** Steps the stream of a source by hand, as its thread would (a poll must have asked for it first). */
+    public static void stepStream(PriceSource source, long nowMs) {
+        if (source instanceof CoinbasePriceSource c) {
+            c.supervisor().step(nowMs);
+        } else if (source instanceof HyperliquidSpotPriceSource h) {
+            h.supervisor().step(nowMs);
+        } else {
+            throw new IllegalArgumentException(source + " has no stream");
+        }
+    }
+
     public static PolymarketPriceSource polymarket(PolymarketClobApi clob, PolymarketDataApi data,
                                                    PolymarketLiveState state, LongSupplier clock) {
         return new PolymarketPriceSource(() -> clob, () -> data, state, PricesConfig.defaults(), clock);

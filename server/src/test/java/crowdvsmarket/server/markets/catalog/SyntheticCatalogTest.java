@@ -31,7 +31,7 @@ class SyntheticCatalogTest {
     }
 
     private static CatalogConfig syntheticConfig(int politics, int sports) {
-        return new CatalogConfig(false, true, CatalogConfig.parseNames(CatalogConfig.DEFAULT_CRYPTO),
+        return new CatalogConfig(false, true, CatalogConfig.parseNames(CatalogConfig.LEGACY_CRYPTO),
                 CatalogConfig.parseNames(CatalogConfig.DEFAULT_STOCKS),
                 CatalogConfig.parseNames(CatalogConfig.DEFAULT_INDICES),
                 CatalogConfig.parseNames(CatalogConfig.DEFAULT_COMMODITIES), true, politics, sports, 10, true);

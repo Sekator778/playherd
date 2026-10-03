@@ -1,0 +1,27 @@
+{
+ "type": "subscriptions",
+ "channels": [
+  {
+   "name": "ticker",
+   "product_ids": [
+    "BTC-USD",
+    "DOGE-USD",
+    "ETH-USD",
+    "SOL-USD",
+    "XRP-USD"
+   ],
+   "account_ids": null
+  },
+  {
+   "name": "heartbeat",
+   "product_ids": [
+    "BTC-USD",
+    "ETH-USD",
+    "SOL-USD",
+    "XRP-USD",
+    "DOGE-USD"
+   ],
+   "account_ids": null
+  }
+ ]
+}

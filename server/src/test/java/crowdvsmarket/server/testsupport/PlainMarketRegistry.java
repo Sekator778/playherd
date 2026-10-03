@@ -57,6 +57,11 @@ public final class PlainMarketRegistry implements MarketRegistry {
     }
 
     @Override
+    public void closeReplaced(String marketId, String reason, long nowMs) {
+        memory.closeReplaced(marketId, reason, nowMs);
+    }
+
+    @Override
     public void setListener(MarketListener listener) {
         memory.setListener(listener);
     }

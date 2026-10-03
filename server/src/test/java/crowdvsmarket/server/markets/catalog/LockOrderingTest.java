@@ -192,10 +192,10 @@ class LockOrderingTest {
         FakeApis.Hyperliquid api = new FakeApis.Hyperliquid();
         api.info.handler = body -> body.has("dex") ? Fixtures.json("hyperliquid/meta_and_asset_ctxs_xyz.json")
                 : Fixtures.json("hyperliquid/meta_and_asset_ctxs_main.json");
-        new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state, HistorySeeder.disabled(),
+        new HyperliquidCatalog(registry, TestCatalogConfigs.withCryptoPerpetuals(), () -> api, state, HistorySeeder.disabled(),
                 () -> NOW).sync(NOW);
         reportDelistedThrice(state, "ETH");
-        HyperliquidCatalog catalog = new HyperliquidCatalog(registry, CatalogConfig.defaults(), () -> api, state,
+        HyperliquidCatalog catalog = new HyperliquidCatalog(registry, TestCatalogConfigs.withCryptoPerpetuals(), () -> api, state,
                 HistorySeeder.disabled(), () -> NOW);
 
         Future<Integer> watch;

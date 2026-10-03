@@ -82,6 +82,19 @@ public class InMemoryMarketRegistry implements MarketRegistry {
 
     @Override
     public void close(String marketId, String reason, long nowMs) {
+        if (Market.BTC_ID.equals(marketId)) {
+            throw new IllegalArgumentException("BTC cannot be closed, except when another market takes over its symbol "
+                    + "(closeReplaced)");
+        }
+        closeMarket(marketId, reason, nowMs);
+    }
+
+    @Override
+    public void closeReplaced(String marketId, String reason, long nowMs) {
+        closeMarket(marketId, reason, nowMs);
+    }
+
+    private void closeMarket(String marketId, String reason, long nowMs) {
         Market closed;
         synchronized (this) {
             Optional<Market> existing = byId(marketId);

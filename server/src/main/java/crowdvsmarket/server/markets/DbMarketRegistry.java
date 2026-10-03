@@ -29,7 +29,9 @@ import org.jboss.logging.Logger;
  *       committed and outside {@link #writeLock}: the listener ({@code GameService}) takes the engine
  *       lock, and a thread that holds that lock may be about to read this registry.
  *   <li>{@link #reload} re-reads the table ({@code EngineRebuildService} calls it at every rebuild).
- *       BTC is always present: a missing row is inserted.
+ *       BTC is always present: a missing row is inserted — and one that was closed stays closed (the insert
+ *       does nothing for an id that exists).
+ *   <li>BTC can be closed only through {@link #closeReplaced}, by the catalog of the market that takes over its symbol.
  * </ul>
  */
 @ApplicationScoped
@@ -117,8 +119,18 @@ public class DbMarketRegistry implements MarketRegistry {
     @Override
     public void close(String marketId, String reason, long nowMs) {
         if (MarketSpec.BTC_ID.equals(marketId)) {
-            throw new IllegalArgumentException("BTC is always listed and cannot be closed");
+            throw new IllegalArgumentException("BTC is always listed and cannot be closed, except when another market "
+                    + "takes over its symbol (closeReplaced)");
         }
+        closeMarket(marketId, reason, nowMs);
+    }
+
+    @Override
+    public void closeReplaced(String marketId, String reason, long nowMs) {
+        closeMarket(marketId, reason, nowMs);
+    }
+
+    private void closeMarket(String marketId, String reason, long nowMs) {
         Market closed;
         synchronized (writeLock) {
             Optional<Market> known = find(snapshot(), marketId);

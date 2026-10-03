@@ -30,6 +30,8 @@ class PricePipelineWiringTest {
     @Inject
     CatalogConfig catalogs;
     @Inject
+    SpotPricesConfig spot;
+    @Inject
     PriceSources sources;
     @Inject
     Scheduler scheduler;
@@ -70,8 +72,23 @@ class PricePipelineWiringTest {
     }
 
     @Test
+    void theSpotKeysHaveTheirDefaults() {
+        assertThat(spot.coinbaseUrl()).isEqualTo("https://api.exchange.coinbase.com");
+        assertThat(spot.coinbaseWsUrl()).isEqualTo("wss://ws-feed.exchange.coinbase.com");
+        assertThat(spot.hyperliquidWsUrl()).isEqualTo("wss://api.hyperliquid.xyz/ws");
+        assertThat(spot.coinbase()).isEqualTo(new SpotPricesConfig.Limits(15_000, 30_000, 0.0015, 5_000, 10_000));
+        assertThat(spot.hyperliquidSpot()).isEqualTo(new SpotPricesConfig.Limits(15_000, 30_000, 0.0015, 8_000, 15_000));
+        assertThat(spot.reconnectMaxMs()).isEqualTo(60_000L);
+        assertThat(spot.idleMs()).isEqualTo(60_000L);
+    }
+
+    @Test
     void theCatalogKeysHaveTheArchitecturesDefaults() {
-        assertThat(catalogs.crypto()).containsExactly("BTC", "ETH", "SOL", "XRP", "DOGE", "HYPE");
+        assertThat(catalogs.crypto()).as("herd.markets.crypto: Hyperliquid perpetuals, none by default").isEmpty();
+        assertThat(catalogs.coinbase()).containsExactly("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD");
+        assertThat(catalogs.hyperliquidSpot()).containsExactly("HYPE");
+        assertThat(catalogs.spotMaxLeverage()).containsOnly(Map.entry("BTC", 40), Map.entry("ETH", 25),
+                Map.entry("SOL", 20), Map.entry("XRP", 20), Map.entry("DOGE", 10), Map.entry("HYPE", 10));
         assertThat(catalogs.stocks()).containsExactly("xyz:NVDA", "xyz:TSLA");
         assertThat(catalogs.indices()).containsExactly("xyz:SP500", "xyz:XYZ100");
         assertThat(catalogs.commodities()).containsExactly("xyz:GOLD", "xyz:BRENTOIL");
@@ -86,17 +103,19 @@ class PricePipelineWiringTest {
 
     @Test
     void withSourceLiveTheRealSourcesAreActiveAndTheSyntheticOneIsNot() {
-        assertThat(sources.active()).extracting(PriceSource::name).containsExactlyInAnyOrder("hyperliquid", "polymarket");
+        // Hyperliquid's perpetuals and its spot pairs are two sources of one venue and share its name
+        assertThat(sources.active()).extracting(PriceSource::name)
+                .containsExactlyInAnyOrder("hyperliquid", "hyperliquid", "coinbase", "polymarket");
         assertThat(sources.bindings()).extracting(b -> b.feed().id())
-                .containsExactlyInAnyOrder("hyperliquid", "hyperliquid:xyz", "polymarket");
+                .containsExactlyInAnyOrder("hyperliquid", "hyperliquid:xyz", "hyperliquid:spot", "coinbase", "polymarket");
     }
 
     @Test
     void everyJobIsScheduledUnderItsIdentity() {
         for (String job : List.of("price-feed-hyperliquid", "price-feed-hyperliquid-xyz", "price-feed-polymarket",
-                "price-feed-synthetic", "price-feed-prune", "catalog-hyperliquid", "catalog-hyperliquid-watch",
-                "catalog-polymarket",
-                "catalog-polymarket-watch", "catalog-synthetic")) {
+                "price-feed-coinbase", "price-feed-hyperliquid-spot", "price-feed-synthetic", "price-feed-prune",
+                "catalog-hyperliquid", "catalog-hyperliquid-watch", "catalog-polymarket",
+                "catalog-polymarket-watch", "catalog-spot", "catalog-synthetic")) {
             assertThat(scheduler.getScheduledJob(job)).as(job).isNotNull();
         }
     }
@@ -104,7 +123,8 @@ class PricePipelineWiringTest {
     @Test
     void thePollingJobsRunAtTheirDefaultPeriods() {
         Map<String, Long> periodsMs = Map.of("price-feed-synthetic", 1_000L, "price-feed-hyperliquid", 3_000L,
-                "price-feed-polymarket", 3_000L, "price-feed-hyperliquid-xyz", 6_000L);
+                "price-feed-polymarket", 3_000L, "price-feed-hyperliquid-xyz", 6_000L, "price-feed-coinbase", 2_000L,
+                "price-feed-hyperliquid-spot", 2_000L);
         periodsMs.forEach((job, periodMs) -> {
             Trigger trigger = scheduler.getScheduledJob(job);
             // previous and next are read twice around a firing now and then: look again until they agree
@@ -132,8 +152,8 @@ class PricePipelineWiringTest {
 
     @Test
     void outsideLiveModeTheJobsRunButNoRestClientIsEverBuilt() {
-        for (String job : List.of("price-feed-hyperliquid", "price-feed-polymarket", "catalog-hyperliquid",
-                "catalog-synthetic")) {
+        for (String job : List.of("price-feed-hyperliquid", "price-feed-polymarket", "price-feed-coinbase",
+                "price-feed-hyperliquid-spot", "catalog-hyperliquid", "catalog-spot", "catalog-synthetic")) {
             Trigger trigger = scheduler.getScheduledJob(job);
             await().atMost(Duration.ofSeconds(30)).until(() -> trigger.getPreviousFireTime() != null);
         }
