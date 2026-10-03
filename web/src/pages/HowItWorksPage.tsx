@@ -4,7 +4,10 @@ import { MultiAccountDisclosureLine, OracleDisclosureLine } from "../components/
 import { formatPlayAmount } from "../format";
 
 /** Static content, baked into the build (`ux_spec.md` §9 — предложение: this screen has no
- *  dynamic fields, so it works even if the backend is unreachable). */
+ *  dynamic fields, so it works even if the backend is unreachable). The exchanges it names are the design's (Р-74, Р-76,
+ *  `docs/product/decisions.md`): crypto from the exchange of the asset itself with a backup, a round on one exchange,
+ *  stocks, indices and commodities from Hyperliquid, odds from Polymarket. The Status page lists what a running server
+ *  really has. */
 export function HowItWorksPage() {
   return (
     <div className="stack" style={{ gap: 28 }}>
@@ -32,7 +35,9 @@ export function HowItWorksPage() {
         <h2>Markets</h2>
         <p>
           Markets are grouped in panels: Crypto, Politics, Sports, Stocks, Indices, Commodities. A <strong>price
-          market</strong> follows the price of a Hyperliquid perpetual in dollars. An <strong>odds market</strong>{" "}
+          market</strong> follows the price of an asset in dollars — a crypto asset's price on an exchange where it is
+          traded (Coinbase; Hyperliquid's own spot market for HYPE), a stock's, an index's or a commodity's as a
+          Hyperliquid perpetual. An <strong>odds market</strong>{" "}
           (politics, sports) follows the probability of one outcome of a Polymarket market, shown as a percentage —
           you bet on whether that probability goes up or down during the round, <strong>not on who wins</strong> the
           election or the match. Its 24-hour change is shown in percentage points (from 64% to 65% is +1.0 pt), a
@@ -76,6 +81,8 @@ export function HowItWorksPage() {
           opposite side of the majority. Capital never resets between seasons — only the season markers on the
           chart do.
         </p>
+        <OracleDisclosureLine source="coinbase" />
+        <OracleDisclosureLine source="kraken" />
         <OracleDisclosureLine source="hyperliquid" />
         <OracleDisclosureLine source="polymarket" />
       </section>
@@ -83,11 +90,21 @@ export function HowItWorksPage() {
       <section>
         <h2>Where the price comes from</h2>
         <p>
-          Prices come from Hyperliquid and odds from Polymarket (a test deployment can run on recorded or simulated
-          prices instead — when it does, the Wallet screen and the Status page say so). There is no decentralized price oracle here —
-          prices are read and published on-chain by a key our team controls. If a reliable price can't be read within
-          an hour of a round closing, the round is cancelled and every bet is refunded, including any that would have
-          been liquidated. A cancelled round always shows its reason on the round's page.
+          Prices come straight from the exchanges — Coinbase and Hyperliquid, with Kraken and Coinbase as backups — and
+          odds from Polymarket (a test deployment can run on recorded or simulated prices instead — when it does, the Wallet
+          screen and the Status page say so). There is no decentralized price oracle here — prices are read and
+          published on-chain by a key our team controls. If a reliable price can't be read within an hour of a round
+          closing, the round is cancelled and every bet is refunded, including any that would have been liquidated. A
+          cancelled round always shows its reason on the round's page.
+        </p>
+        <p>
+          <strong>A round runs on one exchange.</strong> A crypto market has a main exchange and a backup (Kraken for
+          Bitcoin, Ethereum, Solana, XRP and Dogecoin; Coinbase for HYPE). The exchange of a round is chosen when it
+          starts: the main one if it has a live price at that moment, otherwise the backup. The round's open price, its
+          close price and any liquidation then come from that exchange alone, never a mix, and the round's page says which
+          exchange it was. Two exchanges never quote exactly the same price, so a round that starts on the other exchange
+          can open a little away from where the previous round closed. A market whose main exchange has no fresh price
+          shows the backup's price, marked with its name.
         </p>
         <p>
           After a round settles, its results and their hash are published in an oracle record on Chia. The round's

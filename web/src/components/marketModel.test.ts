@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, marketPool, nextCloseMs, roundPriceInfo, subtitleOf } from "./marketModel";
-import { NOW, catalogue, market, seriesDto } from "./testFixtures";
+import {
+  backupPriceNote,
+  backupPriceOf,
+  backupRoundNote,
+  backupRoundOf,
+  crowdSplitOf,
+  herdSideOf,
+  isOpenMarket,
+  kickoffOf,
+  leadSeries,
+  marketPool,
+  nextCloseMs,
+  oddsMarketPhrase,
+  originPhrase,
+  roundPriceInfo,
+  sourceName,
+  subtitleOf,
+} from "./marketModel";
+import { NOW, catalogue, market, seriesDto, spotCatalogue } from "./testFixtures";
 
 describe("crowdSplitOf", () => {
   it("is the share of the stake on each side, whole percent, summing to 100", () => {
@@ -129,5 +146,104 @@ describe("subtitleOf — a subtitle that repeats its title says only the outcome
     expect(sub("crypto", "Bitcoin", null)).toBeNull();
     expect(sub("sports", "X vs. Y", "   ")).toBeNull();
     expect(sub("sports", "X vs. Y", "Draw")).toBe("Draw");
+  });
+});
+
+describe("sourceName / originPhrase — every source the UI names is named, none is 'Hyperliquid' by default", () => {
+  it("names the five sources as a player knows them", () => {
+    expect(sourceName("coinbase")).toBe("Coinbase");
+    expect(sourceName("kraken")).toBe("Kraken");
+    expect(sourceName("hyperliquid")).toBe("Hyperliquid");
+    expect(sourceName("polymarket")).toBe("Polymarket");
+    expect(sourceName("synthetic")).toBe("Simulated");
+  });
+
+  it("a source this build does not know is printed as the server sent it (capitalised) — never as another source", () => {
+    expect(sourceName("bybit")).toBe("Bybit");
+    expect(sourceName(" okx ")).toBe("Okx");
+    expect(sourceName("constructor")).toBe("Constructor"); // not a lookup into Object.prototype
+    expect(sourceName("toString")).toBe("ToString");
+  });
+
+  it("no name at all is null — a page then claims no source", () => {
+    expect(sourceName(undefined)).toBeNull();
+    expect(sourceName(null)).toBeNull();
+    expect(sourceName("")).toBeNull();
+    expect(sourceName("   ")).toBeNull();
+    expect(originPhrase(undefined)).toBeNull();
+    expect(originPhrase(null)).toBeNull();
+  });
+
+  it("the disclosure phrases: price from an exchange, odds from Polymarket, simulated demo prices", () => {
+    expect(originPhrase("coinbase")).toBe("Price from Coinbase");
+    expect(originPhrase("kraken")).toBe("Price from Kraken");
+    expect(originPhrase("hyperliquid")).toBe("Price from Hyperliquid");
+    expect(originPhrase("polymarket")).toBe("Odds from Polymarket");
+    expect(originPhrase("synthetic")).toBe("Simulated demo prices (no live source)");
+    expect(originPhrase("bybit")).toBe("Price from Bybit");
+  });
+
+  it("an odds tag names whose odds they are only when the market says", () => {
+    expect(oddsMarketPhrase("polymarket")).toBe("A Polymarket odds market");
+    expect(oddsMarketPhrase("synthetic")).toBe("A simulated odds market");
+    expect(oddsMarketPhrase(undefined)).toBe("An odds market");
+  });
+});
+
+describe("backupPriceOf — the shown price is the backup exchange's (MarketPriceDto.venue)", () => {
+  const [, eth, , hype] = spotCatalogue();
+  const [btc] = spotCatalogue();
+
+  it("a venue other than the market's own says which exchange the number is from, and whose it stands in for", () => {
+    expect(backupPriceOf(eth)).toEqual({ name: "Kraken", primaryName: "Coinbase" });
+    expect(backupPriceOf({ source: "hyperliquid", price: { price: "87.235", asOfMs: NOW, change24h: null, stale: false, venue: "coinbase" } })).toEqual({
+      name: "Coinbase",
+      primaryName: "Hyperliquid",
+    });
+  });
+
+  it("the main exchange's price is nothing to mark: a null venue, an absent one, one equal to the market's own source, no price", () => {
+    expect(backupPriceOf(btc)).toBeNull(); // venue: null
+    expect(backupPriceOf(hype)).toBeNull();
+    expect(backupPriceOf(market("X"))).toBeNull(); // an older server sends no venue at all
+    expect(backupPriceOf({ source: "coinbase", price: { price: "1.00", asOfMs: NOW, change24h: null, stale: false, venue: "coinbase" } })).toBeNull();
+    expect(backupPriceOf({ source: "coinbase", price: null })).toBeNull();
+  });
+
+  it("says why in one sentence", () => {
+    expect(backupPriceNote({ name: "Kraken", primaryName: "Coinbase" })).toBe("Coinbase has no fresh price right now, so this is Kraken's — its backup.");
+    expect(backupPriceNote({ name: "Kraken", primaryName: null })).toBe("The main exchange has no fresh price right now, so this is Kraken's — its backup.");
+  });
+});
+
+describe("backupRoundOf — a round that runs on its market's backup exchange (RoundBase.source, Р-76)", () => {
+  const [btc, , , hype] = spotCatalogue();
+
+  it("a round on the backup says which exchange, and which main exchange could not price its start", () => {
+    expect(backupRoundOf({ source: "kraken" }, btc)).toEqual({ name: "Kraken", primaryName: "Coinbase" });
+    expect(backupRoundOf({ source: "coinbase" }, hype)).toEqual({ name: "Coinbase", primaryName: "Hyperliquid" });
+  });
+
+  it("a round on the main exchange says nothing", () => {
+    expect(backupRoundOf({ source: "coinbase" }, btc)).toBeNull();
+    expect(backupRoundOf({ source: "hyperliquid" }, hype)).toBeNull();
+  });
+
+  it("and nothing is said when it cannot be known: no market on the list, a market with no backup, a round naming no or another exchange", () => {
+    expect(backupRoundOf({ source: "kraken" }, undefined)).toBeNull();
+    expect(backupRoundOf({ source: "kraken" }, market("PERP"))).toBeNull(); // a perp has no backup
+    expect(backupRoundOf({}, btc)).toBeNull();
+    expect(backupRoundOf({ source: null }, btc)).toBeNull();
+    expect(backupRoundOf({ source: "polymarket" }, btc)).toBeNull();
+  });
+
+  it("the note is in the tense of the round's phase, and says whose prices they are", () => {
+    const kraken = { name: "Kraken", primaryName: "Coinbase" };
+    expect(backupRoundNote(kraken, "RUNNING")).toBe(
+      "This round runs on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation are Kraken's.",
+    );
+    expect(backupRoundNote(kraken, "SETTLED")).toBe(
+      "This round ran on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation were Kraken's.",
+    );
   });
 });

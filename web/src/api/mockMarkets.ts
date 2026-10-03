@@ -1,12 +1,19 @@
 /**
- * The mock's market catalog (Р-69): 6 categories, 19 markets — the six crypto perps, two stocks,
+ * The mock's market catalog (Р-69): 6 categories, 19 markets — the six crypto markets, two stocks,
  * two indices, two commodities (the `herd.markets.*` defaults of `docs/research/markets_architecture.md`
  * §10) and four politics + three sports `ODDS` markets (Т-10), one of them listed "moments ago" so the
  * no-opening-price state exists (`MOCK_NEW_LISTING_ID`). Static data only; the price paths
  * are `mockPrices.ts`, the round/crowd builders `mockRounds.ts`/`mockCrowdHistory.ts`.
  *
+ * The sources are the ones the server names (Р-74, Р-76, `docs/product/decisions.md`): crypto is priced by the
+ * exchange of the asset itself with a backup exchange behind it — BTC, ETH, SOL, XRP and DOGE on Coinbase with Kraken
+ * behind them, HYPE on Hyperliquid's spot market with Coinbase behind it — stocks, indices and commodities by
+ * Hyperliquid, `ODDS` by Polymarket. The mock never switches to a backup (no `MarketPriceDto.venue`, every round on its
+ * main exchange): there is no exchange here to go silent — `/lab/states` draws those states from fixed data.
+ *
  * Every parameter that the server fixes at listing time (Т-3, Т-4) follows the same rule here:
- * `maxLeverage` is `min(40, Hyperliquid's tier-0 maxLeverage)` for a `PERP` and 10 for an `ODDS`
+ * `maxLeverage` is `min(40, Hyperliquid's tier-0 maxLeverage)` for a `PERP` (the six crypto caps are also the server's
+ * `herd.markets.spot.max-leverage` defaults) and 10 for an `ODDS`
  * market; `priceDecimals` is `2 + lotExp` with `lotExp = clamp(3 − floor(log10(price)), 0, 8)` at
  * the listing price (BTC is fixed at 2, an `ODDS` market at 6). The starting prices and leverage
  * caps are the Hyperliquid values measured 2026-10-01 (`docs/research/hl_multi_asset_live.md` §2.1
@@ -27,6 +34,8 @@ export interface MockMarketSpec {
   subtitle: string | null;
   iconUrl: string | null;
   source: MarketDto["source"];
+  /** The exchange behind `source` for a crypto market (`MarketDto.backupSource`, Р-76); null for every other. */
+  backupSource: MarketDto["backupSource"];
   maxLeverage: number;
   priceDecimals: number;
   /** The level the price path is centred on at {@link SIM_BASE_MS} (its own noise moves it a little): USD for a
@@ -72,6 +81,13 @@ const DAY_ONE = Date.UTC(2026, 0, 1);
 
 type MockMarketBase = Omit<MockMarketSpec, "oracleIndex">;
 
+/** Who prices a `PERP` market and who stands behind it (Р-76): stocks, indices and commodities are Hyperliquid's own
+ *  perpetuals with no backup; the crypto markets are spot markets with a backup exchange. */
+type Venues = Pick<MockMarketBase, "source" | "backupSource">;
+const HYPERLIQUID_PERP: Venues = { source: "hyperliquid", backupSource: null };
+const COINBASE_KRAKEN: Venues = { source: "coinbase", backupSource: "kraken" };
+const HYPERLIQUID_SPOT_COINBASE: Venues = { source: "hyperliquid", backupSource: "coinbase" };
+
 function perp(
   id: MarketId,
   category: CategoryId,
@@ -83,6 +99,7 @@ function perp(
   listedAtMs: EpochMs,
   bots: readonly [number, number],
   priceDecimals = perpPriceDecimals(startPrice),
+  venues: Venues = HYPERLIQUID_PERP,
 ): MockMarketBase {
   return {
     id,
@@ -92,7 +109,7 @@ function perp(
     title,
     subtitle: null,
     iconUrl: null,
-    source: "hyperliquid",
+    ...venues,
     maxLeverage: Math.min(40, hlMaxLeverage),
     priceDecimals,
     startPrice,
@@ -139,6 +156,7 @@ function odds(
     subtitle,
     iconUrl: null,
     source: "polymarket",
+    backupSource: null,
     maxLeverage: ODDS_MAX_LEVERAGE,
     priceDecimals: ODDS_PRICE_DECIMALS,
     startPrice,
@@ -169,13 +187,13 @@ const NEW_LISTING_PRICE_FROM = SIM_BASE_MS - 2 * 60_000;
 
 /** Listing order = the order `markets()` returns them in; the oracle index follows it (BTC is 0, Т-9). */
 const CATALOG: readonly MockMarketBase[] = [
-  // crypto (`herd.markets.crypto` default)
-  perp("BTC", "crypto", "BTC", "Bitcoin", 83_451, 40, 0.0045, DAY_ONE, [12, 32], 2),
-  perp("ETH", "crypto", "ETH", "Ethereum", 2_696.8, 25, 0.007, DAY_ONE, [10, 28]),
-  perp("SOL", "crypto", "SOL", "Solana", 117.84, 20, 0.01, DAY_ONE, [8, 22]),
-  perp("XRP", "crypto", "XRP", "XRP", 1.4964, 20, 0.009, Date.UTC(2026, 1, 15), [6, 18]),
-  perp("DOGE", "crypto", "DOGE", "Dogecoin", 0.094534, 10, 0.012, Date.UTC(2026, 2, 1), [6, 18]),
-  perp("HYPE", "crypto", "HYPE", "Hyperliquid", 87.235, 10, 0.014, Date.UTC(2026, 3, 10), [6, 18]),
+  // crypto (`herd.markets.crypto` default): spot markets with a backup exchange (Р-76)
+  perp("BTC", "crypto", "BTC", "Bitcoin", 83_451, 40, 0.0045, DAY_ONE, [12, 32], 2, COINBASE_KRAKEN),
+  perp("ETH", "crypto", "ETH", "Ethereum", 2_696.8, 25, 0.007, DAY_ONE, [10, 28], undefined, COINBASE_KRAKEN),
+  perp("SOL", "crypto", "SOL", "Solana", 117.84, 20, 0.01, DAY_ONE, [8, 22], undefined, COINBASE_KRAKEN),
+  perp("XRP", "crypto", "XRP", "XRP", 1.4964, 20, 0.009, Date.UTC(2026, 1, 15), [6, 18], undefined, COINBASE_KRAKEN),
+  perp("DOGE", "crypto", "DOGE", "Dogecoin", 0.094534, 10, 0.012, Date.UTC(2026, 2, 1), [6, 18], undefined, COINBASE_KRAKEN),
+  perp("HYPE", "crypto", "HYPE", "Hyperliquid", 87.235, 10, 0.014, Date.UTC(2026, 3, 10), [6, 18], undefined, HYPERLIQUID_SPOT_COINBASE),
   // stocks (`herd.markets.stocks`, dex `xyz`)
   perp("xyz_NVDA", "stocks", "NVDA", "NVIDIA", 231.7, 20, 0.0035, Date.UTC(2026, 5, 1), [6, 16]),
   perp("xyz_TSLA", "stocks", "TSLA", "Tesla", 357.74, 20, 0.0055, Date.UTC(2026, 5, 1), [6, 16]),

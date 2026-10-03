@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiWrapper, fakeApi, serverInfoDto } from "../api/apiTestUtils";
 import type { Api, CancellationDto, MarketDto, Page, PageParams, ServerInfoDto } from "../api/contract";
-import { NOW, catalogue, market, marketsOf } from "../components/testFixtures";
+import { NOW, catalogue, market, marketsOf, spotCatalogue } from "../components/testFixtures";
 import { StatusPage } from "./StatusPage";
 
 const cancel = (roundId: string, cancelledAtMs: number, reason = "No reliable price within an hour", refundedBetCount = 4): CancellationDto => ({
@@ -64,7 +64,9 @@ describe("Status — mode and price source, in plain words", () => {
       expect(within(el).getByText("Live", { selector: "dd" })).toBeInTheDocument();
       return el;
     });
-    expect(card).toHaveTextContent(/Prices\s*Live\.\s*Prices and odds are the sources' own current numbers — perpetual prices from Hyperliquid, odds from Polymarket/);
+    expect(card).toHaveTextContent(
+      /Prices\s*Live\.\s*Prices and odds are the sources' own current numbers — prices from the exchanges themselves \(Coinbase and Hyperliquid, with Kraken and Coinbase as backups\), odds from Polymarket/,
+    );
     expect(card).toHaveTextContent("Every market has two series of rounds: 3 MIN and 15 MIN.");
     expect(card).toHaveTextContent("20 labelled test bots play next to real players");
     expect(card).toHaveTextContent(/marked BOT/);
@@ -180,6 +182,116 @@ describe("Status — every market, its source and how old its price is", () => {
   it("a failing first load of the list is an error with a retry", async () => {
     renderStatus({ methods: { markets: vi.fn(async () => Promise.reject(new Error("down"))) } });
     expect(await within(section("Markets and their prices")).findByRole("alert")).toHaveTextContent("Couldn't load the markets.");
+  });
+});
+
+describe("Status — a crypto market's backup exchange, and the sources behind the prices (Р-76)", () => {
+  const rowsOf = () => Array.from(document.querySelectorAll<HTMLElement>(".status-market"));
+  /** The new catalogue plus a stock and an odds market — every kind of source on one page. */
+  const mixed = () => [...spotCatalogue(), ...catalogue().filter((m) => m.id === "xyz_NVDA" || m.id === "PM900101")];
+
+  it("a market names its own exchange and its backup next to it ('Coinbase · Backup: Kraken · asset #20')", async () => {
+    renderStatus({ markets: spotCatalogue() });
+    await waitFor(() => expect(rowsOf()).toHaveLength(5));
+    const [btc, , doge, hype, legacy] = rowsOf();
+    expect(btc).toHaveTextContent("BTC");
+    expect(btc.querySelector(".status-market__id .faint")).toHaveTextContent("Coinbase · Backup: Kraken · asset #20");
+    expect(doge.querySelector(".status-market__id .faint")).toHaveTextContent("Coinbase · Backup: Kraken · asset #22");
+    expect(hype.querySelector(".status-market__id .faint")).toHaveTextContent("Hyperliquid · Backup: Coinbase · asset #23");
+    // the legacy perpetual names no backup — it has none — and says no such thing
+    expect(legacy.querySelector(".status-market__id .faint")).toHaveTextContent(/^Hyperliquid · asset #0$/);
+  });
+
+  it("a price that is the backup's says so on its row — Coinbase has no fresh price, the number is Kraken's", async () => {
+    renderStatus({ markets: spotCatalogue() });
+    await waitFor(() => expect(rowsOf()).toHaveLength(5));
+    const [btc, eth] = rowsOf();
+    expect(eth.querySelector(".status-market__venue")).toHaveTextContent("Showing Kraken's price");
+    expect(eth).toHaveTextContent("$2,696.80");
+    expect(btc.querySelector(".status-market__venue")).toBeNull();
+    expect(document.querySelectorAll(".status-market__venue")).toHaveLength(1);
+  });
+
+  it("a closed market's row (the legacy BTC the new market replaced) says closed, and why in the server's own words — and marks no price", async () => {
+    renderStatus({ markets: spotCatalogue() });
+    await waitFor(() => expect(rowsOf()).toHaveLength(5));
+    const legacy = rowsOf()[4];
+    expect(legacy.querySelector(".status-chip")).toHaveTextContent("Closed");
+    expect(legacy.querySelector(".status-market__reason")).toHaveTextContent("Moved to a new price source: Coinbase");
+    expect(legacy.querySelector(".status-market__venue")).toBeNull();
+    // an open market says no reason: it has none
+    expect(rowsOf()[0].querySelector(".status-market__reason")).toBeNull();
+  });
+
+  it("a closed market the server gave no reason for says none — nothing made up", async () => {
+    renderStatus({ markets: [market("OLD", { symbol: "OLD", status: "CLOSED" })] });
+    await waitFor(() => expect(rowsOf()).toHaveLength(1));
+    expect(rowsOf()[0].querySelector(".status-market__reason")).toBeNull();
+  });
+
+  it("one row per source: the exchanges first, each with what it is the main source of, what it backs, and how its prices are doing", async () => {
+    renderStatus({ markets: mixed() });
+    const list = await screen.findByRole("list", { name: "Sources behind the prices" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows.map((r) => r.querySelector("strong")?.textContent)).toEqual(["Coinbase", "Kraken", "Hyperliquid", "Polymarket"]);
+    const [coinbase, kraken, hyperliquid, polymarket] = rows;
+    expect(coinbase).toHaveTextContent("Main source of BTC, ETH, DOGE");
+    expect(coinbase).toHaveTextContent("Backup for HYPE");
+    expect(coinbase).toHaveTextContent("3 live");
+    expect(kraken).toHaveTextContent("Backup for BTC, ETH, DOGE");
+    expect(kraken).not.toHaveTextContent("Main source of");
+    expect(kraken.querySelector(".status-chip")).toBeNull(); // no market of its own: nothing to count
+    expect(hyperliquid).toHaveTextContent("Main source of HYPE, NVDA");
+    expect(hyperliquid).toHaveTextContent("1 live");
+    expect(hyperliquid).toHaveTextContent("1 stale"); // NVDA's price is old
+    expect(polymarket).toHaveTextContent("Main source of RUNOFF");
+  });
+
+  it("the backup whose price is on screen now says so: its main exchange has no fresh price", async () => {
+    renderStatus({ markets: mixed() });
+    const list = await screen.findByRole("list", { name: "Sources behind the prices" });
+    const [, kraken, , polymarket] = within(list).getAllByRole("listitem");
+    expect(kraken).toHaveTextContent("Its price is shown now for ETH: the main exchange has no fresh price");
+    expect(polymarket).not.toHaveTextContent("shown now");
+  });
+
+  it("a stale main source and one with no price yet are said in words, not only in colour", async () => {
+    const markets = [
+      market("spot_SOL", { source: "coinbase", backupSource: "kraken", price: { price: "117.84", asOfMs: NOW - 99_000, change24h: 0, stale: true } }),
+      market("spot_XRP", { source: "coinbase", backupSource: "kraken", price: null }),
+    ];
+    renderStatus({ markets });
+    const list = await screen.findByRole("list", { name: "Sources behind the prices" });
+    const [coinbase] = within(list).getAllByRole("listitem");
+    expect(coinbase.querySelector(".status-chip--stale")).toHaveTextContent("1 stale");
+    expect(coinbase).toHaveTextContent("1 no price yet");
+  });
+
+  it("says what a backup means: a round runs on one exchange — only when some market has one", async () => {
+    renderStatus({ markets: spotCatalogue() });
+    expect(await screen.findByText(/A crypto market has a backup exchange\. A round runs entirely on one exchange, chosen when it starts/)).toBeInTheDocument();
+    expect(screen.getByText(/its open, its close and every liquidation come from that exchange alone/)).toBeInTheDocument();
+  });
+
+  it("no market with a backup, no word about backups — an odds-only page makes no claim about exchanges", async () => {
+    renderStatus({ markets: catalogue().filter((m) => m.kind === "ODDS") });
+    await screen.findByText(/^\d+ markets?/);
+    const markets = section("Markets and their prices");
+    expect(markets.textContent).not.toMatch(/backup/i);
+    expect(within(markets).getByRole("list", { name: "Sources behind the prices" })).toHaveTextContent("Polymarket");
+  });
+
+  it("an empty list shows no sources list", async () => {
+    renderStatus({ markets: [] });
+    await screen.findByText("No market is listed right now.");
+    expect(screen.queryByRole("list", { name: "Sources behind the prices" })).not.toBeInTheDocument();
+  });
+
+  it("a market of a source this build does not know is named as the server sent it — never as Hyperliquid", async () => {
+    renderStatus({ markets: [market("X1", { symbol: "X1", source: "bybit" as never, oracleIndex: 3 })] });
+    await waitFor(() => expect(rowsOf()).toHaveLength(1));
+    expect(rowsOf()[0].querySelector(".status-market__id .faint")).toHaveTextContent("Bybit · asset #3");
+    expect(section("Markets and their prices").textContent).not.toMatch(/Hyperliquid/);
   });
 });
 

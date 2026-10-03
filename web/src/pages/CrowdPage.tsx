@@ -141,7 +141,7 @@ function Overview({ overview, onPick }: { overview: CrowdOverviewDto; onPick: (m
 
 /** What the account below needs to know of its market: for a market still on the list that is the `MarketDto`;
  *  for one that has left it, the few facts the overview row carries (`source` unknown: no oracle line then). */
-type AccountMarket = Pick<MarketDto, "id" | "symbol" | "iconUrl" | "status"> & Partial<Pick<MarketDto, "source" | "title">>;
+type AccountMarket = Pick<MarketDto, "id" | "symbol" | "iconUrl" | "status"> & Partial<Pick<MarketDto, "source" | "backupSource" | "title">>;
 
 function CrowdAccount({ market }: { market: AccountMarket }) {
   const api = useApi();
@@ -203,7 +203,7 @@ function CrowdAccount({ market }: { market: AccountMarket }) {
       </div>
       <LazyCrowdChart history={crowd.history} variant="full" symbol={market.symbol} />
       {updatedAt !== null && <p className="faint">{formatUpdatedAtUtc(updatedAt)}</p>}
-      {market.source && <OracleDisclosureLine source={market.source} />}
+      {market.source && <OracleDisclosureLine source={market.source} backup={market.backupSource} />}
       <OracleStatusLine />
       <h2>Season returns</h2>
       <table className="data-table data-table--responsive">

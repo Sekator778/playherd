@@ -10,7 +10,7 @@
  * wiggles like a real price at every zoom and costs a handful of knot lookups per evaluation.
  * `ODDS` markets (probabilities, Т-2) live in logit space with bounded octaves, so a price can never
  * leave 0.10–0.90 for the starting levels in the catalog. Numbers are demo-grade, not calibrated
- * to any real feed; nothing here is a Hyperliquid or Polymarket reading.
+ * to any real feed; nothing here is a Coinbase, Kraken, Hyperliquid or Polymarket reading.
  *
  * A round's extremes (the liquidation check, Р-7) are the lowest/highest price on a fixed grid
  * inside the window (every simulated minute for an hourly round, every 15 minutes for a daily one)

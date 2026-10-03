@@ -82,7 +82,8 @@ describe("markets() — the lobby in one call", () => {
         oracleIndex: spec.oracleIndex,
         closedAtMs: null,
         closeReason: null,
-        source: spec.kind === "ODDS" ? "polymarket" : "hyperliquid",
+        source: spec.source,
+        backupSource: spec.backupSource,
         status: "ACTIVE",
       });
       expect(m.price).not.toBeNull();
@@ -109,6 +110,31 @@ describe("markets() — the lobby in one call", () => {
         expect(Number(s.upStake) + Number(s.downStake)).toBeGreaterThanOrEqual(0);
       }
     }
+  });
+
+  it("the sources are the server's (Р-76): crypto on an exchange with a backup behind it, stocks, indices and commodities on Hyperliquid, odds on Polymarket", async () => {
+    const { markets } = await mockApi.markets();
+    const sources = Object.fromEntries(markets.map((m) => [m.id, [m.source, m.backupSource ?? null]]));
+    expect(sources).toMatchObject({
+      BTC: ["coinbase", "kraken"],
+      ETH: ["coinbase", "kraken"],
+      SOL: ["coinbase", "kraken"],
+      XRP: ["coinbase", "kraken"],
+      DOGE: ["coinbase", "kraken"],
+      HYPE: ["hyperliquid", "coinbase"],
+      xyz_NVDA: ["hyperliquid", null],
+      xyz_GOLD: ["hyperliquid", null],
+      PM900101: ["polymarket", null],
+    });
+    // no market lists itself as its own backup
+    for (const m of markets) expect(m.backupSource ?? null).not.toBe(m.source);
+  });
+
+  it("the mock never goes to a backup: no price names another exchange, and the leverage caps are the server's spot defaults", async () => {
+    const { markets } = await mockApi.markets();
+    for (const m of markets) expect(m.price?.venue ?? null, m.id).toBeNull();
+    const caps = Object.fromEntries(markets.filter((m) => m.category === "crypto").map((m) => [m.id, m.maxLeverage]));
+    expect(caps).toEqual({ BTC: 40, ETH: 25, SOL: 20, XRP: 20, DOGE: 10, HYPE: 10 }); // herd.markets.spot.max-leverage
   });
 
   it("each market has its own bots, so the crowds differ (Т-8)", async () => {

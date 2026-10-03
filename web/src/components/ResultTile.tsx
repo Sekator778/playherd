@@ -1,8 +1,9 @@
 import { Link } from "react-router-dom";
-import type { Direction, RoundId } from "../api/contract";
+import type { Direction, MarketDto, RoundId } from "../api/contract";
 import { outcomeFromNet } from "../api/outcome";
 import { formatPlayAmount } from "../format";
 import { CrackIcon, DirectionGlyph, MinusDiscIcon, TrophyIcon } from "./icons";
+import { oddsMarketPhrase } from "./marketModel";
 
 /**
  * A settled round as one result tile — icon + signed net + context, never a table row with the
@@ -37,6 +38,7 @@ export function ResultTile({
   liquidated,
   dateLabel,
   odds = false,
+  source,
 }: {
   roundId: RoundId;
   /** The market's ticker ("BTC", "NVDA", "GER") — which market the round was played in (Р-69). */
@@ -55,6 +57,9 @@ export function ResultTile({
   /** The round was in an `ODDS` market (`ProfileRoundEntryDto.kind`): the tile says so — the result is about how the
    *  odds moved, not about who won. */
   odds?: boolean;
+  /** The market's source, when its market is still on the list (a history row carries none): the tag's hover text names
+   *  whose odds they are only then — an unknown source is not called "Polymarket". */
+  source?: MarketDto["source"];
 }) {
   const kind = resultKind(net, liquidated);
   return (
@@ -75,7 +80,7 @@ export function ResultTile({
               {odds && (
                 <>
                   {" "}
-                  <span className="mk-tag mk-tag--odds" title="A Polymarket odds market: the result is how the odds moved">
+                  <span className="mk-tag mk-tag--odds" title={`${oddsMarketPhrase(source)}: the result is how the odds moved`}>
                     ODDS
                   </span>
                 </>

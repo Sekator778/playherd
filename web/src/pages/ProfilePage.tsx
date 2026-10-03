@@ -159,6 +159,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
               liquidated={h.liquidated}
               dateLabel={formatDateTimeUtc(h.settledAtMs)}
               odds={(h.kind ?? byId.get(h.marketId)?.kind) === "ODDS"}
+              source={byId.get(h.marketId)?.source}
             />
           ))}
         </div>

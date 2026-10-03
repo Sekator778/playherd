@@ -129,7 +129,7 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const CANCELLED_WINDOW = windowFor("HOURLY", Date.UTC(2026, 8, 24, 9, 0, 0));
 const CANCELLED_ROUND_ID = roundIdForWindow(MOCK_BTC.id, CANCELLED_WINDOW);
 const CANCELLED_REASON =
-  "Automatic cancellation: no reliable Hyperliquid price could be read within 1 hour of this round's close, so it could not be settled (Р-23). All bets were refunded.";
+  "Automatic cancellation: no reliable Coinbase price could be read within 1 hour of this round's close, so it could not be settled (Р-23). All bets were refunded.";
 const CANCELLED_AT_MS = CANCELLED_WINDOW.endMs + 55 * 60 * 1000;
 const CANCELLED_REFUNDED_COUNT = 19;
 
@@ -364,6 +364,7 @@ class MockApi implements Api {
       closeReason: closed ? spec.closeReason : null,
       oracleIndex: spec.oracleIndex,
       source: spec.source,
+      backupSource: spec.backupSource,
       price: hasMockPrice(spec, priceAtMs)
         ? {
             price: priceStrAt(spec, priceAtMs),

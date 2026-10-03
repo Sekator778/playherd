@@ -129,7 +129,10 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     renderApp("/stats");
     expect(await screen.findByRole("heading", { name: "Crowd account vs the market" })).toBeInTheDocument();
     expect(await screen.findByLabelText("Market")).toHaveValue("BTC");
-    expect(await screen.findByText(/Price from Hyperliquid/)).toBeInTheDocument();
+    // BTC is priced by Coinbase now, with Kraken behind it (Р-76) — the mock's catalogue says what the server's does
+    const line = await screen.findByText(/Price from Coinbase/);
+    expect(line).toHaveTextContent(/Backup: Kraken/);
+    expect(line).not.toHaveTextContent(/Hyperliquid/);
   });
 
   it("Stats opens on the market in ?m=", async () => {

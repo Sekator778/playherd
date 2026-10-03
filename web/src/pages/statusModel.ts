@@ -1,11 +1,15 @@
 /**
  * What the public Status page (`StatusPage.tsx`) says, as pure functions over the DTOs: where prices come from in
- * plain words, how old each market's price is and whether it counts as stale, the oracle's balance in TXCH, and
- * how a "load older" page of the cancellations log is asked for. No React here, so every sentence has a test.
+ * plain words, which exchange (or Polymarket) is behind which markets, how old each market's price is and whether it
+ * counts as stale, the oracle's balance in TXCH, and how a "load older" page of the cancellations log is asked for. No
+ * React here, so every sentence has a test.
  */
 import type { CancellationDto, MarketDto, PageParams, ServerInfoDto } from "../api/contract";
 import { mergeNewestFirst, nextPageParams, type PageOps } from "../api/paging";
+import { sourceName, type SourceId } from "../components/marketModel";
 import { formatDuration } from "../format";
+
+export { sourceName };
 
 export type PriceSourceKind = "live" | "synthetic" | "replay";
 
@@ -36,7 +40,7 @@ export function describePriceSource(info: Pick<ServerInfoDto, "mode" | "priceSou
         kind,
         title: "Live",
         detail:
-          "Prices and odds are the sources' own current numbers — perpetual prices from Hyperliquid, odds from Polymarket — read by our server every few seconds. Rounds open and settle on them.",
+          "Prices and odds are the sources' own current numbers — prices from the exchanges themselves (Coinbase and Hyperliquid, with Kraken and Coinbase as backups), odds from Polymarket — read by our server every few seconds. Rounds open and settle on them.",
       };
     case "synthetic":
       return {
@@ -122,9 +126,74 @@ export function summarizeMarkets(markets: readonly MarketDto[], nowMs: number): 
   return summary;
 }
 
-/** The source's name as a player knows it. */
-export function sourceName(source: MarketDto["source"]): string {
-  return source === "polymarket" ? "Polymarket" : source === "synthetic" ? "Simulated" : "Hyperliquid";
+/** The order the sources are listed in: the exchanges that price crypto first, then the odds source, then the simulation. */
+const SOURCE_ORDER: readonly SourceId[] = ["coinbase", "kraken", "hyperliquid", "polymarket", "synthetic"];
+
+/**
+ * One source on the Status page — an exchange, Polymarket or the simulation — as the open markets say it. The public
+ * API has no list of price feeds (the operator's `/api/admin/status` has, behind a key), so what the page can tell of a
+ * source is what its markets show: which it is the main source of, which it stands behind as a backup (Р-76), whose
+ * shown price is its own although it is only their backup (the main exchange has no fresh price), and how the prices
+ * of its main markets are doing.
+ */
+export interface SourceSummary {
+  source: SourceId;
+  /** "Coinbase", "Kraken", "Hyperliquid", "Polymarket" — as a player knows it. */
+  name: string;
+  /** Open markets it is the main source of (`MarketDto.source`), in listing order. */
+  main: MarketDto[];
+  /** Open markets it is the backup of (`MarketDto.backupSource`). */
+  backupFor: MarketDto[];
+  /** Open markets that show this source's price now although it is only their backup (`MarketPriceDto.venue`). */
+  shownFor: MarketDto[];
+  /** The prices of its `main` markets, counted like the markets summary does: live, stale, no price yet. */
+  fresh: number;
+  stale: number;
+  noPrice: number;
+}
+
+/** The sources behind the open markets, each with its markets (closed ones are not served by anyone any more). Exchanges
+ *  first, as {@link SOURCE_ORDER} has them; a source this build does not know follows, in the order the list names it. */
+export function summarizeSources(markets: readonly MarketDto[], nowMs: number): SourceSummary[] {
+  const bySource = new Map<SourceId, SourceSummary>();
+  const entry = (source: SourceId): SourceSummary | null => {
+    const name = sourceName(source);
+    if (name === null) return null;
+    let summary = bySource.get(source);
+    if (!summary) {
+      summary = { source, name, main: [], backupFor: [], shownFor: [], fresh: 0, stale: 0, noPrice: 0 };
+      bySource.set(source, summary);
+    }
+    return summary;
+  };
+  for (const market of markets) {
+    if (market.status !== "ACTIVE") continue;
+    const main = entry(market.source);
+    if (main) {
+      main.main.push(market);
+      const kind = freshnessOf(market, nowMs).kind;
+      if (kind === "fresh") main.fresh += 1;
+      else if (kind === "stale") main.stale += 1;
+      else main.noPrice += 1;
+    }
+    const backup = market.backupSource ? entry(market.backupSource) : null;
+    if (backup) {
+      backup.backupFor.push(market);
+      const venue = market.price?.venue;
+      if (venue && venue === market.backupSource) backup.shownFor.push(market);
+    }
+  }
+  const rank = (source: SourceId) => {
+    const at = SOURCE_ORDER.indexOf(source);
+    return at < 0 ? SOURCE_ORDER.length : at;
+  };
+  return [...bySource.values()].sort((a, b) => rank(a.source) - rank(b.source));
+}
+
+/** A list of market tickers for a sentence: the tickers themselves while they are few, else how many ("7 markets"). */
+export function marketsList(markets: readonly Pick<MarketDto, "symbol">[], max = 6): string {
+  if (markets.length <= max) return markets.map((m) => m.symbol).join(", ");
+  return `${markets.length} markets`;
 }
 
 const MOJOS_PER_COIN = 1_000_000_000_000n;

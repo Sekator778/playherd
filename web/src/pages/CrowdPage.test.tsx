@@ -4,7 +4,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiWrapper, fakeApi } from "../api/apiTestUtils";
 import type { CrowdAccountDto, CrowdOverviewDto } from "../api/contract";
-import { catalogue, marketsOf } from "../components/testFixtures";
+import { catalogue, marketsOf, spotCatalogue } from "../components/testFixtures";
 import { CrowdPage } from "./CrowdPage";
 
 const MARKETS = catalogue();
@@ -125,6 +125,27 @@ describe("Stats → Crowd — the market selector (S4)", () => {
     expect(await screen.findByText(/Price from Hyperliquid, published by our team's key/)).toBeInTheDocument();
     await user.selectOptions(await screen.findByLabelText("Market"), "PM900104");
     expect(await screen.findByText(/Odds from Polymarket, published by our team's key/)).toBeInTheDocument();
+  });
+
+  it("a crypto market names its exchange and its backup in the oracle line (Р-76) — a perp or odds market names no backup", async () => {
+    const user = userEvent.setup();
+    const spot = [...spotCatalogue(), ...MARKETS.filter((m) => m.id === "PM900104")];
+    const api = fakeApi({
+      markets: vi.fn(async () => marketsOf(spot)),
+      crowdAccount: vi.fn(async (id: string = "spot_BTC") => ({ ...accountOf("BTC"), marketId: id })),
+      crowdOverview: vi.fn(async () => ({ ...OVERVIEW, markets: [row("spot_BTC", "BTC", 0.02), row("PM900104", "GER", 0.012, 6)] })),
+    });
+    render(
+      <MemoryRouter initialEntries={["/stats?m=spot_BTC"]}>
+        <CrowdPage />
+      </MemoryRouter>,
+      { wrapper: apiWrapper(api) },
+    );
+    const line = await screen.findByText(/^Price from Coinbase, published by our team's key/);
+    expect(line).toHaveTextContent("Backup: Kraken, used for a round only if Coinbase has no price when it starts.");
+    await user.selectOptions(await screen.findByLabelText("Market"), "PM900104");
+    expect(await screen.findByText(/Odds from Polymarket, published by our team's key/)).toBeInTheDocument();
+    expect(screen.queryByText(/Backup:/)).not.toBeInTheDocument();
   });
 });
 

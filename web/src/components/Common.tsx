@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { useApi } from "../api/ApiContext";
 import type { MarketDto, RoundPhase, ServerInfoDto } from "../api/contract";
 import { formatCountdown } from "../format";
+import { backupRoundNote, backupRoundOf, originPhrase, sourceName } from "./marketModel";
 
 export function DemoBanner() {
   return (
@@ -136,22 +137,50 @@ export function OracleStatusLine() {
 }
 
 /** Р-33/§2 ("Про управляемый оракул"): shown wherever the outcome depends on the oracle. The first half names where the
- *  number really comes from — a Polymarket odds market is not "a price from Hyperliquid" (Р-69); the second half is the
+ *  number really comes from — "Price from Coinbase", "Price from Kraken", "Price from Hyperliquid", "Odds from
+ *  Polymarket" (`originPhrase`); a Polymarket odds market is not "a price from Hyperliquid" (Р-69); the second half is the
  *  same for every source: it is OUR key that publishes it. A caller that does not know the source passes none and the
  *  line says nothing about it — it never assumes one (a round of a market that has left `markets()` once claimed
- *  "Price from Hyperliquid" for an odds round). */
-export function OracleDisclosureLine({ source }: { source?: MarketDto["source"] }) {
-  const origin =
-    source === "polymarket"
-      ? "Odds from Polymarket"
-      : source === "synthetic"
-        ? "Simulated demo prices (no live source)"
-        : source === "hyperliquid"
-          ? "Price from Hyperliquid"
-          : null;
+ *  "Price from Hyperliquid" for an odds round). A market that has a backup exchange (Р-76) says so after it: which one,
+ *  and that a round runs on it only when the main exchange has no price at the round's start. */
+export function OracleDisclosureLine({ source, backup }: { source?: MarketDto["source"]; backup?: MarketDto["backupSource"] }) {
+  const origin = originPhrase(source);
+  const backupLabel = sourceName(backup);
   return (
     <p className="disclaimer-line">
       {origin ? `${origin}, published by our team's key` : "Published by our team's key"} — not a decentralized oracle.
+      {backupLabel && (
+        <>
+          {" "}
+          <span className="disclaimer-line__backup">
+            Backup: {backupLabel}, used for a round only if {sourceName(source) ?? "the main exchange"} has no price when it starts.
+          </span>
+        </>
+      )}
+    </p>
+  );
+}
+
+/**
+ * A round that runs (or ran) on its market's backup exchange says so (Р-76: a round runs entirely on one exchange,
+ * chosen when it starts), where the page prints its prices — a quiet boxed note, nothing is wrong. Nothing for a round on
+ * the main exchange, nor when the market (which says which exchange is the main one) is not on the list.
+ */
+export function RoundVenueNote({
+  source,
+  market,
+  phase,
+}: {
+  /** `RoundBase.source`: the exchange the round runs on. */
+  source: MarketDto["source"] | undefined;
+  market: Pick<MarketDto, "source" | "backupSource"> | undefined;
+  phase: "RUNNING" | "SETTLED";
+}) {
+  const backup = backupRoundOf({ source }, market);
+  if (!backup) return null;
+  return (
+    <p className="venue-note" role="note">
+      {backupRoundNote(backup, phase)}
     </p>
   );
 }

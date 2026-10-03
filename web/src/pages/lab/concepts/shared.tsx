@@ -6,6 +6,7 @@
  */
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
+import { originPhrase } from "../../../components/marketModel";
 import { publish } from "../../../fx/resultEventBus";
 import type { ResultEvent, ResultKind, Tier } from "../../../fx/resultEvent";
 
@@ -78,9 +79,9 @@ export function useFireFromQuery(roundId: string): void {
 }
 
 /** The one honest line every concept's room repeats verbatim next to the price (Р-33/`ux_spec.md`
- *  §2) — copied text, not a new disclosure. */
+ *  §2) — the room's own line for the prototype's BTC market (priced by Coinbase now, Р-76), not a new disclosure. */
 export function OracleLine() {
-  return <p className="concept-oracle-line">Price from Hyperliquid, published by our team's key — not a decentralized oracle.</p>;
+  return <p className="concept-oracle-line">{originPhrase("coinbase")}, published by our team's key — not a decentralized oracle.</p>;
 }
 
 export function fmtStake(n: number): string {

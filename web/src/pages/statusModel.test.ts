@@ -1,18 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { CancellationDto } from "../api/contract";
-import { market } from "../components/testFixtures";
+import { NOW as FIXTURE_NOW, catalogue, market, spotCatalogue } from "../components/testFixtures";
 import {
   ageText,
   betsCount,
   describePriceSource,
   formatOperatorBalance,
   freshnessOf,
+  marketsList,
   mergeCancellations,
   nextCancellationsParams,
   priceSourceOf,
   roundLengthsOf,
   sourceName,
   summarizeMarkets,
+  summarizeSources,
   verifierCommand,
 } from "./statusModel";
 
@@ -24,11 +26,14 @@ describe("where prices come from, in plain words", () => {
     expect(priceSourceOf({ mode: "live", priceSource: "replay" })).toBe("replay");
   });
 
-  it("live: names Hyperliquid and Polymarket, and says rounds settle on them", () => {
+  it("live: names every source the prices and odds come from — the exchanges, the backup, Polymarket — and says rounds settle on them", () => {
     const live = describePriceSource({ mode: "live", priceSource: "live" });
     expect(live.title).toBe("Live");
+    expect(live.detail).toMatch(/Coinbase/);
     expect(live.detail).toMatch(/Hyperliquid/);
-    expect(live.detail).toMatch(/Polymarket/);
+    expect(live.detail).toMatch(/Kraken and Coinbase as backups/);
+    expect(live.detail).toMatch(/Kraken/);
+    expect(live.detail).toMatch(/odds from Polymarket/);
     expect(live.detail).toMatch(/settle on them/);
   });
 
@@ -96,11 +101,66 @@ describe("summarizeMarkets", () => {
   });
 });
 
+describe("summarizeSources — which exchange is behind which market, from the open markets themselves", () => {
+  const ids = (markets: Array<{ id: string }>) => markets.map((m) => m.id);
+
+  it("the exchanges first (Coinbase, Kraken, Hyperliquid), then Polymarket — each with the markets it prices and the ones it backs", () => {
+    const sources = summarizeSources([...spotCatalogue(), ...catalogue().filter((m) => m.id === "PM900101" || m.id === "xyz_NVDA")], FIXTURE_NOW);
+    expect(sources.map((s) => s.name)).toEqual(["Coinbase", "Kraken", "Hyperliquid", "Polymarket"]);
+    const [coinbase, kraken, hyperliquid, polymarket] = sources;
+    expect(ids(coinbase.main)).toEqual(["spot_BTC", "spot_ETH", "spot_DOGE"]);
+    expect(ids(coinbase.backupFor)).toEqual(["spot_HYPE"]); // Coinbase stands behind Hyperliquid's spot market
+    expect(ids(kraken.main)).toEqual([]);
+    expect(ids(kraken.backupFor)).toEqual(["spot_BTC", "spot_ETH", "spot_DOGE"]);
+    expect(ids(hyperliquid.main)).toEqual(["spot_HYPE", "xyz_NVDA"]); // the closed legacy BTC perpetual is not served by anyone any more
+    expect(ids(hyperliquid.backupFor)).toEqual([]);
+    expect(ids(polymarket.main)).toEqual(["PM900101"]);
+  });
+
+  it("the backup whose price is on screen now is said — only where the shown price is its own (MarketPriceDto.venue)", () => {
+    const [coinbase, kraken] = summarizeSources(spotCatalogue(), FIXTURE_NOW);
+    expect(ids(kraken.shownFor)).toEqual(["spot_ETH"]); // spot_ETH's price is Kraken's; the others' are Coinbase's own
+    expect(ids(coinbase.shownFor)).toEqual([]);
+  });
+
+  it("how the main markets' prices are doing: live, stale, no price yet — counted once each", () => {
+    const stale = market("spot_SOL", { source: "coinbase", backupSource: "kraken", price: { price: "117.84", asOfMs: FIXTURE_NOW - 99_000, change24h: 0, stale: true } });
+    const waiting = market("spot_XRP", { source: "coinbase", backupSource: "kraken", price: null });
+    const [coinbase] = summarizeSources([...spotCatalogue(), stale, waiting], FIXTURE_NOW);
+    expect(coinbase).toMatchObject({ fresh: 3, stale: 1, noPrice: 1 });
+    expect(coinbase.fresh + coinbase.stale + coinbase.noPrice).toBe(coinbase.main.length);
+  });
+
+  it("a closed market is served by no one; no markets, no sources", () => {
+    const closed = market("old", { status: "CLOSED", source: "coinbase", backupSource: "kraken" });
+    expect(summarizeSources([closed], FIXTURE_NOW)).toEqual([]);
+    expect(summarizeSources([], FIXTURE_NOW)).toEqual([]);
+  });
+
+  it("a source this build does not know is listed after the known ones, under the name the server sent", () => {
+    const odd = market("X1", { source: "bybit" as never });
+    const sources = summarizeSources([odd, ...spotCatalogue()], FIXTURE_NOW);
+    expect(sources.map((s) => s.name)).toEqual(["Coinbase", "Kraken", "Hyperliquid", "Bybit"]);
+  });
+});
+
 describe("small wordings", () => {
-  it("names the source as a player knows it", () => {
+  it("names the source as a player knows it — every one, and none by default as Hyperliquid", () => {
+    expect(sourceName("coinbase")).toBe("Coinbase");
+    expect(sourceName("kraken")).toBe("Kraken");
     expect(sourceName("hyperliquid")).toBe("Hyperliquid");
     expect(sourceName("polymarket")).toBe("Polymarket");
     expect(sourceName("synthetic")).toBe("Simulated");
+    expect(sourceName("bybit")).toBe("Bybit"); // a newer server's exchange: as sent, not 'Hyperliquid'
+  });
+
+  it("a list of tickers while they are few, how many once they are not", () => {
+    const m = (symbol: string) => ({ symbol });
+    expect(marketsList([m("BTC"), m("ETH"), m("SOL")])).toBe("BTC, ETH, SOL");
+    expect(marketsList([m("A"), m("B"), m("C"), m("D"), m("E"), m("F")])).toBe("A, B, C, D, E, F");
+    expect(marketsList([m("A"), m("B"), m("C"), m("D"), m("E"), m("F"), m("G")])).toBe("7 markets");
+    expect(marketsList([m("A"), m("B"), m("C")], 2)).toBe("3 markets");
+    expect(marketsList([])).toBe("");
   });
 
   it("one bet / several bets", () => {

@@ -7,7 +7,11 @@
  *
  * Four sections, each with its own loading / empty / error state so one failing source never blanks the page:
  * - mode and price source (`serverInfo()`: `mode`, `priceSource`, `replay`, `bots`, `roundDurationsSec`, `engineReady`);
- * - the markets, one row each: source, last price, how old it is, stale / no price / closed (`markets()`);
+ * - the markets, one row each: source (and the backup exchange of a crypto market, Р-76), last price — marked when it is
+ *   the backup's — how old it is, stale / no price / closed (`markets()`); above them one row per source (Coinbase,
+ *   Kraken, Hyperliquid, Polymarket): the markets it is the main source of and the backup for, how its prices are doing.
+ *   The public API has no list of price feeds (`/api/admin/status` has one, behind the operator's key), so the rows are
+ *   what the markets themselves say — a stream's connected / silent / REST state is not shown;
  * - the oracle (`serverInfo().oracle`): network, launcher id, last confirmed record, records waiting, the
  *   lowest record this database knows, the operator's balance — and how to check it yourself;
  * - the cancellations log (`cancellations()`, paged): which market, when, why, how many bets were refunded. A refresh
@@ -26,6 +30,7 @@ import { usePoll } from "../api/usePoll";
 import { useServerInfo } from "../api/useServerInfo";
 import { CopyButton, ErrorState, Skeleton } from "../components/Common";
 import { MarketIcon } from "../components/MarketIcon";
+import { backupPriceOf } from "../components/marketModel";
 import { useServerNow } from "../components/useServerNow";
 import { formatDateTimeUtc, formatPrice } from "../format";
 import {
@@ -36,10 +41,13 @@ import {
   describePriceSource,
   formatOperatorBalance,
   freshnessOf,
+  marketsList,
   roundLengthsOf,
   sourceName,
   summarizeMarkets,
+  summarizeSources,
   verifierCommand,
+  type SourceSummary,
 } from "./statusModel";
 import "./StatusPage.css";
 
@@ -119,10 +127,34 @@ function ServerSection() {
 // Markets
 // ---------------------------------------------------------------------------
 
+/** One source of the prices: the exchange (or Polymarket) with the markets it is the main source of and the ones it stands
+ *  behind as a backup, and how its own prices are doing — a word beside every colour, like the market rows below. */
+function SourceRow({ source }: { source: SourceSummary }) {
+  return (
+    <li className="status-source">
+      <div className="status-source__id">
+        <strong>{source.name}</strong>
+        {source.main.length > 0 && <span className="faint">Main source of {marketsList(source.main)}</span>}
+        {source.backupFor.length > 0 && <span className="faint">Backup for {marketsList(source.backupFor)}</span>}
+        {source.shownFor.length > 0 && (
+          <span className="status-source__shown">Its price is shown now for {marketsList(source.shownFor)}: the main exchange has no fresh price</span>
+        )}
+      </div>
+      <div className="status-source__state">
+        {source.fresh > 0 && <span className="status-chip status-chip--fresh">{source.fresh} live</span>}
+        {source.stale > 0 && <span className="status-chip status-chip--stale">{source.stale} stale</span>}
+        {source.noPrice > 0 && <span className="status-chip status-chip--none">{source.noPrice} no price yet</span>}
+      </div>
+    </li>
+  );
+}
+
 function MarketsSection() {
   const { markets, loading, error, refresh } = useMarkets();
   const nowMs = useServerNow(1000);
   const summary = summarizeMarkets(markets, nowMs);
+  const sources = summarizeSources(markets, nowMs);
+  const hasBackups = markets.some((m) => m.status === "ACTIVE" && !!m.backupSource);
   return (
     <section className="card status-card" aria-labelledby="status-markets-title">
       <h2 id="status-markets-title" className="section-title">
@@ -147,9 +179,18 @@ function MarketsSection() {
               Can't reach the server — these are the last prices we got; the ages below keep counting.
             </p>
           )}
+          {sources.length > 0 && (
+            <ul className="status-sources" aria-label="Sources behind the prices">
+              {sources.map((source) => (
+                <SourceRow key={source.source} source={source} />
+              ))}
+            </ul>
+          )}
           <ul className="status-markets">
             {markets.map((market) => {
               const fresh = freshnessOf(market, nowMs);
+              const backupName = sourceName(market.backupSource);
+              const backupPrice = fresh.kind === "closed" ? null : backupPriceOf(market);
               return (
                 <li key={market.id} className={`status-market status-market--${fresh.kind}`} title={market.title}>
                   <MarketIcon market={market} size={28} />
@@ -157,8 +198,12 @@ function MarketsSection() {
                     <strong>{market.symbol}</strong>
                     <span className="faint">
                       {sourceName(market.source)}
+                      {backupName ? ` · Backup: ${backupName}` : ""}
                       {market.oracleIndex !== undefined ? ` · asset #${market.oracleIndex}` : ""}
                     </span>
+                    {backupPrice && <span className="status-market__venue">Showing {backupPrice.name}'s price</span>}
+                    {/* The server's own words for why a market left ("Moved to a new price source: Coinbase"), as it sent them. */}
+                    {fresh.kind === "closed" && market.closeReason && <span className="status-market__reason">{market.closeReason}</span>}
                   </div>
                   <div className="status-market__price mono">{market.price ? formatPrice(market.price.price, market) : "—"}</div>
                   <div className="status-market__age">
@@ -173,6 +218,13 @@ function MarketsSection() {
             A price is stale when its source has sent nothing newer within its limit. Betting stays open meanwhile; if a reliable price can't be
             read within an hour of a round closing, the round is cancelled and every bet refunded (see the log below).
           </p>
+          {hasBackups && (
+            <p className="faint status-fine">
+              A crypto market has a backup exchange. A round runs entirely on one exchange, chosen when it starts — the main one if it has a live
+              price then, otherwise the backup — so its open, its close and every liquidation come from that exchange alone. While the main
+              exchange has no fresh price a market shows the backup's price and says so.
+            </p>
+          )}
         </>
       )}
     </section>

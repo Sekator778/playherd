@@ -144,6 +144,65 @@ export function catalogue(): MarketDto[] {
   ];
 }
 
+/**
+ * The crypto markets the way a server lists them since Р-76 (ids `spot_*`): priced by the exchange of the asset itself with a
+ * backup exchange behind it — BTC, ETH and DOGE on Coinbase with Kraken behind them, HYPE on Hyperliquid's spot market with
+ * Coinbase behind it — and the legacy BTC perpetual that the new market replaced, closed with the server's reason. `spot_ETH`
+ * shows Kraken's price (its main exchange has no fresh price, `MarketPriceDto.venue`), the others their own.
+ */
+export function spotCatalogue(): MarketDto[] {
+  return [
+    market("spot_BTC", {
+      symbol: "BTC",
+      title: "Bitcoin",
+      source: "coinbase",
+      backupSource: "kraken",
+      price: { price: "84010.50", asOfMs: NOW - 400, change24h: 0.0098, stale: false, venue: null },
+      maxLeverage: 40,
+      oracleIndex: 20,
+    }),
+    market("spot_ETH", {
+      symbol: "ETH",
+      title: "Ethereum",
+      source: "coinbase",
+      backupSource: "kraken",
+      price: { price: "2696.80", asOfMs: NOW - 700, change24h: -0.0141, stale: false, venue: "kraken" },
+      maxLeverage: 25,
+      oracleIndex: 21,
+    }),
+    market("spot_DOGE", {
+      symbol: "DOGE",
+      title: "Dogecoin",
+      source: "coinbase",
+      backupSource: "kraken",
+      priceDecimals: 7,
+      price: { price: "0.0945340", asOfMs: NOW - 300, change24h: 0.0211, stale: false },
+      maxLeverage: 10,
+      oracleIndex: 22,
+    }),
+    market("spot_HYPE", {
+      symbol: "HYPE",
+      title: "Hyperliquid",
+      source: "hyperliquid",
+      backupSource: "coinbase",
+      price: { price: "87.235", asOfMs: NOW - 900, change24h: 0.0305, stale: false, venue: null },
+      priceDecimals: 3,
+      maxLeverage: 10,
+      oracleIndex: 23,
+    }),
+    market("BTC", {
+      symbol: "BTC",
+      title: "Bitcoin",
+      status: "CLOSED",
+      source: "hyperliquid",
+      price: { price: "83990.00", asOfMs: NOW - 180_000, change24h: 0.0091, stale: false },
+      closedAtMs: NOW - 180_000,
+      closeReason: "Moved to a new price source: Coinbase",
+      oracleIndex: 0,
+    }),
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // Rounds, ticks and positions (room / chart / strip tests)
 // ---------------------------------------------------------------------------

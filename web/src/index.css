@@ -367,6 +367,19 @@ ol {
   margin: 8px 0 0;
 }
 
+/* A round that runs on its market's backup exchange (Р-76) says so where its prices are printed: a neutral boxed note
+   like the odds note of the room — nothing is wrong, the round just prices on the other exchange. */
+.venue-note {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 /* A quiet line that says what is on screen may be old ("Couldn't refresh — these are the last numbers we had."): the
    Status page and the wallet share it. Amber, as a notice and never an alarm; the words carry the meaning. */
 .status-note {

@@ -103,6 +103,57 @@
 .status-summary {
   font-size: 14px;
 }
+/* one row per source: the exchange (or Polymarket), its markets and its backup duty, how its prices are doing */
+.status-sources {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated-2);
+}
+.status-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+}
+.status-source:first-child {
+  border-top: none;
+}
+.status-source__id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 14px;
+}
+.status-source__id .faint,
+.status-source__shown {
+  font-size: 12px;
+}
+.status-source__shown {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.status-source__state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.status-market__venue,
+.status-market__reason {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.status-market__reason {
+  font-weight: 600;
+}
 .status-markets {
   list-style: none;
   display: flex;

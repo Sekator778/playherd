@@ -105,8 +105,8 @@ describe("the details that broke before", () => {
     expect(Number.isFinite(info.roundDurationsSec.DAILY)).toBe(true);
   });
 
-  it("every round carries its market's kind, price scale and source — and they agree with markets()", () => {
-    const markets = wireResponse<{ markets: Array<{ id: string; kind: string; priceDecimals: number; source: string }> }>("markets").markets;
+  it("every round carries its market's kind, price scale and source — and they agree with markets() (a round's source may also be its market's backup exchange)", () => {
+    const markets = wireResponse<{ markets: Array<{ id: string; kind: string; priceDecimals: number; source: string; backupSource?: string | null }> }>("markets").markets;
     const rounds = (["round.betting", "round.running", "round.settled", "round.cancelled"] as const).map((n) => [n, wireResponse<Record<string, unknown>>(n)] as const);
     const pair = wireResponse<{ running: Record<string, unknown>; betting: Record<string, unknown> }>("rounds.hourly");
     const all = [...rounds, ["rounds.hourly.running", pair.running] as const, ["rounds.hourly.betting", pair.betting] as const];
@@ -115,8 +115,24 @@ describe("the details that broke before", () => {
       const market = markets.find((m) => m.id === round.marketId);
       for (const field of ["kind", "priceDecimals", "source"] as const) {
         if (round[field] === undefined || round[field] === null) problems.push(`${name}.${field} is missing`);
+        // A round runs entirely on one exchange, chosen when it starts (Р-76): its main one, or — when that had no price — its backup.
+        else if (field === "source" && market && (round.source === market.source || (market.backupSource != null && round.source === market.backupSource))) continue;
         else if (market && market[field] !== round[field]) problems.push(`${name}.${field} is ${String(round[field])} but market ${market.id} says ${String(market[field])}`);
       }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("a market's backup exchange is another source than its own, and a price's venue is one of the two (Р-76)", () => {
+    const markets = wireResponse<{
+      markets: Array<{ id: string; source: string; backupSource?: string | null; price: { venue?: string | null } | null }>;
+    }>("markets").markets;
+    const problems: string[] = [];
+    for (const m of markets) {
+      if (m.backupSource != null && m.backupSource === m.source) problems.push(`${m.id}: its backup exchange is its own source (${m.source})`);
+      const venue = m.price?.venue;
+      if (venue != null && venue !== m.source && venue !== m.backupSource) problems.push(`${m.id}: its price is from ${venue}, which is neither ${m.source} nor its backup ${String(m.backupSource)}`);
+      if (venue != null && venue !== m.source && m.backupSource == null) problems.push(`${m.id}: a price from another exchange (${venue}) on a market that names no backup`);
     }
     expect(problems).toEqual([]);
   });
