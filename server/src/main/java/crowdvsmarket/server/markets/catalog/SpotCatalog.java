@@ -15,6 +15,7 @@ import crowdvsmarket.server.prices.HistorySeeder;
 import crowdvsmarket.server.prices.HyperliquidInfoApi;
 import crowdvsmarket.server.prices.HyperliquidPriceSource;
 import crowdvsmarket.server.prices.HyperliquidSpotPriceSource;
+import crowdvsmarket.server.prices.KrakenApi;
 import crowdvsmarket.server.prices.KrakenPriceSource;
 import crowdvsmarket.server.prices.PriceHttpClients;
 import io.quarkus.arc.Unremovable;
@@ -56,8 +57,10 @@ import org.jboss.logging.Logger;
  * in {@code sourceMeta} the exchange a round moves to when the primary cannot price its start, from
  * {@code herd.markets.spot.backup} — Kraken ({@code "backup":{"source":"kraken","ref":"BTC/USD"}}) behind Coinbase for BTC, ETH,
  * SOL, XRP and DOGE, Coinbase ({@code {"source":"coinbase","ref":"HYPE-USD"}}) behind Hyperliquid's spot market for HYPE. Like
- * the rest of a listing it is fixed from then on (Т-10): a change of the setting is for the markets listed after it. The backup is
- * not asked at listing — a market is not kept from the lobby because the backup's pair does not answer right now.
+ * the rest of a listing it is fixed from then on (Т-10): a change of the setting is for the markets listed after it. A Kraken pair
+ * is looked up in {@code /0/public/AssetPairs} first and a market whose pair Kraken says it does not know is listed without a
+ * backup ({@link #recordBackup}); a market is not kept from the lobby because Kraken cannot be asked right now, or because the
+ * backup's pair does not answer right now — and Coinbase, the backup of HYPE, is not asked at all.
  *
  * <p><b>Replacement, in this order, and only then.</b> For a market that is not in the registry yet: (1) the source is
  * read — the product's ticker, or the spot meta with the pair's {@code midPx} — and a source that cannot be reached
@@ -109,27 +112,34 @@ public class SpotCatalog {
     private final CatalogConfig config;
     private final Supplier<CoinbaseExchangeApi> coinbase;
     private final Supplier<HyperliquidInfoApi> hyperliquid;
+    private final Supplier<KrakenApi> kraken;
     private final HistorySeeder seeder;
     private final LongSupplier clock;
     private final Set<String> knownBad = ConcurrentHashMap.newKeySet();
     private final Set<String> sameVenueWarned = ConcurrentHashMap.newKeySet();
+    /** Kraken's answer for a backup pair, by its name ({@code BTC/USD}) — a definite one only, kept so it is asked once. */
+    private final ConcurrentHashMap<String, Boolean> krakenPairs = new ConcurrentHashMap<>();
+    private final Set<String> unknownBackupWarned = ConcurrentHashMap.newKeySet();
 
     @Inject
     public SpotCatalog(MarketRegistry registry, CatalogConfig config, PriceHttpClients clients, HistorySeeder seeder) {
-        this(registry, config, clients.coinbase(), clients.hyperliquid(), seeder, System::currentTimeMillis);
+        this(registry, config, clients.coinbase(), clients.hyperliquid(), clients.kraken(), seeder,
+                System::currentTimeMillis);
     }
 
     SpotCatalog(MarketRegistry registry, CatalogConfig config, Supplier<CoinbaseExchangeApi> coinbase,
-                Supplier<HyperliquidInfoApi> hyperliquid, LongSupplier clock) {
-        this(registry, config, coinbase, hyperliquid, HistorySeeder.disabled(), clock);
+                Supplier<HyperliquidInfoApi> hyperliquid, Supplier<KrakenApi> kraken, LongSupplier clock) {
+        this(registry, config, coinbase, hyperliquid, kraken, HistorySeeder.disabled(), clock);
     }
 
     SpotCatalog(MarketRegistry registry, CatalogConfig config, Supplier<CoinbaseExchangeApi> coinbase,
-                Supplier<HyperliquidInfoApi> hyperliquid, HistorySeeder seeder, LongSupplier clock) {
+                Supplier<HyperliquidInfoApi> hyperliquid, Supplier<KrakenApi> kraken, HistorySeeder seeder,
+                LongSupplier clock) {
         this.registry = registry;
         this.config = config;
         this.coinbase = coinbase;
         this.hyperliquid = hyperliquid;
+        this.kraken = kraken;
         this.seeder = seeder;
         this.clock = clock;
     }
@@ -311,10 +321,15 @@ public class SpotCatalog {
     /**
      * Writes the symbol's backup exchange into the market's {@code sourceMeta}
      * ({@code "backup":{"source":"kraken","ref":"BTC/USD"}}) — what {@code Instruments} reads, and fixed from here on like
-     * everything else a listing records (Т-10). Not checked against the backup venue: its pair may not answer yet, and a
-     * market that cannot be listed for want of a backup's answer would be a worse thing than a backup that never gets a price.
-     * A symbol with none in {@code herd.markets.spot.backup}, or one named {@code none}, has no backup; a backup on the very
-     * venue that prices the market is no backup, said once and left out.
+     * everything else a listing records (Т-10). A symbol with none in {@code herd.markets.spot.backup}, or one named
+     * {@code none}, has no backup; a backup on the very venue that prices the market is no backup, said once and left out.
+     *
+     * <p><b>A Kraken backup is checked against {@code /0/public/AssetPairs}</b> ({@link #krakenKnows}): a pair that Kraken
+     * says it does not know ({@code EQuery:Unknown asset pair}) would be a shadow that never gets a price — and once polled
+     * a source that has to retry per pair — so the market is listed without a backup, said once. Only that definite answer
+     * keeps a backup out: a Kraken that cannot be asked (unreachable, an error, a venue switched off) does not keep a market
+     * from the lobby, and its backup is recorded as before — the pair may well answer later, and the source copes with a
+     * pair that never does.
      */
     private void recordBackup(ObjectNode meta, String symbol, String primaryVenue) {
         Optional<String> venue = config.spotBackupVenue(symbol);
@@ -328,7 +343,42 @@ public class SpotCatalog {
             }
             return;
         }
-        meta.putObject("backup").put("source", venue.get()).put("ref", backupRef(venue.get(), symbol));
+        String ref = backupRef(venue.get(), symbol);
+        if (KrakenPriceSource.NAME.equals(venue.get()) && !krakenKnows(ref, symbol)) {
+            return;
+        }
+        meta.putObject("backup").put("source", venue.get()).put("ref", ref);
+    }
+
+    /**
+     * Whether Kraken has the pair {@code ref} ({@code BTC/USD}), by one {@code AssetPairs} request per pair, a definite answer
+     * kept. {@code false} only when Kraken says the pair is unknown; {@code true} otherwise, an unanswered question included
+     * (and without asking at all while Kraken is in {@code herd.prices.disabled-venues}).
+     */
+    private boolean krakenKnows(String ref, String symbol) {
+        if (config.venueDisabled(KrakenPriceSource.NAME)) {
+            return true; // switched off: nobody asks it anything, the backup is recorded and waits for the venue
+        }
+        Boolean known = krakenPairs.get(ref);
+        if (known != null) {
+            return known;
+        }
+        Optional<Boolean> says;
+        try {
+            says = KrakenPriceSource.knowsPair(kraken.get().assetPairs(ref));
+        } catch (RuntimeException e) { // unreachable, or an HTTP error: no word about the pair
+            LOG.warnf("could not ask Kraken whether it has %s, %s keeps its backup: %s", ref, symbol, e.toString());
+            return true;
+        }
+        if (says.isEmpty()) {
+            LOG.warnf("Kraken's AssetPairs said nothing about %s, %s keeps its backup", ref, symbol);
+            return true;
+        }
+        krakenPairs.put(ref, says.get());
+        if (!says.get() && unknownBackupWarned.add(ref)) {
+            LOG.warnf("Kraken does not know the pair %s: %s is listed without a backup exchange", ref, symbol);
+        }
+        return says.get();
     }
 
     /** What a backup venue calls the USD pair of a symbol: Kraken's WebSocket v2 name {@code BTC/USD}, Coinbase's product {@code BTC-USD}. */

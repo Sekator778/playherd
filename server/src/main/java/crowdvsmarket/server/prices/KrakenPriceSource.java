@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
@@ -54,6 +55,13 @@ import org.jboss.logging.Logger;
  * that has no usable quote at once — the same venue, never another one's price. A message that cannot be a quote (a
  * missing side, a crossed book) is dropped, and a poll fails — so that the feed service says so — only when not one market
  * got a price.
+ *
+ * <p><b>A pair Kraken does not know</b> fails the whole REST call that names it, the known pairs in it too
+ * ({@code {"error":["EQuery:Unknown asset pair"]}}, HTTP 200, measured 2026-10-03). The batched read therefore falls back to
+ * one call per pair on that error; a pair that is refused on its own is remembered until restart, left out of every later REST
+ * read and of the subscription (also after a reconnect), and said once in the log — its markets get no price from Kraken,
+ * the others are not touched. (The catalog checks a backup pair against {@code /0/public/AssetPairs} before it records it, so
+ * this is the net under that check, for a pair that disappears or never got looked at.)
  *
  * <p><b>Pair names.</b> The WebSocket v2 symbol is {@code BTC/USD}; the REST API answers a request that names a pair so
  * under that name, too (measured: {@code Ticker?pair=BTC/USD} is keyed {@code "BTC/USD"}, {@code pair=XBTUSD} is keyed
@@ -130,6 +138,8 @@ public class KrakenPriceSource implements PriceSource {
     /** The pairs the markets asked for, and the ones the open connection has been told to send. */
     private final Set<String> wanted = ConcurrentHashMap.newKeySet();
     private final Set<String> subscribed = ConcurrentHashMap.newKeySet();
+    /** The pairs Kraken answered {@code EQuery:Unknown asset pair} for: never asked for again, never subscribed (until restart). */
+    private final Set<String> refused = ConcurrentHashMap.newKeySet();
     /** The names a pair's answers may carry, by symbol; learned from AssetPairs when a name is missing from an answer. */
     private final ConcurrentHashMap<String, Set<String>> aliases = new ConcurrentHashMap<>();
     /** Counts the subscriptions sent: a quote of an earlier connection is no quote of this one. */
@@ -202,6 +212,7 @@ public class KrakenPriceSource implements PriceSource {
         public List<String> subscribeMessages() {
             epoch++; // a new connection: the quotes of the last one are not this one's until its snapshot comes
             Set<String> symbols = new TreeSet<>(wanted);
+            symbols.removeAll(refused); // a pair Kraken does not know is not asked for again
             subscribed.clear();
             subscribed.addAll(symbols);
             return symbols.isEmpty() ? List.of() : List.of(subscribeMessage(symbols));
@@ -284,17 +295,24 @@ public class KrakenPriceSource implements PriceSource {
         }
         long now = clock.getAsLong();
         for (Market market : markets) {
-            wanted.add(market.sourceRef());
+            if (!refused.contains(market.sourceRef())) {
+                wanted.add(market.sourceRef());
+            }
         }
         StreamSupervisor stream = supervisor();
-        stream.want(now);
-        subscribeNew(stream);
+        if (!wanted.isEmpty()) { // markets whose pair Kraken does not know are no reason to hold a connection
+            stream.want(now);
+            subscribeNew(stream);
+        }
 
         Map<String, Quote> out = new LinkedHashMap<>();
         List<Market> stale = new ArrayList<>();
         boolean alive = stream.connected() && now - lastMessageMs <= spot.kraken().freshMs();
         int current = epoch;
         for (Market market : markets) {
+            if (refused.contains(market.sourceRef())) {
+                continue; // Kraken does not know the pair: no price from here, not even over REST
+            }
             Tick tick = latest.get(market.sourceRef());
             if (alive && tick != null && tick.epoch() == current && now - tick.rxMs() <= QUOTE_MAX_AGE_MS) {
                 out.put(market.id(), quote(market, tick.mid()));
@@ -313,6 +331,7 @@ public class KrakenPriceSource implements PriceSource {
     private void subscribeNew(StreamSupervisor stream) {
         Set<String> missing = new TreeSet<>(wanted);
         missing.removeAll(subscribed);
+        missing.removeAll(refused);
         if (!missing.isEmpty() && stream.connected() && stream.send(subscribeMessage(missing))) {
             subscribed.addAll(missing);
         }
@@ -326,15 +345,29 @@ public class KrakenPriceSource implements PriceSource {
      * One REST ticker call for every market without a usable quote; the mids go into {@code out}. A market whose pair is
      * missing from the answer, or whose book is no book, gets no tick this time. Throws when {@code out} is still empty
      * and the call failed.
+     *
+     * <p><b>One pair Kraken does not know fails the whole call</b> ({@code {"error":["EQuery:Unknown asset pair"]}}, measured
+     * 2026-10-03, and the answer does not say which pair): the others would go without a price for as long as that market is
+     * listed. So that error makes the source ask for each pair on its own ({@link #readOneByOne}); a pair Kraken then refuses
+     * is remembered ({@link #refuse}) — skipped in every REST read, dropped from the subscription — and the others are
+     * priced as if it had never been there.
      */
     private void readTickers(List<Market> markets, Map<String, Quote> out) throws IOException {
         Set<String> symbols = new LinkedHashSet<>();
         for (Market market : markets) {
-            symbols.add(market.sourceRef());
+            if (!refused.contains(market.sourceRef())) {
+                symbols.add(market.sourceRef());
+            }
+        }
+        if (symbols.isEmpty()) {
+            return;
         }
         JsonNode result;
         try {
             result = result(api.get().ticker(String.join(",", symbols)), "Ticker");
+        } catch (UnknownPairException e) {
+            readOneByOne(markets, symbols, out);
+            return;
         } catch (IOException | RuntimeException e) {
             warnings.failure("rest ticker", "could not read the Kraken ticker (no stream quote either)", e);
             if (out.isEmpty()) {
@@ -345,6 +378,9 @@ public class KrakenPriceSource implements PriceSource {
         warnings.success("rest ticker", "the REST ticker of Kraken");
         for (Market market : markets) {
             String symbol = market.sourceRef();
+            if (refused.contains(symbol)) {
+                continue;
+            }
             BigDecimal mid = midOf(entryOf(result, symbol));
             if (mid == null) {
                 warnings.failure("rest " + symbol, "Kraken's ticker has no usable bid and ask for " + symbol
@@ -353,6 +389,81 @@ public class KrakenPriceSource implements PriceSource {
             }
             warnings.success("rest " + symbol, "the REST ticker of " + symbol);
             out.put(market.id(), quote(market, mid));
+        }
+    }
+
+    /**
+     * The REST ticker of each pair on its own, after a call that named several failed with an unknown pair: the pair Kraken
+     * refuses is {@link #refuse refused}, the others are read. A read that fails for any other reason costs that pair its
+     * tick this time and refuses nothing. A batch of one pair is the whole call already: it is refused without asking again.
+     * Throws when {@code out} is still empty and a read failed for a reason that is not an unknown pair.
+     */
+    private void readOneByOne(List<Market> markets, Set<String> symbols, Map<String, Quote> out) throws IOException {
+        if (symbols.size() == 1) {
+            refuse(symbols.iterator().next(), "Ticker");
+            return;
+        }
+        Map<String, BigDecimal> mids = new LinkedHashMap<>();
+        Exception failure = null;
+        for (String symbol : symbols) {
+            try {
+                BigDecimal mid = midOf(entryOf(result(api.get().ticker(symbol), "Ticker"), symbol));
+                if (mid == null) {
+                    warnings.failure("rest " + symbol, "Kraken's ticker has no usable bid and ask for " + symbol, null);
+                } else {
+                    warnings.success("rest " + symbol, "the REST ticker of " + symbol);
+                    mids.put(symbol, mid);
+                }
+            } catch (UnknownPairException e) {
+                refuse(symbol, "Ticker");
+            } catch (IOException | RuntimeException e) {
+                failure = e;
+                warnings.failure("rest " + symbol, "could not read the Kraken ticker of " + symbol
+                        + " (no stream quote either)", e);
+            }
+        }
+        for (Market market : markets) {
+            BigDecimal mid = mids.get(market.sourceRef());
+            if (mid != null) {
+                out.put(market.id(), quote(market, mid));
+            }
+        }
+        if (out.isEmpty() && failure != null) {
+            throw new IOException("no Kraken price for any market: " + failure, failure);
+        }
+    }
+
+    /**
+     * Kraken does not know {@code symbol}: remembered until restart (like a name the catalog gave up on), taken out of the
+     * subscription set and out of every REST read, and said once. The markets of the pair simply get no price from Kraken.
+     */
+    private void refuse(String symbol, String call) {
+        if (refused.add(symbol)) {
+            wanted.remove(symbol);
+            subscribed.remove(symbol);
+            LOG.warnf("Kraken does not know the pair %s (%s answered EQuery:Unknown asset pair): it is left out of the "
+                    + "subscription and of the REST reads, and its markets get no price from Kraken", symbol, call);
+        }
+    }
+
+    /** The pairs Kraken refused so far — for tests. */
+    Set<String> refusedPairs() {
+        return Set.copyOf(refused);
+    }
+
+    /**
+     * Whether an {@code AssetPairs} answer for one pair says that Kraken has it: {@code true} when its {@code result} holds an
+     * entry, {@code false} for {@code EQuery:Unknown asset pair}, and empty when the answer says neither (an error of another
+     * kind — a rate limit, an outage — or no entry and no error): that is no word about the pair. The catalog asks this
+     * before it records a pair as the backup of a market.
+     */
+    public static Optional<Boolean> knowsPair(JsonNode answer) {
+        try {
+            return result(answer, "AssetPairs").isEmpty() ? Optional.empty() : Optional.of(true);
+        } catch (UnknownPairException e) {
+            return Optional.of(false);
+        } catch (IOException e) {
+            return Optional.empty();
         }
     }
 
@@ -370,17 +481,33 @@ public class KrakenPriceSource implements PriceSource {
     // Pair names
     // ------------------------------------------------------------------------------------------
 
+    /** What Kraken says for a pair it does not have ({@code error: ["EQuery:Unknown asset pair"]}, with an HTTP 200). */
+    static final String UNKNOWN_PAIR = "EQuery:Unknown asset pair";
+
+    /** An answer that says a pair is unknown — which fails the whole call that names it, the known pairs in it too. */
+    static final class UnknownPairException extends IOException {
+
+        UnknownPairException(String message) {
+            super(message);
+        }
+    }
+
     /**
      * The {@code result} of a Kraken answer; an answer with an error (an {@code E…} entry of {@code error}: rate limit,
-     * unknown pair, …) is an {@link IOException}. A {@code W…} entry is a warning and no failure.
+     * unknown pair, …) is an {@link IOException} — an {@link UnknownPairException} for an unknown pair. A {@code W…} entry
+     * is a warning and no failure.
      */
     static JsonNode result(JsonNode answer, String what) throws IOException {
         if (answer == null || !answer.isObject()) {
             throw new IOException("Kraken's " + what + " answer is not an object: " + abbreviate(String.valueOf(answer)));
         }
         for (JsonNode error : answer.path("error")) {
-            if (error.asText("").startsWith("E")) {
-                throw new IOException("Kraken's " + what + " answered with an error: " + error.asText());
+            String text = error.asText("");
+            if (text.startsWith(UNKNOWN_PAIR)) {
+                throw new UnknownPairException("Kraken's " + what + " answered with an error: " + text);
+            }
+            if (text.startsWith("E")) {
+                throw new IOException("Kraken's " + what + " answered with an error: " + text);
             }
         }
         JsonNode result = answer.path("result");
@@ -482,9 +609,18 @@ public class KrakenPriceSource implements PriceSource {
      * no data. Whatever is not a whole row is left out, and so is every row after {@code result.last}. Sorted by time.
      */
     Candles candles(String symbol, long startMs) throws IOException {
+        if (refused.contains(symbol)) {
+            return new Candles(List.of(), History.NO_LIMIT); // Kraken does not know the pair: no history to ask for
+        }
         long startMinute = Math.floorDiv(startMs, CANDLE_MS) * CANDLE_MS;
         long since = startMinute / 1000L - 1; // the rows are those AFTER since
-        JsonNode result = result(api.get().ohlc(symbol, 1, since), "OHLC");
+        JsonNode result;
+        try {
+            result = result(api.get().ohlc(symbol, 1, since), "OHLC");
+        } catch (UnknownPairException e) {
+            refuse(symbol, "OHLC");
+            throw e;
+        }
         JsonNode rows = entryOf(result, symbol);
         if (rows == null || !rows.isArray()) {
             return new Candles(List.of(), History.NO_LIMIT); // nothing under the pair's names: no history (an unknown pair would have been an error)

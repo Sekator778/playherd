@@ -395,6 +395,149 @@ class KrakenPriceSourceTest {
         assertThat(quotes).containsOnlyKeys("spot_BTC~kraken");
     }
 
+    // ---------------------------------------------------------------------- a pair Kraken does not know
+
+    /** A market whose Kraken pair does not exist: {@code NOPE/USD}. */
+    private final Market nope = shadow("NOPE", 0, 9);
+
+    /** What Kraken answers for a call that names a pair it does not know — for the whole call, the other pairs in it too. */
+    private static JsonNode unknownPair() {
+        return Fixtures.parse("{\"error\":[\"EQuery:Unknown asset pair\"]}");
+    }
+
+    /** The REST ticker as Kraken serves it: the fixture's pairs, and the error above when any name in the call is unknown. */
+    private void krakenKnowsEverythingButNope() {
+        api.ticker.handler = pairs -> {
+            ObjectNode answer = Fixtures.json("kraken/rest_ticker_symbols.json").deepCopy();
+            ObjectNode result = JSON.createObjectNode();
+            for (String pair : pairs.split(",")) {
+                if (!answer.get("result").has(pair)) {
+                    return unknownPair();
+                }
+                result.set(pair, answer.get("result").get(pair));
+            }
+            answer.set("result", result);
+            return answer;
+        };
+    }
+
+    @Test
+    void oneUnknownPairDoesNotPoisonTheRestFallbackOfTheOthers() throws Exception {
+        krakenKnowsEverythingButNope();
+
+        Map<String, PriceSource.Quote> quotes = source.poll(feed, List.of(btc, nope, doge));
+
+        assertThat(quotes).as("the pairs Kraken knows are priced, the one it does not gets no tick")
+                .containsOnlyKeys("spot_BTC~kraken", "spot_DOGE~kraken");
+        assertThat(quotes.get("spot_BTC~kraken").raw()).isEqualByComparingTo("84702.95");
+        assertThat(api.ticker.requests).as("the batch fails as a whole, so each pair is asked for on its own")
+                .containsExactly("BTC/USD,NOPE/USD,DOGE/USD", "BTC/USD", "NOPE/USD", "DOGE/USD");
+    }
+
+    @Test
+    void aRefusedPairIsRememberedLeftOutOfTheRestReadsAndOfTheSubscriptionAndNeverAskedAgain() throws Exception {
+        krakenKnowsEverythingButNope();
+        List<Market> markets = List.of(btc, nope, doge);
+        source.poll(feed, markets);
+        api.ticker.requests.clear();
+
+        connectTheStream(); // the stream is wanted from the first poll: it is told only what Kraken knows
+        assertThat(transport.last().sent).containsExactly("{\"method\":\"subscribe\",\"params\":{\"channel\":\"ticker\","
+                + "\"symbol\":[\"BTC/USD\",\"DOGE/USD\"],\"event_trigger\":\"bbo\"}}");
+
+        now.addAndGet(2_000);
+        Map<String, PriceSource.Quote> quotes = source.poll(feed, markets);
+
+        assertThat(quotes).containsOnlyKeys("spot_BTC~kraken", "spot_DOGE~kraken");
+        assertThat(api.ticker.requests).as("one call for the pairs that exist, and not a word about the other")
+                .containsExactly("BTC/USD,DOGE/USD");
+
+        // a reconnect subscribes to the same set, and a poll that has only the refused pair asks nobody
+        transport.last().serverCloses(1006, "");
+        for (int step = 0; step < 100 && transport.links.size() < 2; step++) { // the loss is seen, the next attempt comes
+            now.addAndGet(250);
+            PipelineTestSupport.stepStream(source, now.get());
+        }
+        assertThat(transport.links).hasSize(2);
+        assertThat(transport.last().sent).hasSize(1);
+        assertThat(transport.last().sent.get(0)).doesNotContain("NOPE");
+        api.ticker.requests.clear();
+        assertThat(source.poll(feed, List.of(nope))).isEmpty();
+        assertThat(api.ticker.requests).isEmpty();
+        assertThat(source.refusedPairs()).containsExactly("NOPE/USD");
+    }
+
+    @Test
+    void aPollOfOnlyAnUnknownPairIsNoFailureAndAsksOnce() throws Exception {
+        krakenKnowsEverythingButNope();
+
+        Map<String, PriceSource.Quote> first = source.poll(feed, List.of(nope));
+        Map<String, PriceSource.Quote> second = source.poll(feed, List.of(nope));
+
+        assertThat(first).isEmpty();
+        assertThat(second).isEmpty();
+        assertThat(api.ticker.requests).as("the one pair is the whole batch: no second call to find out").containsExactly("NOPE/USD");
+    }
+
+    @Test
+    void aReadThatFailsForAnotherReasonRefusesNothing() throws Exception {
+        api.ticker.handler = pairs -> {
+            if (pairs.contains(",")) {
+                return unknownPair(); // the batch fails as a whole ...
+            }
+            if (pairs.equals("DOGE/USD")) {
+                throw new IllegalStateException("HTTP 503"); // ... and DOGE's own read is down for another reason
+            }
+            return Fixtures.json("kraken/rest_ticker_symbols.json");
+        };
+
+        Map<String, PriceSource.Quote> quotes = source.poll(feed, List.of(btc, doge));
+
+        assertThat(quotes).containsOnlyKeys("spot_BTC~kraken");
+        assertThat(source.refusedPairs()).as("a 503 says nothing about the pair").isEmpty();
+        api.ticker.handler = pairs -> Fixtures.json("kraken/rest_ticker_symbols.json");
+        assertThat(source.poll(feed, List.of(btc, doge))).containsOnlyKeys("spot_BTC~kraken", "spot_DOGE~kraken");
+    }
+
+    @Test
+    void aPollFailsWhenNoPairGotAPriceForAReasonThatIsNotAnUnknownPair() {
+        api.ticker.handler = pairs -> {
+            if (pairs.contains(",")) {
+                return unknownPair();
+            }
+            throw new IllegalStateException("HTTP 503");
+        };
+
+        assertThatThrownBy(() -> source.poll(feed, List.of(btc, doge))).isInstanceOf(IOException.class)
+                .hasMessageContaining("no Kraken price for any market");
+    }
+
+    @Test
+    void anAssetPairsAnswerSaysKnownUnknownOrNothingAboutThePair() {
+        assertThat(KrakenPriceSource.knowsPair(assetPairsOf("BTC/USD"))).contains(true);
+        assertThat(KrakenPriceSource.knowsPair(unknownPair())).as("EQuery:Unknown asset pair").contains(false);
+        assertThat(KrakenPriceSource.knowsPair(Fixtures.parse("{\"error\":[\"EGeneral:Too many requests\"]}")))
+                .as("an error of another kind is no word about the pair").isEmpty();
+        assertThat(KrakenPriceSource.knowsPair(Fixtures.parse("{\"error\":[],\"result\":{}}"))).as("neither a pair nor an error")
+                .isEmpty();
+        assertThat(KrakenPriceSource.knowsPair(Fixtures.parse("{\"error\":[\"WGeneral:Something to know\"],\"result\":"
+                + "{\"BTC/USD\":{\"altname\":\"XBTUSD\"}}}"))).as("a warning is no failure").contains(true);
+        assertThat(KrakenPriceSource.knowsPair(Fixtures.parse("[]"))).isEmpty();
+        assertThat(KrakenPriceSource.knowsPair(null)).isEmpty();
+    }
+
+    @Test
+    void aHistoryRequestThatFindsAnUnknownPairRefusesItAndTheNextOneAsksNothing() throws Exception {
+        api.ohlc.handler = call -> unknownPair();
+
+        assertThatThrownBy(() -> source.history(nope, T0 - 600_000L, T0)).isInstanceOf(IOException.class)
+                .hasMessageContaining("Unknown asset pair");
+        assertThat(source.refusedPairs()).containsExactly("NOPE/USD");
+        assertThat(source.history(nope, T0 - 600_000L, T0)).as("known now: no request").isEmpty();
+
+        assertThat(api.ohlc.requests).hasSize(1);
+    }
+
     @Test
     void messagesThatAreNoTickerAreNotQuotesAndNeverFailAnything() throws Exception {
         source.poll(feed, List.of(btc));

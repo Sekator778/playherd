@@ -39,6 +39,7 @@ class SpotCatalogTest {
     private FakeMarketRegistry registry;
     private FakeApis.Coinbase coinbase;
     private FakeApis.Hyperliquid hyperliquid;
+    private FakeApis.Kraken kraken;
     private final Map<String, JsonNode> tickers = new LinkedHashMap<>();
 
     @BeforeEach
@@ -46,6 +47,8 @@ class SpotCatalogTest {
         registry = new FakeMarketRegistry();
         coinbase = new FakeApis.Coinbase();
         hyperliquid = new FakeApis.Hyperliquid();
+        kraken = new FakeApis.Kraken();
+        kraken.assetPairs.handler = this::krakenAssetPairs;
         tickers.put("BTC-USD", Fixtures.json("coinbase/rest_ticker_btc.json")); // bid 84631.94, ask 84631.95
         tickers.put("ETH-USD", ticker("2684.34", "2684.35"));
         tickers.put("SOL-USD", ticker("119.42", "119.43"));
@@ -66,8 +69,20 @@ class SpotCatalogTest {
         return Fixtures.parse("{\"bid\":\"" + bid + "\",\"ask\":\"" + ask + "\",\"price\":\"" + ask + "\"}");
     }
 
+    /**
+     * Kraken's {@code AssetPairs} for one pair, from the fixture of 2026-10-03 (BTC, ETH, SOL, XRP, DOGE against USD): the pair
+     * when it is in it, else what Kraken answers for a pair it does not have — an error with an HTTP 200.
+     */
+    private JsonNode krakenAssetPairs(String pair) {
+        JsonNode fixture = Fixtures.json("kraken/rest_asset_pairs_symbols.json").get("result");
+        if (!fixture.has(pair)) {
+            return Fixtures.parse("{\"error\":[\"EQuery:Unknown asset pair\"]}");
+        }
+        return Fixtures.parse("{\"error\":[],\"result\":{\"" + pair + "\":" + fixture.get(pair) + "}}");
+    }
+
     private SpotCatalog catalog(CatalogConfig config) {
-        return new SpotCatalog(registry, config, () -> coinbase, () -> hyperliquid, () -> NOW);
+        return new SpotCatalog(registry, config, () -> coinbase, () -> hyperliquid, () -> kraken, () -> NOW);
     }
 
     private SpotCatalog catalog() {
@@ -280,12 +295,96 @@ class SpotCatalogTest {
     }
 
     @Test
-    void theBackupIsNotAskedAtListing() {
+    void aKrakenBackupPairIsLookedUpInAssetPairsOnceBeforeItIsRecordedAndCoinbaseIsNotAskedForABackup() {
         catalog().sync(NOW);
 
+        assertThat(kraken.assetPairs.requests).as("one lookup per pair, by the name that goes into the listing")
+                .containsExactlyInAnyOrder("BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "DOGE/USD");
         assertThat(coinbase.ticker.requests).as("only the markets' own products: HYPE-USD is nobody's product here")
                 .containsExactlyInAnyOrder("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD");
         assertThat(hyperliquid.requestsOfType("spotMetaAndAssetCtxs")).hasSize(1);
+        assertThat(kraken.ticker.requests).as("nothing but AssetPairs").isEmpty();
+        assertThat(kraken.ohlc.requests).isEmpty();
+    }
+
+    @Test
+    void aPairKrakenDoesNotKnowIsListedWithoutABackupAndTheOthersKeepTheirs() {
+        kraken.assetPairs.handler = pair -> pair.equals("DOGE/USD")
+                ? Fixtures.parse("{\"error\":[\"EQuery:Unknown asset pair\"]}") : krakenAssetPairs(pair);
+
+        int pending = catalog().sync(NOW);
+
+        assertThat(pending).isZero();
+        assertThat(registry.byId("spot_DOGE")).as("the market itself is listed: only its backup is missing").isPresent();
+        assertThat(Fixtures.parse(market("spot_DOGE").sourceMeta()).has("backup")).isFalse();
+        assertThat(Fixtures.parse(market("spot_DOGE").sourceMeta()).get("product").asText()).isEqualTo("DOGE-USD");
+        assertThat(crowdvsmarket.server.prices.Instruments.hasBackup(market("spot_DOGE"))).isFalse();
+        assertThat(crowdvsmarket.server.prices.Instruments.shadowOf(market("spot_DOGE"))).isEmpty();
+        for (String coin : List.of("BTC", "ETH", "SOL", "XRP")) {
+            assertThat(crowdvsmarket.server.prices.Instruments.backupOf(market("spot_" + coin)))
+                    .contains(new crowdvsmarket.server.prices.Instruments.Backup("kraken", coin + "/USD"));
+        }
+        assertThat(Fixtures.parse(market("spot_HYPE").sourceMeta()).get("backup").get("source").asText()).isEqualTo("coinbase");
+    }
+
+    @Test
+    void aKrakenThatCannotBeAskedOrSaysNothingAboutThePairKeepsTheBackupAndKeepsNoMarketFromTheLobby() {
+        // HTTP 503 for BTC, a rate limit for ETH, an answer with neither a pair nor an error for SOL: no word about the pair
+        kraken.assetPairs.handler = pair -> switch (pair) {
+            case "BTC/USD" -> throw new WebApplicationException(Response.status(503).build());
+            case "ETH/USD" -> Fixtures.parse("{\"error\":[\"EGeneral:Too many requests\"]}");
+            case "SOL/USD" -> Fixtures.parse("{\"error\":[],\"result\":{}}");
+            default -> krakenAssetPairs(pair);
+        };
+
+        catalog().sync(NOW);
+
+        for (String coin : List.of("BTC", "ETH", "SOL", "XRP", "DOGE")) {
+            assertThat(crowdvsmarket.server.prices.Instruments.backupOf(market("spot_" + coin))).as(coin)
+                    .contains(new crowdvsmarket.server.prices.Instruments.Backup("kraken", coin + "/USD"));
+        }
+    }
+
+    @Test
+    void aDefiniteAnswerIsKeptSoARepeatedListingDoesNotAskTwice() {
+        kraken.assetPairs.handler = pair -> pair.equals("DOGE/USD")
+                ? Fixtures.parse("{\"error\":[\"EQuery:Unknown asset pair\"]}") : krakenAssetPairs(pair);
+        registry = new FakeMarketRegistry() { // the first listing fails, as a database that hiccups: the next pass lists it
+            private boolean failed;
+
+            @Override
+            public Market list(crowdvsmarket.server.markets.NewMarket spec, long nowMs) {
+                if (!failed) {
+                    failed = true;
+                    throw new IllegalStateException("database unavailable");
+                }
+                return super.list(spec, nowMs);
+            }
+        };
+        SpotCatalog catalog = catalog();
+
+        assertThat(catalog.sync(NOW)).as("BTC is not listed yet").isEqualTo(1);
+        assertThat(catalog.sync(NOW + 60_000L)).isZero();
+
+        assertThat(kraken.assetPairs.requests.stream().filter("BTC/USD"::equals)).as("asked once, kept").hasSize(1);
+        assertThat(kraken.assetPairs.requests.stream().filter("DOGE/USD"::equals)).as("the unknown one too").hasSize(1);
+        assertThat(Fixtures.parse(market("spot_DOGE").sourceMeta()).has("backup")).isFalse();
+        assertThat(crowdvsmarket.server.prices.Instruments.hasBackup(market("spot_BTC"))).isTrue();
+    }
+
+    @Test
+    void aSwitchedOffKrakenIsNotAskedAboutAPairAndItsBackupIsStillRecorded() {
+        catalog(configWith(CatalogConfig.DEFAULT_SPOT_BACKUP, java.util.Set.of("kraken"))).sync(NOW);
+
+        assertThat(kraken.assetPairs.requests).as("not even the catalog asks a venue that is off").isEmpty();
+        assertThat(crowdvsmarket.server.prices.Instruments.hasBackup(market("spot_BTC"))).isTrue();
+    }
+
+    @Test
+    void aMarketWithNoKrakenBackupAsksKrakenNothing() {
+        catalog(configWith("BTC:none,ETH:coinbase", java.util.Set.of())).sync(NOW);
+
+        assertThat(kraken.assetPairs.requests).isEmpty();
     }
 
     // ------------------------------------------------------------------------ a venue that is switched off
@@ -586,7 +685,7 @@ class SpotCatalogTest {
     void aListedMarketIsHandedToTheSeederAndAMarketNotListedIsNot() {
         HistorySeeder seeder = mock(HistorySeeder.class);
         SpotCatalog catalog = new SpotCatalog(registry, config(List.of("BTC-USD", "NOPE-USD"), List.of()), () -> coinbase,
-                () -> hyperliquid, seeder, () -> NOW);
+                () -> hyperliquid, () -> kraken, seeder, () -> NOW);
 
         catalog.sync(NOW);
 
