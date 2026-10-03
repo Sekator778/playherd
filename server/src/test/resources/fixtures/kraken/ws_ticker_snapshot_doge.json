@@ -1,0 +1,22 @@
+{
+  "channel": "ticker",
+  "type": "snapshot",
+  "data": [
+    {
+      "symbol": "DOGE/USD",
+      "bid": 0.0928743,
+      "bid_qty": 268.57604443,
+      "ask": 0.0928744,
+      "ask_qty": 13942.43840164,
+      "last": 0.0928885,
+      "volume": 68401699.24689358,
+      "vwap": 0.093371,
+      "low": 0.0903029,
+      "high": 0.0977186,
+      "change": -0.0035359,
+      "change_pct": -3.67,
+      "trades": 10082,
+      "timestamp": "2026-10-03T12:07:05.632678Z"
+    }
+  ]
+}

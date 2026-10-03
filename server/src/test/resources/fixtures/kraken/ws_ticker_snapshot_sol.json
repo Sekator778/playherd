@@ -1,0 +1,22 @@
+{
+  "channel": "ticker",
+  "type": "snapshot",
+  "data": [
+    {
+      "symbol": "SOL/USD",
+      "bid": 119.43,
+      "bid_qty": 43.30789514,
+      "ask": 119.44,
+      "ask_qty": 106.51427568,
+      "last": 119.44,
+      "volume": 342540.30868929,
+      "vwap": 119.59,
+      "low": 117.12,
+      "high": 123.48,
+      "change": -2.43,
+      "change_pct": -1.99,
+      "trades": 39668,
+      "timestamp": "2026-10-03T12:07:06.012462Z"
+    }
+  ]
+}

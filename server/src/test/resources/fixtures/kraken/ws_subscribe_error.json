@@ -1,0 +1,8 @@
+{
+  "error": "Currency pair not supported NOPE/USD",
+  "method": "subscribe",
+  "success": false,
+  "symbol": "NOPE/USD",
+  "time_in": "2026-10-03T12:18:21.398628Z",
+  "time_out": "2026-10-03T12:18:21.398671Z"
+}

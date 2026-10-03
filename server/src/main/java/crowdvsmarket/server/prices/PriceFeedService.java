@@ -19,15 +19,19 @@ import org.jboss.logging.Logger;
  * (docs/research/markets_architecture.md §3.2 rule 1): Hyperliquid's default dex every 3 s and dex
  * {@code xyz} every 6 s (together 600 of the 1200 weight units a minute the IP is allowed — while a dex has an active
  * market: with none, nothing is asked), the Polymarket midpoints every 3 s, the synthetic walk every second, and the
- * two streamed spot feeds, Coinbase and Hyperliquid spot, every 2 s — which cost no request: their sources answer from
- * the newest quote the WebSocket delivered, and read REST only for a market whose quote is stale
- * ({@link CoinbasePriceSource}, {@link HyperliquidSpotPriceSource}). Every job runs with
+ * three streamed spot feeds, Coinbase, Kraken and Hyperliquid spot, every 2 s — which cost no request: their sources
+ * answer from the newest quote the WebSocket delivered, and read REST only for a market whose quote is stale
+ * ({@link CoinbasePriceSource}, {@link KrakenPriceSource}, {@link HyperliquidSpotPriceSource}). A poll polls the
+ * <i>instruments</i> of the active markets ({@link Instruments}): a market with a backup exchange is polled on its own
+ * feed, and its shadow — the same market at the backup venue, keyed {@code spot_BTC~kraken} — on the backup's, so that
+ * the backup's ticks are always there, in memory and in {@code price_snapshots}, when a round has to move to it.
+ * Every job runs with
  * {@code concurrentExecution = SKIP}: a poll that hangs on a slow source is not stacked up behind
  * itself, the next ones are skipped until it returns (the HTTP timeouts are 3 s connect, 5 s read).
  * The periods are the defaults of {@code herd.prices.hyperliquid.poll-every},
  * {@code herd.prices.hyperliquid.xyz-poll-every}, {@code herd.prices.polymarket.poll-every},
- * {@code herd.prices.coinbase.poll-every}, {@code herd.prices.hyperliquid.spot-poll-every} and
- * {@code herd.prices.synthetic.poll-every}.
+ * {@code herd.prices.coinbase.poll-every}, {@code herd.prices.kraken.poll-every},
+ * {@code herd.prices.hyperliquid.spot-poll-every} and {@code herd.prices.synthetic.poll-every}.
  *
  * <p>Everything here happens only with {@code herd.mode=live}: the jobs of the real sources with
  * {@code herd.prices.source=live}, the synthetic job with {@code synthetic}; in mode replay each
@@ -44,6 +48,7 @@ public class PriceFeedService {
     static final String HYPERLIQUID_XYZ_EVERY = "${herd.prices.hyperliquid.xyz-poll-every:6s}";
     static final String POLYMARKET_EVERY = "${herd.prices.polymarket.poll-every:3s}";
     static final String COINBASE_EVERY = "${herd.prices.coinbase.poll-every:2s}";
+    static final String KRAKEN_EVERY = "${herd.prices.kraken.poll-every:2s}";
     static final String HYPERLIQUID_SPOT_EVERY = "${herd.prices.hyperliquid.spot-poll-every:2s}";
     static final String SYNTHETIC_EVERY = "${herd.prices.synthetic.poll-every:1s}";
     static final String PRUNE_EVERY = "10m";
@@ -52,6 +57,7 @@ public class PriceFeedService {
     static final String JOB_HYPERLIQUID_XYZ = "price-feed-hyperliquid-xyz";
     static final String JOB_POLYMARKET = "price-feed-polymarket";
     static final String JOB_COINBASE = "price-feed-coinbase";
+    static final String JOB_KRAKEN = "price-feed-kraken";
     static final String JOB_HYPERLIQUID_SPOT = "price-feed-hyperliquid-spot";
     static final String JOB_SYNTHETIC = "price-feed-synthetic";
     static final String JOB_PRUNE = "price-feed-prune";
@@ -129,6 +135,14 @@ public class PriceFeedService {
         }
     }
 
+    @Scheduled(every = KRAKEN_EVERY, concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
+            identity = JOB_KRAKEN)
+    void pollKraken() {
+        if (config.liveSources()) {
+            pollFeed(KrakenPriceSource.FEED);
+        }
+    }
+
     @Scheduled(every = HYPERLIQUID_SPOT_EVERY, concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
             identity = JOB_HYPERLIQUID_SPOT)
     void pollHyperliquidSpot() {
@@ -169,7 +183,9 @@ public class PriceFeedService {
         if (binding == null) {
             return;
         }
-        List<Market> markets = registry.active().stream().filter(m -> binding.feed().handles().test(m)).toList();
+        // instruments: a market with a backup exchange is polled on two feeds, itself on its own and its shadow on the backup's
+        List<Market> markets = registry.active().stream().flatMap(m -> Instruments.of(m).stream())
+                .filter(m -> binding.feed().handles().test(m)).toList();
         if (markets.isEmpty()) {
             return;
         }

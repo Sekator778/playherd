@@ -4,6 +4,7 @@ import io.quarkus.runtime.Startup;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
+import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
@@ -60,12 +61,14 @@ public class PricesConfigProducer {
             @ConfigProperty(name = "herd.prices.hyperliquid.max-basis",
                     defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_MAX_BASIS) double hyperliquidMaxBasis,
             @ConfigProperty(name = "herd.prices.hyperliquid.max-heal-ms",
-                    defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_MAX_HEAL_MS) long hyperliquidMaxHealMs) {
+                    defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_MAX_HEAL_MS) long hyperliquidMaxHealMs,
+            // Optional: SmallRye takes an empty value for none, and the default of this list is empty (no venue off)
+            @ConfigProperty(name = "herd.prices.disabled-venues") Optional<String> disabledVenues) {
         return new PricesConfig(PricesConfig.isLiveMode(mode), PricesConfig.SourceKind.parse(source),
                 dailySec * 1000L, hyperliquidUrl, clobUrl, gammaUrl, dataUrl, hyperliquidStaleMs,
                 hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs,
                 syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs,
                 quietCarryMaxMs, seedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
-                hyperliquidMaxHealMs);
+                hyperliquidMaxHealMs, PricesConfig.parseVenues(disabledVenues.orElse("")));
     }
 }

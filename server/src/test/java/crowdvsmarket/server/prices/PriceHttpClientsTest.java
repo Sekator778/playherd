@@ -179,6 +179,56 @@ class PriceHttpClientsTest {
     }
 
     @Test
+    void krakenIsAskedWithGetsThePairsInTheQueryAndTheSecondsOfSince() throws Exception {
+        server.reply(r -> FakeHttpServer.Reply.json("{\"error\":[],\"result\":{}}"));
+        PriceHttpClients withKraken = new PriceHttpClients(PricesConfig.defaults().withEndpoints(server.baseUrl(), 3_000, 5_000),
+                SpotPricesConfig.defaults().withKrakenEndpoints(server.baseUrl(), "ws://127.0.0.1:1/unused"));
+        try {
+            KrakenApi kraken = withKraken.kraken().get();
+
+            kraken.ticker("BTC/USD,ETH/USD");
+            kraken.assetPairs("DOGE/USD");
+            kraken.ohlc("BTC/USD", 1, 1_791_027_599L);
+
+            List<FakeHttpServer.Request> requests = server.requests();
+            assertThat(requests).extracting(FakeHttpServer.Request::method).containsOnly("GET");
+            assertThat(requests.get(0).accept()).contains("application/json");
+            assertThat(path(requests.get(0).pathAndQuery())).isEqualTo("/0/public/Ticker");
+            assertThat(query(requests.get(0).pathAndQuery())).as("the pairs as the stream names them, decoded")
+                    .containsOnlyKeys("pair").containsEntry("pair", List.of("BTC/USD,ETH/USD"));
+            assertThat(path(requests.get(1).pathAndQuery())).isEqualTo("/0/public/AssetPairs");
+            assertThat(query(requests.get(1).pathAndQuery())).containsEntry("pair", List.of("DOGE/USD"));
+            assertThat(path(requests.get(2).pathAndQuery())).isEqualTo("/0/public/OHLC");
+            assertThat(query(requests.get(2).pathAndQuery())).containsEntry("pair", List.of("BTC/USD"))
+                    .containsEntry("interval", List.of("1")).containsEntry("since", List.of("1791027599"));
+        } finally {
+            withKraken.close();
+        }
+    }
+
+    @Test
+    void coinbaseIsAskedWithGetsTheProductInThePathAndTheMinuteGranularityInTheQuery() throws Exception {
+        server.reply(r -> FakeHttpServer.Reply.json("[]"));
+        PriceHttpClients withCoinbase = new PriceHttpClients(PricesConfig.defaults().withEndpoints(server.baseUrl(), 3_000, 5_000),
+                SpotPricesConfig.defaults().withEndpoints(server.baseUrl(), "ws://127.0.0.1:1/unused", "ws://127.0.0.1:1/unused"));
+        try {
+            CoinbaseExchangeApi coinbase = withCoinbase.coinbase().get();
+
+            coinbase.ticker("BTC-USD");
+            coinbase.candles("HYPE-USD", 60, "2026-10-03T12:00:00Z", "2026-10-03T12:04:00Z");
+
+            List<FakeHttpServer.Request> requests = server.requests();
+            assertThat(path(requests.get(0).pathAndQuery())).isEqualTo("/products/BTC-USD/ticker");
+            assertThat(path(requests.get(1).pathAndQuery())).isEqualTo("/products/HYPE-USD/candles");
+            assertThat(query(requests.get(1).pathAndQuery())).containsEntry("granularity", List.of("60"))
+                    .containsEntry("start", List.of("2026-10-03T12:00:00Z"))
+                    .containsEntry("end", List.of("2026-10-03T12:04:00Z"));
+        } finally {
+            withCoinbase.close();
+        }
+    }
+
+    @Test
     void anErrorStatusIsAnExceptionTheCallersTreatAsAFailedPoll() {
         server.reply(r -> new FakeHttpServer.Reply(503, "{\"error\":\"busy\"}", 0));
 

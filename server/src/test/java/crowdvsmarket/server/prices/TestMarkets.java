@@ -42,6 +42,27 @@ public final class TestMarkets {
                 0L, null, null, null);
     }
 
+    /** A Coinbase market with Kraken behind it, as the spot catalog lists BTC, ETH, SOL, XRP and DOGE: {@code spot_BTC}. */
+    public static Market coinbaseWithKraken(String symbol, int lotExp, int oracleIndex) {
+        return withBackup(coinbase(symbol, lotExp, oracleIndex), "kraken", symbol + "/USD");
+    }
+
+    /** The Hyperliquid spot market with Coinbase behind it, as the spot catalog lists HYPE: {@code spot_HYPE}. */
+    public static Market hlSpotWithCoinbase(String symbol, String pair, int lotExp, int oracleIndex) {
+        return withBackup(hlSpot(symbol, pair, lotExp, oracleIndex), "coinbase", symbol + "-USD");
+    }
+
+    /** {@code market} with the backup exchange recorded in its {@code sourceMeta}, the way the catalog records it. */
+    public static Market withBackup(Market market, String backupSource, String backupRef) {
+        String base = market.sourceMeta();
+        String meta = (base == null || base.equals("{}") ? "{" : base.substring(0, base.length() - 1) + ",")
+                + "\"backup\":{\"source\":\"" + backupSource + "\",\"ref\":\"" + backupRef + "\"}}";
+        return new Market(market.id(), market.kind(), market.category(), market.symbol(), market.title(),
+                market.subtitle(), market.iconUrl(), market.source(), market.sourceRef(), meta, market.maxLeverage(),
+                market.lotExp(), market.oracleIndex(), market.status(), market.listedAtMs(), market.closedAtMs(),
+                market.closeReason(), market.endsAtMs());
+    }
+
     /** A Polymarket ODDS market priced by {@code token}. */
     public static Market odds(String id, String token) {
         return new Market(id, MarketKind.ODDS, Category.POLITICS, "PM", "Will it?", "Yes", null, "polymarket", token,

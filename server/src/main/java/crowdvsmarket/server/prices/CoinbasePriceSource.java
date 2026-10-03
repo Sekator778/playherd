@@ -114,6 +114,7 @@ public class CoinbasePriceSource implements PriceSource {
     /** The products the markets asked for, and the ones the open connection has been told to send. */
     private final Set<String> wanted = ConcurrentHashMap.newKeySet();
     private final Set<String> subscribed = ConcurrentHashMap.newKeySet();
+    private volatile int lastPollRestReads;
     private StreamSupervisor supervisor; // created by the first poll, guarded by this
 
     @Inject
@@ -274,10 +275,17 @@ public class CoinbasePriceSource implements PriceSource {
                 stale.add(market);
             }
         }
+        lastPollRestReads = stale.size();
         if (!stale.isEmpty()) {
             readTickers(stale, out);
         }
         return out;
+    }
+
+    @Override
+    public FeedStatus status(Feed feed, long nowMs) {
+        return StreamSupervisor.status(feed, NAME, supervisor().health(nowMs), nowMs, spot.coinbase().freshMs(),
+                lastPollRestReads);
     }
 
     /** Products a market asked for that the open connection was not told about: subscribed now, no reconnect. */

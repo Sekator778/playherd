@@ -1,0 +1,22 @@
+{
+  "channel": "ticker",
+  "type": "snapshot",
+  "data": [
+    {
+      "symbol": "XRP/USD",
+      "bid": 1.488,
+      "bid_qty": 715.43623285,
+      "ask": 1.48801,
+      "ask_qty": 3360.19247182,
+      "last": 1.48815,
+      "volume": 38486549.81010779,
+      "vwap": 1.49545,
+      "low": 1.44698,
+      "high": 1.55506,
+      "change": -0.04309,
+      "change_pct": -2.81,
+      "trades": 37163,
+      "timestamp": "2026-10-03T12:07:03.495466Z"
+    }
+  ]
+}

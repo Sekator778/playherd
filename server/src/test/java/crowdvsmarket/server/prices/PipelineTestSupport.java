@@ -28,6 +28,11 @@ public final class PipelineTestSupport {
         return new CoinbasePriceSource(() -> api, SpotPricesConfig.defaults(), transport, clock, false);
     }
 
+    /** The Kraken source over scripted REST and WebSocket layers; its stream is stepped by the test. */
+    public static KrakenPriceSource kraken(KrakenApi api, WebSocketTransport transport, LongSupplier clock) {
+        return new KrakenPriceSource(() -> api, SpotPricesConfig.defaults(), transport, clock, false);
+    }
+
     /** The Hyperliquid spot source over scripted layers; the periodic context read runs on the calling thread. */
     public static HyperliquidSpotPriceSource hyperliquidSpot(HyperliquidInfoApi api, WebSocketTransport transport,
                                                              LongSupplier clock) {
@@ -39,6 +44,8 @@ public final class PipelineTestSupport {
     public static void stepStream(PriceSource source, long nowMs) {
         if (source instanceof CoinbasePriceSource c) {
             c.supervisor().step(nowMs);
+        } else if (source instanceof KrakenPriceSource k) {
+            k.supervisor().step(nowMs);
         } else if (source instanceof HyperliquidSpotPriceSource h) {
             h.supervisor().step(nowMs);
         } else {

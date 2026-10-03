@@ -1,0 +1,12 @@
+{
+  "method": "subscribe",
+  "result": {
+    "channel": "ticker",
+    "event_trigger": "bbo",
+    "snapshot": true,
+    "symbol": "BTC/USD"
+  },
+  "success": true,
+  "time_in": "2026-10-03T12:07:06.088329Z",
+  "time_out": "2026-10-03T12:07:06.088386Z"
+}

@@ -3,16 +3,59 @@ package crowdvsmarket.server.prices;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /** {@link PricesConfig} and its producer: the architecture's limits, the retention, the mode and source switches. */
 class PricesConfigTest {
 
     private static PricesConfig produce(String mode, String source, long dailySec) {
+        return produce(mode, source, dailySec, Optional.empty());
+    }
+
+    private static PricesConfig produce(String mode, String source, long dailySec, Optional<String> disabledVenues) {
         return new PricesConfigProducer().pricesConfig(mode, source, dailySec, PricesConfig.DEFAULT_HYPERLIQUID_URL,
                 PricesConfig.DEFAULT_POLYMARKET_CLOB_URL, PricesConfig.DEFAULT_POLYMARKET_GAMMA_URL,
                 PricesConfig.DEFAULT_POLYMARKET_DATA_URL, 15_000, 20_000, 30_000, 30_000, 90_000, 5_000, 10_000, 60_000,
-                3_000, 5_000, 600_000L, 260, true, 0.0015, 1_800_000L);
+                3_000, 5_000, 600_000L, 260, true, 0.0015, 1_800_000L, disabledVenues);
+    }
+
+    @Test
+    void noVenueIsDisabledByDefaultAndTheSwitchNamesVenuesInAnyCase() {
+        assertThat(PricesConfig.defaults().disabledVenues()).isEmpty();
+        assertThat(produce("live", "live", 900).disabledVenues()).isEmpty();
+        assertThat(produce("live", "live", 900, Optional.of("")).disabledVenues()).isEmpty();
+
+        PricesConfig coinbaseOff = produce("live", "live", 900, Optional.of(" Coinbase ,, kraken,coinbase"));
+
+        assertThat(coinbaseOff.disabledVenues()).containsExactlyInAnyOrder("coinbase", "kraken");
+        assertThat(coinbaseOff.venueDisabled("coinbase")).isTrue();
+        assertThat(coinbaseOff.venueDisabled("hyperliquid")).isFalse();
+        assertThat(PricesConfig.parseVenues("hyperliquid,polymarket")).containsExactly("hyperliquid", "polymarket");
+    }
+
+    @Test
+    void aTypoInTheSwitchStopsTheServerRatherThanLeavingTheVenueOn() {
+        assertThatThrownBy(() -> produce("live", "live", 900, Optional.of("coinbse")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("herd.prices.disabled-venues").hasMessageContaining("coinbse");
+        assertThatThrownBy(() -> produce("live", "live", 900, Optional.of("synthetic")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theOtherSettingsSurviveTheSwitchAndTheSwitchSurvivesTheOtherSettings() {
+        PricesConfig off = PricesConfig.defaults().withDisabledVenues(Set.of("coinbase"));
+
+        assertThat(off.hyperliquidMaxBasis()).isEqualTo(0.0015);
+        assertThat(off.withHyperliquidMaxBasis(0.002).disabledVenues()).containsExactly("coinbase");
+        assertThat(off.withHyperliquidMaxHealMs(5).disabledVenues()).containsExactly("coinbase");
+        assertThat(off.withQuietCarryMaxMs(1).disabledVenues()).containsExactly("coinbase");
+        assertThat(off.withHyperliquidSeedBudget(1).disabledVenues()).containsExactly("coinbase");
+        assertThat(off.withDailyRoundMs(1_000).disabledVenues()).containsExactly("coinbase");
+        assertThat(off.withEndpoints("http://x", 1, 1).disabledVenues()).containsExactly("coinbase");
+        assertThat(off.withMode(true, PricesConfig.SourceKind.SYNTHETIC).disabledVenues()).containsExactly("coinbase");
     }
 
     @Test

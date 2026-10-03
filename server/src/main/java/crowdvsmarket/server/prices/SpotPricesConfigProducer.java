@@ -7,8 +7,8 @@ import jakarta.inject.Singleton;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Reads the {@code herd.prices.coinbase.*}, {@code herd.prices.hyperliquid.ws-url} and {@code spot-*},
- * {@code herd.prices.stream.*} keys (each with its default, see {@link SpotPricesConfig}) into the one
+ * Reads the {@code herd.prices.coinbase.*}, {@code herd.prices.kraken.*}, {@code herd.prices.hyperliquid.ws-url} and
+ * {@code spot-*}, {@code herd.prices.stream.*} keys (each with its default, see {@link SpotPricesConfig}) into the one
  * {@link SpotPricesConfig} bean — like {@link PricesConfigProducer}, so that every class of the pipeline can be built
  * by hand in a plain unit test.
  */
@@ -48,11 +48,27 @@ public class SpotPricesConfigProducer {
             @ConfigProperty(name = "herd.prices.stream.reconnect-max-ms",
                     defaultValue = SpotPricesConfig.DEFAULT_RECONNECT_MAX_MS) long reconnectMaxMs,
             @ConfigProperty(name = "herd.prices.stream.idle-ms", defaultValue = SpotPricesConfig.DEFAULT_IDLE_MS)
-            long idleMs) {
+            long idleMs,
+            @ConfigProperty(name = "herd.prices.kraken.url", defaultValue = SpotPricesConfig.DEFAULT_KRAKEN_URL)
+            String krakenUrl,
+            @ConfigProperty(name = "herd.prices.kraken.ws-url", defaultValue = SpotPricesConfig.DEFAULT_KRAKEN_WS_URL)
+            String krakenWsUrl,
+            @ConfigProperty(name = "herd.prices.kraken.stale-ms", defaultValue = SpotPricesConfig.DEFAULT_STALE_MS)
+            long krakenStaleMs,
+            @ConfigProperty(name = "herd.prices.kraken.max-gap-ms",
+                    defaultValue = SpotPricesConfig.DEFAULT_MAX_GAP_MS) long krakenMaxGapMs,
+            @ConfigProperty(name = "herd.prices.kraken.max-basis",
+                    defaultValue = SpotPricesConfig.DEFAULT_MAX_BASIS) double krakenMaxBasis,
+            @ConfigProperty(name = "herd.prices.kraken.fresh-ms",
+                    defaultValue = SpotPricesConfig.DEFAULT_KRAKEN_FRESH_MS) long krakenFreshMs,
+            @ConfigProperty(name = "herd.prices.kraken.silence-ms",
+                    defaultValue = SpotPricesConfig.DEFAULT_KRAKEN_SILENCE_MS) long krakenSilenceMs) {
         return new SpotPricesConfig(coinbaseUrl, coinbaseWsUrl, hyperliquidWsUrl,
                 new SpotPricesConfig.Limits(coinbaseStaleMs, coinbaseMaxGapMs, coinbaseMaxBasis, coinbaseFreshMs,
                         coinbaseSilenceMs),
                 new SpotPricesConfig.Limits(spotStaleMs, spotMaxGapMs, spotMaxBasis, spotFreshMs, spotSilenceMs),
-                reconnectMaxMs, idleMs);
+                reconnectMaxMs, idleMs, krakenUrl, krakenWsUrl,
+                new SpotPricesConfig.Limits(krakenStaleMs, krakenMaxGapMs, krakenMaxBasis, krakenFreshMs,
+                        krakenSilenceMs));
     }
 }

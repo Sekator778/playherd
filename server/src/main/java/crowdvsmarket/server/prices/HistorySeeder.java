@@ -165,18 +165,24 @@ public class HistorySeeder {
         return Math.min(MAX_SEED_MS, Math.max(MIN_SEED_MS, config.dailyRoundMs()));
     }
 
-    /** Queues the seeding of a market that was just listed and returns at once. */
+    /**
+     * Queues the seeding of a market that was just listed and returns at once — of every instrument of it
+     * ({@link Instruments}): the backup exchange's shadow is seeded like the market itself, so that either venue has the
+     * recent past a round that opens on it needs.
+     */
     public void seed(Market market) {
         if (!enabled || !config.pipelineActive()) {
             return;
         }
-        PriceSources.Binding binding = sources.bindingFor(market).orElse(null);
-        if (binding == null) {
-            return;
+        for (Market instrument : Instruments.of(market)) {
+            PriceSources.Binding binding = sources.bindingFor(instrument).orElse(null);
+            if (binding == null) {
+                continue;
+            }
+            long now = clock.getAsLong();
+            attempts.put(instrument.id(), new Attempt(key(runningStarts.apply(now)), now, 0, State.QUEUED));
+            queue(instrument, binding);
         }
-        long now = clock.getAsLong();
-        attempts.put(market.id(), new Attempt(key(runningStarts.apply(now)), now, 0, State.QUEUED));
-        queue(market, binding);
     }
 
     /**

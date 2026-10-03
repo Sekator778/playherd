@@ -16,10 +16,12 @@ import java.util.function.Predicate;
  *
  * <p>Implementations: {@link HyperliquidPriceSource} (feeds {@code hyperliquid} and
  * {@code hyperliquid:xyz}), {@link HyperliquidSpotPriceSource} ({@code hyperliquid:spot}),
- * {@link CoinbasePriceSource} ({@code coinbase}), {@link PolymarketPriceSource}, {@link SyntheticPriceSource}. All
- * but the last are active with {@code herd.prices.source=live}, the last with {@code synthetic}. The Coinbase and the
- * Hyperliquid spot source keep the latest quote of each market from a WebSocket stream ({@link StreamSupervisor}) and
- * answer a poll from memory; only when the stream is down or silent do they read the same venue over REST.
+ * {@link CoinbasePriceSource} ({@code coinbase}), {@link KrakenPriceSource} ({@code kraken}),
+ * {@link PolymarketPriceSource}, {@link SyntheticPriceSource}. All but the last are active with
+ * {@code herd.prices.source=live} (except a venue named in {@code herd.prices.disabled-venues}), the last with
+ * {@code synthetic}. The Coinbase, Kraken and Hyperliquid spot sources keep the latest quote of each market from a
+ * WebSocket stream ({@link StreamSupervisor}) and answer a poll from memory; only when the stream is down or silent do
+ * they read the same venue over REST.
  */
 public interface PriceSource {
 
@@ -55,8 +57,8 @@ public interface PriceSource {
      * What the numbers of {@link #history} are, compared with the ticks of {@link #poll}.
      * {@link #SAME_AS_LIVE}: the same quantity (Polymarket's midpoint buckets against its live midpoints) — a
      * history point may stand between two ticks. {@link #TRADE_PRICES}: another one (Hyperliquid's candles are
-     * trade prices, its ticks are mark prices; Coinbase's and Hyperliquid spot's candles are trade prices, their ticks
-     * are mids of the best bid and ask) — history is the past of the first tick, and it bridges a gap between
+     * trade prices, its ticks are mark prices; Coinbase's, Kraken's and Hyperliquid spot's candles are trade prices,
+     * their ticks are mids of the best bid and ask) — history is the past of the first tick, and it bridges a gap between
      * two live ticks only as a whole, when every bar of the gap is there and the live prices around it lie inside
      * their own bars ({@link LiveMarketPrices}, {@code GapBridge}); it is never put between two live ticks otherwise.
      */
@@ -133,11 +135,40 @@ public interface PriceSource {
     }
 
     /**
-     * The source's name, what a market's {@code source} says: {@code hyperliquid}, {@code coinbase}, {@code polymarket}
-     * or {@code synthetic}. Sources of one venue share the name, and with it the pace of {@link HistorySeeder}'s
-     * queue (Hyperliquid's perpetuals and its spot pairs draw on one request budget).
+     * What the operator's status page says about one feed (the {@code priceFeeds} of {@code /api/admin/status}).
+     *
+     * @param feed          the feed's id
+     * @param venue         the source's name
+     * @param mode          {@code poll}: asked over REST on a schedule; {@code stream}: a WebSocket keeps the quotes and
+     *                      the poll answers from memory
+     * @param state         {@code polling} (a REST-polled feed); for a stream {@code connected} (open and heard from
+     *                      lately), {@code silent} (open, but nothing heard for longer than its freshness limit — the
+     *                      supervisor drops it at the silence limit), {@code rest-fallback} (no usable connection: the
+     *                      polls read the same venue over REST), {@code idle} (nobody polls — no active market, the
+     *                      stream is closed); {@code disabled} (the venue is in {@code herd.prices.disabled-venues}:
+     *                      neither stream nor REST); {@code synthetic}
+     * @param lastMessageAtMs when the stream last said anything ({@code null}: never, or not a stream)
+     * @param restReads     how many markets the last poll read over REST because the stream had no quote for them (a
+     *                      quiet product with a healthy stream counts too)
+     */
+    record FeedStatus(String feed, String venue, String mode, String state, Long lastMessageAtMs, int restReads) {
+
+        public static FeedStatus polling(String feed, String venue) {
+            return new FeedStatus(feed, venue, "poll", "polling", null, 0);
+        }
+    }
+
+    /**
+     * The source's name, what a market's {@code source} says: {@code hyperliquid}, {@code coinbase}, {@code kraken},
+     * {@code polymarket} or {@code synthetic}. Sources of one venue share the name, and with it the pace of
+     * {@link HistorySeeder}'s queue (Hyperliquid's perpetuals and its spot pairs draw on one request budget).
      */
     String name();
+
+    /** How the feed is doing, for the operator's status page; a REST-polled source is simply {@code polling}. */
+    default FeedStatus status(Feed feed, long nowMs) {
+        return FeedStatus.polling(feed.id(), name());
+    }
 
     List<Feed> feeds();
 

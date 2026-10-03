@@ -1,0 +1,22 @@
+{
+  "channel": "ticker",
+  "type": "snapshot",
+  "data": [
+    {
+      "symbol": "ETH/USD",
+      "bid": 2684.28,
+      "bid_qty": 0.09339342,
+      "ask": 2684.29,
+      "ask_qty": 7.8703505,
+      "last": 2684.29,
+      "volume": 38117.83287208,
+      "vwap": 2702.03,
+      "low": 2650.41,
+      "high": 2768.75,
+      "change": -62.22,
+      "change_pct": -2.27,
+      "trades": 57446,
+      "timestamp": "2026-10-03T12:06:55.484467Z"
+    }
+  ]
+}

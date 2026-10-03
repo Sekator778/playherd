@@ -13,7 +13,7 @@ import org.eclipse.microprofile.rest.client.RestClientBuilder;
 import org.jboss.logging.Logger;
 
 /**
- * The REST clients of the price pipeline and the catalogs (Hyperliquid, Coinbase, Polymarket), built on first use with
+ * The REST clients of the price pipeline and the catalogs (Hyperliquid, Coinbase, Kraken, Polymarket), built on first use with
  * the base URL of their {@code herd.prices.*} key and the pipeline's timeouts — connect 3 s, read 5 s — because
  * {@link LiveMarketPrices#resolve} blocks on them. Built here rather than injected with
  * {@code @RestClient} because the timeouts of an injected client come from
@@ -56,6 +56,7 @@ public class PriceHttpClients {
     private final List<Object> built = new ArrayList<>();
     private final Lazy<HyperliquidInfoApi> hyperliquid;
     private final Lazy<CoinbaseExchangeApi> coinbase;
+    private final Lazy<KrakenApi> kraken;
     private final Lazy<PolymarketClobApi> clob;
     private final Lazy<PolymarketDataApi> data;
     private final Lazy<PolymarketGammaApi> gamma;
@@ -65,6 +66,7 @@ public class PriceHttpClients {
         this.config = config;
         this.hyperliquid = new Lazy<>(HyperliquidInfoApi.class, config::hyperliquidUrl);
         this.coinbase = new Lazy<>(CoinbaseExchangeApi.class, spot::coinbaseUrl);
+        this.kraken = new Lazy<>(KrakenApi.class, spot::krakenUrl);
         this.clob = new Lazy<>(PolymarketClobApi.class, config::polymarketClobUrl);
         this.data = new Lazy<>(PolymarketDataApi.class, config::polymarketDataUrl);
         this.gamma = new Lazy<>(PolymarketGammaApi.class, config::polymarketGammaUrl);
@@ -82,6 +84,10 @@ public class PriceHttpClients {
 
     public Supplier<CoinbaseExchangeApi> coinbase() {
         return coinbase;
+    }
+
+    public Supplier<KrakenApi> kraken() {
+        return kraken;
     }
 
     public Supplier<PolymarketClobApi> clob() {

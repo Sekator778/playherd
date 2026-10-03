@@ -63,6 +63,31 @@ public final class FakeApis {
         }
     }
 
+    public static class Kraken implements KrakenApi {
+
+        public record OhlcCall(String pair, int intervalMinutes, long sinceSeconds) {
+        }
+
+        public final Script<String, JsonNode> ticker = new Script<>();
+        public final Script<String, JsonNode> assetPairs = new Script<>();
+        public final Script<OhlcCall, JsonNode> ohlc = new Script<>();
+
+        @Override
+        public JsonNode ticker(String pairs) {
+            return ticker.call(pairs);
+        }
+
+        @Override
+        public JsonNode assetPairs(String pairs) {
+            return assetPairs.call(pairs);
+        }
+
+        @Override
+        public JsonNode ohlc(String pair, int intervalMinutes, long sinceSeconds) {
+            return ohlc.call(new OhlcCall(pair, intervalMinutes, sinceSeconds));
+        }
+    }
+
     public static class Clob implements PolymarketClobApi {
 
         public final Script<JsonNode, JsonNode> midpoints = new Script<>();

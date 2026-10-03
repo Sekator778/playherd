@@ -1,6 +1,7 @@
 package crowdvsmarket.server.prices;
 
 import crowdvsmarket.server.config.GameMode;
+import java.util.Set;
 
 /**
  * The {@code herd.mode} / {@code herd.prices.*} settings the live price pipeline reads
@@ -33,6 +34,10 @@ import crowdvsmarket.server.config.GameMode;
  *                          a gap between two live ticks ({@link GapBridge}); default 0.0015 (15 bp)
  * @param hyperliquidMaxHealMs {@code herd.prices.hyperliquid.max-heal-ms}: the longest gap between two live ticks
  *                          that candles bridge; default 30 minutes; 0 switches bridging off
+ * @param disabledVenues    {@code herd.prices.disabled-venues}: venues ({@code hyperliquid}, {@code coinbase},
+ *                          {@code kraken}, {@code polymarket}) that give no price at all — no stream, no REST, no
+ *                          catalog request — so that a stand can be restarted with a primary exchange off to prove that
+ *                          the backup answers; empty by default
  */
 public record PricesConfig(
         boolean liveMode,
@@ -56,9 +61,13 @@ public record PricesConfig(
         int hyperliquidSeedBudgetPerMinute,
         boolean requireMinuteAlignedRounds,
         double hyperliquidMaxBasis,
-        long hyperliquidMaxHealMs) {
+        long hyperliquidMaxHealMs,
+        Set<String> disabledVenues) {
 
-    /** {@code herd.prices.source}: {@code live} reads Hyperliquid, Coinbase and Polymarket,
+    /** The venues that {@code herd.prices.disabled-venues} may name: the sources of real prices. */
+    public static final Set<String> VENUES = Set.of("hyperliquid", "coinbase", "kraken", "polymarket");
+
+    /** {@code herd.prices.source}: {@code live} reads Hyperliquid, Coinbase, Kraken and Polymarket,
      *  {@code synthetic} is the offline walk for CI, e2e and work without a network (Т-12). */
     public enum SourceKind {
         LIVE, SYNTHETIC;
@@ -99,7 +108,29 @@ public record PricesConfig(
                 Double.parseDouble(DEFAULT_HYPERLIQUID_MAX_BASIS), Long.parseLong(DEFAULT_HYPERLIQUID_MAX_HEAL_MS));
     }
 
+    /** The settings of before the switch for venues (22 components), with none disabled. */
+    public PricesConfig(boolean liveMode, SourceKind source, long dailyRoundMs, String hyperliquidUrl,
+                        String polymarketClobUrl, String polymarketGammaUrl, String polymarketDataUrl,
+                        long hyperliquidStaleMs, long hyperliquidXyzStaleMs, long hyperliquidMaxGapMs,
+                        long polymarketStaleMs, long polymarketMaxGapMs, long syntheticStaleMs, long syntheticMaxGapMs,
+                        long backfillCooldownMs, int connectTimeoutMs, int readTimeoutMs, long quietCarryMaxMs,
+                        int hyperliquidSeedBudgetPerMinute, boolean requireMinuteAlignedRounds,
+                        double hyperliquidMaxBasis, long hyperliquidMaxHealMs) {
+        this(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl, polymarketDataUrl,
+                hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs,
+                syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs,
+                quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
+                hyperliquidMaxHealMs, Set.of());
+    }
+
     public PricesConfig {
+        for (String venue : disabledVenues) {
+            if (!VENUES.contains(venue)) {
+                throw new IllegalArgumentException("herd.prices.disabled-venues names '" + venue
+                        + "', which is no venue: " + new java.util.TreeSet<>(VENUES));
+            }
+        }
+        disabledVenues = Set.copyOf(disabledVenues);
         if (Double.isNaN(hyperliquidMaxBasis) || Double.isInfinite(hyperliquidMaxBasis) || hyperliquidMaxBasis < 0) {
             throw new IllegalArgumentException("herd.prices.hyperliquid.max-basis must be a relative distance of at "
                     + "least 0, got " + hyperliquidMaxBasis);
@@ -171,7 +202,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
-                hyperliquidMaxBasis, hyperliquidMaxHealMs);
+                hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues);
     }
 
     /** The same settings with other base URLs and timeouts — for a client talking to a local test server. */
@@ -179,7 +210,7 @@ public record PricesConfig(
         return new PricesConfig(liveMode, source, dailyRoundMs, baseUrl, baseUrl, baseUrl, baseUrl, hyperliquidStaleMs,
                 hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs, syntheticStaleMs,
                 syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs, quietCarryMaxMs,
-                hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis, hyperliquidMaxHealMs);
+                hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues);
     }
 
     /** The same settings with another longest quiet carry. */
@@ -188,7 +219,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, maxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
-                hyperliquidMaxHealMs);
+                hyperliquidMaxHealMs, disabledVenues);
     }
 
     /** The same settings with another seed budget. */
@@ -197,7 +228,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, weightPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
-                hyperliquidMaxHealMs);
+                hyperliquidMaxHealMs, disabledVenues);
     }
 
     /** The same settings with another daily round — for the budget arithmetic of a seed. */
@@ -206,7 +237,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
-                hyperliquidMaxBasis, hyperliquidMaxHealMs);
+                hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues);
     }
 
     /** The same settings with another tolerance between a live mark and the candle of its minute. */
@@ -215,7 +246,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, maxBasis,
-                hyperliquidMaxHealMs);
+                hyperliquidMaxHealMs, disabledVenues);
     }
 
     /** The same settings with another longest gap that candles bridge (0: none). */
@@ -224,7 +255,33 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
-                hyperliquidMaxBasis, maxMs);
+                hyperliquidMaxBasis, maxMs, disabledVenues);
+    }
+
+    /** The same settings with these venues switched off ({@code herd.prices.disabled-venues}). */
+    public PricesConfig withDisabledVenues(Set<String> venues) {
+        return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
+                polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
+                polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
+                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
+                hyperliquidMaxBasis, hyperliquidMaxHealMs, venues);
+    }
+
+    /** Whether the venue is in {@code herd.prices.disabled-venues}: it gives no price, over no channel. */
+    public boolean venueDisabled(String venue) {
+        return disabledVenues.contains(venue);
+    }
+
+    /** {@code herd.prices.disabled-venues} text → the set of venues, lower case; blanks and repeats dropped. */
+    public static Set<String> parseVenues(String csv) {
+        Set<String> out = new java.util.LinkedHashSet<>();
+        for (String part : csv.split(",")) {
+            String venue = part.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!venue.isEmpty()) {
+                out.add(venue);
+            }
+        }
+        return out;
     }
 
     /** {@code herd.mode} text → {@code liveMode}, with the same parser the rest of the server uses. */
@@ -237,7 +294,7 @@ public record PricesConfig(
         return 2 * dailyRoundMs + RETENTION_EXTRA_MS;
     }
 
-    /** The real sources run — Hyperliquid, Coinbase, Polymarket (mode=live, source=live). */
+    /** The real sources run — Hyperliquid, Coinbase, Kraken, Polymarket (mode=live, source=live). */
     public boolean liveSources() {
         return liveMode && source == SourceKind.LIVE;
     }

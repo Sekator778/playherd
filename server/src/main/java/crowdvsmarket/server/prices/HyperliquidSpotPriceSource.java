@@ -97,6 +97,7 @@ public class HyperliquidSpotPriceSource implements PriceSource {
     private final Set<String> wanted = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean refreshing = new AtomicBoolean();
     private volatile long lastContextMs = Long.MIN_VALUE / 2;
+    private volatile int lastPollRestReads;
     private StreamSupervisor supervisor; // created by the first poll, guarded by this
     private ExecutorService ownBackground; // the production executor of the background reads, guarded by this
 
@@ -244,6 +245,7 @@ public class HyperliquidSpotPriceSource implements PriceSource {
                 stale.add(market);
             }
         }
+        lastPollRestReads = stale.size();
         if (!stale.isEmpty()) {
             readContexts(stale, out, now);
         } else if (now - lastContextMs >= CONTEXT_REFRESH_MS && refreshing.compareAndSet(false, true)) {
@@ -251,6 +253,12 @@ public class HyperliquidSpotPriceSource implements PriceSource {
             background.execute(this::refreshContexts);
         }
         return out;
+    }
+
+    @Override
+    public FeedStatus status(Feed feed, long nowMs) {
+        return StreamSupervisor.status(feed, NAME, supervisor().health(nowMs), nowMs, spot.hyperliquidSpot().freshMs(),
+                lastPollRestReads);
     }
 
     private Quote quote(Market market, BigDecimal mid) {

@@ -85,6 +85,7 @@ final class StreamSupervisor implements AutoCloseable {
             }
             long now = clock.getAsLong();
             lastRxMs = now;
+            lastMessageMs = now;
             healthy = true;
             stream.onMessage(message, now);
         }
@@ -122,6 +123,7 @@ final class StreamSupervisor implements AutoCloseable {
 
     private volatile Session current;
     private volatile long lastWantedMs = NEVER;
+    private volatile long lastMessageMs = NEVER;
     private volatile boolean closed;
     private Thread thread; // started by the first want(), guarded by this
     // only step() touches these
@@ -184,6 +186,39 @@ final class StreamSupervisor implements AutoCloseable {
     boolean connected() {
         Session session = current;
         return session != null && session.connection != null && session.ended == null;
+    }
+
+    /**
+     * What a stream tells the operator: whether somebody wants it ({@link #want} within {@code idleMs}), whether a
+     * connection is open, when the last message of any connection came, how many connections were opened and dropped.
+     */
+    record Health(boolean wanted, boolean open, long lastMessageAtMs, int connects, int drops) {
+    }
+
+    Health health(long nowMs) {
+        long wantedAt = lastWantedMs;
+        return new Health(wantedAt != NEVER && nowMs - wantedAt <= idleMs, connected(), lastMessageMs, connects, drops);
+    }
+
+    /**
+     * The {@link PriceSource.FeedStatus} of a streamed feed (its fields explain the states): {@code idle} when nobody asks
+     * for the stream, {@code rest-fallback} when asked and no connection is usable, {@code silent} when open but not heard
+     * from within {@code freshMs}, else {@code connected}.
+     */
+    static PriceSource.FeedStatus status(PriceSource.Feed feed, String venue, Health health, long nowMs, long freshMs,
+                                         int restReads) {
+        String state;
+        if (!health.wanted()) {
+            state = "idle";
+        } else if (!health.open()) {
+            state = "rest-fallback";
+        } else if (health.lastMessageAtMs() == NEVER || nowMs - health.lastMessageAtMs() > freshMs) {
+            state = "silent";
+        } else {
+            state = "connected";
+        }
+        return new PriceSource.FeedStatus(feed.id(), venue, "stream", state,
+                health.lastMessageAtMs() == NEVER ? null : health.lastMessageAtMs(), restReads);
     }
 
     /** How many times a connection was opened (the first included) and how many were dropped — for tests and logs. */
