@@ -53,6 +53,22 @@ public final class PipelineTestSupport {
         }
     }
 
+    /**
+     * Steps the stream of a source every 250 ms, the test's clock moving with it, until the transport holds {@code links}
+     * connections — the loss seen and the backoff waited out (the floor of a few seconds after a short session included);
+     * fails after two minutes of it.
+     */
+    public static void stepUntilConnected(PriceSource source, java.util.concurrent.atomic.AtomicLong clock,
+                                          FakeWebSocketTransport transport, int links) {
+        for (int ticks = 0; transport.links.size() < links; ticks++) {
+            if (ticks > 480) {
+                throw new AssertionError("no connection number " + links + " within two minutes of stepping the stream");
+            }
+            clock.addAndGet(StreamSupervisor.TICK_MS);
+            stepStream(source, clock.get());
+        }
+    }
+
     public static PolymarketPriceSource polymarket(PolymarketClobApi clob, PolymarketDataApi data,
                                                    PolymarketLiveState state, LongSupplier clock) {
         return new PolymarketPriceSource(() -> clob, () -> data, state, PricesConfig.defaults(), clock);

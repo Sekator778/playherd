@@ -298,6 +298,40 @@ class CoinbasePriceSourceTest {
         assertThat(api.ticker.requests).containsExactly("BTC-USD");
     }
 
+    @Test
+    void onlyATickerIsDataOfASubscribedChannelNotTheAcknowledgementAHeartbeatOrAnError() {
+        // what tells the supervisor that a connection works (and so that its backoff may start over): a price
+        assertThat(CoinbasePriceSource.isDataMessage(ws("ws_ticker_btc.json"))).isTrue();
+        assertThat(CoinbasePriceSource.isDataMessage(ws("ws_ticker_doge.json"))).isTrue();
+
+        assertThat(CoinbasePriceSource.isDataMessage(ws("ws_subscriptions.json"))).as("the acknowledgement").isFalse();
+        assertThat(CoinbasePriceSource.isDataMessage(ws("ws_heartbeat.json"))).isFalse();
+        assertThat(CoinbasePriceSource.isDataMessage("{\"type\":\"error\",\"message\":\"Failed to subscribe\"}")).isFalse();
+        assertThat(CoinbasePriceSource.isDataMessage("{\"type\":\"something-new\"}")).isFalse();
+        assertThat(CoinbasePriceSource.isDataMessage("this is not json")).isFalse();
+        assertThat(CoinbasePriceSource.isDataMessage("")).isFalse();
+        assertThat(CoinbasePriceSource.isDataMessage("[]")).isFalse();
+    }
+
+    @Test
+    void aServerThatAcceptsSendsOnlyTheAcknowledgementAndClosesIsRetriedAtTheFloorAndLessOftenNotEverySecond() throws Exception {
+        source.poll(feed, List.of(btc));
+        connectTheStream();
+        int closes = 0;
+        // the acknowledgement of the subscription, the heartbeat, then the server hangs up: five times over
+        for (int round = 0; round < 5; round++) {
+            deliver("ws_subscriptions.json");
+            deliver("ws_heartbeat.json");
+            transport.last().serverCloses(1000, "bye");
+            closes++;
+            long before = now.get();
+            PipelineTestSupport.stepUntilConnected(source, now, transport, closes + 1);
+            assertThat(now.get() - before).as("the wait after loss number %d", closes)
+                    .isGreaterThanOrEqualTo(StreamSupervisor.SHORT_SESSION_FLOOR_MS);
+        }
+        assertThat(transport.links).hasSize(6);
+    }
+
     // ---------------------------------------------------------------------- subscriptions follow the markets
 
     @Test
@@ -320,10 +354,7 @@ class CoinbasePriceSourceTest {
         first.serverCloses(1006, "");
         now.addAndGet(2_000);
         source.poll(feed, List.of(btc, doge));
-        PipelineTestSupport.stepStream(source, now.get()); // the loss is seen
-        now.addAndGet(1_100);
-        source.poll(feed, List.of(btc, doge));
-        PipelineTestSupport.stepStream(source, now.get()); // and the next attempt is due
+        PipelineTestSupport.stepUntilConnected(source, now, transport, 2); // the loss is seen, the next attempt comes
 
         assertThat(transport.links).hasSize(2);
         assertThat(transport.last().sent).containsExactly(

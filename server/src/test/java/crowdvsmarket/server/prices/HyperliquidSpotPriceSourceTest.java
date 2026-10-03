@@ -287,6 +287,20 @@ class HyperliquidSpotPriceSourceTest {
     }
 
     @Test
+    void onlyAnAllMidsWithItsMidsIsDataOfTheSubscribedChannelNotTheResponseAPongOrAnError() {
+        assertThat(HyperliquidSpotPriceSource.isDataMessage(Fixtures.json("hyperliquid/ws_all_mids.json").toString())).isTrue();
+
+        assertThat(HyperliquidSpotPriceSource.isDataMessage(
+                Fixtures.json("hyperliquid/ws_subscription_response_all_mids.json").toString())).as("the response").isFalse();
+        assertThat(HyperliquidSpotPriceSource.isDataMessage("{\"channel\":\"pong\"}")).isFalse();
+        assertThat(HyperliquidSpotPriceSource.isDataMessage("{\"channel\":\"error\",\"data\":\"Already subscribed\"}")).isFalse();
+        assertThat(HyperliquidSpotPriceSource.isDataMessage("{\"channel\":\"allMids\"}")).as("no mids in it").isFalse();
+        assertThat(HyperliquidSpotPriceSource.isDataMessage("{\"channel\":\"allMids\",\"data\":{\"mids\":[]}}")).isFalse();
+        assertThat(HyperliquidSpotPriceSource.isDataMessage("this is not json")).isFalse();
+        assertThat(HyperliquidSpotPriceSource.isDataMessage("")).isFalse();
+    }
+
+    @Test
     void messagesThatAreNoAllMidsAreNotPricesAndNeverFailAnything() throws Exception {
         source.poll(feed, List.of(hype));
         connectTheStream();

@@ -10,12 +10,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Predicate;
 import org.junit.jupiter.api.Test;
 
 /**
  * {@link StreamSupervisor}: connects when somebody wants the stream, subscribes after every connect, drops a connection
  * that was closed, failed or went silent, reconnects after 1, 2, 4 … up to the maximum seconds with the backoff starting
- * over once a connection has worked, closes a stream nobody has asked for, and stops with the application. The
+ * over once a connection has delivered data of a subscribed channel or stayed up for 30 s (a hello does not count, and a
+ * session lost sooner than 30 s is followed by at least 5 s of silence), closes a stream nobody has asked for, and stops
+ * with the application. The
  * decisions are {@code step(now)}'s, driven here with a clock of the test's own and a scripted transport — no thread,
  * no sleeping; one test runs the real virtual thread.
  */
@@ -32,6 +35,8 @@ class StreamSupervisorTest {
     private List<String> subscribe = List.of("{\"subscribe\":\"all\"}");
     private String keepAlive;
     private volatile Boolean subscribedOnAVirtualThread;
+    /** What the test's stream counts as data (a price of a subscribed channel): by default every message, as a stream that cannot tell. */
+    private volatile Predicate<String> isData = text -> true;
 
     private final StreamSupervisor.Stream stream = new StreamSupervisor.Stream() {
         @Override
@@ -53,6 +58,11 @@ class StreamSupervisorTest {
         @Override
         public String keepAliveMessage() {
             return keepAlive;
+        }
+
+        @Override
+        public boolean isData(String text) {
+            return isData.test(text);
         }
 
         @Override
@@ -122,8 +132,18 @@ class StreamSupervisorTest {
         assertThat(received).containsExactly((START + 1_234) + " {\"m\":1}", (START + 2_000) + " {\"m\":2}");
     }
 
+    /** Keeps the connection heard from: one message every 5 s from {@code fromMs} to {@code untilMs} (inclusive), the stream wanted all along. */
+    private void stayUp(StreamSupervisor supervisor, FakeWebSocketTransport.Link link, long fromMs, long untilMs) {
+        for (long at = fromMs + 5_000; at <= untilMs; at += 5_000) {
+            now.set(at);
+            link.deliver("{\"type\":\"heartbeat\"}");
+            supervisor.want(at);
+            step(supervisor, at);
+        }
+    }
+
     @Test
-    void aSilentConnectionIsDroppedAndTheNextAttemptComesAfterOneSecond() {
+    void aSilentConnectionIsDroppedAndAfterAShortSessionTheNextAttemptComesAfterTheFloor() {
         StreamSupervisor supervisor = supervisor();
         supervisor.want(START);
         step(supervisor, START);
@@ -142,13 +162,36 @@ class StreamSupervisorTest {
         assertThat(transport.last().aborted).isTrue();
         assertThat(supervisor.drops()).isEqualTo(1);
 
-        supervisor.want(START + 10_999);
-        step(supervisor, START + 10_999);
-        assertThat(transport.attempts).as("not yet: one second after the drop").isEqualTo(1);
-        supervisor.want(START + 11_001);
-        step(supervisor, START + 11_001);
+        supervisor.want(START + 14_999);
+        step(supervisor, START + 14_999);
+        assertThat(transport.attempts).as("not yet: the session lasted 10 s, so the next attempt is 5 s after the drop at the least")
+                .isEqualTo(1);
+        supervisor.want(START + 15_001);
+        step(supervisor, START + 15_001);
         assertThat(transport.attempts).isEqualTo(2);
         assertThat(transport.last().sent).as("subscribed anew on the new connection").containsExactly("{\"subscribe\":\"all\"}");
+    }
+
+    @Test
+    void aConnectionThatLivedForAWhileAndThenWentSilentIsRetriedAfterOneSecond() {
+        StreamSupervisor supervisor = supervisor();
+        supervisor.want(START);
+        step(supervisor, START);
+        stayUp(supervisor, transport.last(), START, START + 35_000); // a message every 5 s for 35 s, then nothing
+
+        supervisor.want(START + 45_000);
+        step(supervisor, START + 45_000);
+        assertThat(supervisor.connected()).as("10 s of silence since the last message: not yet").isTrue();
+        supervisor.want(START + 45_001);
+        step(supervisor, START + 45_001);
+        assertThat(supervisor.connected()).isFalse();
+
+        supervisor.want(START + 45_900);
+        step(supervisor, START + 45_900);
+        assertThat(transport.attempts).isEqualTo(1);
+        supervisor.want(START + 46_001);
+        step(supervisor, START + 46_001);
+        assertThat(transport.attempts).as("a session of 45 s has worked: the backoff starts at one second, no floor").isEqualTo(2);
     }
 
     @Test
@@ -169,31 +212,35 @@ class StreamSupervisorTest {
     }
 
     @Test
-    void aConnectionTheServerClosedOrThatFailedIsReconnectedAfterOneSecond() {
+    void aConnectionThatLivedAndWasClosedByTheServerOrFailedIsReconnectedAfterOneSecond() {
         StreamSupervisor supervisor = supervisor();
         supervisor.want(START);
         step(supervisor, START);
-        transport.last().deliver("{\"m\":1}");
+        stayUp(supervisor, transport.last(), START, START + 30_000); // a connection that works, for half a minute
 
+        long closedAt = START + 30_500;
+        now.set(closedAt);
         transport.last().serverCloses(1006, "going away");
-        supervisor.want(START + 500);
-        step(supervisor, START + 500);
+        supervisor.want(closedAt + 500);
+        step(supervisor, closedAt + 500);
         assertThat(supervisor.connected()).isFalse();
-        supervisor.want(START + 1_400);
-        step(supervisor, START + 1_400);
+        supervisor.want(closedAt + 1_400);
+        step(supervisor, closedAt + 1_400);
         assertThat(transport.attempts).isEqualTo(1);
-        supervisor.want(START + 1_500);
-        step(supervisor, START + 1_500);
+        supervisor.want(closedAt + 1_500);
+        step(supervisor, closedAt + 1_500);
         assertThat(transport.attempts).isEqualTo(2);
 
-        now.set(START + 2_000);
-        transport.last().deliver("{\"m\":2}");
+        long reconnectedAt = closedAt + 1_500;
+        stayUp(supervisor, transport.last(), reconnectedAt, reconnectedAt + 30_000);
+        long failedAt = reconnectedAt + 30_500;
+        now.set(failedAt);
         transport.last().serverFails(new IOException("connection reset"));
-        supervisor.want(START + 2_100);
-        step(supervisor, START + 2_100);
+        supervisor.want(failedAt + 100);
+        step(supervisor, failedAt + 100);
         assertThat(supervisor.connected()).isFalse();
-        supervisor.want(START + 3_100);
-        step(supervisor, START + 3_100);
+        supervisor.want(failedAt + 1_100);
+        step(supervisor, failedAt + 1_100);
         assertThat(transport.attempts).isEqualTo(3);
     }
 
@@ -220,7 +267,7 @@ class StreamSupervisorTest {
     }
 
     @Test
-    void theBackoffStartsOverOnceAConnectionHasWorked() {
+    void theBackoffStartsOverOnceAConnectionHasDeliveredDataButAShortSessionKeepsTheFloor() {
         transport.connectFailure = new IOException("connection refused");
         StreamSupervisor supervisor = supervisor();
         long at = START;
@@ -236,19 +283,19 @@ class StreamSupervisorTest {
         step(supervisor, at); // the attempt at 7 s works
         assertThat(supervisor.connected()).isTrue();
         now.set(at + 500);
-        transport.last().deliver("{\"m\":1}"); // it works: a message came
+        transport.last().deliver("{\"m\":1}"); // it works: a data message came (the test's stream counts every message)
         supervisor.want(at + 500);
         step(supervisor, at + 500);
 
         transport.last().serverCloses(1001, "restart");
         supervisor.want(at + 1_000);
-        step(supervisor, at + 1_000); // the loss is seen here
-        supervisor.want(at + 1_900);
-        step(supervisor, at + 1_900);
-        assertThat(transport.attempts).as("not before a second").isEqualTo(4);
-        supervisor.want(at + 2_000);
-        step(supervisor, at + 2_000);
-        assertThat(transport.attempts).as("a second after the loss, not eight").isEqualTo(5);
+        step(supervisor, at + 1_000); // the loss is seen here, after a session of one second: short
+        supervisor.want(at + 5_900);
+        step(supervisor, at + 5_900);
+        assertThat(transport.attempts).as("the floor under the backoff after a short session: not before 5 s").isEqualTo(4);
+        supervisor.want(at + 6_000);
+        step(supervisor, at + 6_000);
+        assertThat(transport.attempts).as("5 s after the loss — the backoff had started over, so not the eight").isEqualTo(5);
     }
 
     @Test
@@ -264,10 +311,167 @@ class StreamSupervisorTest {
             }
         }
 
-        // connect at 0, silent for 10 s (dropped at 10.25 s: the first tick past silenceMs), connect again 1 s later, at
-        // 11.25 s, silent again (dropped at 21.5 s), 2 s later at 23.5 s, then 4 s, 8 s ... — the backoff never starts
-        // over, because nothing was ever received
-        assertThat(connectsAt).containsExactly(0L, 11_250L, 23_500L, 37_750L, 56_000L);
+        // connect at 0, silent for 10 s (dropped at 10.25 s: the first tick past silenceMs; a session of 10 s is short, so
+        // the wait is the floor of 5 s, over the 1 s of the backoff), connect again at 15.25 s, silent again (dropped at
+        // 25.5 s), 5 s later at 30.5 s (the backoff is 2 s, then 4 s: still under the floor), then the backoff itself, 8 s,
+        // 16 s ... — it never starts over, because nothing was ever received
+        assertThat(connectsAt).containsExactly(0L, 15_250L, 30_500L, 45_750L, 64_000L);
+    }
+
+    /**
+     * Steps every 250 ms from the current time to {@code untilMs} with the stream wanted all along; {@code onConnect} runs right
+     * after each connection that opens. Returns the times (from {@link #START}) at which connections opened.
+     */
+    private List<Long> stepWhileWanted(StreamSupervisor supervisor, long untilMs, Runnable onConnect) {
+        List<Long> connectsAt = new ArrayList<>();
+        for (long at = now.get(); at <= untilMs; at += StreamSupervisor.TICK_MS) {
+            supervisor.want(at);
+            step(supervisor, at);
+            if (transport.links.size() > connectsAt.size()) {
+                connectsAt.add(at - START);
+                onConnect.run();
+            }
+        }
+        return connectsAt;
+    }
+
+    @Test
+    void aServerThatAcceptsSaysOneThingAndClosesIsRetriedLessAndLessOftenNotEveryFewSeconds() {
+        // a hello is not data: the first message of a connection no longer says that it works
+        isData = text -> !text.contains("hello");
+        StreamSupervisor supervisor = supervisor();
+
+        List<Long> connectsAt = stepWhileWanted(supervisor, START + 190_000, () -> {
+            transport.last().deliver("{\"hello\":1}");
+            transport.last().serverCloses(1000, "bye");
+        });
+
+        // each loss is seen a tick after the connect, and the wait is the backoff or, under it, the floor of 5 s after a
+        // session that did not last: 5, 5, 5, 8, 16, 32, 60 s ... — and never the second a hello used to buy
+        assertThat(connectsAt).containsExactly(0L, 5_250L, 10_500L, 15_750L, 24_000L, 40_250L, 72_500L, 132_750L);
+    }
+
+    @Test
+    void aServerThatSendsDataAndClosesAtOnceIsRetriedAtTheFloorNotEveryFewSeconds() {
+        StreamSupervisor supervisor = supervisor();
+
+        List<Long> connectsAt = stepWhileWanted(supervisor, START + 30_000, () -> {
+            transport.last().deliver("{\"price\":1}"); // a data message: the backoff starts over — but the session was short
+            transport.last().serverCloses(1000, "bye");
+        });
+
+        assertThat(connectsAt).as("the floor of %d ms after a session shorter than %d ms", StreamSupervisor.SHORT_SESSION_FLOOR_MS,
+                StreamSupervisor.STABLE_AFTER_MS).containsExactly(0L, 5_250L, 10_500L, 15_750L, 21_000L, 26_250L);
+    }
+
+    @Test
+    void aConnectionThatStaysUpForThirtySecondsHasWorkedWhateverItSaidAndIsRetriedAfterOneSecond() {
+        isData = text -> false; // nothing but heartbeats and acknowledgements, ever
+        transport.connectFailure = new IOException("connection refused");
+        StreamSupervisor supervisor = supervisor();
+        long at = START;
+        for (; at < START + 7_000; at += StreamSupervisor.TICK_MS) { // attempts at 0, 1 and 3 s fail: the backoff stands at 8 s
+            supervisor.want(at);
+            step(supervisor, at);
+        }
+        transport.connectFailure = null;
+        supervisor.want(at);
+        step(supervisor, at); // the attempt at 7 s works
+        assertThat(supervisor.connected()).isTrue();
+        assertThat(transport.attempts).isEqualTo(4);
+        long openedAt = at;
+        FakeWebSocketTransport.Link link = transport.last();
+
+        // it stays up, heard from every 5 s with something that is no data, for 30 s
+        for (long t = openedAt + 5_000; t <= openedAt + StreamSupervisor.STABLE_AFTER_MS; t += 5_000) {
+            now.set(t);
+            link.deliver("{\"type\":\"heartbeat\"}");
+            supervisor.want(t);
+            step(supervisor, t);
+        }
+        assertThat(supervisor.connected()).isTrue();
+        long lostAt = openedAt + StreamSupervisor.STABLE_AFTER_MS + 500;
+        now.set(lostAt);
+        link.serverCloses(1001, "restart");
+        supervisor.want(lostAt);
+        step(supervisor, lostAt); // the loss is seen
+
+        supervisor.want(lostAt + 900);
+        step(supervisor, lostAt + 900);
+        assertThat(transport.attempts).as("not before the one second").isEqualTo(4);
+        supervisor.want(lostAt + 1_000);
+        step(supervisor, lostAt + 1_000);
+        assertThat(transport.attempts).as("a second after a session that lasted — not the eight of the backoff before it")
+                .isEqualTo(5);
+    }
+
+    @Test
+    void aSessionThatLastedJustUnderThirtySecondsAndSaidNothingUsefulStillGetsTheFloorAndTheBackoffGrows() {
+        isData = text -> false;
+        StreamSupervisor supervisor = supervisor();
+        supervisor.want(START);
+        step(supervisor, START);
+        FakeWebSocketTransport.Link link = transport.last();
+        for (long at = START + 5_000; at <= START + 29_000; at += 5_000) {
+            now.set(at);
+            link.deliver("{\"type\":\"heartbeat\"}");
+            supervisor.want(at);
+            step(supervisor, at);
+        }
+        now.set(START + 29_500);
+        link.serverCloses(1001, "restart");
+        supervisor.want(START + 29_500);
+        step(supervisor, START + 29_500); // 29.5 s: under the limit
+
+        supervisor.want(START + 34_400);
+        step(supervisor, START + 34_400);
+        assertThat(transport.attempts).as("the floor, not one second").isEqualTo(1);
+        supervisor.want(START + 34_500);
+        step(supervisor, START + 34_500);
+        assertThat(transport.attempts).isEqualTo(2);
+    }
+
+    @Test
+    void aDataMessageResetsTheBackoffEvenOnAShortSessionAndAHelloDoesNot() {
+        // three connects that fail leave the backoff at 8 s (attempts at 0, 1 and 3 s); the one at 7 s works
+        transport.connectFailure = new IOException("connection refused");
+        StreamSupervisor supervisor = supervisor();
+        long at = START;
+        for (; at < START + 7_000; at += StreamSupervisor.TICK_MS) {
+            supervisor.want(at);
+            step(supervisor, at);
+        }
+        assertThat(transport.attempts).isEqualTo(3);
+        transport.connectFailure = null;
+
+        // hello only: it was a short session, nothing says it worked — the 8 s of the backoff stay
+        isData = text -> !text.contains("hello");
+        supervisor.want(at);
+        step(supervisor, at);
+        assertThat(supervisor.connected()).isTrue();
+        transport.last().deliver("{\"hello\":1}");
+        transport.last().serverCloses(1000, "bye");
+        supervisor.want(at + 250);
+        step(supervisor, at + 250); // the loss is seen at 7.25 s
+        supervisor.want(at + 8_200);
+        step(supervisor, at + 8_200);
+        assertThat(transport.attempts).as("8 s after the loss, not one second and not five").isEqualTo(4);
+        supervisor.want(at + 8_250);
+        step(supervisor, at + 8_250);
+        assertThat(transport.attempts).isEqualTo(5);
+
+        // data: the backoff starts over — one second, held up to the floor of 5 s by the short session
+        long reopened = at + 8_250;
+        transport.last().deliver("{\"price\":1}");
+        transport.last().serverCloses(1000, "bye");
+        supervisor.want(reopened + 250);
+        step(supervisor, reopened + 250);
+        supervisor.want(reopened + 5_200);
+        step(supervisor, reopened + 5_200);
+        assertThat(transport.attempts).as("not before the floor").isEqualTo(5);
+        supervisor.want(reopened + 5_250);
+        step(supervisor, reopened + 5_250);
+        assertThat(transport.attempts).as("the floor, not the eight (or sixteen) seconds of an unreset backoff").isEqualTo(6);
     }
 
     @Test
@@ -355,8 +559,8 @@ class StreamSupervisorTest {
         first.serverCloses(1006, "");
         supervisor.want(START + 100);
         step(supervisor, START + 100);
-        supervisor.want(START + 1_200);
-        step(supervisor, START + 1_200); // the second connection
+        supervisor.want(START + 5_200);
+        step(supervisor, START + 5_200); // the second connection: 5 s after the loss, the floor after a session of 0.1 s
         assertThat(transport.attempts).isEqualTo(2);
 
         first.deliver("{\"late\":true}"); // the old socket says one more thing

@@ -186,8 +186,26 @@ public class CoinbasePriceSource implements PriceSource {
         }
 
         @Override
+        public boolean isData(String text) {
+            return isDataMessage(text);
+        }
+
+        @Override
         public void onMessage(String text, long rxMs) {
             CoinbasePriceSource.this.onMessage(text, rxMs);
+        }
+    }
+
+    /**
+     * Whether a message is data of a subscribed channel: a {@code ticker} message, a price. The acknowledgement of the
+     * subscription ({@code subscriptions}), a heartbeat and an error are not — a connection that has delivered only those has
+     * not shown that it works ({@link StreamSupervisor}).
+     */
+    static boolean isDataMessage(String text) {
+        try {
+            return "ticker".equals(JSON.readTree(text).path("type").asText(""));
+        } catch (JsonProcessingException e) {
+            return false;
         }
     }
 

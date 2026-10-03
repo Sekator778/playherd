@@ -288,10 +288,7 @@ class KrakenPriceSourceTest {
         subscribedAndSnapshotted();
         FakeWebSocketTransport.Link first = transport.last();
         first.serverCloses(1006, "");
-        now.addAndGet(100);
-        PipelineTestSupport.stepStream(source, now.get()); // the loss is seen
-        now.addAndGet(1_100);
-        PipelineTestSupport.stepStream(source, now.get()); // and the next attempt is made
+        PipelineTestSupport.stepUntilConnected(source, now, transport, 2); // the loss is seen, the next attempt is made
         assertThat(transport.links).hasSize(2);
         deliver("ws_status.json");
         deliver("ws_heartbeat.json");
@@ -454,10 +451,7 @@ class KrakenPriceSourceTest {
 
         // a reconnect subscribes to the same set, and a poll that has only the refused pair asks nobody
         transport.last().serverCloses(1006, "");
-        for (int step = 0; step < 100 && transport.links.size() < 2; step++) { // the loss is seen, the next attempt comes
-            now.addAndGet(250);
-            PipelineTestSupport.stepStream(source, now.get());
-        }
+        PipelineTestSupport.stepUntilConnected(source, now, transport, 2); // the loss is seen, the next attempt comes
         assertThat(transport.links).hasSize(2);
         assertThat(transport.last().sent).hasSize(1);
         assertThat(transport.last().sent.get(0)).doesNotContain("NOPE");
@@ -559,6 +553,39 @@ class KrakenPriceSourceTest {
         assertThat(api.ticker.requests).containsExactly("BTC/USD");
     }
 
+    @Test
+    void onlyATickerSnapshotOrUpdateIsDataOfASubscribedChannelNotTheGreetingTheAcknowledgementAHeartbeatOrARefusal() {
+        // what tells the supervisor that a connection works (and so that its backoff may start over): a price
+        for (String fixture : List.of("ws_ticker_snapshot_btc.json", "ws_ticker_update_btc.json", "ws_ticker_update_doge.json")) {
+            assertThat(KrakenPriceSource.isDataMessage(ws(fixture))).as(fixture).isTrue();
+        }
+
+        for (String fixture : List.of("ws_status.json", "ws_subscribe_ack.json", "ws_heartbeat.json", "ws_subscribe_error.json")) {
+            assertThat(KrakenPriceSource.isDataMessage(ws(fixture))).as(fixture).isFalse();
+        }
+        assertThat(KrakenPriceSource.isDataMessage("{\"channel\":\"ticker\"}")).as("no entry in it").isFalse();
+        assertThat(KrakenPriceSource.isDataMessage("{\"channel\":\"ticker\",\"data\":[]}")).isFalse();
+        assertThat(KrakenPriceSource.isDataMessage("{\"channel\":\"something-new\",\"data\":[{}]}")).isFalse();
+        assertThat(KrakenPriceSource.isDataMessage("this is not json")).isFalse();
+        assertThat(KrakenPriceSource.isDataMessage("")).isFalse();
+    }
+
+    @Test
+    void aServerThatGreetsAcknowledgesAndHangsUpIsNotDialledEverySecond() throws Exception {
+        source.poll(feed, List.of(btc));
+        connectTheStream();
+        long previous = now.get();
+        for (int round = 1; round <= 4; round++) {
+            deliver("ws_status.json");
+            deliver("ws_subscribe_ack.json");
+            transport.last().serverCloses(1000, "bye");
+            PipelineTestSupport.stepUntilConnected(source, now, transport, round + 1);
+            assertThat(now.get() - previous).as("the wait before connection number %d", round + 1)
+                    .isGreaterThanOrEqualTo(StreamSupervisor.SHORT_SESSION_FLOOR_MS);
+            previous = now.get();
+        }
+    }
+
     // ---------------------------------------------------------------------- subscriptions follow the markets
 
     @Test
@@ -582,9 +609,7 @@ class KrakenPriceSourceTest {
 
         first.serverCloses(1006, "");
         now.addAndGet(2_000);
-        PipelineTestSupport.stepStream(source, now.get()); // the loss is seen
-        now.addAndGet(1_100);
-        PipelineTestSupport.stepStream(source, now.get()); // and the next attempt is due
+        PipelineTestSupport.stepUntilConnected(source, now, transport, 2); // the loss is seen, the next attempt is due
 
         assertThat(transport.links).hasSize(2);
         assertThat(transport.last().sent).containsExactly("{\"method\":\"subscribe\",\"params\":{\"channel\":\"ticker\","

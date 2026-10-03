@@ -17,10 +17,17 @@ import org.jboss.logging.Logger;
  *
  * <p><b>What it watches.</b> A connection is dead when the peer closed it or it failed, and silent when nothing at all
  * — a quote, a heartbeat, an acknowledgement — has arrived for {@code silenceMs} (a connection that opens and never
- * says a word is silent too). Either drops it and schedules the next attempt. The backoff starts again at one second
- * once a connection has delivered a message, so a stream that was healthy comes back within a second, while a server
- * that accepts connections and hangs up (or one that is down) is tried less and less often. The supervisor
- * does not judge what a message says: {@link Stream#onMessage} does.
+ * says a word is silent too). Either drops it and schedules the next attempt.
+ *
+ * <p><b>When the backoff starts over.</b> A connection has <i>worked</i> when it has delivered a data message of a
+ * subscribed channel — what the stream says is one ({@link Stream#isData}: a price; not a greeting, an acknowledgement, a
+ * heartbeat or an error) — or has stayed up for {@value #STABLE_AFTER_MS} ms. Only then does the backoff start again at
+ * one second, so a stream that was healthy comes back within a second. The first message of a connection, whatever it is,
+ * proves nothing: a server that accepts, says one thing and closes, again and again, would be dialled every second
+ * for ever; it is tried less and less often like a server that is down. And a session that was lost before
+ * {@value #STABLE_AFTER_MS} ms — data or not — is followed by at least {@value #SHORT_SESSION_FLOOR_MS} ms of silence: a
+ * server that flaps is not hammered. The supervisor does not judge what a message says beyond that: {@link Stream#onMessage}
+ * does.
  *
  * <p><b>Nobody asking, no connection.</b> The stream runs while somebody wants it ({@link #want}, which a source calls
  * from every poll): after {@code idleMs} without a call it is closed, and the next call connects again at once. With no
@@ -51,6 +58,16 @@ final class StreamSupervisor implements AutoCloseable {
             return null;
         }
 
+        /**
+         * Whether the message is <i>data</i> of a channel this stream subscribed to — a price — and not a greeting, the
+         * acknowledgement of a subscription, a heartbeat or an error. A connection that has delivered one has proved that the
+         * subscription works, and the backoff of the next reconnect starts over. The default is a stream that cannot tell:
+         * every message is data. Called on the transport's thread for each message until the first data one.
+         */
+        default boolean isData(String message) {
+            return true;
+        }
+
         /** One message of the stream, received at {@code rxMs} by the supervisor's clock. Runs on the transport's thread. */
         void onMessage(String text, long rxMs);
     }
@@ -58,6 +75,10 @@ final class StreamSupervisor implements AutoCloseable {
     /** How often the thread looks at the stream: the longest it is unattended, and the resolution of every timeout. */
     static final long TICK_MS = 250L;
     static final long INITIAL_BACKOFF_MS = 1_000L;
+    /** A connection that stays up this long has worked, whatever it said: its loss is retried from the shortest backoff. */
+    static final long STABLE_AFTER_MS = 30_000L;
+    /** The least wait before the next attempt after a session that did not last {@link #STABLE_AFTER_MS}: the floor under the backoff. */
+    static final long SHORT_SESSION_FLOOR_MS = 5_000L;
     static final long CONNECT_TIMEOUT_MS = 5_000L;
     /** Hyperliquid closes a connection nothing is sent on for a minute (hl_multi_asset_live.md §6): half of that. */
     static final long KEEP_ALIVE_EVERY_MS = 30_000L;
@@ -69,13 +90,16 @@ final class StreamSupervisor implements AutoCloseable {
 
         volatile WebSocketTransport.Connection connection;
         volatile long lastRxMs;
-        /** At least one message arrived: the connection works. */
-        volatile boolean healthy;
+        /** When the connection opened (the first look at it before then: the attempt's own time). */
+        volatile long openedAtMs;
+        /** A data message of a subscribed channel arrived ({@link Stream#isData}): the subscription works. */
+        volatile boolean dataSeen;
         /** Why the peer or the network ended it, {@code null} while it lives. */
         volatile String ended;
 
         Session(long nowMs) {
             this.lastRxMs = nowMs;
+            this.openedAtMs = nowMs;
         }
 
         @Override
@@ -86,8 +110,23 @@ final class StreamSupervisor implements AutoCloseable {
             long now = clock.getAsLong();
             lastRxMs = now;
             lastMessageMs = now;
-            healthy = true;
+            if (!dataSeen && isDataQuietly(message)) {
+                dataSeen = true;
+            }
             stream.onMessage(message, now);
+        }
+
+        private boolean isDataQuietly(String message) {
+            try {
+                return stream.isData(message);
+            } catch (RuntimeException e) { // a message the stream cannot even look at is no data
+                return false;
+            }
+        }
+
+        /** The connection has worked: it delivered data, or stayed up for {@link #STABLE_AFTER_MS}. */
+        boolean worked(long nowMs) {
+            return dataSeen || nowMs - openedAtMs >= STABLE_AFTER_MS;
         }
 
         @Override
@@ -275,8 +314,10 @@ final class StreamSupervisor implements AutoCloseable {
             connect(nowMs);
             return TICK_MS;
         }
-        if (session.healthy) {
-            backoffMs = INITIAL_BACKOFF_MS; // a connection that works: the next loss is retried within a second
+        if (session.worked(nowMs)) {
+            // data of a subscribed channel, or half a minute up: the next loss is retried from the shortest backoff
+            // (a hello, an acknowledgement or an error does not count, however promptly it came)
+            backoffMs = INITIAL_BACKOFF_MS;
         }
         String ended = session.ended;
         if (ended != null) {
@@ -301,6 +342,7 @@ final class StreamSupervisor implements AutoCloseable {
             }
             long opened = clock.getAsLong();
             session.lastRxMs = opened; // the silence is counted from here, not from the start of a slow connect
+            session.openedAtMs = opened; // and so is the time it has been up
             lastKeepAliveAtMs = opened;
             connects++;
             LOG.infof("the %s stream is connected (%s)", stream.name(), stream.uri());
@@ -310,7 +352,7 @@ final class StreamSupervisor implements AutoCloseable {
             session.abortQuietly();
             failures.failure("connect", "could not connect the " + stream.name() + " stream, trying again in "
                     + backoffMs / 1000 + " s", e);
-            scheduleReconnect(nowMs);
+            scheduleReconnect(nowMs, 0L);
         } catch (InterruptedException e) {
             current = null;
             session.abortQuietly();
@@ -334,8 +376,11 @@ final class StreamSupervisor implements AutoCloseable {
         session.abortQuietly();
         drops++;
         if (reconnect) {
-            LOG.warnf("the %s stream was lost (%s), connecting again in %d s", stream.name(), why, backoffMs / 1000);
-            scheduleReconnect(nowMs);
+            // a session that was lost before it could prove itself is not followed by an attempt sooner than the floor
+            long floorMs = nowMs - session.openedAtMs < STABLE_AFTER_MS ? SHORT_SESSION_FLOOR_MS : 0L;
+            LOG.warnf("the %s stream was lost (%s) after %d s, connecting again in %d s", stream.name(), why,
+                    (nowMs - session.openedAtMs) / 1000, Math.max(backoffMs, floorMs) / 1000);
+            scheduleReconnect(nowMs, floorMs);
         } else {
             LOG.infof("the %s stream is closed (%s)", stream.name(), why);
             nextAttemptAtMs = 0L; // wanted again: connected at once
@@ -343,8 +388,9 @@ final class StreamSupervisor implements AutoCloseable {
         }
     }
 
-    private void scheduleReconnect(long nowMs) {
-        nextAttemptAtMs = nowMs + backoffMs;
+    /** The next attempt after the backoff or the floor, whichever is longer; the backoff doubles for the one after. */
+    private void scheduleReconnect(long nowMs, long floorMs) {
+        nextAttemptAtMs = nowMs + Math.max(backoffMs, floorMs);
         backoffMs = Math.min(backoffMs * 2, reconnectMaxMs);
     }
 

@@ -185,8 +185,27 @@ public class HyperliquidSpotPriceSource implements PriceSource {
         }
 
         @Override
+        public boolean isData(String text) {
+            return isDataMessage(text);
+        }
+
+        @Override
         public void onMessage(String text, long rxMs) {
             HyperliquidSpotPriceSource.this.onMessage(text, rxMs);
+        }
+    }
+
+    /**
+     * Whether a message is data of the subscribed channel: an {@code allMids} message that carries its {@code mids}. The
+     * {@code subscriptionResponse}, a {@code pong} and an error are not — a connection that has delivered only those has not
+     * shown that it works ({@link StreamSupervisor}).
+     */
+    static boolean isDataMessage(String text) {
+        try {
+            JsonNode message = JSON.readTree(text);
+            return "allMids".equals(message.path("channel").asText("")) && message.path("data").path("mids").isObject();
+        } catch (JsonProcessingException e) {
+            return false;
         }
     }
 

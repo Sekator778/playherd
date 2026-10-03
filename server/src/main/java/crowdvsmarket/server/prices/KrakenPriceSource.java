@@ -219,8 +219,28 @@ public class KrakenPriceSource implements PriceSource {
         }
 
         @Override
+        public boolean isData(String text) {
+            return isDataMessage(text);
+        }
+
+        @Override
         public void onMessage(String text, long rxMs) {
             KrakenPriceSource.this.onMessage(text, rxMs);
+        }
+    }
+
+    /**
+     * Whether a message is data of a subscribed channel: a {@code ticker} snapshot or update that carries an entry. The
+     * {@code status} greeting, the acknowledgement of the subscription, a {@code heartbeat} and a refusal are not — a
+     * connection that has delivered only those has not shown that it works ({@link StreamSupervisor}).
+     */
+    static boolean isDataMessage(String text) {
+        try {
+            JsonNode message = JSON.readTree(text);
+            return "ticker".equals(message.path("channel").asText("")) && message.path("data").isArray()
+                    && message.path("data").size() > 0;
+        } catch (JsonProcessingException e) {
+            return false;
         }
     }
 
