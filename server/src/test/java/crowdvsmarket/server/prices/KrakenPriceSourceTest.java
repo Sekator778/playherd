@@ -585,30 +585,53 @@ class KrakenPriceSourceTest {
     }
 
     @Test
-    void theOhlcIsReadInPagesWhenTheAnswerIsFull() throws Exception {
-        // 720 rows in the first answer, 3 in the second: since moves to the newest row of the first
-        ArrayNode page1 = JSON.createArrayNode();
-        long first = 1_791_029_000L;
-        for (int i = 0; i < KrakenPriceSource.MAX_ROWS; i++) {
-            page1.add(row(first + i * 60L, "100", "101", "99", "100", 5));
-        }
-        ArrayNode page2 = JSON.createArrayNode();
-        long second = first + KrakenPriceSource.MAX_ROWS * 60L;
-        for (int i = 0; i < 3; i++) {
-            page2.add(row(second + i * 60L, "100", "101", "99", "100", 5));
-        }
-        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
-        api.ohlc.handler = call -> ohlcAnswer("BTC/USD", calls.getAndIncrement() == 0 ? page1 : page2,
-                Long.MAX_VALUE / 4000);
-        now.set(second * 1000L + 3_600_000L);
+    void theOhlcIsOneCallWhateverItAnswersBecauseKrakenHasNoOlderPageToGive() throws Exception {
+        // measured 2026-10-03: since a day back answered 721 rows, the first of them 12.0 h old — the latest 720 committed
+        // minutes and the one in progress; with since = 1 the same. Asking again from the newest row cannot bring more.
+        KrakenOhlcTape tape = KrakenOhlcTape.flat("BTC/USD", 84_000.0);
+        api.ohlc.handler = call -> tape.answer(call.sinceSeconds(), now.get());
+        now.set(SAMPLED);
 
-        List<CandleHistory.Candle> candles = source.candles("BTC/USD", first * 1000L + 1_800_000L);
+        PriceSource.History history = source.historyOf(btc, SAMPLED - 24 * 3_600_000L, SAMPLED);
 
-        assertThat(api.ohlc.requests).hasSize(2);
-        assertThat(api.ohlc.requests.get(1).sinceSeconds()).as("from the newest row of the first page")
-                .isEqualTo(first + (KrakenPriceSource.MAX_ROWS - 1) * 60L);
-        assertThat(candles).hasSize(KrakenPriceSource.MAX_ROWS + 3);
-        assertThat(candles).isSortedAccordingTo((a, b) -> Long.compare(a.t(), b.t()));
+        assertThat(api.ohlc.requests).as("one request, not a page after page").hasSize(1);
+        assertThat(api.ohlc.requests.get(0).sinceSeconds()).as("the minute 24 h and 30 min back, less a second")
+                .isEqualTo((SAMPLED - 24 * 3_600_000L - 1_800_000L) / 1000L / 60L * 60L - 1);
+        assertThat(history.points()).isNotEmpty();
+        assertThat(history.bars()).as("the 720 committed minutes, the one in progress left out").hasSize(KrakenOhlcTape.KEPT);
+    }
+
+    @Test
+    void anAnswerThatBeginsLaterThanAskedSaysFromWhenItIsComplete() throws Exception {
+        KrakenOhlcTape tape = KrakenOhlcTape.flat("BTC/USD", 84_000.0);
+        api.ohlc.handler = call -> tape.answer(call.sinceSeconds(), now.get());
+        now.set(SAMPLED);
+        long firstRowMs = SAMPLED / 60_000L * 60_000L - KrakenOhlcTape.KEPT * 60_000L; // 12.0 h before the minute in progress
+
+        PriceSource.History day = source.historyOf(btc, SAMPLED - 24 * 3_600_000L, SAMPLED);
+        PriceSource.History hours = source.historyOf(btc, SAMPLED - 3 * 3_600_000L, SAMPLED);
+
+        assertThat(day.coveredFromMs()).as("what lies before the first row is no data").isEqualTo(firstRowMs);
+        assertThat(day.reaches(firstRowMs)).isTrue();
+        assertThat(day.reaches(firstRowMs - 1)).isFalse();
+        assertThat(hours.coveredFromMs()).as("it reaches back as far as it was asked to").isEqualTo(PriceSource.History.NO_LIMIT);
+        assertThat(hours.reaches(0L)).isTrue();
+    }
+
+    @Test
+    void theCandlesOfATruncatedAnswerAreAllThereIsAndTheMinuteInProgressIsNotOne() throws Exception {
+        KrakenOhlcTape tape = KrakenOhlcTape.flat("BTC/USD", 84_000.0).quiet(SAMPLED / 60_000L * 60_000L - 5 * 60_000L);
+        api.ohlc.handler = call -> tape.answer(call.sinceSeconds(), now.get());
+        now.set(SAMPLED);
+
+        KrakenPriceSource.Candles candles = source.candles("BTC/USD", SAMPLED - 24 * 3_600_000L);
+
+        assertThat(candles.list()).hasSize(KrakenPriceSource.MAX_ROWS); // the 720 committed minutes; the 721st is in progress
+        assertThat(KrakenOhlcTape.KEPT).as("the tape keeps what the source says Kraken keeps").isEqualTo(KrakenPriceSource.MAX_ROWS);
+        assertThat(candles.list()).isSortedAccordingTo((a, b) -> Long.compare(a.t(), b.t()));
+        assertThat(candles.list().stream().filter(c -> !c.hasTrades())).as("the filler of the quiet minute is there, as a filler")
+                .hasSize(1);
+        assertThat(candles.coveredFromMs()).isEqualTo(candles.list().get(0).t());
     }
 
     @Test

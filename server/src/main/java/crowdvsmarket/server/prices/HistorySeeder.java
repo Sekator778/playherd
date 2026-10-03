@@ -43,7 +43,10 @@ import org.jboss.logging.Logger;
  * once; a try that failed — or that left the market still without a price at the start it was about, the source
  * having nothing yet (Polymarket's buckets materialise minutes late) — is repeated after a minute and then after
  * twice as long as the last time, up to a quarter of an hour; one that succeeded is not repeated in that window.
- * A seed asks for the history of the last day or minutes and only ever adds.
+ * A seed asks for the history of the last day or minutes and only ever adds. A source may keep less than was asked for
+ * (Kraken serves the latest 720 minutes whatever the range, {@link PriceSource.History#coveredFromMs}): a window start
+ * older than that has no data to be had, so it is not "missing" — the seed is done with what exists and is not tried
+ * again, minute after minute, for a price that nobody can give.
  *
  * <p><b>Pacing: Hyperliquid's budget.</b> The limit is 1200 weight a minute per IP (hl_multi_asset_live.md §5.1).
  * Polling takes 600 (the default dex every 3 s is 20 × 20, {@code xyz} every 6 s is 10 × 20) and the catalog 40
@@ -112,6 +115,8 @@ public class HistorySeeder {
     private final ThrottledLog warnings;
     private final ConcurrentHashMap<String, Attempt> attempts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> nextSlotMs = new ConcurrentHashMap<>();
+    /** Per instrument, the oldest moment its source keeps history for, as the last seed learned it (never moves back). */
+    private final ConcurrentHashMap<String, Long> coveredFrom = new ConcurrentHashMap<>();
     private ScheduledThreadPoolExecutor pool; // created by the first seed, guarded by this
 
     @Inject
@@ -214,14 +219,21 @@ public class HistorySeeder {
     /**
      * Whether a seed could give the market an opening price it lacks: no tick (of any kind: a pin is a price
      * too) is fresh at a running window's start — and for a source whose history is the past of the first live
-     * tick only, no live tick lies at or before that start. Without a calendar (no starts), an empty ring.
+     * tick only, no live tick lies at or before that start. A start older than the history the source keeps
+     * ({@link PriceSource.History#coveredFromMs}: Kraken serves twelve hours) cannot be helped by any seed — that
+     * part is no data — and does not count: the seed is done with what exists and is not repeated for it. Without a
+     * calendar (no starts), an empty ring.
      */
     private boolean needsSeed(Market market, PriceSources.Binding binding, long[] starts) {
         if (starts.length == 0) {
             return store.size(market.id()) == 0;
         }
         boolean tradePrices = binding.source().historyKind() == PriceSource.HistoryKind.TRADE_PRICES;
+        long keptFrom = coveredFrom.getOrDefault(market.id(), PriceSource.History.NO_LIMIT);
         for (long start : starts) {
+            if (start < keptFrom) {
+                continue; // older than the source keeps: nothing to ask for
+            }
             if (store.hasTickFreshAt(market.id(), start, binding.feed().staleMs())) {
                 continue;
             }
@@ -341,6 +353,9 @@ public class HistorySeeder {
         long[] starts = runningStarts.apply(to);
         PriceSource source = binding.source();
         PriceSource.History history = source.historyOf(market, from, to, starts); // no lock is held
+        if (history.coveredFromMs() != PriceSource.History.NO_LIMIT) {
+            coveredFrom.merge(market.id(), history.coveredFromMs(), Math::max); // what a source no longer keeps, it never regains
+        }
         List<PricePoint> usable = new ArrayList<>(history.points().size());
         for (PricePoint p : history.points()) {
             if (LiveMarketPrices.usable(market, p)) {
@@ -351,8 +366,10 @@ public class HistorySeeder {
         if (source.historyKind() == PriceSource.HistoryKind.SAME_AS_LIVE) {
             added += store.fillHoles(market.id(), usable, binding.feed().maxGapMs());
         }
-        LOG.infof("price history seeded for %s: %d point(s) from the source for the last %d min, %d added",
-                market.id(), history.points().size(), seedSpanMs() / 60_000L, added);
+        LOG.infof("price history seeded for %s: %d point(s) from the source for the last %d min, %d added%s",
+                market.id(), history.points().size(), seedSpanMs() / 60_000L, added,
+                history.coveredFromMs() > from ? " (the source keeps nothing before "
+                        + java.time.Instant.ofEpochMilli(history.coveredFromMs()) + ": done with what exists)" : "");
         return added;
     }
 

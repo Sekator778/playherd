@@ -122,15 +122,37 @@ public interface PriceSource {
      * @param bars      for a source whose history is {@link HistoryKind#TRADE_PRICES}: every closed bar with trades
      *                  of the answer (it starts earlier than the range asked for, see the source), oldest first —
      *                  what {@code GapBridge} bridges a gap between two live ticks with; empty otherwise
+     * @param coveredFromMs the oldest moment the source keeps history for, when the range asked for starts before it
+     *                  ({@link #NO_LIMIT}: the answer reaches back as far as it was asked to, or the source has no such
+     *                  limit). Kraken, for one, serves the latest 720 one-minute candles whatever {@code since} is:
+     *                  what lies before the first of them is <i>no data</i>, not a quiet market — nothing is bridged
+     *                  over it, nothing is carried across it, and a seed asking for more is done with what exists
      */
-    record History(List<PricePoint> points, Optional<PricePoint> lastTrade, List<Bar> bars) {
+    record History(List<PricePoint> points, Optional<PricePoint> lastTrade, List<Bar> bars, long coveredFromMs) {
+
+        /** {@link #coveredFromMs} of a source that gave everything it was asked for. */
+        public static final long NO_LIMIT = Long.MIN_VALUE;
+
+        public History(List<PricePoint> points, Optional<PricePoint> lastTrade, List<Bar> bars) {
+            this(points, lastTrade, bars, NO_LIMIT);
+        }
 
         public History(List<PricePoint> points, Optional<PricePoint> lastTrade) {
-            this(points, lastTrade, List.of());
+            this(points, lastTrade, List.of(), NO_LIMIT);
         }
 
         public static History of(List<PricePoint> points) {
-            return new History(points, Optional.empty(), List.of());
+            return new History(points, Optional.empty(), List.of(), NO_LIMIT);
+        }
+
+        /** The same answer, saying it is complete from {@code coveredFromMs} on only. */
+        History coveredFrom(long coveredFromMs) {
+            return new History(points, lastTrade, bars, coveredFromMs);
+        }
+
+        /** Whether the source says anything about {@code atMs}: false for a time before the history it keeps. */
+        boolean reaches(long atMs) {
+            return atMs >= coveredFromMs;
         }
     }
 

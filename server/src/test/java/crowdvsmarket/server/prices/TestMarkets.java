@@ -35,6 +35,16 @@ public final class TestMarkets {
                 MarketStatus.ACTIVE, 0L, null, null, null);
     }
 
+    /**
+     * A market that Kraken itself prices — {@code spot_BTC}, source {@code kraken}, ref {@code BTC/USD} — which no catalog
+     * lists (Kraken is only ever a backup) but a legal market id, for a test that needs a round window on Kraken's ticks and
+     * history: the shadow of a backup has an id that no round window can carry.
+     */
+    public static Market kraken(String symbol, int lotExp, int oracleIndex) {
+        return new Market("spot_" + symbol, MarketKind.PERP, Category.CRYPTO, symbol, symbol, null, null, "kraken",
+                symbol + "/USD", null, 20, lotExp, oracleIndex, MarketStatus.ACTIVE, 0L, null, null, null);
+    }
+
     /** A Hyperliquid spot market as the spot catalog lists it: {@code spot_HYPE} priced by the pair {@code @107}. */
     public static Market hlSpot(String symbol, String pair, int lotExp, int oracleIndex) {
         return new Market("spot_" + symbol, MarketKind.PERP, Category.CRYPTO, symbol, symbol, null, null, "hyperliquid",

@@ -11,7 +11,9 @@ import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 /**
  * Kraken's public, read-only market data (no key; docs/research/primary_sources.md §2.3; read live 2026-10-03 at
  * https://api.kraken.com). Every answer is {@code {"error":[…],"result":{…}}}; an error such as
- * {@code ["EQuery:Unknown asset pair"]} comes with an HTTP 200 and no {@code result}.
+ * {@code ["EQuery:Unknown asset pair"]} comes with an HTTP 200 and no {@code result} — for a call that names several pairs,
+ * one unknown among them fails the whole call (measured 2026-10-03: {@code Ticker?pair=BTC/USD,NOPE/USD} and
+ * {@code AssetPairs?pair=BTC/USD,NOPE/USD} both answered only that error).
  * <ul>
  *   <li>{@code GET /0/public/Ticker?pair=BTC/USD,ETH/USD} — several pairs in one call; per pair {@code a} (ask:
  *       {@code [price, whole lot volume, lot volume]}), {@code b} (bid, the same), {@code c} (last trade: price, lot
@@ -21,10 +23,13 @@ import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
  *   <li>{@code GET /0/public/AssetPairs?pair=BTC/USD} — per pair {@code altname} ({@code XBTUSD}), {@code wsname}
  *       ({@code XBT/USD}, the name of WebSocket v1), {@code base}, {@code quote}, {@code status}; keyed like the ticker;
  *   <li>{@code GET /0/public/OHLC?pair=BTC/USD&interval=1&since=<unix seconds>} — rows
- *       {@code [time, open, high, low, close, vwap, volume, count]}, {@code time} the start of the minute, at most 720 of
- *       them, those after {@code since}; a minute without trades is a row with {@code count} 0 (open = high = low =
- *       close = the previous close, volume 0 — a filler, like Hyperliquid's {@code n = 0}); the last row is the minute in
- *       progress, and {@code result.last} is the time of the last committed one.
+ *       {@code [time, open, high, low, close, vwap, volume, count]}, {@code time} the start of the minute; those after
+ *       {@code since}, <b>but only ever the latest 720 committed minutes and the one in progress</b>: there is no older page
+ *       and no paging at all, whatever {@code since} is (measured 2026-10-03, 17:0x UTC, from Germany: {@code since} a day
+ *       back answered 721 rows, the first 12.0 h old, and {@code since = 1} the same; {@code since} three hours back, 180
+ *       rows). A minute without trades is a row with {@code count} 0 (open = high = low = close = the previous close, volume
+ *       0 — a filler, like Hyperliquid's {@code n = 0}); the last row is the minute in progress and is always there, and
+ *       {@code result.last} is the time of the last committed one.
  * </ul>
  * The public endpoints' own rate limit is UNVERIFIED (https://docs.kraken.com/api/docs/guides/spot-rest-ratelimits,
  * read 2026-10-03, describes the call counter of an API key, 15 to 20 with a decay of 0.33 to 1 a second): the source

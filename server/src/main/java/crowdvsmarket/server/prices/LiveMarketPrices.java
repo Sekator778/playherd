@@ -665,7 +665,7 @@ public class LiveMarketPrices implements MarketPrices {
                         + "unless the candles bridge the whole gap)" : "");
         boolean[] bridged = bridging ? bridgeHoles(market, window, assessment, answer, pinned)
                 : new boolean[holes.size()];
-        carryQuietHoles(market, window, holes, perHole, bridged, answer.lastTrade(), tradePrices);
+        carryQuietHoles(market, window, holes, perHole, bridged, answer, tradePrices);
     }
 
     /** A live tick on both sides and a gap within the cap: worth fetching the candles up to the tick on the right. */
@@ -696,7 +696,7 @@ public class LiveMarketPrices implements MarketPrices {
             GapBridge.Gap gap = new GapBridge.Gap(hole.leftRealAtMs(), Px.decode(hole.leftPx()), fillFrom,
                     hole.rightAtMs(), Px.decode(hole.rightPx()));
             GapBridge.Result result = GapBridge.bridge(answer.bars(), gap, atBoundaries, assessment.feed().maxGapMs(),
-                    config.hyperliquidMaxHealMs(), maxBasis, p -> usable(market, p));
+                    config.hyperliquidMaxHealMs(), maxBasis, p -> usable(market, p), answer.coveredFromMs());
             if (result.ok()) {
                 int added = store.mergeHistory(market.id(), result.points(), false);
                 bridged[i] = true;
@@ -720,15 +720,21 @@ public class LiveMarketPrices implements MarketPrices {
      * {@code end}). "Did not move" is: a live tick on the right with the same price — or, with none yet, the
      * source's last trade (a candle's close) being the very price of the left tick. With
      * {@code tradePrices} the tick on the left must be a live one: the carried price is a mark, never a
-     * trade price. Only called after the source answered.
+     * trade price. Only called after the source answered — and only for the part of a hole the answer reaches
+     * ({@link PriceSource.History#reaches}): a source that keeps no history that old (Kraken keeps twelve hours)
+     * has nothing to say about it, and its silence is no sign that the asset was quiet.
      */
     private void carryQuietHoles(Market market, RoundWindow window, List<Hole> holes, int[] perHole,
-                                 boolean[] bridged, Optional<PricePoint> lastTrade, boolean tradePrices) {
+                                 boolean[] bridged, PriceSource.History answer, boolean tradePrices) {
+        Optional<PricePoint> lastTrade = answer.lastTrade();
         List<PricePoint> carried = new ArrayList<>();
         for (int i = 0; i < holes.size(); i++) {
             Hole hole = holes.get(i);
             if (perHole[i] > 0 || bridged[i] || hole.leftPx() == null || (tradePrices && !hole.leftLive())) {
                 continue; // a bridged hole has its points; one the asset traded in is not a quiet one
+            }
+            if (!answer.reaches(hole.fromMs())) {
+                continue; // no data that old: the absence of trades in the answer says nothing about this hole
             }
             long spanEnd = Math.min(hole.toMs(), window.endMs() + 1);
             if (spanEnd - hole.fromMs() > config.quietCarryMaxMs()) {

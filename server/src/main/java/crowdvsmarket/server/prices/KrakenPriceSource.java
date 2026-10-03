@@ -66,12 +66,19 @@ import org.jboss.logging.Logger;
  * day ago; kept through a stream outage: it is a figure of the last day).
  *
  * <p><b>History is the 1-minute candles</b> ({@code GET /0/public/OHLC?pair=…&interval=1&since=…}: rows
- * {@code [time, open, high, low, close, vwap, volume, count]}, the rows after {@code since}, at most 720 a call — read in
- * pages). They are trade prices and the ticks are mids, so the history is {@link HistoryKind#TRADE_PRICES} and
- * {@link CandleHistory}, {@link GapBridge} and the quiet rule treat it as they treat Coinbase's and Hyperliquid's. Two
- * things are this venue's: a minute without trades is a row with {@code count = 0} (a filler, not a price), and the last
- * row is the minute in progress — rows after {@code result.last}, the exchange's own marker of the last committed
- * candle, are never used, whatever the clock says. The weight of a history call is 0 ({@link HistorySeeder} spaces
+ * {@code [time, open, high, low, close, vwap, volume, count]}). They are trade prices and the ticks are mids, so the
+ * history is {@link HistoryKind#TRADE_PRICES} and {@link CandleHistory}, {@link GapBridge} and the quiet rule treat it as
+ * they treat Coinbase's and Hyperliquid's. Three things are this venue's. A minute without trades is a row with
+ * {@code count = 0} (a filler, not a price). The last row is the minute in progress — rows after {@code result.last}, the
+ * exchange's own marker of the last committed candle, are never used, whatever the clock says. And <b>there is no paging
+ * and no older data</b>: a call answers the latest 720 committed minutes and the one in progress, however far back
+ * {@code since} is — measured 2026-10-03, 17:0x UTC, from Germany: {@code since} a day back gave 721 rows, the first of
+ * them 12.0 h old, and {@code since = 1} the same (docs/research/primary_sources.md §2.3 says "до 720 строк"); {@code since}
+ * only cuts off the old end of what is kept. What lies before the first row is therefore <i>no data</i>, which
+ * {@link #candles} notices (the first row comes after the minute asked for) and {@link #historyOf} says in the answer
+ * ({@link History#coveredFromMs()}): a seed that asks for a day is done with the twelve hours that exist, a gap older than
+ * that is not bridged and not carried across as a quiet asset's flat price. The history stays this venue's own: no Trades
+ * API, no other exchange fills what Kraken does not keep. The weight of a history call is 0 ({@link HistorySeeder} spaces
  * seeds a second apart). The last trade before a range that holds none (a pair quiet for the 30 minutes asked for) is
  * not read: Kraken's ticker gives the last price but not its time, so the evidence is missing and a quiet hole at the
  * end of a window stays a hole — the conservative answer.
@@ -91,13 +98,14 @@ public class KrakenPriceSource implements PriceSource {
     public static final String NAME = "kraken";
     public static final String FEED = "kraken";
 
-    /** The most rows one OHLC call answers. */
+    /**
+     * How many committed minutes Kraken's OHLC keeps for a call: the latest 720 (12 h), whatever {@code since} is — there is no
+     * page behind them (measured 2026-10-03, see the class comment).
+     */
     static final int MAX_ROWS = 720;
     static final long CANDLE_MS = CandleHistory.CANDLE_MS;
     /** A history request starts this long before its range, as the others' do: the candle of the left tick of a gap, a last trade. */
     static final long LOOKBACK_MS = 30 * 60_000L;
-    /** OHLC is read in at most this many pages: 4 × 720 minutes, more than the 24 h + 30 min a seed asks for. */
-    static final int MAX_PAGES = 4;
     /** A quote of the stream that has not changed for this long is confirmed over REST (class comment). */
     static final long QUOTE_MAX_AGE_MS = 60_000L;
 
@@ -450,38 +458,46 @@ public class KrakenPriceSource implements PriceSource {
 
     @Override
     public History historyOf(Market market, long fromMs, long toMs, long... boundariesMs) throws IOException {
-        List<CandleHistory.Candle> candles = candles(market.sourceRef(), fromMs - LOOKBACK_MS);
-        return CandleHistory.answer(candles, fromMs, toMs, clock.getAsLong(), boundariesMs);
+        Candles got = candles(market.sourceRef(), fromMs - LOOKBACK_MS);
+        return CandleHistory.answer(got.list(), fromMs, toMs, clock.getAsLong(), boundariesMs)
+                .coveredFrom(got.coveredFromMs());
     }
 
     /**
-     * The committed candles of {@code symbol} from the minute that contains {@code startMs} on (up to the last committed
-     * one: Kraken has no end of range), in pages of at most {@value #MAX_ROWS} rows; whatever is not a whole row is left
-     * out, and so is every row after {@code result.last}. Sorted by time.
+     * What one OHLC call gave: the committed candles, oldest first, and from when on the answer is complete.
+     *
+     * @param coveredFromMs the start of the first row when Kraken's answer begins after the minute that was asked for —
+     *                      it keeps the latest {@value #MAX_ROWS} minutes and nothing older, so what lies before is no
+     *                      data ({@link History#coveredFromMs()}); {@link History#NO_LIMIT} when the answer reaches back
+     *                      as far as asked, and when it has no rows at all (that says nothing about a limit)
      */
-    List<CandleHistory.Candle> candles(String symbol, long startMs) throws IOException {
-        long since = Math.floorDiv(startMs, CANDLE_MS) * (CANDLE_MS / 1000L) - 1; // the rows are those AFTER since
-        Map<Long, CandleHistory.Candle> byTime = new LinkedHashMap<>();
-        for (int page = 0; page < MAX_PAGES; page++) {
-            JsonNode result = result(api.get().ohlc(symbol, 1, since), "OHLC");
-            JsonNode rows = entryOf(result, symbol);
-            if (rows == null || !rows.isArray()) {
-                break; // nothing under the pair's names: no history (an unknown pair would have been an error)
-            }
-            long committed = result.path("last").asLong(Long.MAX_VALUE);
-            long newest = since;
-            for (CandleHistory.Candle candle : candles(rows, committed)) {
-                byTime.putIfAbsent(candle.t(), candle);
-            }
-            for (JsonNode row : rows) {
-                newest = Math.max(newest, row.path(0).asLong(newest));
-            }
-            if (rows.size() < MAX_ROWS || newest <= since) {
-                break;
-            }
-            since = newest;
+    record Candles(List<CandleHistory.Candle> list, long coveredFromMs) {
+    }
+
+    /**
+     * The committed candles of {@code symbol} from the minute that contains {@code startMs} on, in <b>one</b> call: Kraken
+     * has no end of range, no page after the last row and no page before the first — it answers the latest
+     * {@value #MAX_ROWS} committed minutes and the one in progress whatever {@code since} is (class comment). A first row
+     * later than the minute asked for is a truncated answer, and says from when the candles exist; the part before that is
+     * no data. Whatever is not a whole row is left out, and so is every row after {@code result.last}. Sorted by time.
+     */
+    Candles candles(String symbol, long startMs) throws IOException {
+        long startMinute = Math.floorDiv(startMs, CANDLE_MS) * CANDLE_MS;
+        long since = startMinute / 1000L - 1; // the rows are those AFTER since
+        JsonNode result = result(api.get().ohlc(symbol, 1, since), "OHLC");
+        JsonNode rows = entryOf(result, symbol);
+        if (rows == null || !rows.isArray()) {
+            return new Candles(List.of(), History.NO_LIMIT); // nothing under the pair's names: no history (an unknown pair would have been an error)
         }
-        return CandleHistory.sorted(new ArrayList<>(byTime.values()));
+        long committed = result.path("last").asLong(Long.MAX_VALUE);
+        long firstRowMs = Long.MAX_VALUE;
+        for (JsonNode row : rows) {
+            if (row.isArray() && row.path(0).isNumber()) {
+                firstRowMs = Math.min(firstRowMs, row.get(0).asLong() * 1000L);
+            }
+        }
+        long coveredFrom = firstRowMs != Long.MAX_VALUE && firstRowMs > startMinute ? firstRowMs : History.NO_LIMIT;
+        return new Candles(CandleHistory.sorted(candles(rows, committed)), coveredFrom);
     }
 
     /**

@@ -31,6 +31,9 @@ import java.util.function.Predicate;
  *   <li><b>The gap is not longer than {@code maxHealMs}</b> (measured between the two live ticks). The checks below
  *       look at the two ends only; the longer the gap, the less they say about the middle and the more minutes of the
  *       round rest on trade prices instead of marks.</li>
+ *   <li><b>The source keeps candles that old.</b> Kraken serves the latest 720 minutes and nothing before them: a gap that
+ *       begins before the first candle there is has no candles — they do not exist, which is not the same as a minute
+ *       without trades — and is refused at once.</li>
  *   <li><b>Every minute that overlaps the gap has a bar</b>: a closed candle with trades, from the minute of the part
  *       to fill to the minute of the right tick, with none missing. A minute without trades (a filler {@code n = 0},
  *       a row that is absent) is not covered: the asset was quiet, the quiet-carry rule is the one that may carry a
@@ -95,6 +98,16 @@ final class GapBridge {
      */
     static Result bridge(List<PriceSource.Bar> bars, Gap gap, List<PricePoint> extra, long maxGapMs, long maxHealMs,
                          BigDecimal maxBasis, Predicate<PricePoint> usable) {
+        return bridge(bars, gap, extra, maxGapMs, maxHealMs, maxBasis, usable, PriceSource.History.NO_LIMIT);
+    }
+
+    /**
+     * @param coveredFromMs the oldest moment the source keeps candles for ({@link PriceSource.History#coveredFromMs}): a
+     *                      gap whose left live tick is older than that has no candles to be bridged with, and is refused
+     *                      at once, before the bars are looked at — they are not missing, they do not exist
+     */
+    static Result bridge(List<PriceSource.Bar> bars, Gap gap, List<PricePoint> extra, long maxGapMs, long maxHealMs,
+                         BigDecimal maxBasis, Predicate<PricePoint> usable, long coveredFromMs) {
         long length = gap.rightAtMs() - gap.leftAtMs();
         if (maxHealMs <= 0) {
             return Result.refused("bridging is switched off (max-heal-ms is 0)");
@@ -102,6 +115,10 @@ final class GapBridge {
         if (length > maxHealMs) {
             return Result.refused("the gap of " + seconds(length) + " is longer than the " + seconds(maxHealMs)
                     + " a gap may be bridged");
+        }
+        if (gap.leftAtMs() < coveredFromMs) {
+            return Result.refused("the live tick at " + at(gap.leftAtMs()) + " is older than the candles the source keeps, "
+                    + "which begin at " + at(coveredFromMs) + ": there is nothing to bridge the gap with");
         }
         PriceSource.Bar leftBar = barAt(bars, gap.leftAtMs());
         if (leftBar == null) {

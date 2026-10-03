@@ -217,6 +217,34 @@ class GapBridgeTest {
     }
 
     @Test
+    void aGapThatBeginsBeforeTheCandlesTheSourceKeepsIsRefusedAtOnceAndNotForMissingBars() {
+        // Kraken keeps the latest 720 minutes: a live tick older than the first of them has no candles, and none are "missing"
+        GapBridge.Gap gap = gap(M0 + 10_000L, M0 + 100_000L);
+        long keptFrom = M0 + MINUTE; // the source's first candle is the one after the left tick's minute
+
+        GapBridge.Result withBars = GapBridge.bridge(bars(M0, 3), gap, List.of(), MAX_GAP, CAP, BASIS, ANY, keptFrom);
+        GapBridge.Result withoutBars = GapBridge.bridge(List.of(), gap, List.of(), MAX_GAP, CAP, BASIS, ANY, keptFrom);
+
+        assertThat(withBars.ok()).as("whatever bars the answer held").isFalse();
+        assertThat(withBars.refusal()).contains("older than the candles the source keeps").contains("2026-");
+        assertThat(withoutBars.refusal()).as("the reason is the limit, not a bar that is not there")
+                .contains("older than the candles the source keeps").doesNotContain("no candle with trades");
+    }
+
+    @Test
+    void aGapThatBeginsWhereTheSourceKeepsItsFirstCandleIsBridgedAndNoLimitIsTheOldBehaviour() {
+        GapBridge.Gap gap = gap(M0 + 10_000L, M0 + 100_000L);
+
+        assertThat(GapBridge.bridge(bars(M0, 3), gap, List.of(), MAX_GAP, CAP, BASIS, ANY, M0 + 10_000L).ok())
+                .as("the candles are kept from the very moment of the left tick").isTrue();
+        assertThat(GapBridge.bridge(bars(M0, 3), gap, List.of(), MAX_GAP, CAP, BASIS, ANY, M0).ok()).isTrue();
+        assertThat(GapBridge.bridge(bars(M0, 3), gap, List.of(), MAX_GAP, CAP, BASIS, ANY, PriceSource.History.NO_LIMIT).ok())
+                .isTrue();
+        assertThat(GapBridge.bridge(bars(M0, 3), gap, List.of(), MAX_GAP, CAP, BASIS, ANY, M0 + 10_001L).ok())
+                .as("a millisecond later it is not").isFalse();
+    }
+
+    @Test
     void aCapOfZeroSwitchesBridgingOff() {
         GapBridge.Result result = GapBridge.bridge(bars(M0, 3), gap(M0 + 10_000L, M0 + 100_000L), List.of(), MAX_GAP, 0,
                 BASIS, ANY);
