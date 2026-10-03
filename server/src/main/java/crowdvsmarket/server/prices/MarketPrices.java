@@ -55,7 +55,9 @@ public interface MarketPrices {
 
     /**
      * Opens the round at {@code nowMs}, after its start: chooses the exchange it runs on if that has not been chosen yet —
-     * the primary when it has a live tick fresh at the round's start, else the backup, else neither yet — and returns it.
+     * the primary when it has a live tick fresh at the round's start, else the backup when it has; with no live tick on either
+     * side, whichever ring can price the start from what it holds (seeded history, a carried tick, a pin — non-live evidence of
+     * one rank), the primary's first; else neither yet — and returns it.
      * The scheduler calls it for every running round; it writes the choice once and may block on the database, so never under
      * the engine lock. Empty while no exchange can price the start, and for a market without a backup.
      */

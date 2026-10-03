@@ -490,8 +490,9 @@ public class GameService implements MarketListener {
     /**
      * Opens the rounds that have started (Р-76, "a round runs entirely on one exchange"): for every running market that has a
      * backup exchange, the running window of each series that has no exchange yet is given the one it runs on — the primary
-     * when it has a live price at the round's start, else the backup, else none yet and the round waits; the choice is
-     * written once and never revisited ({@link MarketPrices#openRound}). The rounds that start together (both series at a
+     * when it has a live price at the round's start, else the backup when it has; with none live on either side, whichever
+     * can price the start from the history, carry or pin it holds, the primary first; else none yet and the round waits; the
+     * choice is written once and never revisited ({@link MarketPrices#openRound}). The rounds that start together (both series at a
      * shared boundary) are decided on the same data and agree. {@code mode=live} only. No lock is taken here: the choice is read
      * off the price rings and written to the database, and the engine's lock must never wait for either; one market's
      * failure (the database, say) never stops the others, and a round that is not opened now is opened at the next tick or,

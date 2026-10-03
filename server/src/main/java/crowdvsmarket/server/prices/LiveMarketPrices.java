@@ -33,8 +33,10 @@ import org.jboss.logging.Logger;
  * ({@code spot_BTC~kraken}) — and everything above holds per ring unchanged: staleness, holes, pins, the bridge, the quiet
  * carry. What is new is the choice of the venue, made once for each round when it opens ({@link #openRound}; the
  * rule is in {@link #chooseByRings}): the primary if it has a <i>live</i> tick fresh at the round's start, else the backup if
- * it has, else the round waits, and the first venue that can price the start later — from history ({@link #healStart}), the
- * primary first — is taken. The choice is written once ({@link RoundVenues}) and never revisited: the round is settled — open,
+ * it has; else — no live tick on either side — whichever ring can price the start from what it holds (seeded history, a
+ * carried tick, a pin: non-live evidence, all of one rank), the primary's first; else the round waits, and the first venue
+ * that can price the start later — from history ({@link #healStart}), the primary first — is taken. The choice is written
+ * once ({@link RoundVenues}) and never revisited: the round is settled — open,
  * close, path — from its venue's ring alone ({@link #resolve}, {@link #soFar}), and a venue that cannot price it leaves the
  * round to wait, and to be refunded an hour after its end, as any round without a price (Р-23); it is never moved to the
  * other venue. The next round starts at the price of whichever venue it opens on, which may differ from the close of
@@ -295,23 +297,33 @@ public class LiveMarketPrices implements MarketPrices {
     }
 
     /**
-     * The venue to open a round at {@code startMs} on, from the rings as they are: the primary when it has a <i>live</i>
-     * tick fresh at the start (the rule of {@code P(start)}: the last tick at or before it, not older than the feed's
-     * {@code staleMs}); else the backup when it has; else — the start has no live tick on either side, and history
-     * may have healed it — the primary when any tick of it is fresh at the start, else the backup when any is.
-     * Empty when neither can price the start.
+     * The venue to open a round at {@code startMs} on, from the rings as they are — two passes, each over the primary and
+     * then the backup:
+     * <ol>
+     *   <li><b>A live tick fresh at the start</b> ({@link #liveFreshAt}; the rule of {@code P(start)}: the last tick at or
+     *       before it, not older than the feed's {@code staleMs}) — the primary's, else the backup's. A venue that is
+     *       alive at the boundary beats any amount of the other kind of evidence on the other side.</li>
+     *   <li><b>No live tick on either side: whatever else can price the start</b> ({@link #anyFreshAt}) — seeded history (a
+     *       market listed in the middle of a window has nothing else), a carried tick, a pin: all are non-live evidence of
+     *       the same rank, the primary's ring first. So a pin the backup holds at the start (the close of the round before
+     *       it, if that ran there) does not beat a primary whose ring has history for it; it prices the start only when the
+     *       primary's ring cannot.</li>
+     * </ol>
+     * Empty when neither ring can price the start: the round waits, and {@link #healStart} asks the venues' histories later,
+     * the primary first.
      */
     private Optional<Market> chooseByRings(Market primary, Market backup, long startMs) {
-        if (liveFreshAt(primary, startMs)) {
-            return Optional.of(primary);
+        for (Market venue : List.of(primary, backup)) {
+            if (liveFreshAt(venue, startMs)) {
+                return Optional.of(venue);
+            }
         }
-        if (liveFreshAt(backup, startMs)) {
-            return Optional.of(backup);
+        for (Market venue : List.of(primary, backup)) {
+            if (anyFreshAt(venue, startMs)) {
+                return Optional.of(venue);
+            }
         }
-        if (anyFreshAt(primary, startMs)) {
-            return Optional.of(primary);
-        }
-        return anyFreshAt(backup, startMs) ? Optional.of(backup) : Optional.empty();
+        return Optional.empty();
     }
 
     /** A venue with no source — switched off, or never configured — prices nothing, whatever its ring still holds. */
@@ -319,6 +331,13 @@ public class LiveMarketPrices implements MarketPrices {
         return sources.bindingFor(instrument).map(PriceSources.Binding::feed);
     }
 
+    /**
+     * Whether the instrument has a <i>live</i> tick fresh at {@code startMs}: the nearest real tick at or before it
+     * ({@link TickRing.Window#floorSourceKind}) is a live one — not a history point — and no older than the feed's
+     * {@code staleMs}. A pin or a carried tick at the start is a copy, not a tick of its own: it counts as the real tick it
+     * stands for. The pin of the round before, standing for the live tick that round was settled from, must not demote its
+     * venue at the very boundary; a pin standing for a history point, or for a tick that is too old, is non-live.
+     */
     private boolean liveFreshAt(Market instrument, long startMs) {
         Optional<PriceSource.Feed> feed = feedOf(instrument);
         if (feed.isEmpty()) {
@@ -329,6 +348,10 @@ public class LiveMarketPrices implements MarketPrices {
                 && startMs - w.floorSourceAtMs() <= feed.get().staleMs();
     }
 
+    /**
+     * Whether the instrument's ring can price the start at all: a tick of any kind (live, history, carried, pin) at or before
+     * it, no older than the feed's {@code staleMs} — exactly the {@code P(start)} that settling the round would use.
+     */
     private boolean anyFreshAt(Market instrument, long startMs) {
         Optional<PriceSource.Feed> feed = feedOf(instrument);
         if (feed.isEmpty()) {

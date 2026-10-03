@@ -195,6 +195,107 @@ class LiveMarketPricesVenuesTest {
         assertThat(separate.openRound(btc, window(btc), START + 500)).as("not live; the backup is").contains("kraken");
     }
 
+    // ------------------------------------------------------------------ no live tick at the start: the rest of the evidence
+
+    /** What {@link HistorySeeder} leaves in a ring: history points from {@code from} to {@code to}, no live tick, no pin. */
+    private void seeded(Market instrument, String feed, long from, long to, long stepMs, double price) {
+        List<PricePoint> points = new ArrayList<>();
+        for (long at = from; at <= to; at += stepMs) {
+            points.add(point(at, price));
+        }
+        store.seedHistory(instrument.id(), feed, points);
+    }
+
+    @Test
+    void aMarketListedMidWindowWhosePrimaryRingHoldsOnlySeededHistoryAtTheStartOpensOnThePrimary() {
+        // listed 100 s into the round: the seeds gave both rings the past (a point at the start itself, the close of the
+        // minute before it), the polls began after the listing — no live tick at the start on either side
+        now.set(START + 100_000L);
+        seeded(btc, "coinbase", START - 900_000L, START + 90_000L, 20_000L, 99.0);
+        seeded(shadow, "kraken", START - 900_000L, START + 90_000L, 20_000L, 99.5);
+        primary(START + 102_000L, START + 110_000L, 2_000L, 100.0);
+        backup(START + 102_000L, START + 110_000L, 2_000L, 100.5);
+
+        Optional<String> venue = prices.openRound(btc, window(btc), now.get());
+
+        assertThat(venue).as("history is not a live tick: the primary's and the backup's alike — the primary is first").contains("coinbase");
+        assertThat(coinbase.historyAsked).as("nothing to heal").isEmpty();
+    }
+
+    @Test
+    void aVenueWithSeededHistoryAtTheStartBeatsOneWithNothingBothWays() {
+        seeded(btc, "coinbase", START - 600_000L, START, 20_000L, 99.0);
+        assertThat(prices.openRound(btc, window(btc), START + 500)).as("only the primary can price the start").contains("coinbase");
+
+        RoundWindow later = window(btc, Interval.HOURLY, START + 600_000L, START + 600_000L + STEP);
+        seeded(shadow, "kraken", START, START + 600_000L, 20_000L, 99.5);
+        assertThat(prices.openRound(btc, later, START + 601_000L)).as("only the backup can").contains("kraken");
+    }
+
+    @Test
+    void aPinOnTheBackupAtTheStartDoesNotBeatAPrimaryThatCanPriceTheStartFromHistory() {
+        // the previous round ran on the backup and pinned its close at this boundary; the backup's last live tick is 40 s old,
+        // and the primary's ring holds history up to a millisecond before the start
+        backup(START - 60_000L, START - 40_000L, 5_000L, 100.5);
+        store.pinBoundary(shadow.id(), START, Px.encode(new BigDecimal("100.5")));
+        store.mergeHistory(btc.id(), List.of(point(START - 20_000L, 99.7), point(START - 1, 99.9)));
+
+        assertThat(prices.openRound(btc, window(btc), START + 500)).as("the pin is non-live evidence, the primary is first")
+                .contains("coinbase");
+    }
+
+    @Test
+    void aPinOnTheBackupAloneStillPricesTheStartWhenThePrimaryHasNothingAtAll() {
+        backup(START - 60_000L, START - 40_000L, 5_000L, 100.5);
+        store.pinBoundary(shadow.id(), START, Px.encode(new BigDecimal("100.5")));
+
+        assertThat(prices.openRound(btc, window(btc), START + 500)).as("a price at the start is a price at the start")
+                .contains("kraken");
+        assertThat(coinbase.historyAsked).isEmpty();
+    }
+
+    @Test
+    void aCarriedTickIsNonLiveEvidenceToo() {
+        // the primary's last live tick is 100 s old, a quiet hole was carried across to a few seconds before the start; the
+        // backup's ring is empty: the primary prices the start, but never as a live tick
+        primary(START - 130_000L, START - 100_000L, 10_000L, 100.0);
+        store.mergeCarried(btc.id(), List.of(point(START - 90_000L, 100.0), point(START - 10_000L, 100.0)));
+        backup(START - 50_000L, START - 40_000L, 5_000L, 100.5); // stale at the start (limit 15 s)
+
+        assertThat(prices.openRound(btc, window(btc), START + 500)).contains("coinbase");
+    }
+
+    @Test
+    void aLiveTickOfTheBackupBeatsHistoryOfThePrimaryAndAPinChangesNothingAboutThat() {
+        store.mergeHistory(btc.id(), List.of(point(START - 1, 99.9)));
+        backup(START - 4_000L, START - 4_000L, 1, 100.5); // a live tick, fresh at the start
+        store.pinBoundary(shadow.id(), START, Px.encode(new BigDecimal("100.5"))); // the previous round's close, standing for it
+
+        assertThat(prices.openRound(btc, window(btc), START + 500)).contains("kraken");
+    }
+
+    @Test
+    void whenNeitherVenueHasAnythingAtTheStartTheRoundIsUndecidedAtTheOpenAndDecidedLaterByHealingThePrimaryFirst() {
+        primary(START + 30_000L, END + 3_000L, 3_000L, 100.0);
+        backup(START + 40_000L, END + 3_000L, 3_000L, 100.5);
+        coinbase.history = m -> List.of(point(START - 20_000L, 99.5), point(START - 1, 99.8));
+        kraken.history = m -> List.of(point(START - 20_000L, 99.6), point(START - 1, 99.9));
+
+        assertThat(prices.openRound(btc, window(btc), START + 1_000)).as("nothing to price the start with").isEmpty();
+        assertThat(prices.openRound(btc, window(btc), START + 2_000)).as("and opening asks no history").isEmpty();
+        assertThat(coinbase.historyAsked).isEmpty();
+        assertThat(kraken.historyAsked).isEmpty();
+        assertThat(venueStore.rows).isEmpty();
+
+        now.set(END + 1_000);
+        RoundPriceData data = prices.resolve(btc, window(btc));
+
+        assertThat(data.venue()).as("the settlement heals the start, the primary first").isEqualTo("coinbase");
+        assertThat(data.open()).isEqualByComparingTo("99.80");
+        assertThat(coinbase.historyAsked).containsExactly("spot_BTC");
+        assertThat(kraken.historyAsked).as("the backup is never asked").isEmpty();
+    }
+
     @Test
     void theChoiceIsWrittenOnceNoMatterHowOftenTheRoundIsOpened() {
         primary(START - 2_000, END, 3_000, 100.0);
