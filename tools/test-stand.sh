@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Tests of tools/stand.sh that need neither docker nor a network (`make test-tools`): the reachability check after `up` asks
 # every venue the server prices from — Hyperliquid, Coinbase, Kraken — from inside the server container, says so for each,
-# warns (never fails) for one that does not answer, and leaves out a venue that HERD_PRICES_DISABLED_VENUES switches off.
-# A fake `docker` stands in for the compose project and records what the container would have been asked.
+# warns (never fails) for one that does not answer, and leaves out a venue that HERD_PRICES_DISABLED_VENUES switches off; and the
+# host port of the web: a second `up` on a stand that is already running keeps the port its own web container holds (a public
+# tunnel is pointed at it), where it used to call it busy and move the web to the next one.
+# A fake `docker` stands in for the compose project and records what it would have been asked, a fake `lsof` for the
+# processes that listen.
 
 set -uo pipefail
 
@@ -19,9 +22,31 @@ FAILS=0
 
 # `docker compose -p herd -f FILE exec -T server curl <args> URL`: the last argument is the URL. HERD_FAKE_DOWN lists the URLs
 # the container cannot reach (curl then says why on stderr and prints 000, as `curl -sS -w %{http_code}` does).
+# The stand itself: HERD_FAKE_WEB_PORT is the host port the web container of the running stand publishes (unset: no stand is
+# running, `docker compose port` finds no container and fails), HERD_FAKE_WEB_V6ONLY=1 has it published on [::] only.
 docker() {
   local url="${!#}"
   echo "$*" >>"${CALLS}"
+  case "$*" in
+    *" port web 80")
+      if [[ -n "${HERD_FAKE_WEB_PORT:-}" ]]; then
+        [[ -n "${HERD_FAKE_WEB_V6ONLY:-}" ]] || printf '0.0.0.0:%s\n' "${HERD_FAKE_WEB_PORT}"
+        printf '[::]:%s\n' "${HERD_FAKE_WEB_PORT}"
+        return 0
+      fi
+      echo "no container found for service web" >&2
+      return 1
+      ;;
+    "info") return 0 ;;
+    "volume inspect "*) return 1 ;; # no archive volume
+    "ps -a --format {{.Names}}")
+      [[ -z "${HERD_FAKE_WEB_PORT:-}" ]] || printf 'herd-db-1\nherd-chainsvc-1\nherd-server-1\nherd-web-1\n'
+      return 0
+      ;;
+    "inspect -f "*) echo herd; return 0 ;; # every herd-* container is this compose project's
+    *" up -d --build") echo "UP HERD_WEB_PORT=${HERD_WEB_PORT:-}" >>"${CALLS}"; return 0 ;;
+    *" ps --format "*) printf 'db healthy\nchainsvc healthy\nserver healthy\nweb healthy\n'; return 0 ;;
+  esac
   case "${HERD_FAKE_DOWN:-}" in
     *"${url}"*)
       echo "curl: (7) Failed to connect to ${url}" >&2
@@ -30,6 +55,15 @@ docker() {
       ;;
   esac
   printf '200'
+}
+
+# `lsof -nP -iTCP:<port> -sTCP:LISTEN`: succeeds when something listens on the port — HERD_FAKE_BUSY lists the busy ones.
+lsof() {
+  local arg port=""
+  for arg in "$@"; do
+    [[ "${arg}" == -iTCP:* ]] && port="${arg#-iTCP:}"
+  done
+  [[ " ${HERD_FAKE_BUSY:-} " == *" ${port} "* ]]
 }
 
 ok() { # description, status (0 = holds)
@@ -85,6 +119,59 @@ OUT=$(HERD_PRICES_SOURCE=synthetic run)
 ok "synthetic prices: nothing is asked and nothing is said" "$([[ ! -s "${CALLS}" && -z "${OUT}" ]]; echo $?)"
 OUT=$(HERD_MODE=replay run)
 ok "replay mode: nothing is asked" "$([[ ! -s "${CALLS}" ]]; echo $?)"
+
+# --- the host port of the web: a second `up` keeps the port the stand's own web container holds
+pick() { # the port pick_web_port chooses, under the errexit the script itself runs with; what it says goes to ${PICK_LOG}
+  ( set -e; pick_web_port ) 2>"${PICK_LOG}"
+}
+PICK_LOG="${SANDBOX}/pick.log"
+
+PORT=$(pick)
+ok "no stand, 8480 free: 8480" "$([[ "${PORT}" == 8480 ]]; echo $?)"
+PORT=$(HERD_FAKE_BUSY="8480" pick)
+ok "no stand, 8480 held by another process: the next free port, 8481" "$([[ "${PORT}" == 8481 ]]; echo $?)"
+ok "... and it says why" "$(grep -q 'port 8480 is in use — looking for the next free one' "${PICK_LOG}"; echo $?)"
+PORT=$(HERD_FAKE_BUSY="8480 8481 8482" pick)
+ok "no stand, three ports held by others: the first free one, 8483" "$([[ "${PORT}" == 8483 ]]; echo $?)"
+
+PORT=$(HERD_FAKE_BUSY="8480" HERD_FAKE_WEB_PORT=8480 pick)
+ok "the stand runs on 8480 (its own web holds the port): kept, not moved to 8481" "$([[ "${PORT}" == 8480 ]]; echo $?)"
+ok "... and it says it is the stand's own" "$(grep -q "port 8480 is held by this stand's own web container — kept" "${PICK_LOG}"; echo $?)"
+ok "... and does not go looking for another port" "$(grep -q 'looking for the next free one' "${PICK_LOG}"; [[ $? -ne 0 ]]; echo $?)"
+PORT=$(HERD_FAKE_BUSY="8480 8481" HERD_FAKE_WEB_PORT=8480 pick)
+ok "the stand runs on 8480 and 8481 is held by another process too: 8480" "$([[ "${PORT}" == 8480 ]]; echo $?)"
+PORT=$(HERD_FAKE_BUSY="8480" HERD_FAKE_WEB_PORT=8480 HERD_FAKE_WEB_V6ONLY=1 pick)
+ok "the stand's web published on [::] only: kept as well" "$([[ "${PORT}" == 8480 ]]; echo $?)"
+PORT=$(HERD_FAKE_BUSY="8480 8481" HERD_FAKE_WEB_PORT=8481 pick)
+ok "the stand runs on 8481 (8480 is another process's): it stays on 8481" "$([[ "${PORT}" == 8481 ]]; echo $?)"
+ok "... and says so" "$(grep -q "this stand's web container stays on its own port 8481" "${PICK_LOG}"; echo $?)"
+PORT=$(HERD_FAKE_BUSY="8481" HERD_FAKE_WEB_PORT=8481 pick)
+ok "the stand runs on 8481 and 8480 is free again: back to the default, 8480" "$([[ "${PORT}" == 8480 ]]; echo $?)"
+PORT=$(HERD_FAKE_BUSY="8480" HERD_FAKE_WEB_PORT=8480 HERD_WEB_PORT=9000 pick)
+ok "a free port asked for with HERD_WEB_PORT is honoured, the stand moves to it" "$([[ "${PORT}" == 9000 ]]; echo $?)"
+PORT=$(HERD_FAKE_BUSY="8480 9000" HERD_FAKE_WEB_PORT=8480 HERD_WEB_PORT=9000 pick)
+ok "a port asked for that another process holds does not move a running stand" "$([[ "${PORT}" == 8480 ]]; echo $?)"
+PORT=$(HERD_FAKE_BUSY="9000" HERD_WEB_PORT=9000 pick)
+ok "no stand and the port asked for is busy: the search starts at 8480's neighbour, 8481" "$([[ "${PORT}" == 8481 ]]; echo $?)"
+BUSY_ALL="$(seq -s ' ' 8480 8529)"
+OUT=$(HERD_FAKE_BUSY="${BUSY_ALL}" pick)
+STATUS=$?
+ok "no stand and no free port in 8480..8529: it refuses" "$([[ "${STATUS}" -ne 0 && -z "${OUT}" ]]; echo $?)"
+
+up_run() { # `stand.sh up` end to end against the fake docker: what the compose project is started with, and what is printed
+  : >"${CALLS}"
+  ( set -e; cmd_up ) 2>&1
+}
+OUT=$(HERD_FAKE_BUSY="8480" HERD_FAKE_WEB_PORT=8480 up_run)
+STATUS=$?
+ok "a second up on a running stand: succeeds" "${STATUS}"
+ok "... compose is started with the web on 8480 again" "$(grep -q '^UP HERD_WEB_PORT=8480$' "${CALLS}"; echo $?)"
+ok "... and the stand says it is on 8480" "$(grep -q 'http://localhost:8480' <<<"${OUT}"; echo $?)"
+ok "... and never on 8481" "$(grep -q 8481 "${CALLS}"; [[ $? -ne 0 ]]; echo $?)"
+OUT=$(HERD_FAKE_BUSY="8480" up_run)
+ok "the first up with another process on 8480: compose gets 8481" "$(grep -q '^UP HERD_WEB_PORT=8481$' "${CALLS}"; echo $?)"
+OUT=$(up_run)
+ok "the first up on a free machine: compose gets 8480" "$(grep -q '^UP HERD_WEB_PORT=8480$' "${CALLS}"; echo $?)"
 
 if [[ "${FAILS}" -ne 0 ]]; then
   echo "${FAILS} check(s) failed" >&2

@@ -65,10 +65,33 @@ port_is_free() {
   ! lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
 }
 
+# The host port that the web container of THIS compose project (herd-web-1, project herd) publishes right now; nothing when it
+# is not running. Asked of the project — `docker compose port web 80` prints 0.0.0.0:8480 (and [::]:8480) — not of a container
+# name, so only our own web container can ever be the answer.
+own_web_port() {
+  "${COMPOSE[@]}" port web 80 2>/dev/null | sed -n 's/.*:\([1-9][0-9]*\)$/\1/p' | head -n 1 || true
+}
+
+# The host port for the web: the one asked for (HERD_WEB_PORT, else 8480) when it is free — or when it is the one this stand's
+# own web container already publishes: a second `up` on a running stand reconciles the container it has, so that port is the
+# stand's, not somebody else's. (It used to count as busy: the second `up` moved the web from 8480 to 8481, and the public
+# tunnel on 8480 lost the stand.) When something else holds the port asked for and the stand is running, the stand stays where
+# it is; with no stand running the next free port is taken.
 pick_web_port() {
-  local p="${HERD_WEB_PORT:-${DEFAULT_WEB_PORT}}"
+  local p="${HERD_WEB_PORT:-${DEFAULT_WEB_PORT}}" own
+  own="$(own_web_port)"
   if port_is_free "${p}"; then
     echo "${p}"
+    return
+  fi
+  if [[ -n "${own}" && "${p}" == "${own}" ]]; then
+    log "port ${p} is held by this stand's own web container — kept"
+    echo "${p}"
+    return
+  fi
+  if [[ -n "${own}" ]]; then
+    log "port ${p} is in use by something else — this stand's web container stays on its own port ${own}"
+    echo "${own}"
     return
   fi
   log "port ${p} is in use — looking for the next free one"
@@ -288,7 +311,8 @@ main() {
 Usage: $(basename "$0") up|down|logs [service]|status|reset
 
   up      build (if needed) and start db+chainsvc+server+web, wait until healthy, check that the
-          server reaches the live price sources (Hyperliquid, Coinbase, Kraken), print URLs
+          server reaches the live price sources (Hyperliquid, Coinbase, Kraken), print URLs; a stand that
+          is already running keeps the host port of its web (8480 by default), so a tunnel to it stays valid
   down    stop and remove containers (keeps the herd_pg_live volume and ~/.c2/testnet11)
   logs    follow logs (optionally for one service: "logs server")
   status  show container health + live GET of serverInfo
