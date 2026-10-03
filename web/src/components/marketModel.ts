@@ -12,6 +12,22 @@ export function isOpenMarket(market: Pick<MarketDto, "status">): boolean {
   return market.status === "ACTIVE";
 }
 
+/** The ticker of the bitcoin pair — what a call that names no market means (`contract.ts`: `marketId` omitted). */
+export const BITCOIN_SYMBOL = "BTC";
+
+/**
+ * The market a screen opens on when nothing says which: the ACTIVE crypto market whose symbol is BTC — `spot_BTC` since
+ * its price moved to the exchange of the asset itself, `BTC` on a server that never moved it — else the first ACTIVE crypto
+ * market; `undefined` when there is neither. Never "the id `BTC`": that row is the legacy perpetual the new market replaced,
+ * which stays on the list closed for ten minutes and is then gone (its crowd account lives on in the overview), so an id
+ * written into a screen lands it on a closed market or on none. The server resolves an omitted market the same way
+ * (`GameService.defaultMarket`).
+ */
+export function defaultMarket<M extends Pick<MarketDto, "symbol" | "category" | "status">>(markets: readonly M[]): M | undefined {
+  const open = markets.filter(isOpenMarket);
+  return open.find((m) => m.category === "crypto" && m.symbol === BITCOIN_SYMBOL) ?? open.find((m) => m.category === "crypto");
+}
+
 /** The series a card talks about: the shortest (listed first, `MarketDto.series`) — always something fresh to say. */
 export function leadSeries(market: Pick<MarketDto, "series">): MarketSeriesDto | undefined {
   return market.series[0];

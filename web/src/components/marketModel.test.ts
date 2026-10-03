@@ -5,6 +5,7 @@ import {
   backupRoundNote,
   backupRoundOf,
   crowdSplitOf,
+  defaultMarket,
   herdSideOf,
   isOpenMarket,
   kickoffOf,
@@ -69,6 +70,38 @@ describe("market helpers", () => {
     expect(nextCloseMs(ger)).toBe(NOW + 30_000); // betting closes before the 40 min event end
     expect(nextCloseMs({ series: [seriesDto({ bettingClosesAtMs: NOW + 900_000 })], endsAtMs: NOW + 60_000 })).toBe(NOW + 60_000);
     expect(nextCloseMs(runoff)).toBe(NOW + 75_000);
+  });
+});
+
+describe("defaultMarket — what a screen opens on when nothing says which market", () => {
+  const spot = spotCatalogue(); // spot_BTC, spot_ETH, spot_DOGE, spot_HYPE open; the legacy BTC perpetual closed, last in the list
+  const ids = (list: ReturnType<typeof spotCatalogue>) => defaultMarket(list)?.id;
+
+  it("is the open market whose symbol is BTC: spot_BTC once the legacy BTC perpetual was replaced and closed", () => {
+    expect(ids(spot)).toBe("spot_BTC");
+    expect(ids([...spot].reverse())).toBe("spot_BTC"); // the order of the list does not decide
+  });
+
+  it("is the legacy BTC on a server that never replaced it, and never a closed BTC", () => {
+    expect(ids(catalogue())).toBe("BTC");
+    expect(ids(spot.filter((m) => m.id === "BTC" || m.id === "spot_ETH"))).toBe("spot_ETH"); // BTC closed: the first open crypto market
+  });
+
+  it("is the first open crypto market when none of them is BTC", () => {
+    expect(ids(spot.filter((m) => m.id !== "spot_BTC"))).toBe("spot_ETH");
+    expect(ids([market("xyz_NVDA", { category: "stocks", symbol: "NVDA" }), ...spot.filter((m) => m.id === "spot_DOGE")])).toBe("spot_DOGE");
+  });
+
+  it("is nothing when no crypto market is open — the caller decides what then", () => {
+    expect(ids([])).toBeUndefined();
+    expect(ids(spot.filter((m) => m.id === "BTC"))).toBeUndefined();
+    expect(ids([market("xyz_NVDA", { category: "stocks", symbol: "NVDA" })])).toBeUndefined();
+  });
+
+  it("a market of another category with the symbol BTC is no bitcoin pair", () => {
+    const lookalike = market("PM_BTC", { category: "politics", symbol: "BTC" });
+    expect(ids([lookalike, ...spot])).toBe("spot_BTC");
+    expect(ids([lookalike])).toBeUndefined();
   });
 });
 

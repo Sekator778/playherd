@@ -4,7 +4,8 @@
  *
  * - an overview of every market's crowd account (`crowdOverview()`): total herd capital and return, the
  *   best and the worst market — the worst as visible as the best — and a ranked list that opens a market;
- * - a market selector (default: `?m=`, else the market you came from, else BTC) driving `crowdAccount(id)`,
+ * - a market selector (default: `?m=`, else the market you came from, else the open BTC market — `spot_BTC` since BTC's price
+ *   moved to its own exchange, never the legacy `BTC` perpetual that was closed for it) driving `crowdAccount(id)`,
  *   with its capital, returns and the chart crowd vs hold vs anti-crowd on a time axis that follows how much
  *   history there is (`components/crowdModel.ts`).
  *
@@ -25,7 +26,7 @@ import { LazyCrowdChart } from "../components/LazyCrowdChart";
 import { MarketIcon } from "../components/MarketIcon";
 import { LiveStatTile } from "../components/RoundParts";
 import { bestAndWorst, marketGroups, rankedByReturn, type OverviewRow } from "../components/crowdModel";
-import { subtitleOf } from "../components/marketModel";
+import { defaultMarket, subtitleOf } from "../components/marketModel";
 import { lastMarket, rememberMarket } from "../components/lastMarket";
 import { trend, TREND_GLYPH } from "../components/marketFormat";
 import { formatPercent, formatUpdatedAtUtc, formatUsd } from "../format";
@@ -233,9 +234,10 @@ export function CrowdPage() {
   const tick = useClock(5000);
   const [params, setParams] = useSearchParams();
   const { markets, categories, loading: marketsLoading, error: marketsError, refresh } = useMarkets();
-  const wanted = params.get("m") ?? lastMarket() ?? "BTC";
+  // What the link or the room the player came from asks for; null when nothing does. Not "BTC" then: that is the legacy
+  // perpetual which the catalog closed when BTC's price moved to its own exchange — the default is chosen from the list.
+  const wanted = params.get("m") ?? lastMarket();
   const requested = useMarket(wanted).market;
-  const btc = useMarket("BTC").market;
 
   const [overview, setOverview] = useState<CrowdOverviewDto | null>(null);
   useEffect(() => {
@@ -256,11 +258,12 @@ export function CrowdPage() {
   const groups = useMemo(() => marketGroups(markets, categories), [markets, categories]);
 
   // The market asked for (the link, or the room it came from): from the list; else — a closed market that has
-  // left it — from its row of the overview (which keeps it); else BTC, when that is gone or never was.
-  const wantedRow = overview?.markets.find((r) => r.marketId.toLowerCase() === wanted.toLowerCase());
+  // left it — from its row of the overview (which keeps it); else the default (`defaultMarket`: the open BTC market,
+  // else the first open crypto market), and with the list holding neither, the first market it holds.
+  const wantedRow = wanted ? overview?.markets.find((r) => r.marketId.toLowerCase() === wanted.toLowerCase()) : undefined;
   const leftTheList: AccountMarket | undefined =
     !requested && wantedRow ? { id: wantedRow.marketId, symbol: wantedRow.symbol, title: wantedRow.title, status: wantedRow.status, iconUrl: null } : undefined;
-  const market: AccountMarket | undefined = requested ?? leftTheList ?? btc ?? markets[0];
+  const market: AccountMarket | undefined = requested ?? leftTheList ?? defaultMarket(markets) ?? markets[0];
 
   const pick = useCallback(
     (marketId: string) => {

@@ -149,6 +149,72 @@ describe("Stats → Crowd — the market selector (S4)", () => {
   });
 });
 
+describe("Stats → Crowd — the default market once BTC's price moved to its own exchange (Р-76)", () => {
+  // the server's list since then: spot_BTC (open), spot_ETH, spot_DOGE, spot_HYPE, and the legacy BTC perpetual — closed
+  const LEGACY_ROW = row("BTC", "BTC", 0.034, 20, { status: "CLOSED", title: "Bitcoin" });
+  const SPOT_OVERVIEW: CrowdOverviewDto = {
+    ...OVERVIEW,
+    markets: [LEGACY_ROW, row("spot_BTC", "BTC", 0.002, 3, { title: "Bitcoin" }), row("spot_ETH", "ETH", -0.01, 2, { title: "Ethereum" })],
+  };
+
+  function renderSpot(path: string, markets = spotCatalogue(), overview: CrowdOverviewDto = SPOT_OVERVIEW) {
+    const crowdAccount = vi.fn(async (id: string = "spot_BTC") => ({ ...accountOf("BTC"), marketId: id }));
+    const api = fakeApi({
+      markets: vi.fn(async () => marketsOf(markets)),
+      crowdAccount,
+      crowdOverview: vi.fn(async () => overview),
+    });
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <CrowdPage />
+      </MemoryRouter>,
+      { wrapper: apiWrapper(api) },
+    );
+    return { crowdAccount };
+  }
+
+  it("opens on the open BTC market, spot_BTC — not on the legacy BTC that the catalog closed, which is still on the list", async () => {
+    const { crowdAccount } = renderSpot("/stats");
+
+    expect(await screen.findByLabelText("Market")).toHaveValue("spot_BTC");
+    await waitFor(() => expect(crowdAccount).toHaveBeenCalledWith("spot_BTC"));
+    expect(crowdAccount).not.toHaveBeenCalledWith("BTC");
+    expect(screen.getByRole("link", { name: "Play BTC" })).toHaveAttribute("href", "/play/spot_BTC");
+  });
+
+  it("the same once the legacy BTC has left the list and only its closed row in the overview remains", async () => {
+    const { crowdAccount } = renderSpot("/stats", spotCatalogue().filter((m) => m.id !== "BTC"));
+
+    expect(await screen.findByLabelText("Market")).toHaveValue("spot_BTC");
+    await waitFor(() => expect(crowdAccount).toHaveBeenCalledWith("spot_BTC"));
+    expect(crowdAccount).not.toHaveBeenCalledWith("BTC");
+  });
+
+  it("with no open BTC market it opens on the first open crypto market", async () => {
+    const { crowdAccount } = renderSpot("/stats", spotCatalogue().filter((m) => m.id !== "spot_BTC"));
+
+    expect(await screen.findByLabelText("Market")).toHaveValue("spot_ETH");
+    await waitFor(() => expect(crowdAccount).toHaveBeenCalledWith("spot_ETH"));
+  });
+
+  it("the room the player came from still wins over the default", async () => {
+    window.sessionStorage.setItem("herd.lastMarket", "spot_DOGE");
+    const { crowdAccount } = renderSpot("/stats");
+
+    expect(await screen.findByLabelText("Market")).toHaveValue("spot_DOGE");
+    await waitFor(() => expect(crowdAccount).toHaveBeenCalledWith("spot_DOGE"));
+  });
+
+  it("a link that names the legacy BTC opens it as itself, marked closed — asked for, not swapped", async () => {
+    const { crowdAccount } = renderSpot("/stats?m=BTC");
+
+    await waitFor(() => expect(crowdAccount).toHaveBeenCalledWith("BTC"));
+    const select = await screen.findByLabelText("Market");
+    expect(select).toHaveValue("BTC");
+    expect(within(select).getByRole("option", { name: "BTC · Bitcoin (closed)" })).toBeInTheDocument();
+  });
+});
+
 describe("Stats → Crowd — the herd overview (S4)", () => {
   it("totals: the whole herd's capital and return, signed and arrowed", async () => {
     renderCrowd();

@@ -260,7 +260,7 @@ class RealApi implements Api {
     return rpc("cancellations", [params ?? null]);
   }
 
-  // --- home aggregate (describes BTC) ---
+  // --- home aggregate (describes the BTC pair: the server resolves it to the open market whose symbol is BTC) ---
   home(): Promise<HomeSummaryDto> {
     return rpc("home", []);
   }

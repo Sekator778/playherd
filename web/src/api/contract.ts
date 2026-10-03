@@ -512,7 +512,9 @@ export interface MarketReferenceDto {
 }
 
 export interface LiquidationPreviewRequest {
-  /** Omitted → `"BTC"`. */
+  /** Omitted → the BTC pair: the open market whose symbol is BTC (`spot_BTC` once the legacy `BTC` perpetual was replaced by it
+   *  and closed), which the server resolves (`GameService.defaultMarket`). A screen that has to name a market itself takes
+   *  `defaultMarket(markets)` (`components/marketModel.ts`), never the id `"BTC"`. */
   marketId?: MarketId;
   direction: Direction;
   leverage: Leverage;
@@ -1076,7 +1078,7 @@ export interface Api {
   myPositions(): Promise<MyPositionDto[]>;
 
   // --- rounds (Р-8, Р-13, Р-19, Р-22, Р-23, Р-32) ---
-  /** `marketId` omitted → `"BTC"`. */
+  /** `marketId` omitted → the BTC pair: the open market whose symbol is BTC (see {@link LiquidationPreviewRequest.marketId}). */
   rounds(interval: Interval, marketId?: MarketId): Promise<RoundsPairDto>;
   round(roundId: RoundId): Promise<RoundDto>;
   /**
@@ -1089,7 +1091,7 @@ export interface Api {
    * all.
    */
   betFeed?(roundId: RoundId, sinceSeq?: number): Promise<BetFeedDto>;
-  /** Same as `referencePrice("BTC")` — kept for callers that predate markets. */
+  /** Same as `referencePrice` of the BTC pair — the open market whose symbol is BTC — kept for callers that predate markets. */
   btcReferencePrice(): Promise<MarketReferenceDto>;
   previewLiquidation(req: LiquidationPreviewRequest): Promise<LiquidationPreviewDto>;
   /** Also used to MODIFY an existing bet on the same round (Р-13) — mirrors
@@ -1114,7 +1116,7 @@ export interface Api {
   myDepositAddress(): Promise<DepositAddressDto>;
 
   // --- crowd account (Р-5, Р-14, Р-17, Р-25, Р-26; one per market, Т-6) ---
-  /** `marketId` omitted → `"BTC"`. */
+  /** `marketId` omitted → the BTC pair: the open market whose symbol is BTC (see {@link LiquidationPreviewRequest.marketId}). */
   crowdAccount(marketId?: MarketId): Promise<CrowdAccountDto>;
   crowdOverview(): Promise<CrowdOverviewDto>;
 
@@ -1128,7 +1130,7 @@ export interface Api {
   // --- cancellations log (Р-23, Р-32) ---
   cancellations(params?: PageParams): Promise<Page<CancellationDto>>;
 
-  // --- home aggregate (Р-34) ---
+  // --- home aggregate (Р-34): describes the BTC pair, the open market whose symbol is BTC (see above) ---
   home(): Promise<HomeSummaryDto>;
 
   // --- "while you were away" (task item, 2026-09-26 IA follow-up) ---
