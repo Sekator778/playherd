@@ -117,8 +117,9 @@ class OracleEndpointsTest extends LiveGameTestBase {
         // exactly the documented fields, nothing else leaks
         Set<String> fields = new TreeSet<>();
         ethEntry.fieldNames().forEachRemaining(fields::add);
-        assertThat(fields).containsExactly("id", "index", "kind", "listedAtMs", "priceDecimals", "source", "sourceRef",
-                "symbol");
+        assertThat(fields).containsExactly("backup", "id", "index", "kind", "listedAtMs", "priceDecimals", "source",
+                "sourceRef", "symbol");
+        assertThat(ethEntry.path("backup").isNull()).as("a market with no backup exchange says null").isTrue();
     }
 
     private static JsonNode entry(JsonNode entries, String id) {
@@ -128,6 +129,21 @@ class OracleEndpointsTest extends LiveGameTestBase {
             }
         }
         throw new AssertionError("no registry entry for " + id + " in " + entries);
+    }
+
+    @Test
+    void theRegistryShowsTheMainAndTheBackupExchangeOfAMarketThatHasOne() throws Exception {
+        Market spot = listWithBackup("T_OREG3", "SPT", "kraken", "SPT/USD");
+
+        JsonNode entry = entry(json(given().get("/api/markets/registry.json")), spot.id());
+
+        assertThat(entry.path("source").asText()).as("the main exchange").isEqualTo("coinbase");
+        assertThat(entry.path("sourceRef").asText()).isEqualTo("SPT-USD");
+        assertThat(entry.path("backup").path("source").asText()).isEqualTo("kraken");
+        assertThat(entry.path("backup").path("ref").asText()).as("what the backup calls the pair").isEqualTo("SPT/USD");
+        Set<String> backupFields = new TreeSet<>();
+        entry.path("backup").fieldNames().forEachRemaining(backupFields::add);
+        assertThat(backupFields).containsExactly("ref", "source");
     }
 
     @Test
@@ -192,12 +208,40 @@ class OracleEndpointsTest extends LiveGameTestBase {
         Set<String> fields = new TreeSet<>();
         first.fieldNames().forEachRemaining(fields::add);
         assertThat(fields).containsExactly("asset", "marketId", "priceCents", "resultsHash", "roundId", "seq", "state",
-                "ts");
+                "ts", "venue");
+        assertThat(first.path("venue").isNull()).as("a round of a market with no backup exchange: no venue").isTrue();
 
         JsonNode fromSecond = json(given().queryParam("fromSeq", ethSeq).get("/api/oracle/records"));
         assertThat(fromSecond.get("records")).extracting(r -> r.path("seq").asLong()).containsExactly(ethSeq, btc2);
         assertThat(fromSecond.path("firstSeq").asLong()).as("firstSeq is the database's, not the page's")
                 .isEqualTo(btc);
+    }
+
+    @Test
+    void theJournalNamesTheExchangeARoundRanOnAndNullForARoundThatRanOnNone() throws Exception {
+        Market spot = listWithBackup("T_OREC2", "SPJ", "kraken", "SPJ/USD");
+        long onKraken = insert(spot.id(), spot.oracleIndex(), 1);
+        long onCoinbase = insert(spot.id(), spot.oracleIndex(), 2);
+        long onNone = insert(spot.id(), spot.oracleIndex(), 3);
+        // the exchange is the round's: the result row says it, and the journal reads it from there
+        for (long[] round : new long[][] {{1, 0}, {2, 1}}) {
+            String venue = round[1] == 0 ? "kraken" : "coinbase";
+            String roundId = spot.id() + "-1h-" + (1_790_000_000_000L + round[0] * 180_000);
+            db.tx(c -> db.update(c, "INSERT INTO round_results (round_id, market, interval, window_start_ms, "
+                    + "window_end_ms, status, created_at_ms, venue) VALUES (?, ?, 'HOURLY', ?, ?, 'SETTLED', ?, ?)",
+                    roundId, spot.id(), 1_790_000_000_000L + round[0] * 180_000, 1_790_000_180_000L + round[0] * 180_000,
+                    1_790_000_000_000L, venue));
+        }
+
+        JsonNode records = json(given().get("/api/oracle/records")).get("records");
+
+        assertThat(records).hasSize(3);
+        assertThat(records.get(0).path("seq").asLong()).isEqualTo(onKraken);
+        assertThat(records.get(0).path("venue").asText()).isEqualTo("kraken");
+        assertThat(records.get(1).path("seq").asLong()).isEqualTo(onCoinbase);
+        assertThat(records.get(1).path("venue").asText()).isEqualTo("coinbase");
+        assertThat(records.get(2).path("seq").asLong()).isEqualTo(onNone);
+        assertThat(records.get(2).get("venue").isNull()).as("an explicit null: no exchange of its own").isTrue();
     }
 
     @Test

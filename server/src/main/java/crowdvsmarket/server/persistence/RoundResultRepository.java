@@ -45,8 +45,15 @@ public class RoundResultRepository {
 
     /** One settled round's closing price, keyed by where its window ends — what {@link
      *  #settledCloses} hands to {@code BoundaryPrices}. {@code closeCents} is the engine (lot) price
-     *  times 100, like the column it comes from. */
-    public record SettledClose(long windowEndMs, long closeCents) {
+     *  times 100, like the column it comes from. {@code venue}: the exchange the round ran on (V9), {@code
+     *  null} for a round of a market without a backup — the next round opens at the close of a round on the
+     *  same venue only (Р-76). */
+    public record SettledClose(long windowEndMs, long closeCents, String venue) {
+
+        /** A round that ran on no particular venue. */
+        public SettledClose(long windowEndMs, long closeCents) {
+            this(windowEndMs, closeCents, null);
+        }
     }
 
     /**
@@ -58,11 +65,12 @@ public class RoundResultRepository {
      */
     public List<SettledClose> settledCloses(String marketId, Interval interval, long fromStartMs) {
         return db.read(c -> db.queryList(c, """
-                SELECT window_end_ms, close_price_cents FROM round_results
+                SELECT window_end_ms, close_price_cents, venue FROM round_results
                 WHERE market = ? AND interval = ? AND status = 'SETTLED' AND window_start_ms >= ?
                 ORDER BY window_end_ms, round_id
                 """,
-                rs -> new SettledClose(rs.getLong("window_end_ms"), rs.getLong("close_price_cents")),
+                rs -> new SettledClose(rs.getLong("window_end_ms"), rs.getLong("close_price_cents"),
+                        rs.getString("venue")),
                 marketId, interval.name(), fromStartMs));
     }
 
@@ -75,15 +83,15 @@ public class RoundResultRepository {
                                 long windowEnd, long openPriceCents, long closePriceCents,
                                 List<Rounds.PublicPositionDto> positions, Rounds.CrowdRoundResultDto crowd,
                                 String resultsHash, String canonicalJson, long settledAtMs,
-                                List<PlayerHistoryRow> perPlayerHistory) throws SQLException {
+                                List<PlayerHistoryRow> perPlayerHistory, String venue) throws SQLException {
         db.update(c, """
                 INSERT INTO round_results (round_id, market, interval, window_start_ms, window_end_ms, status,
                     open_price_cents, close_price_cents, positions_json, crowd_json, results_hash,
-                    canonical_json, settled_at_ms, created_at_ms)
-                VALUES (?, ?, ?, ?, ?, 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?)
+                    canonical_json, settled_at_ms, created_at_ms, venue)
+                VALUES (?, ?, ?, ?, ?, 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 roundId, marketId, interval.name(), windowStart, windowEnd, openPriceCents, closePriceCents,
-                Db.jsonb(positions), Db.jsonb(crowd), resultsHash, canonicalJson, settledAtMs, settledAtMs);
+                Db.jsonb(positions), Db.jsonb(crowd), resultsHash, canonicalJson, settledAtMs, settledAtMs, venue);
         for (PlayerHistoryRow row : perPlayerHistory) {
             db.update(c, """
                     INSERT INTO player_round_history (round_id, player_id, market, interval, settled_at_ms,
@@ -101,15 +109,15 @@ public class RoundResultRepository {
 
     public void insertCancelled(Connection c, String marketId, String roundId, Interval interval, long windowStart,
                                   long windowEnd, String reason, long cancelledAtMs, int refundedBetCount,
-                                  String resultsHash, String canonicalJson) throws SQLException {
+                                  String resultsHash, String canonicalJson, String venue) throws SQLException {
         db.update(c, """
                 INSERT INTO round_results (round_id, market, interval, window_start_ms, window_end_ms, status,
                     cancelled_at_ms, cancellation_reason, refunded_bet_count, results_hash, canonical_json,
-                    created_at_ms)
-                VALUES (?, ?, ?, ?, ?, 'CANCELLED', ?, ?, ?, ?, ?, ?)
+                    created_at_ms, venue)
+                VALUES (?, ?, ?, ?, ?, 'CANCELLED', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 roundId, marketId, interval.name(), windowStart, windowEnd, cancelledAtMs, reason, refundedBetCount,
-                resultsHash, canonicalJson, cancelledAtMs);
+                resultsHash, canonicalJson, cancelledAtMs, venue);
     }
 
     public Optional<Rounds.RoundDto> findRoundDto(String roundId) {
@@ -274,9 +282,12 @@ public class RoundResultRepository {
         Rounds.RoundWindowDto window = new Rounds.RoundWindowDto(interval, rs.getLong("window_start_ms"),
                 rs.getLong("window_end_ms"));
         String status = rs.getString("status");
+        // a round of a market with a backup exchange says which exchange it ran on; any other, the market's own source
+        String venue = rs.getString("venue");
+        String source = venue != null ? venue : market.source();
         if ("CANCELLED".equals(status)) {
             return new Rounds.RoundCancelled(roundId, window, market.id(), market.symbol(), kindOf(market),
-                    market.priceDecimals(), market.source(), cancellationOf(rs, roundId), rs.getString("results_hash"));
+                    market.priceDecimals(), source, cancellationOf(rs, roundId), rs.getString("results_hash"));
         }
         List<Rounds.PublicPositionDto> positions = db.readJson(rs, "positions_json",
                 new TypeReference<List<Rounds.PublicPositionDto>>() {
@@ -285,7 +296,7 @@ public class RoundResultRepository {
         String openPrice = market.rawString(java.math.BigDecimal.valueOf(rs.getLong("open_price_cents"), 2));
         String closePrice = market.rawString(java.math.BigDecimal.valueOf(rs.getLong("close_price_cents"), 2));
         return new Rounds.RoundSettled(roundId, window, market.id(), market.symbol(), kindOf(market),
-                market.priceDecimals(), market.source(), openPrice, closePrice, positions, crowd,
+                market.priceDecimals(), source, openPrice, closePrice, positions, crowd,
                 rs.getString("results_hash"));
     }
 

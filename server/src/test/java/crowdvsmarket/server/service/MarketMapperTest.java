@@ -92,6 +92,18 @@ class MarketMapperTest {
         assertThat(stale).isEqualTo(new Markets.MarketPriceDto("2700.50", 5L, null, true));
     }
 
+    @Test
+    void aQuoteFromTheBackupExchangeSaysSoAndOneFromThePrimaryDoesNot() {
+        Markets.MarketPriceDto fromTheBackup = MarketMapper.price(perpLot0(),
+                new PriceQuote(new BigDecimal("2700.5"), 7L, 0.01, false, "kraken"));
+        Markets.MarketPriceDto fromThePrimary = MarketMapper.price(perpLot0(),
+                new PriceQuote(new BigDecimal("2700.5"), 7L, 0.01, false));
+
+        assertThat(fromTheBackup).isEqualTo(new Markets.MarketPriceDto("2700.50", 7L, 0.01, false, "kraken"));
+        assertThat(fromTheBackup.venue()).isEqualTo("kraken");
+        assertThat(fromThePrimary.venue()).isNull();
+    }
+
     // ---------------------------------------------------------------------------------------
     // the live split
     // ---------------------------------------------------------------------------------------

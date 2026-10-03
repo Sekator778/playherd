@@ -341,7 +341,11 @@ interface RoundBase {
    *  readable for good. Same values as the market's `MarketDto` fields. */
   kind: MarketKind;
   priceDecimals: number;
-  source: "hyperliquid" | "coinbase" | "polymarket" | "synthetic";
+  /** The exchange the round runs on — its prices come from there alone. For a market that has a backup exchange
+   *  it is chosen when the round opens (the primary if that has a live price at the start, else the backup) and
+   *  never changes; until then, the primary. A round that moves to the backup opens at the backup's price, which
+   *  may differ from the previous round's close by the two exchanges' basis (a few basis points). */
+  source: "hyperliquid" | "coinbase" | "kraken" | "polymarket" | "synthetic";
 }
 
 export interface RoundBetting extends RoundBase {
@@ -717,6 +721,10 @@ export interface MarketPriceDto {
   /** True when the last tick is older than the source's staleness limit: betting stays open, the
    *  card shows the price as stale. */
   stale: boolean;
+  /** Which exchange the shown price is from, when it is not the market's own (`MarketDto.source`):
+   *  a crypto market whose primary exchange has no fresh price shows its backup's (`MarketDto.backupSource`)
+   *  and says so here (Р-76). Null/absent: the primary's price, and every market that has no backup. */
+  venue?: "hyperliquid" | "coinbase" | "kraken" | null;
 }
 
 /** One round series of a market, as the lobby card and the room header need it (Р-19, Р-62). */
@@ -782,7 +790,14 @@ export interface MarketDto {
   /** The market's index in the on-chain oracle record (0 = BTC; `GET /api/markets/registry.json`
    *  is the public list) — shown next to "Anchored on Chia". */
   oracleIndex?: number;
-  source: "hyperliquid" | "coinbase" | "polymarket" | "synthetic";
+  /** The market's primary exchange (or source). Crypto is priced by the exchange of the asset itself: Coinbase
+   *  for BTC, ETH, SOL, XRP and DOGE, Hyperliquid's spot market for HYPE; stocks, indices and commodities by
+   *  Hyperliquid (dex `xyz`), odds by Polymarket. */
+  source: "hyperliquid" | "coinbase" | "kraken" | "polymarket" | "synthetic";
+  /** The exchange a round runs on when the primary cannot price its start (Р-76: a round runs entirely on one
+   *  exchange, chosen when it opens): Kraken behind Coinbase, Coinbase behind Hyperliquid spot. Null/absent: no
+   *  backup. Which of the two a round runs on is that round's `source`. */
+  backupSource?: "coinbase" | "kraken" | null;
   /** Null until the first tick arrives. */
   price: MarketPriceDto | null;
   /** One entry per series, shortest first. */

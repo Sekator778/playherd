@@ -194,6 +194,7 @@ public class BotService {
         if (config.mode() != GameMode.LIVE) {
             return true;
         }
-        return marketPrices.latest(market.id()).map(quote -> !quote.stale()).orElse(false);
+        // the primary exchange's price while it is fresh, else the backup's (Р-76): a market whose primary is down still bets
+        return marketPrices.latest(market).map(quote -> !quote.stale()).orElse(false);
     }
 }

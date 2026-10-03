@@ -206,6 +206,129 @@ class SpotCatalogTest {
         assertThat(market("spot_ETH").maxLeverage()).as("not in the table").isEqualTo(10);
     }
 
+    // ------------------------------------------------------------------------ the backup exchange (Р-76)
+
+    private CatalogConfig configWith(String backup, java.util.Set<String> disabledVenues) {
+        CatalogConfig d = CatalogConfig.defaults();
+        return new CatalogConfig(true, false, List.of(), List.of(), List.of(), List.of(), true, 3, 3, 10, true,
+                d.gameCooldownMs(), d.coinbase(), d.hyperliquidSpot(), d.spotMaxLeverage(),
+                CatalogConfig.parseBackups(backup), disabledVenues);
+    }
+
+    @Test
+    void aListedMarketRecordsItsBackupExchangeInItsSourceMeta() {
+        catalog().sync(NOW);
+
+        JsonNode btc = Fixtures.parse(market("spot_BTC").sourceMeta());
+        assertThat(btc.get("product").asText()).as("what was there before stays").isEqualTo("BTC-USD");
+        assertThat(btc.get("backup").get("source").asText()).isEqualTo("kraken");
+        assertThat(btc.get("backup").get("ref").asText()).as("Kraken's WebSocket v2 name of the pair").isEqualTo("BTC/USD");
+        for (String coin : List.of("ETH", "SOL", "XRP", "DOGE")) {
+            JsonNode backup = Fixtures.parse(market("spot_" + coin).sourceMeta()).get("backup");
+            assertThat(backup.get("source").asText()).as(coin).isEqualTo("kraken");
+            assertThat(backup.get("ref").asText()).as(coin).isEqualTo(coin + "/USD");
+        }
+        JsonNode hype = Fixtures.parse(market("spot_HYPE").sourceMeta());
+        assertThat(hype.get("pair").asText()).isEqualTo("HYPE/USDC");
+        assertThat(hype.get("backup").get("source").asText()).as("Coinbase behind Hyperliquid's own spot market")
+                .isEqualTo("coinbase");
+        assertThat(hype.get("backup").get("ref").asText()).isEqualTo("HYPE-USD");
+    }
+
+    @Test
+    void theBackupsAreWhatTheMarketsFindThroughInstruments() {
+        catalog().sync(NOW);
+
+        assertThat(crowdvsmarket.server.prices.Instruments.backupOf(market("spot_BTC")))
+                .contains(new crowdvsmarket.server.prices.Instruments.Backup("kraken", "BTC/USD"));
+        assertThat(crowdvsmarket.server.prices.Instruments.backupOf(market("spot_HYPE")))
+                .contains(new crowdvsmarket.server.prices.Instruments.Backup("coinbase", "HYPE-USD"));
+        assertThat(crowdvsmarket.server.prices.Instruments.shadowOf(market("spot_BTC")).orElseThrow().id())
+                .isEqualTo("spot_BTC~kraken");
+    }
+
+    @Test
+    void aSymbolWithNoBackupOrNamedNoneHasNoneAndNothingElseOfTheListingChanges() {
+        catalog(configWith("BTC:none,ETH:kraken", java.util.Set.of())).sync(NOW);
+
+        assertThat(Fixtures.parse(market("spot_BTC").sourceMeta()).has("backup")).as("none").isFalse();
+        assertThat(Fixtures.parse(market("spot_SOL").sourceMeta()).has("backup")).as("not in the setting").isFalse();
+        assertThat(Fixtures.parse(market("spot_HYPE").sourceMeta()).has("backup")).isFalse();
+        assertThat(Fixtures.parse(market("spot_ETH").sourceMeta()).get("backup").get("source").asText()).isEqualTo("kraken");
+        assertThat(crowdvsmarket.server.prices.Instruments.hasBackup(market("spot_BTC"))).isFalse();
+        assertThat(market("spot_BTC").source()).isEqualTo("coinbase");
+        assertThat(market("spot_BTC").maxLeverage()).isEqualTo(40);
+    }
+
+    @Test
+    void aBackupOnTheVenueThatPricesTheMarketIsNoBackup() {
+        catalog(configWith("BTC:coinbase,HYPE:coinbase", java.util.Set.of())).sync(NOW);
+
+        assertThat(Fixtures.parse(market("spot_BTC").sourceMeta()).has("backup")).as("Coinbase behind Coinbase").isFalse();
+        assertThat(Fixtures.parse(market("spot_HYPE").sourceMeta()).has("backup")).as("Coinbase behind Hyperliquid is one").isTrue();
+    }
+
+    @Test
+    void theBackupIsFixedAtListingAndAChangeOfTheSettingIsForTheMarketsListedAfterIt() {
+        catalog().sync(NOW);
+        String before = market("spot_BTC").sourceMeta();
+
+        catalog(configWith("BTC:none", java.util.Set.of())).sync(NOW + 60_000L);
+
+        assertThat(market("spot_BTC").sourceMeta()).as("listed already: never again").isEqualTo(before);
+        assertThat(registry.log.stream().filter(l -> l.startsWith("listed spot_BTC"))).hasSize(1);
+    }
+
+    @Test
+    void theBackupIsNotAskedAtListing() {
+        catalog().sync(NOW);
+
+        assertThat(coinbase.ticker.requests).as("only the markets' own products: HYPE-USD is nobody's product here")
+                .containsExactlyInAnyOrder("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD");
+        assertThat(hyperliquid.requestsOfType("spotMetaAndAssetCtxs")).hasSize(1);
+    }
+
+    // ------------------------------------------------------------------------ a venue that is switched off
+
+    @Test
+    void aSwitchedOffCoinbaseIsNotAskedAndItsMarketsAreNotListedYet() {
+        int pending = catalog(configWith(CatalogConfig.DEFAULT_SPOT_BACKUP, java.util.Set.of("coinbase"))).sync(NOW);
+
+        assertThat(coinbase.ticker.requests).as("not even the catalog asks it").isEmpty();
+        assertThat(registry.byId("spot_BTC")).isEmpty();
+        assertThat(registry.byId("spot_DOGE")).isEmpty();
+        assertThat(registry.byId("spot_HYPE")).as("Hyperliquid is on").isPresent();
+        assertThat(pending).as("the five products wait for the venue to be switched on").isEqualTo(5);
+    }
+
+    @Test
+    void aSwitchedOffHyperliquidIsNotAskedAndItsMarketIsNotListedYet() {
+        int pending = catalog(configWith(CatalogConfig.DEFAULT_SPOT_BACKUP, java.util.Set.of("hyperliquid"))).sync(NOW);
+
+        assertThat(hyperliquid.info.requests).as("neither the meta nor anything else").isEmpty();
+        assertThat(registry.byId("spot_HYPE")).isEmpty();
+        assertThat(registry.byId("spot_BTC")).isPresent();
+        assertThat(pending).isEqualTo(1);
+    }
+
+    @Test
+    void aVenueThatIsSwitchedOnLaterGetsItsMarketsListedThen() {
+        catalog(configWith(CatalogConfig.DEFAULT_SPOT_BACKUP, java.util.Set.of("coinbase"))).sync(NOW);
+
+        catalog().sync(NOW + 60_000L);
+
+        assertThat(registry.byId("spot_BTC")).isPresent();
+        assertThat(registry.byId("spot_DOGE")).isPresent();
+    }
+
+    @Test
+    void aSwitchedOffBackupVenueDoesNotKeepAMarketFromBeingListed() {
+        catalog(configWith(CatalogConfig.DEFAULT_SPOT_BACKUP, java.util.Set.of("kraken"))).sync(NOW);
+
+        assertThat(registry.byId("spot_BTC")).as("the backup is recorded at listing and not asked").isPresent();
+        assertThat(Fixtures.parse(market("spot_BTC").sourceMeta()).get("backup").get("source").asText()).isEqualTo("kraken");
+    }
+
     // ------------------------------------------------------------------------ replacement
 
     @Test

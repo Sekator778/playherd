@@ -141,8 +141,10 @@ class WireFixturesTest extends LiveRpcTestBase {
                 .atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
         long start = Math.max(now - 20 * 60_000L, monthStart + 60_000L);
         Market btc = registry.require("BTC");
+        // priced by Coinbase, with Kraken behind it (Р-76): the wire shows a market that has a backup exchange
         Market perp = registry.list(new NewMarket("T_WIRE_PERP", MarketKind.PERP, Category.CRYPTO, "WPR", "Wirecoin",
-                null, null, "hyperliquid", "WPR", null, 25, 1, null), now);
+                null, null, "coinbase", "WPR-USD", "{\"backup\":{\"source\":\"kraken\",\"ref\":\"WPR/USD\"}}", 25, 1,
+                null), now);
         Market odds = registry.list(new NewMarket("T_WIRE_ODDS", MarketKind.ODDS, Category.POLITICS, "BRA",
                 "Will Lula win the Brazilian election?", "Yes · Brazil election", "https://img.example/lula.png",
                 "polymarket", "tok-lula", null, 10, 4, now + 30L * 86_400_000L), now);
@@ -158,6 +160,7 @@ class WireFixturesTest extends LiveRpcTestBase {
         prices.setPrice(btc, "84000.50");
         prices.setSoFar(btc, "84000.50", "84120.25");
         prices.setPrice(perp, "2500.000");
+        prices.setVenue(perp, "coinbase"); // every round of the market runs on its primary exchange
         prices.setSoFar(perp, "2412.000", "2418.500");
         prices.setQuote(odds, "0.5230", now - 500L, 0.0098, false);
         prices.setQuote(game, "0.4100", now - 500L, -0.012, false);
@@ -248,6 +251,8 @@ class WireFixturesTest extends LiveRpcTestBase {
         Session alice = story.alice();
         RoundWindow running = roundProgress.findNext(story.perp().id(), Interval.HOURLY).orElseThrow();
         RoundWindow betting = roundProgress.bettingWindow(story.perp().id(), Interval.HOURLY);
+        // the lobby shows Kraken's price for WPR: Coinbase has no fresh tick (the backup's, with its venue named)
+        prices.setQuote(story.perp(), "2412.000", System.currentTimeMillis() - 400L, 0.0123, false, "kraken");
         marketView.invalidate();
 
         capture("serverInfo", null, "serverInfo");
@@ -330,6 +335,12 @@ class WireFixturesTest extends LiveRpcTestBase {
         JsonNode perp = markets.get(1);
         assertThat(perp.path("priceDecimals").asInt()).isEqualTo(3);
         assertThat(perp.path("kind").asText()).isEqualTo("PERP");
+        assertThat(perp.path("source").asText()).as("the primary exchange").isEqualTo("coinbase");
+        assertThat(perp.path("backupSource").asText()).as("the exchange behind it").isEqualTo("kraken");
+        assertThat(perp.path("price").path("venue").asText()).as("the shown price is the backup's").isEqualTo("kraken");
+        assertThat(markets.get(0).path("backupSource").isNull()).as("BTC has no backup: null, never left out").isTrue();
+        assertThat(markets.get(0).path("price").path("venue").isNull()).isTrue();
+        assertThat(markets.get(2).path("backupSource").isNull()).isTrue();
         assertThat(perp.path("series")).hasSize(2);
         assertThat(perp.path("crowd").path("roundsTraded").asInt()).isPositive();
         assertThat(perp.path("crowd").path("lastOutcome").asText()).as("the crowd won the settled round").isEqualTo("WIN");
@@ -352,7 +363,8 @@ class WireFixturesTest extends LiveRpcTestBase {
             JsonNode round = name.equals("rounds.hourly") ? pair.path("running") : answers.get(name);
             assertThat(round.path("kind").asText()).as(name + ".kind").isIn("PERP", "ODDS");
             assertThat(round.path("priceDecimals").isInt()).as(name + ".priceDecimals").isTrue();
-            assertThat(round.path("source").asText()).as(name + ".source").isIn("hyperliquid", "polymarket", "synthetic");
+            assertThat(round.path("source").asText()).as(name + ".source").isIn("hyperliquid", "coinbase", "kraken",
+                    "polymarket", "synthetic");
         }
 
         JsonNode roundBetting = answers.get("round.betting");
@@ -377,6 +389,11 @@ class WireFixturesTest extends LiveRpcTestBase {
         assertThat(roundSettled.path("crowd").path("traded").asBoolean()).isTrue();
         assertThat(roundSettled.path("resultsHash").asText()).startsWith("0x");
         assertThat(roundSettled.path("oracleAnchor").isObject()).as("the round's record is queued").isTrue();
+        assertThat(roundSettled.path("source").asText()).as("the exchange the round ran on").isEqualTo("coinbase");
+        assertThat(answers.get("round.running").path("source").asText()).isEqualTo("coinbase");
+        assertThat(answers.get("round.betting").path("source").asText()).isEqualTo("coinbase");
+        assertThat(roundResults.canonicalJson(story.settled().roundId()).orElseThrow())
+                .as("the venue is in the document the hash covers").contains("\"venue\":\"coinbase\"");
 
         JsonNode roundCancelled = answers.get("round.cancelled");
         assertThat(roundCancelled.path("kind").asText()).isEqualTo("ODDS");

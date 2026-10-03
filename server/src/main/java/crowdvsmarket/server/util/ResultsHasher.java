@@ -37,7 +37,8 @@ import java.util.TreeMap;
  * (the BTC overload of {@link #build} is unchanged and pinned by {@code ResultsHasherTest}). For any
  * other market a root key {@code "market"} (the market id) is added; the price fields are the
  * market's ENGINE (lot) prices times 100, the unit {@code round_results} stores. A stored
- * {@code canonical_json} is never recomputed.
+ * {@code canonical_json} is never recomputed. <b>Venues (Р-76):</b> a round of a market that has a backup exchange
+ * also carries the root key {@code "venue"}, the exchange it ran on; a round of any other market does not.
  */
 public final class ResultsHasher {
 
@@ -67,9 +68,24 @@ public final class ResultsHasher {
     public static CanonicalResult build(String market, String roundId, String series, String status,
                                           Long openPriceCents, Long closePriceCents, List<PositionEntry> positions,
                                           CrowdEntry crowd) {
+        return build(market, roundId, series, status, openPriceCents, closePriceCents, positions, crowd, null);
+    }
+
+    /**
+     * The same, for a round of a market that has venues (Р-76): {@code venue} — the exchange the round ran on,
+     * {@code "coinbase"}, {@code "kraken"} or {@code "hyperliquid"} — is a root key of its own, after
+     * {@code "status"} in the sorted order. {@code null} leaves the key out, and the JSON is then exactly what the
+     * overloads above give: no existing shape changes, so every published hash stays verifiable.
+     */
+    public static CanonicalResult build(String market, String roundId, String series, String status,
+                                          Long openPriceCents, Long closePriceCents, List<PositionEntry> positions,
+                                          CrowdEntry crowd, String venue) {
         Map<String, Object> root = new TreeMap<>();
         if (!MarketSpec.BTC_ID.equals(market)) {
             root.put("market", market);
+        }
+        if (venue != null) {
+            root.put("venue", venue);
         }
         root.put("roundId", roundId);
         root.put("series", series);

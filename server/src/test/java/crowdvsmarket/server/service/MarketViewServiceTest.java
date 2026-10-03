@@ -210,6 +210,25 @@ class MarketViewServiceTest {
     }
 
     @Test
+    void aMarketWithABackupExchangeNamesItAndShowsAQuoteFromItWhenThePrimaryHasNone() {
+        Market spot = list("SPOT1", MarketKind.PERP, Category.CRYPTO, "SP", 10, 0,
+                "{\"backup\":{\"source\":\"kraken\",\"ref\":\"SP/USD\"}}", null);
+        run(spot);
+        prices.setQuote(spot, "100.50", NOW - 300L, 0.01, false, "kraken");
+        prices.setQuote(btc, "84012.30", NOW - 300L, null, false);
+
+        Markets.MarketsDto answer = view.markets(NOW);
+
+        Markets.MarketDto market = dto(answer, "SPOT1");
+        assertThat(market.source()).as("the market's own exchange").isEqualTo("synthetic");
+        assertThat(market.backupSource()).isEqualTo("kraken");
+        assertThat(market.price()).isEqualTo(new Markets.MarketPriceDto("100.50", NOW - 300L, 0.01, false, "kraken"));
+        assertThat(dto(answer, "BTC").backupSource()).as("a market without one").isNull();
+        assertThat(dto(answer, "BTC").price().venue()).isNull();
+        assertThat(dto(answer, "PMODDS").backupSource()).as("a note that says nothing of a backup").isNull();
+    }
+
+    @Test
     void aMarketWithNoTickYetHasNoPrice() {
         prices.setQuote(btc, "84012.30", NOW, null, false);
 

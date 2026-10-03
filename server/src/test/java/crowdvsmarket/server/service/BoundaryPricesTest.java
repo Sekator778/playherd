@@ -323,6 +323,150 @@ class BoundaryPricesTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // venues (Р-76): Р-40 holds within an exchange, and across a switch the open is the new exchange's
+    // ---------------------------------------------------------------------------------------
+
+    private static final Market SPOT = new Market("spot_BTC", MarketKind.PERP, "crypto", "BTC", "BTC", null, null,
+            "coinbase", "BTC-USD", "{\"backup\":{\"source\":\"kraken\",\"ref\":\"BTC/USD\"}}", 10, 0, 2,
+            MarketStatus.ACTIVE, 0L, null, null, null);
+
+    private static RoundPriceData on(String venue, String open, String close, long from, long to) {
+        BigDecimal high = new BigDecimal(open).max(new BigDecimal(close));
+        BigDecimal low = new BigDecimal(open).min(new BigDecimal(close));
+        return new RoundPriceData(new BigDecimal(open), new BigDecimal(close),
+                List.of(candle(from, to, open, high.toPlainString(), low.toPlainString(), close)), to, venue);
+    }
+
+    @Test
+    void aRoundOpensAtTheCloseOfTheRoundBeforeItOnTheSameExchange() {
+        prices.settled(hourly("spot_BTC", 0L), 10_000_00L, "kraken");
+
+        RoundPriceData data = prices.forSettlement(hourly("spot_BTC", STEP),
+                on("kraken", "10010.00", "10020.00", STEP, 2 * STEP - 1));
+
+        assertThat(data.open()).isEqualByComparingTo("10000.00");
+        assertThat(data.venue()).as("the venue goes on with the data").isEqualTo("kraken");
+        assertThat(data.close()).isEqualByComparingTo("10020.00");
+    }
+
+    @Test
+    void aRoundThatMovedToTheOtherExchangeOpensWhereThatExchangesPricesPutItNotAtTheOtherOnesClose() {
+        prices.settled(hourly("spot_BTC", 0L), 10_000_00L, "coinbase"); // the round before ran on Coinbase, closed 10 000.00
+        RoundPriceData fromKraken = on("kraken", "10003.00", "10020.00", STEP, 2 * STEP - 1);
+
+        RoundPriceData data = prices.forSettlement(hourly("spot_BTC", STEP), fromKraken);
+
+        assertThat(data).as("Coinbase's close is another exchange's number: Kraken's data stands as it is")
+                .isSameAs(fromKraken);
+        assertThat(data.open()).isEqualByComparingTo("10003.00");
+    }
+
+    @Test
+    void theClosesOfTheTwoExchangesAtOneBoundaryAreKeptApart() {
+        prices.settled(hourly("spot_BTC", DAY - STEP), 10_000_00L, "coinbase"); // two rounds that ended together,
+        prices.settled(daily("spot_BTC", 0L), 10_004_00L, "kraken");            // each on its own exchange
+
+        assertThat(prices.closeAt("spot_BTC", DAY, "coinbase")).hasValueSatisfying(p -> assertThat(p).isEqualByComparingTo("10000.00"));
+        assertThat(prices.closeAt("spot_BTC", DAY, "kraken")).hasValueSatisfying(p -> assertThat(p).isEqualByComparingTo("10004.00"));
+        assertThat(prices.closeAt("spot_BTC", DAY, "hyperliquid")).isEmpty();
+        assertThat(prices.closeAt("spot_BTC", DAY)).as("a market with no exchange has none of these").isEmpty();
+    }
+
+    @Test
+    void aMarketWithNoBackupKeepsItsClosesWithoutAnExchange() {
+        prices.settled(hourly("BTC", 0L), 10_000_00L);
+
+        assertThat(prices.closeAt("BTC", STEP)).isPresent();
+        assertThat(prices.closeAt("BTC", STEP, null)).isPresent();
+        assertThat(prices.closeAt("BTC", STEP, "kraken")).isEmpty();
+        RoundPriceData none = on(null, "10010.00", "10020.00", STEP, 2 * STEP - 1);
+        assertThat(prices.forSettlement(hourly("BTC", STEP), none).open()).isEqualByComparingTo("10000.00");
+    }
+
+    @Test
+    void aRunningRoundOfAMarketWithABackupShowsTheOpenOfItsOwnExchangeOnly() {
+        prices.settled(hourly("spot_BTC", DAY - STEP), 10_000_00L, "coinbase");
+        prices.settled(daily("spot_BTC", 0L), 10_004_00L, "kraken");
+        RoundWindow running = hourly("spot_BTC", DAY);
+
+        Optional<RoundPriceData> onCoinbase = prices.forRunning(SPOT, running, Optional.empty(), Optional.of("coinbase"));
+        Optional<RoundPriceData> onKraken = prices.forRunning(SPOT, running, Optional.empty(), Optional.of("kraken"));
+        Optional<RoundPriceData> onHyperliquid = prices.forRunning(SPOT, running, Optional.empty(), Optional.of("hyperliquid"));
+
+        assertThat(onCoinbase).hasValueSatisfying(d -> {
+            assertThat(d.open()).isEqualByComparingTo("10000.00");
+            assertThat(d.venue()).isEqualTo("coinbase");
+        });
+        assertThat(onKraken).hasValueSatisfying(d -> {
+            assertThat(d.open()).isEqualByComparingTo("10004.00");
+            assertThat(d.venue()).isEqualTo("kraken");
+        });
+        assertThat(onHyperliquid).as("no round closed there: nothing to override with").isEmpty();
+    }
+
+    @Test
+    void aRunningRoundWhoseExchangeIsNotDecidedYetShowsNoOpenFromTheBoundaryPrices() {
+        prices.settled(hourly("spot_BTC", 0L), 10_000_00L, "coinbase");
+        RoundWindow running = hourly("spot_BTC", STEP);
+
+        assertThat(prices.forRunning(SPOT, running, Optional.empty(), Optional.empty()))
+                .as("which exchange's close it would be is not known").isEmpty();
+        RoundPriceData pipeline = on("kraken", "10003.00", "10004.00", STEP, STEP + 5_000);
+        assertThat(prices.forRunning(SPOT, running, Optional.of(pipeline), Optional.empty()))
+                .as("the pipeline names its exchange (Kraken's): Coinbase's close is not its open")
+                .containsSame(pipeline);
+    }
+
+    @Test
+    void aRunningRoundWithPipelineDataOpensAtItsExchangesPreviousClose() {
+        prices.settled(hourly("spot_BTC", 0L), 10_000_00L, "kraken");
+        RoundPriceData pipeline = on("kraken", "10003.00", "10004.00", STEP, STEP + 5_000);
+
+        Optional<RoundPriceData> shown = prices.forRunning(SPOT, hourly("spot_BTC", STEP), Optional.of(pipeline),
+                Optional.of("kraken"));
+
+        assertThat(shown).hasValueSatisfying(d -> {
+            assertThat(d.open()).isEqualByComparingTo("10000.00");
+            assertThat(d.close()).isEqualByComparingTo("10004.00");
+            assertThat(d.venue()).isEqualTo("kraken");
+            assertThat(d.path().get(0).open()).isEqualByComparingTo("10000.00");
+        });
+    }
+
+    @Test
+    void aStateBuiltAsideLoadsTheClosesPerExchange() {
+        when(roundResults.settledCloses(eq("spot_BTC"), eq(Interval.HOURLY), anyLong())).thenReturn(List.of(
+                new RoundResultRepository.SettledClose(STEP, 10_000_00L, "coinbase"),
+                new RoundResultRepository.SettledClose(2 * STEP, 10_100_00L, "kraken"),
+                new RoundResultRepository.SettledClose(2 * STEP, 10_090_00L, "coinbase")));
+        when(roundResults.settledCloses(eq("spot_BTC"), eq(Interval.DAILY), anyLong())).thenReturn(List.of());
+
+        BoundaryPrices.Snapshot snapshot = loadWith(cursorsOf(hourly("spot_BTC", 2 * STEP), daily("spot_BTC", 0L)));
+        prices.adopt(snapshot);
+
+        assertThat(prices.closeAt("spot_BTC", 2 * STEP, "kraken")).hasValueSatisfying(p -> assertThat(p).isEqualByComparingTo("10100.00"));
+        assertThat(prices.closeAt("spot_BTC", 2 * STEP, "coinbase")).hasValueSatisfying(p -> assertThat(p).isEqualByComparingTo("10090.00"));
+        assertThat(snapshot.of("spot_BTC", "kraken")).containsOnlyKeys(2 * STEP);
+        assertThat(snapshot.of("spot_BTC", "coinbase")).containsOnlyKeys(STEP, 2 * STEP);
+        assertThat(snapshot.of("spot_BTC")).as("a market with no exchange: none of them").isEmpty();
+    }
+
+    @Test
+    void whatNoCursorCanNeedAnyMoreIsDroppedWhateverItsExchange() {
+        progress.seed("spot_BTC", Interval.HOURLY, hourly("spot_BTC", 3 * STEP));
+        progress.seed("spot_BTC", Interval.DAILY, daily("spot_BTC", 2 * DAY));
+        prices.settled(hourly("spot_BTC", STEP), 100_00L, "kraken");        // ends at 2 steps: behind every cursor
+        prices.settled(hourly("spot_BTC", STEP), 101_00L, "coinbase");
+        prices.settled(hourly("spot_BTC", 2 * STEP), 200_00L, "coinbase");  // ends at 3 steps: where the hourly cursor starts
+        prices.settled(hourly("spot_BTC", 3 * STEP), 300_00L, "kraken");    // ends at 4 steps
+
+        assertThat(prices.closeAt("spot_BTC", 2 * STEP, "kraken")).as("ended before every cursor: dropped").isEmpty();
+        assertThat(prices.closeAt("spot_BTC", 2 * STEP, "coinbase")).isEmpty();
+        assertThat(prices.closeAt("spot_BTC", 3 * STEP, "coinbase")).as("a round can still open there: kept").isPresent();
+        assertThat(prices.closeAt("spot_BTC", 4 * STEP, "kraken")).isPresent();
+    }
+
+    // ---------------------------------------------------------------------------------------
     // replay mode
     // ---------------------------------------------------------------------------------------
 

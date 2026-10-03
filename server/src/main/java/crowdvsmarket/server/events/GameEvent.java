@@ -1,5 +1,6 @@
 package crowdvsmarket.server.events;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.Direction;
@@ -24,6 +25,12 @@ import java.util.List;
  * ({@code EventStore.CURRENT_SCHEMA_VERSION} stays 1). Each of the four also keeps its pre-markets
  * constructor (BTC) for callers and fixtures that predate the field; production code names the
  * market explicitly.
+ *
+ * <p><b>Venues (Р-76):</b> {@link RoundResolved} has one more optional trailing field, {@code venue}, the exchange a
+ * round of a market with a backup exchange ran on and was settled from. It is written only when there is one
+ * ({@code @JsonInclude(NON_NULL)}): the event of any other round is the same bytes it always was, and a row without the
+ * key reads as {@code null}. The engine does not use it — it is the record of where the prices of the event came from, next
+ * to the prices themselves. Still no schema bump.
  */
 public sealed interface GameEvent {
 
@@ -81,16 +88,23 @@ public sealed interface GameEvent {
      *  independent of the (possibly wall-clock-driven, e.g. live-mode) price source that produced
      *  it originally. */
     record RoundResolved(Interval interval, long windowStart, long windowEnd, String openPrice, String closePrice,
-                           List<CandleData> path, long atMs, String market) implements GameEvent {
+                           List<CandleData> path, long atMs, String market,
+                           @JsonInclude(JsonInclude.Include.NON_NULL) String venue) implements GameEvent {
 
         public RoundResolved {
             market = marketOrBtc(market);
         }
 
+        /** Pre-venues shape: a round of a market with one exchange (the event is then written without a {@code venue} key, as ever). */
+        public RoundResolved(Interval interval, long windowStart, long windowEnd, String openPrice,
+                               String closePrice, List<CandleData> path, long atMs, String market) {
+            this(interval, windowStart, windowEnd, openPrice, closePrice, path, atMs, market, null);
+        }
+
         /** Pre-markets shape: a BTC round. */
         public RoundResolved(Interval interval, long windowStart, long windowEnd, String openPrice,
                                String closePrice, List<CandleData> path, long atMs) {
-            this(interval, windowStart, windowEnd, openPrice, closePrice, path, atMs, null);
+            this(interval, windowStart, windowEnd, openPrice, closePrice, path, atMs, null, null);
         }
     }
 

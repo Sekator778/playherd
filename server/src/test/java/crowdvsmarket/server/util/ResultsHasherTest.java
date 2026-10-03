@@ -145,6 +145,85 @@ class ResultsHasherTest {
                 + "\"status\":\"CANCELLED\"}");
     }
 
+    // --- Venues (Р-76): a round of a market that has a backup exchange names the exchange it ran on in the root key
+    // "venue", which sorts after "status"; a round without one is byte for byte what it was. The two literals below are
+    // also pinned in tools/verify-oracle/test_verify_oracle.py (GOLDEN_VENUE_*), which hashes them the way the chain's
+    // resultsHash is checked: one byte string for the Java hasher and the Python verifier. ---
+
+    private static final String SPOT_BTC_KRAKEN_JSON = "{\"closePriceCents\":5100000,\"crowd\":{\"direction\":\"UP\","
+            + "\"leverage\":5,\"marginUsdCents\":1000000,\"pnlUsdCents\":100000},\"market\":\"spot_BTC\","
+            + "\"openPriceCents\":5000000,\"positions\":[{\"direction\":\"UP\",\"leverage\":5,\"outcome\":\"SETTLED\","
+            + "\"payoutMojos\":550000,\"playerId\":\"p1\",\"stakeMojos\":500000},{\"direction\":\"DOWN\",\"leverage\":5,"
+            + "\"outcome\":\"SETTLED\",\"payoutMojos\":90000,\"playerId\":\"p2\",\"stakeMojos\":100000},"
+            + "{\"direction\":\"UP\",\"leverage\":40,\"outcome\":\"LIQUIDATED\",\"payoutMojos\":0,\"playerId\":\"p3\","
+            + "\"stakeMojos\":250000}],\"roundId\":\"spot_BTC-1h-1790889263076\",\"series\":\"HOURLY\","
+            + "\"status\":\"SETTLED\",\"venue\":\"kraken\"}";
+    private static final String SPOT_BTC_KRAKEN_HASH =
+            "0xb44603801af528e7f30279d00bc85929190fcb8de1a9bb2e76b384c7e15b4fd8";
+    private static final String SPOT_ETH_COINBASE_CANCELLED_JSON = "{\"closePriceCents\":null,\"crowd\":null,"
+            + "\"market\":\"spot_ETH\",\"openPriceCents\":null,\"positions\":[],\"roundId\":\"spot_ETH-1d-1790889263076\","
+            + "\"series\":\"DAILY\",\"status\":\"CANCELLED\",\"venue\":\"coinbase\"}";
+    private static final String SPOT_ETH_COINBASE_CANCELLED_HASH =
+            "0x2c34933d78b5ef4964804329971e1bbe39aa749b8b69258344033872e9bce204";
+
+    @Test
+    void aRoundThatRanOnAVenueNamesItInTheLastRootKeyAndHashesWithIt() {
+        var crowd = new ResultsHasher.CrowdEntry("UP", 5, 1000000, 100000);
+
+        var result = ResultsHasher.build("spot_BTC", "spot_BTC-1h-1790889263076", "HOURLY", "SETTLED", 5000000L, 5100000L,
+                samplePositions(), crowd, "kraken");
+
+        assertThat(result.json()).isEqualTo(SPOT_BTC_KRAKEN_JSON);
+        assertThat(result.hash()).isEqualTo(SPOT_BTC_KRAKEN_HASH);
+        assertThat(result.json()).endsWith(",\"status\":\"SETTLED\",\"venue\":\"kraken\"}");
+        assertThat(result.hash()).isEqualTo(ResultsHasher.sha256Hex(result.json()));
+    }
+
+    @Test
+    void theVenueIsTheOnlyDifferenceFromTheSameRoundWithoutOne() {
+        var crowd = new ResultsHasher.CrowdEntry("UP", 5, 1000000, 100000);
+        var without = ResultsHasher.build("spot_BTC", "spot_BTC-1h-1790889263076", "HOURLY", "SETTLED", 5000000L, 5100000L,
+                samplePositions(), crowd);
+        var withNull = ResultsHasher.build("spot_BTC", "spot_BTC-1h-1790889263076", "HOURLY", "SETTLED", 5000000L,
+                5100000L, samplePositions(), crowd, null);
+        var onCoinbase = ResultsHasher.build("spot_BTC", "spot_BTC-1h-1790889263076", "HOURLY", "SETTLED", 5000000L,
+                5100000L, samplePositions(), crowd, "coinbase");
+        var onKraken = ResultsHasher.build("spot_BTC", "spot_BTC-1h-1790889263076", "HOURLY", "SETTLED", 5000000L,
+                5100000L, samplePositions(), crowd, "kraken");
+
+        assertThat(withNull.json()).as("no venue: no key, nothing else moves").isEqualTo(without.json());
+        assertThat(withNull.hash()).isEqualTo(without.hash());
+        assertThat(without.json()).doesNotContain("venue");
+        assertThat(onKraken.json().replace(",\"venue\":\"kraken\"", "")).isEqualTo(without.json());
+        assertThat(onCoinbase.json().replace(",\"venue\":\"coinbase\"", "")).isEqualTo(without.json());
+        assertThat(List.of(without.hash(), onCoinbase.hash(), onKraken.hash())).as("the venue is inside the hash")
+                .doesNotHaveDuplicates();
+    }
+
+    @Test
+    void aMarketWithoutAVenueStaysByteForByteWhatItWas() {
+        var crowd = new ResultsHasher.CrowdEntry("UP", 5, 1000000, 100000);
+
+        var btc = ResultsHasher.build("BTC", "1h-1790889263076", "HOURLY", "SETTLED", 5000000L, 5100000L,
+                samplePositions(), crowd, null);
+        var cancelled = ResultsHasher.build("BTC", "1d-1790889263076", "DAILY", "CANCELLED", null, null, List.of(), null,
+                null);
+
+        assertThat(btc.json()).isEqualTo(BTC_SETTLED_JSON);
+        assertThat(btc.hash()).isEqualTo(BTC_SETTLED_HASH);
+        assertThat(cancelled.json()).isEqualTo(BTC_CANCELLED_JSON);
+        assertThat(cancelled.hash()).isEqualTo(BTC_CANCELLED_HASH);
+    }
+
+    @Test
+    void aCancelledRoundThatHadAVenueKeepsIt() {
+        var result = ResultsHasher.build("spot_ETH", "spot_ETH-1d-1790889263076", "DAILY", "CANCELLED", null, null,
+                List.of(), null, "coinbase");
+
+        assertThat(result.json()).isEqualTo(SPOT_ETH_COINBASE_CANCELLED_JSON);
+        assertThat(result.hash()).isEqualTo(SPOT_ETH_COINBASE_CANCELLED_HASH);
+    }
+
     @Test
     void sameInputsProduceByteIdenticalOutput() {
         var a = ResultsHasher.build("1h-1", "HOURLY", "SETTLED", 100L, 105L,

@@ -443,4 +443,33 @@ class HyperliquidSpotPriceSourceTest {
 
         assertThatThrownBy(() -> source.history(hype, T0 - 600_000L, T0)).isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void theStatusOfTheStreamSaysIdleConnectedSilentOrRestFallback() throws Exception {
+        assertThat(source.status(feed, T0).state()).as("nobody has asked").isEqualTo("idle");
+        assertThat(source.status(feed, T0).mode()).isEqualTo("stream");
+        assertThat(source.status(feed, T0).venue()).isEqualTo("hyperliquid");
+        assertThat(source.status(feed, T0).feed()).isEqualTo("hyperliquid:spot");
+
+        source.poll(feed, List.of(hype)); // asks for the stream, and reads the contexts over REST
+        assertThat(source.status(feed, now.get()).state()).as("wanted, not connected yet").isEqualTo("rest-fallback");
+        assertThat(source.status(feed, now.get()).restReads()).isEqualTo(1);
+
+        connectTheStream();
+        deliver("ws_subscription_response_all_mids.json");
+        deliver("ws_all_mids.json");
+        assertThat(source.status(feed, now.get()).state()).isEqualTo("connected");
+        assertThat(source.status(feed, now.get()).lastMessageAtMs()).isEqualTo(T0);
+        source.poll(feed, List.of(hype));
+        assertThat(source.status(feed, now.get()).restReads()).as("from the stream").isZero();
+
+        assertThat(source.status(feed, T0 + 16_000).state()).as("open, but nothing heard for longer than the limit")
+                .isEqualTo("silent");
+
+        transport.last().serverCloses(1006, "");
+        PipelineTestSupport.stepStream(source, T0 + 100);
+        assertThat(source.status(feed, T0 + 100).state()).isEqualTo("rest-fallback");
+
+        assertThat(source.status(feed, T0 + 10 * 60_000L).state()).as("nobody polls any more").isEqualTo("idle");
+    }
 }

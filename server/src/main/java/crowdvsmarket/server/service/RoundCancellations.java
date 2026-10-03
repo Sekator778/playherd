@@ -12,6 +12,8 @@ import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.persistence.Db;
 import crowdvsmarket.server.persistence.RoundResultRepository;
+import crowdvsmarket.server.prices.Instruments;
+import crowdvsmarket.server.prices.RoundVenues;
 import crowdvsmarket.server.util.ResultsHasher;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -46,6 +48,8 @@ public class RoundCancellations {
     RoundProgress roundProgress;
     @Inject
     SeriesSeeder seeder;
+    @Inject
+    RoundVenues venues;
 
     /**
      * A market closed: cancels, with a refund, the running round and the round open for betting of each
@@ -99,14 +103,16 @@ public class RoundCancellations {
         int refundedBetCount = hub.engine(market.id(), window.interval()).betBook().betsFor(window.roundId()).size();
         GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
                 window.endMs(), reason, nowMs, market.id());
+        // the exchange the round had been decided to run on, if it had (Р-76): the cancelled round says so too
+        String venue = Instruments.hasBackup(market) ? venues.venueOfRound(window.roundId()).orElse(null) : null;
         var canonical = ResultsHasher.build(market.id(), window.roundId(), window.interval().name(), "CANCELLED",
-                null, null, List.of(), null);
+                null, null, List.of(), null, venue);
         db.tx(c -> {
             eventStore.append(c, event, nowMs);
             touchedState.set(true);
             applier.apply(event); // refunds every pending bet and clears the round's BetBook entry
             roundResults.insertCancelled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
-                    window.endMs(), reason, nowMs, refundedBetCount, canonical.hash(), canonical.json());
+                    window.endMs(), reason, nowMs, refundedBetCount, canonical.hash(), canonical.json(), venue);
             return null;
         });
         return new Rounds.CancellationDto(window.roundId(), market.id(), market.symbol(), reason, nowMs,

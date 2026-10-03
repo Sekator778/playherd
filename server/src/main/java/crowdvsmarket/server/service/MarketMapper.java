@@ -41,7 +41,7 @@ final class MarketMapper {
 
     static Markets.MarketPriceDto price(Market market, PriceQuote quote) {
         return new Markets.MarketPriceDto(rawPrice(market, quote.raw()), quote.asOfMs(), quote.change24h(),
-                quote.stale());
+                quote.stale(), quote.venue());
     }
 
     /** The live split of the bets of a round that is open for betting: how many players, the stake on each side,

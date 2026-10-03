@@ -194,9 +194,12 @@ public class OracleRecordRepository {
         return db.read(c -> {
             Long firstSeq = db.queryOne(c, "SELECT MIN(seq) AS first_seq FROM oracle_records",
                     rs -> (Long) rs.getObject("first_seq"));
+            // the venue is the round's (V9): the record is written in the transaction that writes the round's result row
             java.util.List<JournalRow> rows = db.queryList(c, """
-                    SELECT seq, round_id, market, asset_index, ts, price_cents, results_hash, state
-                    FROM oracle_records WHERE seq >= ? ORDER BY seq ASC LIMIT ?
+                    SELECT o.seq, o.round_id, o.market, o.asset_index, o.ts, o.price_cents, o.results_hash, o.state,
+                        r.venue
+                    FROM oracle_records o LEFT JOIN round_results r ON r.round_id = o.round_id
+                    WHERE o.seq >= ? ORDER BY o.seq ASC LIMIT ?
                     """, this::toJournalRow, fromSeq, limit);
             return new JournalPage(firstSeq, rows);
         });
@@ -217,7 +220,7 @@ public class OracleRecordRepository {
     private JournalRow toJournalRow(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new JournalRow(rs.getLong("seq"), rs.getString("round_id"), rs.getString("market"),
                 rs.getInt("asset_index"), rs.getLong("ts"), rs.getLong("price_cents"), rs.getString("results_hash"),
-                rs.getString("state"));
+                rs.getString("state"), rs.getString("venue"));
     }
 
     /** {@code postAttemptedAtMs}: when this server first put the row in a POST to chainsvc ({@code null}: never). */
@@ -237,9 +240,17 @@ public class OracleRecordRepository {
                                       long sourceTs, long queuedAtMs, String market, int assetIndex) {
     }
 
-    /** One row of the public journal, in the field names of the JSON it becomes. */
+    /** One row of the public journal, in the field names of the JSON it becomes. {@code venue}: the exchange the
+     *  round ran on — the one {@code priceCents} is the close of — for a market that has a backup; {@code null} for
+     *  any other. */
     public record JournalRow(long seq, String roundId, String market, int assetIndex, long ts, long priceCents,
-                               String resultsHash, String state) {
+                               String resultsHash, String state, String venue) {
+
+        /** A row of a round that ran on no particular venue. */
+        public JournalRow(long seq, String roundId, String market, int assetIndex, long ts, long priceCents,
+                          String resultsHash, String state) {
+            this(seq, roundId, market, assetIndex, ts, priceCents, resultsHash, state, null);
+        }
     }
 
     /** {@link #journal}'s answer: the page and the start of this database's {@code seq} range. */

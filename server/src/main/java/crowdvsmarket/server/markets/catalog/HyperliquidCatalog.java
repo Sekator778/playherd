@@ -125,7 +125,7 @@ public class HyperliquidCatalog {
     @Scheduled(every = EVERY, delayed = "3s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
             identity = JOB)
     void run() {
-        if (config.liveSources()) {
+        if (config.liveSources() && !config.venueDisabled(HyperliquidPriceSource.NAME)) { // a venue that is off is not asked
             sync(clock.getAsLong());
         }
     }

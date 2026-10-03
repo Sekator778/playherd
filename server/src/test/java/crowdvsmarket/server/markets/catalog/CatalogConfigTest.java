@@ -96,7 +96,7 @@ class CatalogConfigTest {
         PricesConfig live = PricesConfig.defaults();
 
         CatalogConfig real = producer.catalogConfig(live, Optional.of("BTC,ETH"), "xyz:NVDA", "", "", false, 2, 1, 5, false,
-                "30m", "BTC-USD, ETH-USD", "HYPE", "BTC:40,ETH:25");
+                "30m", "BTC-USD, ETH-USD", "HYPE", "BTC:40,ETH:25", "BTC:kraken, HYPE:coinbase");
         assertThat(real.liveSources()).isTrue();
         assertThat(real.syntheticSource()).isFalse();
         assertThat(real.crypto()).containsExactly("BTC", "ETH");
@@ -112,12 +112,12 @@ class CatalogConfigTest {
         assertThat(real.gameCooldownMs()).isEqualTo(1_800_000L);
 
         CatalogConfig synthetic = producer.catalogConfig(live.withMode(true, PricesConfig.SourceKind.SYNTHETIC),
-                Optional.of("BTC"), "", "", "", true, 3, 3, 10, true, "6h", "BTC-USD", "HYPE", "BTC:40");
+                Optional.of("BTC"), "", "", "", true, 3, 3, 10, true, "6h", "BTC-USD", "HYPE", "BTC:40", "BTC:kraken");
         assertThat(synthetic.liveSources()).isFalse();
         assertThat(synthetic.syntheticSource()).isTrue();
 
         CatalogConfig replay = producer.catalogConfig(live.withMode(false, PricesConfig.SourceKind.LIVE),
-                Optional.of("BTC"), "", "", "", true, 3, 3, 10, true, "6h", "BTC-USD", "HYPE", "BTC:40");
+                Optional.of("BTC"), "", "", "", true, 3, 3, 10, true, "6h", "BTC-USD", "HYPE", "BTC:40", "BTC:kraken");
         assertThat(replay.liveSources()).isFalse();
         assertThat(replay.syntheticSource()).isFalse();
     }
@@ -130,7 +130,7 @@ class CatalogConfigTest {
         CatalogConfig c = producer.catalogConfig(PricesConfig.defaults(), Optional.empty(), CatalogConfig.DEFAULT_STOCKS,
                 CatalogConfig.DEFAULT_INDICES, CatalogConfig.DEFAULT_COMMODITIES, true, 3, 3, 10, true, "6h",
                 CatalogConfig.DEFAULT_COINBASE, CatalogConfig.DEFAULT_HYPERLIQUID_SPOT,
-                CatalogConfig.DEFAULT_SPOT_MAX_LEVERAGE);
+                CatalogConfig.DEFAULT_SPOT_MAX_LEVERAGE, CatalogConfig.DEFAULT_SPOT_BACKUP);
 
         assertThat(c.crypto()).isEmpty();
         assertThat(c.perpNames()).extracting(CatalogConfig.PerpName::name)
@@ -155,6 +155,44 @@ class CatalogConfigTest {
         assertThatThrownBy(() -> new CatalogConfig(true, false, List.of(), List.of(), List.of(), List.of(), true, 3, 3, 10,
                 true, 0L, List.of(), List.of(), Map.of("BTC", 1))).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("at least 2x");
+    }
+
+    @Test
+    void theBackupTableIsParsedAndTheDefaultIsKrakenBehindCoinbaseAndCoinbaseBehindHyperliquid() {
+        assertThat(CatalogConfig.parseBackups(" BTC:kraken, HYPE : Coinbase ,,DOGE:none")).containsExactly(
+                Map.entry("BTC", "kraken"), Map.entry("HYPE", "coinbase"), Map.entry("DOGE", "none")); // order kept, lower case
+        assertThat(CatalogConfig.parseBackups("")).isEmpty();
+        for (String bad : new String[] {"BTC", "BTC:", ":kraken", "BTC:binance", "BTC:hyperliquid", "BTC kraken"}) {
+            assertThatThrownBy(() -> CatalogConfig.parseBackups(bad)).as(bad)
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("herd.markets.spot.backup");
+        }
+
+        CatalogConfig d = CatalogConfig.defaults();
+        for (String symbol : List.of("BTC", "ETH", "SOL", "XRP", "DOGE")) {
+            assertThat(d.spotBackupVenue(symbol)).as(symbol).contains("kraken");
+        }
+        assertThat(d.spotBackupVenue("HYPE")).contains("coinbase");
+        assertThat(d.spotBackupVenue("PEPE")).as("a symbol that is not in the table has none").isEmpty();
+
+        CatalogConfig none = new CatalogConfig(true, false, List.of(), List.of(), List.of(), List.of(), true, 3, 3, 10, true,
+                0L, List.of(), List.of(), Map.of(), CatalogConfig.parseBackups("BTC:none,ETH:kraken"), java.util.Set.of());
+        assertThat(none.spotBackupVenue("BTC")).as("none is no backup").isEmpty();
+        assertThat(none.spotBackupVenue("ETH")).contains("kraken");
+    }
+
+    @Test
+    void theSwitchForVenuesReachesTheCatalogsFromThePriceConfig() {
+        CatalogConfigProducer producer = new CatalogConfigProducer();
+
+        CatalogConfig off = producer.catalogConfig(PricesConfig.defaults().withDisabledVenues(java.util.Set.of("coinbase")),
+                Optional.empty(), CatalogConfig.DEFAULT_STOCKS, CatalogConfig.DEFAULT_INDICES,
+                CatalogConfig.DEFAULT_COMMODITIES, true, 3, 3, 10, true, "6h", CatalogConfig.DEFAULT_COINBASE,
+                CatalogConfig.DEFAULT_HYPERLIQUID_SPOT, CatalogConfig.DEFAULT_SPOT_MAX_LEVERAGE,
+                CatalogConfig.DEFAULT_SPOT_BACKUP);
+
+        assertThat(off.venueDisabled("coinbase")).isTrue();
+        assertThat(off.venueDisabled("hyperliquid")).isFalse();
+        assertThat(CatalogConfig.defaults().disabledVenues()).isEmpty();
     }
 
     @Test

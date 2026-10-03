@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import crowdvsmarket.server.config.GameMode;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.markets.Category;
+import crowdvsmarket.server.markets.catalog.CatalogConfig;
 import crowdvsmarket.server.prices.CoinbasePriceSource;
 import crowdvsmarket.server.prices.HyperliquidPriceSource;
+import crowdvsmarket.server.prices.KrakenPriceSource;
 import crowdvsmarket.server.prices.PolymarketPriceSource;
 import crowdvsmarket.server.prices.PricesConfig;
 import crowdvsmarket.server.prices.SyntheticPriceSource;
@@ -85,9 +87,19 @@ class ContractUnionsTest {
     }
 
     private static final Side SOURCES = new Side("the names of the price sources (HyperliquidPriceSource, "
-            + "CoinbasePriceSource, PolymarketPriceSource, SyntheticPriceSource)",
-            new LinkedHashSet<>(List.of(HyperliquidPriceSource.NAME, CoinbasePriceSource.NAME,
+            + "CoinbasePriceSource, KrakenPriceSource, PolymarketPriceSource, SyntheticPriceSource)",
+            new LinkedHashSet<>(List.of(HyperliquidPriceSource.NAME, CoinbasePriceSource.NAME, KrakenPriceSource.NAME,
                     PolymarketPriceSource.NAME, SyntheticPriceSource.NAME)), Set.of());
+
+    /** The exchanges a round can run on besides a market's primary (Р-76): the venues a backup may be. */
+    private static final Side BACKUP_VENUES = new Side("server.markets.catalog.CatalogConfig.BACKUP_VENUES",
+            new LinkedHashSet<>(new TreeSet<>(CatalogConfig.BACKUP_VENUES)), Set.of());
+
+    /** The exchanges a market's price can be from: the primary of a crypto market or of a Hyperliquid one, and its backups. */
+    private static final Side PRICE_VENUES = new Side("the names of the exchanges that give a crypto price "
+            + "(HyperliquidPriceSource, CoinbasePriceSource, KrakenPriceSource)",
+            new LinkedHashSet<>(List.of(HyperliquidPriceSource.NAME, CoinbasePriceSource.NAME, KrakenPriceSource.NAME)),
+            Set.of());
 
     private static Side priceSources() {
         Set<String> values = new LinkedHashSet<>(lowerCase(PricesConfig.SourceKind.class).values());
@@ -117,6 +129,8 @@ class ContractUnionsTest {
                     enumSide(crowdvsmarket.server.markets.MarketStatus.class)),
             pair("MarketCrowdBriefDto.lastOutcome", enumSide(Enums.CrowdOutcome.class)),
             pair("MarketDto.source", SOURCES),
+            pair("MarketDto.backupSource", BACKUP_VENUES),
+            pair("MarketPriceDto.venue", PRICE_VENUES),
             pair("RoundBase.source", SOURCES),
             pair("ServerInfoDto.mode", lowerCase(GameMode.class)),
             pair("ServerInfoDto.priceSource", priceSources()),
@@ -230,7 +244,10 @@ class ContractUnionsTest {
 
         assertThat(unions.keySet()).contains("Interval", "Direction", "RoundPhase", "MarketKind", "CategoryId",
                 "LedgerEntryType", "WithdrawalState", "WithdrawalChainState", "MarketDto.status",
-                "MarketCrowdBriefDto.lastOutcome", "ServerInfoDto.mode", "ApiErrorCode", "RoundBase.source");
+                "MarketCrowdBriefDto.lastOutcome", "ServerInfoDto.mode", "ApiErrorCode", "RoundBase.source",
+                "MarketDto.backupSource", "MarketPriceDto.venue");
+        assertThat(unions.get("MarketDto.backupSource")).containsExactly("coinbase", "kraken");
+        assertThat(unions.get("MarketPriceDto.venue")).containsExactly("hyperliquid", "coinbase", "kraken");
         assertThat(unions.get("LedgerEntryType")).contains("OPERATOR_CORRECTION");
         assertThat(unions.get("MarketCrowdBriefDto.lastOutcome")).contains("FLAT");
         assertThat(unions.get("ApiErrorCode")).as("the doc comments inside the union do not cut it short")

@@ -53,6 +53,7 @@ import crowdvsmarket.server.persistence.OracleRecordRepository;
 import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.persistence.WithdrawalDepositRepository;
 import crowdvsmarket.server.price.PriceService;
+import crowdvsmarket.server.prices.Instruments;
 import crowdvsmarket.server.prices.MarketPrices;
 import crowdvsmarket.server.prices.PriceQuote;
 import crowdvsmarket.server.prices.PriceUnavailableException;
@@ -187,6 +188,8 @@ public class GameService implements MarketListener {
 
     private static final BigDecimal ZERO_MONEY = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final Logger LOG = Logger.getLogger(GameService.class);
+    /** A round that cannot be opened (the database down, say) is said once a minute, not every tick. */
+    private final crowdvsmarket.server.util.LogThrottle venueLog = new crowdvsmarket.server.util.LogThrottle(60_000L);
     /** Р-53: минимум для настоящего on-chain вывода (предложение — не зафиксировано в
      *  docs/product/decisions.md; та же цифра, что {@code LedgerBook.MIN_STAKE}, но отдельная по
      *  смыслу константа: одно — минимальная ставка, другое — минимальный вывод, у них нет причины
@@ -484,6 +487,40 @@ public class GameService implements MarketListener {
         return marketRegistry.active().stream().filter(this::runs).toList();
     }
 
+    /**
+     * Opens the rounds that have started (Р-76, "a round runs entirely on one exchange"): for every running market that has a
+     * backup exchange, the running window of each series that has no exchange yet is given the one it runs on — the primary
+     * when it has a live price at the round's start, else the backup, else none yet and the round waits; the choice is
+     * written once and never revisited ({@link MarketPrices#openRound}). The rounds that start together (both series at a
+     * shared boundary) are decided on the same data and agree. {@code mode=live} only. No lock is taken here: the choice is read
+     * off the price rings and written to the database, and the engine's lock must never wait for either; one market's
+     * failure (the database, say) never stops the others, and a round that is not opened now is opened at the next tick or,
+     * at the latest, when it is settled.
+     */
+    public void openRounds(long nowMs) {
+        if (config.mode() != GameMode.LIVE) {
+            return;
+        }
+        for (Market market : runningMarkets()) {
+            if (!Instruments.hasBackup(market)) {
+                continue;
+            }
+            for (Interval interval : Interval.values()) {
+                Optional<RoundWindow> running = roundProgress.findNext(market.id(), interval);
+                if (running.isEmpty() || nowMs < running.get().startMs()) {
+                    continue;
+                }
+                try {
+                    marketPrices.openRound(market, running.get(), nowMs);
+                } catch (RuntimeException e) {
+                    if (venueLog.allow(market.id() + "/" + interval, nowMs)) {
+                        LOG.warnf("could not open %s: %s", running.get().roundId(), e.toString());
+                    }
+                }
+            }
+        }
+    }
+
     /** Gives {@code market} its engines and, when its rounds are played, a series per interval
      *  seeded at the window containing "now" (§4 п.2) — never at the calendar's first window, which
      *  would make the scheduler walk every window since the origin, and never behind a window that
@@ -750,17 +787,18 @@ public class GameService implements MarketListener {
                     : List.of(singleCandle(window, open, close));
             GameEvent.RoundResolved event = new GameEvent.RoundResolved(window.interval(), window.startMs(),
                     window.endMs(), open.toPlainString(), close.toPlainString(), EventApplier.fromCandles(path),
-                    nowMs, market.id());
+                    nowMs, market.id(), data.venue());
             AtomicBoolean touchedMemory = new AtomicBoolean();
             try {
                 RoundReport report = db.tx(c -> {
                     eventStore.append(c, event, nowMs);
                     touchedMemory.set(true); // from here the engine may be ahead of the database
                     RoundReport r = (RoundReport) eventApplier.apply(event);
-                    storeSettledResult(c, market, window, r, data.sourceTsMs());
+                    storeSettledResult(c, market, window, r, data.sourceTsMs(), data.venue());
                     return r;
                 });
-                boundaries.settled(window, close.movePointRight(2).longValueExact()); // only once it has committed
+                // only once it has committed; the close is the close on the exchange the round ran on (Р-76)
+                boundaries.settled(window, close.movePointRight(2).longValueExact(), data.venue());
                 rebuildService.recovered(window.roundId());
                 return report;
             } catch (RuntimeException | Error e) {
@@ -799,9 +837,11 @@ public class GameService implements MarketListener {
 
     /** Inside {@link #resolveRound}'s transaction: the settled result, the per-player history rows
      *  and the oracle record. All prices in the DTOs are the market's raw strings; the price columns
-     *  and the oracle record keep engine (lot) prices times 100 (§6). */
+     *  and the oracle record keep engine (lot) prices times 100 (§6). {@code venue}: the exchange the round ran on
+     *  (Р-76) — in the canonical results JSON, so inside the hash that goes on chain, and in the result row; the oracle
+     *  record's price is the close on that exchange; {@code null} for a market with one exchange: nothing changes for it. */
     private void storeSettledResult(Connection c, Market market, RoundWindow window, RoundReport report,
-                                    long sourceTsMs) throws SQLException {
+                                    long sourceTsMs, String venue) throws SQLException {
         MarketSpec spec = market.spec();
         Map<String, PlayerIdentity> identities = players.identitiesById();
         List<Rounds.PublicPositionDto> positionDtos = new ArrayList<>();
@@ -851,12 +891,12 @@ public class GameService implements MarketListener {
         long openCents = report.openPrice().movePointRight(2).longValueExact();
         long closeCents = report.closePrice().movePointRight(2).longValueExact();
         var canonical = crowdvsmarket.server.util.ResultsHasher.build(market.id(), window.roundId(),
-                window.interval().name(), "SETTLED", openCents, closeCents, hashEntries, crowdHashEntry);
+                window.interval().name(), "SETTLED", openCents, closeCents, hashEntries, crowdHashEntry, venue);
 
         long settledAtMs = window.endMs() - 1;
         roundResults.insertSettled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
                 window.endMs(), openCents, closeCents, positionDtos, crowdDto, canonical.hash(), canonical.json(),
-                settledAtMs, historyRows);
+                settledAtMs, historyRows, venue);
         enqueueOracleRecord(c, market, window.roundId(), settledAtMs, sourceTsMs, closeCents, canonical.hash());
     }
 
@@ -1016,7 +1056,7 @@ public class GameService implements MarketListener {
                 .toList();
         return new Rounds.RoundBetting(window.roundId(), new Rounds.RoundWindowDto(toDto(window.interval()),
                 window.startMs(), window.endMs()), market.id(), market.symbol(), kindOf(market),
-                market.priceDecimals(), market.source(), bets.size(), myBet, split.upStake(), split.downStake(),
+                market.priceDecimals(), sourceOf(market, window), bets.size(), myBet, split.upStake(), split.downStake(),
                 split.upCount(), split.downCount(), split.majorityDirection(), split.majorityLeverage(), recentBets);
     }
 
@@ -1087,7 +1127,7 @@ public class GameService implements MarketListener {
         Optional<RoundPriceData> soFar = soFar(market, window, nowMs);
         if (soFar.isEmpty()) {
             return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(), kindOf(market),
-                    market.priceDecimals(), market.source(), null, List.of(), null);
+                    market.priceDecimals(), sourceOf(market, window), null, List.of(), null);
         }
         MarketSpec spec = market.spec();
         BigDecimal openPrice = soFar.get().open();
@@ -1145,7 +1185,18 @@ public class GameService implements MarketListener {
         }
 
         return new Rounds.RoundRunning(window.roundId(), windowDto, market.id(), market.symbol(), kindOf(market),
-                market.priceDecimals(), market.source(), openRaw, positions, crowdPreview);
+                market.priceDecimals(), sourceOf(market, window), openRaw, positions, crowdPreview);
+    }
+
+    /**
+     * The {@code source} a round's DTO names: the exchange the round runs on (Р-76) once it is decided — for a market
+     * with a backup exchange the primary until then — and the market's own source for any other market. Memory only.
+     */
+    private String sourceOf(Market market, RoundWindow window) {
+        if (config.mode() != GameMode.LIVE) {
+            return market.source();
+        }
+        return marketPrices.decidedVenue(market, window).orElse(market.source());
     }
 
     /** Open price and path so far of a running window, in engine (lot) prices; empty when the open price is not
@@ -1154,7 +1205,8 @@ public class GameService implements MarketListener {
      *  MarketViewService} reads a player's running positions off the same prices. */
     public Optional<RoundPriceData> soFar(Market market, RoundWindow window, long nowMs) {
         if (config.mode() == GameMode.LIVE) {
-            return boundaries.forRunning(market, window, marketPrices.soFar(market, window, nowMs));
+            return boundaries.forRunning(market, window, marketPrices.soFar(market, window, nowMs),
+                    marketPrices.decidedVenue(market, window));
         }
         if (!Market.BTC_ID.equals(market.id())) {
             return Optional.empty();
@@ -1219,11 +1271,12 @@ public class GameService implements MarketListener {
     // ---------------------------------------------------------------------------------------
 
     /** The market's latest quote — the raw price and when it was read: the replay series in {@code
-     *  mode=replay} (BTC only), the latest tick in {@code mode=live}; empty when there is none. Memory
+     *  mode=replay} (BTC only), the latest tick in {@code mode=live} — of the primary exchange while it is fresh, of
+     *  the backup's when that is (the quote says which, Р-76); empty when there is none. Memory
      *  only. Public: the lobby ({@code MarketViewService}) shows the same price. */
     public Optional<PriceQuote> latestQuote(Market market, long nowMs) {
         if (config.mode() == GameMode.LIVE) {
-            return marketPrices.latest(market.id());
+            return marketPrices.latest(market);
         }
         if (!Market.BTC_ID.equals(market.id())) {
             return Optional.empty();

@@ -29,6 +29,18 @@ import org.jboss.logging.Logger;
  * not even a merge for another, longer window can move them — and nothing at all is merged behind the
  * latest boundary pinned for the market ({@link TickStore#pinBoundary}).
  *
+ * <p><b>A market with a backup exchange</b> (Р-76, {@link Instruments}) has a ring per venue — its own, and its shadow's
+ * ({@code spot_BTC~kraken}) — and everything above holds per ring unchanged: staleness, holes, pins, the bridge, the quiet
+ * carry. What is new is the choice of the venue, made once for each round when it opens ({@link #openRound}; the
+ * rule is in {@link #chooseByRings}): the primary if it has a <i>live</i> tick fresh at the round's start, else the backup if
+ * it has, else the round waits, and the first venue that can price the start later — from history ({@link #healStart}), the
+ * primary first — is taken. The choice is written once ({@link RoundVenues}) and never revisited: the round is settled — open,
+ * close, path — from its venue's ring alone ({@link #resolve}, {@link #soFar}), and a venue that cannot price it leaves the
+ * round to wait, and to be refunded an hour after its end, as any round without a price (Р-23); it is never moved to the
+ * other venue. The next round starts at the price of whichever venue it opens on, which may differ from the close of
+ * this one by the basis between the two venues (Р-40 holds within a venue). For the lobby, {@link #latest(Market)} shows
+ * the primary's live tick while it is fresh and the backup's when it is not, saying which.
+ *
  * <p><b>A pin is not a tick</b> ({@link TickRing#PIN}): {@link #latest} and {@link #series} never show
  * it, so during an outage it cannot make an old price look fresh to a bot or the bet slip; and the
  * {@code sourceTs} of a settlement is the time of the <i>real</i> tick its price comes from, whether the
@@ -94,11 +106,11 @@ import org.jboss.logging.Logger;
  * round waits (and, in the end, is refunded) rather than settling on an invented flat line; if the source
  * did not answer, nothing is carried either — the next try may bring the real points.
  *
- * <p>Locking (docs/research/markets_architecture.md §3.2, the engine lock): {@link #resolve} may
- * block on HTTP and holds no lock while it does; {@link #latest}, {@link #series} and
- * {@link #soFar} only copy slices out of the rings, each for the length of one array copy. Nothing
- * here ever calls the market registry, so none of it can wait for the engine lock that the
- * registry's listener takes.
+ * <p>Locking (docs/research/markets_architecture.md §3.2, the engine lock): {@link #resolve} and
+ * {@link #openRound} may block on HTTP or the database and hold no lock while they do; {@link #latest},
+ * {@link #series}, {@link #soFar} and {@link #decidedVenue} only copy slices out of the rings and read the
+ * decisions held in memory, each for the length of one array copy. Nothing here ever calls the market
+ * registry, so none of it can wait for the engine lock that the registry's listener takes.
  */
 @ApplicationScoped
 public class LiveMarketPrices implements MarketPrices {
@@ -118,19 +130,27 @@ public class LiveMarketPrices implements MarketPrices {
     private final TickStore store;
     private final PriceSources sources;
     private final PricesConfig config;
+    private final RoundVenues venues;
     private final LongSupplier clock;
     private final ThrottledLog warnings;
     private final ConcurrentHashMap<String, Long> lastBackfillMs = new ConcurrentHashMap<>();
 
     @Inject
-    public LiveMarketPrices(TickStore store, PriceSources sources, PricesConfig config) {
-        this(store, sources, config, System::currentTimeMillis);
+    public LiveMarketPrices(TickStore store, PriceSources sources, PricesConfig config, RoundVenues venues) {
+        this(store, sources, config, venues, System::currentTimeMillis);
     }
 
+    /** With a holder of round venues of its own, kept in memory: for a market with one venue, the one that ever matters. */
     LiveMarketPrices(TickStore store, PriceSources sources, PricesConfig config, LongSupplier clock) {
+        this(store, sources, config, RoundVenues.inMemory(config.retentionMs(), clock), clock);
+    }
+
+    LiveMarketPrices(TickStore store, PriceSources sources, PricesConfig config, RoundVenues venues,
+                     LongSupplier clock) {
         this.store = store;
         this.sources = sources;
         this.config = config;
+        this.venues = venues;
         this.clock = clock;
         this.warnings = new ThrottledLog(LOG, clock, 60_000L);
     }
@@ -147,14 +167,74 @@ public class LiveMarketPrices implements MarketPrices {
         return Optional.of(new PriceQuote(last.get().raw(), last.get().atMs(), store.change24h(marketId), stale));
     }
 
+    /**
+     * What the lobby, the bots and the bet slip show. A market with one venue: its latest live tick. A market with a
+     * backup: the primary's latest live tick while it is fresh, else the backup's while that is fresh — the quote then
+     * says which venue it is from ({@link PriceQuote#venue}) — and with neither fresh, the newer of the two (ties: the
+     * primary's), still saying where it is from, so that the stale flag is true of the very price that is shown.
+     */
+    @Override
+    public Optional<PriceQuote> latest(Market market) {
+        Optional<PriceQuote> primary = latest(market.id());
+        Optional<Market> shadow = Instruments.shadowOf(market);
+        if (shadow.isEmpty() || (primary.isPresent() && !primary.get().stale())) {
+            return primary;
+        }
+        Optional<PriceQuote> backup = latest(shadow.get().id()).map(q -> q.withVenue(shadow.get().source()));
+        if (backup.isPresent() && !backup.get().stale()) {
+            return backup;
+        }
+        if (primary.isEmpty()) {
+            return backup;
+        }
+        if (backup.isEmpty()) {
+            return primary;
+        }
+        return backup.get().asOfMs() > primary.get().asOfMs() ? backup : primary;
+    }
+
+    /**
+     * The series of exactly this key's ring. The chart of a market is its primary venue's series: the backup's points are
+     * not mixed in — the series carries no venue per point (that would be a contract change), and two venues' mids stitched
+     * into one line without a mark would be a line that jumps by their basis, unexplained.
+     */
     @Override
     public List<PricePoint> series(String marketId, long fromMs, long toMs) {
         return store.series(marketId, fromMs, toMs);
     }
 
     @Override
+    public Optional<String> decidedVenue(Market market, RoundWindow window) {
+        requireSameMarket(market, window);
+        return Instruments.hasBackup(market) ? venues.decided(window.roundId()) : Optional.empty();
+    }
+
+    @Override
+    public Optional<String> openRound(Market market, RoundWindow window, long nowMs) {
+        requireSameMarket(market, window);
+        Optional<Market> shadow = Instruments.shadowOf(market);
+        if (shadow.isEmpty()) {
+            return Optional.empty();
+        }
+        return decideInstrument(market, shadow.get(), window, false, nowMs).map(Market::source);
+    }
+
+    @Override
     public RoundPriceData resolve(Market market, RoundWindow window) throws PriceUnavailableException {
         requireSameMarket(market, window);
+        Optional<Market> shadow = Instruments.shadowOf(market);
+        if (shadow.isEmpty()) {
+            return resolveOn(market, window);
+        }
+        // a round of a market with a backup is settled from the exchange it was decided to run on, and from that one alone
+        Market instrument = decideInstrument(market, shadow.get(), window, true, clock.getAsLong())
+                .orElseThrow(() -> new PriceUnavailableException("no exchange can price the start of " + market.id() + " "
+                        + window.roundId() + ": " + noVenue(market, shadow.get(), window.startMs())));
+        return resolveOn(instrument, window).withVenue(instrument.source());
+    }
+
+    /** The settlement of {@code window} from the ticks of {@code market} — a market, or the shadow of one — alone. */
+    private RoundPriceData resolveOn(Market market, RoundWindow window) throws PriceUnavailableException {
         PriceSources.Binding binding = sources.bindingFor(market).orElse(null);
         PriceSource.Feed feed = binding == null ? FALLBACK_FEED : binding.feed();
         Assessment first = assess(market, window, feed);
@@ -170,6 +250,121 @@ public class LiveMarketPrices implements MarketPrices {
                     + second.describe());
         }
         return settled(market, window, second);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // The exchange of a round (Р-76)
+    // ------------------------------------------------------------------------------------------
+
+    /**
+     * The instrument the round runs on, deciding it first when nothing has: what is already decided stands (the table's
+     * row, remembered or read), a round that another of the market's rounds starting together was decided with takes
+     * that, and otherwise {@link #chooseByRings}; with {@code heal}, and nothing chosen yet, {@link #healStart} asks the
+     * venues' histories. A choice is written once ({@link RoundVenues#decide}); empty while no venue can price the
+     * round's start.
+     */
+    private Optional<Market> decideInstrument(Market market, Market shadow, RoundWindow window, boolean heal,
+                                              long nowMs) {
+        Optional<String> known = heal ? venues.venueOfRound(window.roundId()) : venues.decided(window.roundId());
+        if (known.isPresent()) {
+            return Optional.of(instrumentOf(market, shadow, known.get()));
+        }
+        Optional<String> together = venues.decidedForStart(market.id(), window.startMs());
+        Optional<Market> chosen = together.isPresent() ? Optional.of(instrumentOf(market, shadow, together.get()))
+                : chooseByRings(market, shadow, window.startMs());
+        if (chosen.isEmpty() && heal) {
+            chosen = healStart(market, shadow, window);
+        }
+        if (chosen.isEmpty()) {
+            return Optional.empty();
+        }
+        String venue = venues.decide(window.roundId(), market.id(), window.startMs(), chosen.get().source(), nowMs);
+        return Optional.of(instrumentOf(market, shadow, venue));
+    }
+
+    /** The market or its shadow, by the venue's name; a venue that is neither of them cannot be priced from here. */
+    private static Market instrumentOf(Market market, Market shadow, String venue) {
+        if (venue.equals(market.source())) {
+            return market;
+        }
+        if (venue.equals(shadow.source())) {
+            return shadow;
+        }
+        throw new PriceUnavailableException("round of " + market.id() + " was decided on " + venue
+                + ", which is neither its primary exchange " + market.source() + " nor its backup " + shadow.source());
+    }
+
+    /**
+     * The venue to open a round at {@code startMs} on, from the rings as they are: the primary when it has a <i>live</i>
+     * tick fresh at the start (the rule of {@code P(start)}: the last tick at or before it, not older than the feed's
+     * {@code staleMs}); else the backup when it has; else — the start has no live tick on either side, and history
+     * may have healed it — the primary when any tick of it is fresh at the start, else the backup when any is.
+     * Empty when neither can price the start.
+     */
+    private Optional<Market> chooseByRings(Market primary, Market backup, long startMs) {
+        if (liveFreshAt(primary, startMs)) {
+            return Optional.of(primary);
+        }
+        if (liveFreshAt(backup, startMs)) {
+            return Optional.of(backup);
+        }
+        if (anyFreshAt(primary, startMs)) {
+            return Optional.of(primary);
+        }
+        return anyFreshAt(backup, startMs) ? Optional.of(backup) : Optional.empty();
+    }
+
+    /** A venue with no source — switched off, or never configured — prices nothing, whatever its ring still holds. */
+    private Optional<PriceSource.Feed> feedOf(Market instrument) {
+        return sources.bindingFor(instrument).map(PriceSources.Binding::feed);
+    }
+
+    private boolean liveFreshAt(Market instrument, long startMs) {
+        Optional<PriceSource.Feed> feed = feedOf(instrument);
+        if (feed.isEmpty()) {
+            return false;
+        }
+        TickRing.Window w = store.window(instrument.id(), startMs, startMs);
+        return w.hasFloor() && w.floorSourceKind() == TickRing.LIVE
+                && startMs - w.floorSourceAtMs() <= feed.get().staleMs();
+    }
+
+    private boolean anyFreshAt(Market instrument, long startMs) {
+        Optional<PriceSource.Feed> feed = feedOf(instrument);
+        if (feed.isEmpty()) {
+            return false;
+        }
+        TickRing.Window w = store.window(instrument.id(), startMs, startMs);
+        return w.hasFloor() && startMs - w.floorAtMs() <= feed.get().staleMs();
+    }
+
+    /**
+     * No venue can price the start from what the rings hold: asks the venues' histories, the primary first, for the start of the
+     * round — the same request that settles a round with a hole ({@link #backfill}: a candle source's history is the past of
+     * its first tick and a bridge over a gap between two live ticks) — and takes the first venue that has a price at the start
+     * afterwards. A venue is asked once per backfill cooldown, so a settlement that is retried every few seconds asks
+     * the exchanges once a minute.
+     */
+    private Optional<Market> healStart(Market primary, Market backup, RoundWindow window) {
+        for (Market instrument : List.of(primary, backup)) {
+            PriceSources.Binding binding = sources.bindingFor(instrument).orElse(null);
+            if (binding == null) {
+                continue;
+            }
+            Assessment assessment = assess(instrument, window, binding.feed());
+            if (!assessment.holes().isEmpty()) {
+                backfill(instrument, window, binding.source(), assessment);
+            }
+            if (anyFreshAt(instrument, window.startMs())) {
+                return Optional.of(instrument);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private String noVenue(Market primary, Market backup, long startMs) {
+        return primary.source() + " and " + backup.source() + " have no tick fresh at "
+                + Instant.ofEpochMilli(startMs) + " and their histories could not give one";
     }
 
     /**
@@ -198,6 +393,26 @@ public class LiveMarketPrices implements MarketPrices {
     @Override
     public Optional<RoundPriceData> soFar(Market market, RoundWindow window, long nowMs) {
         requireSameMarket(market, window);
+        Optional<Market> shadow = Instruments.shadowOf(market);
+        if (shadow.isEmpty()) {
+            return soFarOn(market, window, nowMs);
+        }
+        Optional<String> venue = venues.decided(window.roundId()); // memory only; no venue yet, no running price
+        if (venue.isEmpty()) {
+            return Optional.empty();
+        }
+        Market instrument;
+        try {
+            instrument = instrumentOf(market, shadow.get(), venue.get());
+        } catch (PriceUnavailableException e) { // a decision this configuration cannot read: nothing to show, nothing to fail
+            warnings.failure("venue " + window.roundId(), e.getMessage(), null);
+            return Optional.empty();
+        }
+        return soFarOn(instrument, window, nowMs).map(data -> data.withVenue(instrument.source()));
+    }
+
+    /** The running prices of {@code window} from the ticks of {@code market} — a market, or the shadow of one — alone. */
+    private Optional<RoundPriceData> soFarOn(Market market, RoundWindow window, long nowMs) {
         long start = window.startMs();
         long upTo = Math.min(nowMs, window.endMs());
         if (upTo < start) {

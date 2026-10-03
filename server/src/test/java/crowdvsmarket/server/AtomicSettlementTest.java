@@ -153,7 +153,7 @@ class AtomicSettlementTest extends LiveGameTestBase {
         Snapshot before = snapshot(p, market, betting);
         doThrow(new IllegalStateException("injected result failure")).when(roundResultsSpy).insertSettled(
                 any(Connection.class), anyString(), anyString(), any(Interval.class), anyLong(), anyLong(), anyLong(),
-                anyLong(), any(), any(), anyString(), anyString(), anyLong(), any());
+                anyLong(), any(), any(), anyString(), anyString(), anyLong(), any(), any());
 
         assertThatThrownBy(() -> gameService.resolveRound(betting, betting.endMs()))
                 .hasMessageContaining("injected result failure");
@@ -183,7 +183,7 @@ class AtomicSettlementTest extends LiveGameTestBase {
         assertThat(before.balance()).isEqualTo("9750.000");
         doThrow(new IllegalStateException("injected cancel failure")).when(roundResultsSpy).insertCancelled(
                 any(Connection.class), anyString(), anyString(), any(Interval.class), anyLong(), anyLong(),
-                anyString(), anyLong(), anyInt(), anyString(), anyString());
+                anyString(), anyLong(), anyInt(), anyString(), anyString(), any());
 
         assertThatThrownBy(() -> gameService.cancelRoundById(betting.roundId(), "operator test", betting.startMs() - 1))
                 .hasMessageContaining("injected cancel failure");

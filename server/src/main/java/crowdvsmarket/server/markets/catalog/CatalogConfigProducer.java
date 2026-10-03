@@ -45,12 +45,15 @@ public class CatalogConfigProducer {
             @ConfigProperty(name = "herd.markets.hyperliquid-spot",
                     defaultValue = CatalogConfig.DEFAULT_HYPERLIQUID_SPOT) String hyperliquidSpot,
             @ConfigProperty(name = "herd.markets.spot.max-leverage",
-                    defaultValue = CatalogConfig.DEFAULT_SPOT_MAX_LEVERAGE) String spotMaxLeverage) {
+                    defaultValue = CatalogConfig.DEFAULT_SPOT_MAX_LEVERAGE) String spotMaxLeverage,
+            @ConfigProperty(name = "herd.markets.spot.backup", defaultValue = CatalogConfig.DEFAULT_SPOT_BACKUP)
+            String spotBackup) {
         return new CatalogConfig(prices.liveSources(), prices.syntheticSource(),
                 CatalogConfig.parseNames(crypto.orElse(CatalogConfig.DEFAULT_CRYPTO)), CatalogConfig.parseNames(stocks),
                 CatalogConfig.parseNames(indices), CatalogConfig.parseNames(commodities), polymarketEnabled,
                 politicsCount, sportsCount, oddsMaxLeverage, inPlayFirst, CatalogConfig.parseDurationMs(gameCooldown),
                 CatalogConfig.parseNames(coinbase), CatalogConfig.parseNames(hyperliquidSpot),
-                CatalogConfig.parseLeverages(spotMaxLeverage));
+                CatalogConfig.parseLeverages(spotMaxLeverage), CatalogConfig.parseBackups(spotBackup),
+                prices.disabledVenues());
     }
 }

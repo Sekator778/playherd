@@ -163,7 +163,7 @@ export const variant =
 const direction = lit("UP", "DOWN");
 const interval = lit("HOURLY", "DAILY");
 const kind = lit("PERP", "ODDS");
-const source = lit("hyperliquid", "coinbase", "polymarket", "synthetic");
+const source = lit("hyperliquid", "coinbase", "kraken", "polymarket", "synthetic");
 
 export const playerSummary = obj<PlayerSummaryDto>({ playerId: nonEmptyStr, nickname: str, walletAddress: nonEmptyStr, displayName: nonEmptyStr, isBot: opt(bool) });
 
@@ -392,7 +392,10 @@ const market = obj<MarketDto>({
   closeReason: opt(str),
   oracleIndex: opt(int),
   source,
-  price: nullable(obj<MarketPriceDto>({ price, asOfMs: int, change24h: nullable(num), stale: bool })),
+  backupSource: opt(lit("coinbase", "kraken")),
+  price: nullable(
+    obj<MarketPriceDto>({ price, asOfMs: int, change24h: nullable(num), stale: bool, venue: opt(lit("hyperliquid", "coinbase", "kraken")) }),
+  ),
   series: arr(marketSeries),
   crowd: marketCrowd,
 });

@@ -1,0 +1,1 @@
+{"interval": "HOURLY", "windowStart": 1700000000000, "windowEnd": 1700000180000, "openPrice": "64000.10", "closePrice": "64120.50", "path": [{"openTimeMs": 1700000000000, "closeTimeMs": 1700000179999, "open": "64000.10", "high": "64150.00", "low": "63990.00", "close": "64120.50", "volume": "0", "trades": 0}], "atMs": 1700000180000, "market": "spot_BTC", "venue": "kraken"}

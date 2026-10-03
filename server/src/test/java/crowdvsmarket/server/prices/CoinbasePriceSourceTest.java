@@ -513,6 +513,36 @@ class CoinbasePriceSourceTest {
     }
 
     @Test
+    void theStatusOfTheStreamSaysIdleConnectedSilentOrRestFallback() throws Exception {
+        assertThat(source.status(feed, T0).state()).as("nobody has asked").isEqualTo("idle");
+        assertThat(source.status(feed, T0).mode()).isEqualTo("stream");
+        assertThat(source.status(feed, T0).venue()).isEqualTo("coinbase");
+        assertThat(source.status(feed, T0).feed()).isEqualTo("coinbase");
+
+        source.poll(feed, List.of(btc, doge)); // asks for the stream, and reads REST for both
+        assertThat(source.status(feed, now.get()).state()).as("wanted, not connected yet").isEqualTo("rest-fallback");
+        assertThat(source.status(feed, now.get()).restReads()).isEqualTo(2);
+
+        connectTheStream();
+        deliver("ws_heartbeat.json");
+        assertThat(source.status(feed, now.get()).state()).as("a heartbeat is a message").isEqualTo("connected");
+        assertThat(source.status(feed, now.get()).lastMessageAtMs()).isEqualTo(T0);
+        deliver("ws_ticker_btc.json");
+        deliver("ws_ticker_doge.json");
+        source.poll(feed, List.of(btc, doge));
+        assertThat(source.status(feed, now.get()).restReads()).as("both from the stream").isZero();
+
+        assertThat(source.status(feed, T0 + 16_000).state()).as("open, but nothing heard for longer than the limit")
+                .isEqualTo("silent");
+
+        transport.last().serverCloses(1006, "");
+        PipelineTestSupport.stepStream(source, T0 + 100);
+        assertThat(source.status(feed, T0 + 100).state()).isEqualTo("rest-fallback");
+
+        assertThat(source.status(feed, T0 + 10 * 60_000L).state()).as("nobody polls any more").isEqualTo("idle");
+    }
+
+    @Test
     void aFailedCandleReadIsThrownForTheCallerToLog() {
         api.candles.handler = call -> {
             throw new IllegalStateException("HTTP 429");

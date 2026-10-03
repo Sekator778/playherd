@@ -36,6 +36,12 @@ import org.jboss.logging.Logger;
  * <p>A failure in one series (a price that cannot be read, an exception) never stops the others: each
  * (market, interval) is its own try block.
  *
+ * <p><b>Opening the rounds (Р-76).</b> Every tick, before anything is settled, each running round of a market that has a
+ * backup exchange which has started and has no exchange yet is given one ({@link GameService#openRounds}): the
+ * primary if it has a live price at the round's start, else the backup, else the round waits. The settlement
+ * of a round then asks that exchange alone for its prices — and if it cannot be priced the round waits and is
+ * refunded an hour after its end as any round without a price (below), never moved to the other exchange.
+ *
  * <p><b>Gates before anything runs.</b> While the engine is not ready ({@code
  * EngineRebuildService#isReady}: the first rebuild has not finished, or a failed settlement's
  * recovery has not succeeded) the tick only tries to bring it back — the rebuild is retried here,
@@ -122,6 +128,7 @@ public class RoundSchedulerService {
         for (Market market : markets) {
             seedMissingSeries(market, now);
         }
+        gameService.openRounds(now); // the exchange each round that has started runs on (Р-76); never throws
         try {
             botService.tick(now);
         } catch (Exception e) {

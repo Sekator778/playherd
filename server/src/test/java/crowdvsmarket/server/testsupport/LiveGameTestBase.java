@@ -94,6 +94,16 @@ public abstract class LiveGameTestBase {
                 id, null, maxLeverage, lotExp, null), System.currentTimeMillis());
     }
 
+    /**
+     * A market that has a backup exchange (Р-76): its {@code sourceMeta} says so, the way the spot catalog lists it, so
+     * {@code Instruments.backupOf} finds it. The primary is called {@code coinbase} (the market's {@code source}).
+     */
+    protected Market listWithBackup(String id, String symbol, String backupSource, String backupRef) {
+        String meta = "{\"backup\":{\"source\":\"" + backupSource + "\",\"ref\":\"" + backupRef + "\"}}";
+        return registry.list(new NewMarket(id, MarketKind.PERP, "crypto", symbol, symbol + " test market", null, null,
+                "coinbase", symbol + "-USD", meta, 10, 0, null), System.currentTimeMillis());
+    }
+
     protected String signUp(String label) {
         String wallet = "txch1live" + label + UUID.randomUUID().toString().replace("-", "");
         return gameService.registerOrTouchPlayer(wallet, System.currentTimeMillis()).player().playerId();

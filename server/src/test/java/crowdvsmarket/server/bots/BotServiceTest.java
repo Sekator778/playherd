@@ -82,6 +82,8 @@ class BotServiceTest {
         registry = mock(MarketRegistry.class);
         prices = mock(MarketPrices.class);
         when(prices.latest(anyString())).thenReturn(Optional.empty());
+        // the bots ask for a market's quote, the primary exchange's or the backup's (Р-76); this mock answers by the market's id
+        when(prices.latest(any(Market.class))).thenAnswer(inv -> prices.latest(inv.<Market>getArgument(0).id()));
 
         bots = new BotService();
         bots.config = config;

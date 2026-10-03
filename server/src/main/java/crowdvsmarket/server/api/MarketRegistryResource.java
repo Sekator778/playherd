@@ -2,6 +2,7 @@ package crowdvsmarket.server.api;
 
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.prices.Instruments;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
@@ -30,13 +31,22 @@ public class MarketRegistryResource {
     @Inject
     MarketRegistry registry;
 
-    /** One registry entry, in the field names of the JSON. */
+    /** The backup exchange of a market (Р-76): the venue's name and what that venue calls the pair. */
+    public record Backup(String source, String ref) {
+    }
+
+    /**
+     * One registry entry, in the field names of the JSON. {@code source}/{@code sourceRef}: the market's primary exchange;
+     * {@code backup}: the exchange a round moves to when the primary cannot price its start, {@code null} for a market that
+     * has none. A round says which of the two it ran on ({@code venue} in the records journal and in its results.json).
+     */
     public record Entry(int index, String id, String kind, String symbol, int priceDecimals, String source,
-                        String sourceRef, long listedAtMs) {
+                        String sourceRef, long listedAtMs, Backup backup) {
 
         static Entry of(Market market) {
             return new Entry(market.oracleIndex(), market.id(), market.kind().name(), market.symbol(),
-                    market.priceDecimals(), market.source(), market.sourceRef(), market.listedAtMs());
+                    market.priceDecimals(), market.source(), market.sourceRef(), market.listedAtMs(),
+                    Instruments.backupOf(market).map(b -> new Backup(b.source(), b.ref())).orElse(null));
         }
     }
 

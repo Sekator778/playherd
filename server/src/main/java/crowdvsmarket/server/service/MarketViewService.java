@@ -15,6 +15,7 @@ import crowdvsmarket.server.dto.Markets;
 import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.prices.Instruments;
 import crowdvsmarket.server.prices.RoundPriceData;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -162,8 +163,9 @@ public class MarketViewService {
                 market.symbol(), market.title(), market.subtitle(), market.iconUrl(), market.maxLeverage(),
                 market.priceDecimals(), Enums.MarketStatus.valueOf(market.status().name()), market.endsAtMs(),
                 MarketMapper.eventStartsAtMs(market), market.closedAtMs(), market.closeReason(),
-                market.oracleIndex(), market.source(), price, series(market, engines, intervals),
-                crowdBrief(market, engines));
+                market.oracleIndex(), market.source(),
+                Instruments.backupOf(market).map(Instruments.Backup::source).orElse(null), price,
+                series(market, engines, intervals), crowdBrief(market, engines));
     }
 
     private List<Markets.MarketSeriesDto> series(Market market, Optional<EngineHub.MarketEngines> engines,

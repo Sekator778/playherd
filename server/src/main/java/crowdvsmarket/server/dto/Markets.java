@@ -23,8 +23,15 @@ public final class Markets {
 
     /** {@code price}: raw, {@code priceDecimals} digits. {@code change24h}: relative (0.0098 = +0.98%),
      *  {@code null} when the source gives none. {@code stale}: the last tick is older than the source's
-     *  staleness limit (betting stays open). */
-    public record MarketPriceDto(String price, long asOfMs, Double change24h, boolean stale) {
+     *  staleness limit (betting stays open). {@code venue}: the exchange the shown price is from when it is not the
+     *  market's primary one — {@code "kraken"} for a market whose primary has no fresh tick and whose backup has
+     *  (Р-76) — {@code null} for the primary's price and for a market that has no backup. */
+    public record MarketPriceDto(String price, long asOfMs, Double change24h, boolean stale, String venue) {
+
+        /** The price of the market's primary exchange. */
+        public MarketPriceDto(String price, long asOfMs, Double change24h, boolean stale) {
+            this(price, asOfMs, change24h, stale, null);
+        }
     }
 
     /** One round series of a market. {@code upStake}/{@code downStake}: PLAY staked on each side of the
@@ -46,13 +53,16 @@ public final class Markets {
      * otherwise, also for a sports game, whose source "end date" is the kick-off — see {@code
      * eventStartsAtMs}); {@code closedAtMs}/{@code closeReason}: set once {@code status} is {@code
      * CLOSED}; {@code price}: null until the first tick; {@code series}: one entry per series, shortest
-     * first — empty for a market whose rounds are not running (closed, or not yet seeded).
+     * first — empty for a market whose rounds are not running (closed, or not yet seeded). {@code source}: the
+     * market's primary exchange (or source); {@code backupSource}: the exchange a round moves to when the primary cannot
+     * price its start (Р-76), {@code null} for a market that has none — and the {@code source} of each round
+     * says which of the two it runs on.
      */
     public record MarketDto(String id, Enums.MarketKind kind, String category, String symbol, String title,
                               String subtitle, String iconUrl, int maxLeverage, int priceDecimals,
                               Enums.MarketStatus status, Long endsAtMs, Long eventStartsAtMs, Long closedAtMs,
-                              String closeReason, int oracleIndex, String source, MarketPriceDto price,
-                              List<MarketSeriesDto> series, MarketCrowdBriefDto crowd) {
+                              String closeReason, int oracleIndex, String source, String backupSource,
+                              MarketPriceDto price, List<MarketSeriesDto> series, MarketCrowdBriefDto crowd) {
     }
 
     /** The lobby in one call: active markets plus those closed within the last 10 minutes, in listing order. */

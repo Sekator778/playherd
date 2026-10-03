@@ -41,8 +41,14 @@ public class ScriptedMarketPrices implements MarketPrices {
     private final Map<String, RuntimeException> resolveFailures = new ConcurrentHashMap<>();
     private final Map<String, RoundPriceData> soFar = new ConcurrentHashMap<>();
     private final Map<String, List<PricePoint>> series = new ConcurrentHashMap<>();
+    private final Map<String, String> venues = new ConcurrentHashMap<>();
+    private final List<String> opened = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final Map<String, RuntimeException> openFailures = new ConcurrentHashMap<>();
 
     public void reset() {
+        opened.clear();
+        openFailures.clear();
+        venues.clear();
         series.clear();
         latest.clear();
         defaults.clear();
@@ -66,6 +72,24 @@ public class ScriptedMarketPrices implements MarketPrices {
     public void setQuote(Market market, String raw, long asOfMs, Double change24h, boolean stale) {
         defaults.put(market.id(), new BigDecimal(raw));
         latest.put(market.id(), new PriceQuote(new BigDecimal(raw), asOfMs, change24h, stale));
+    }
+
+    /** The market's latest tick as {@link #setQuote} has it, and from {@code venue}: the backup exchange's, shown because the primary has none fresh (Р-76). */
+    public void setQuote(Market market, String raw, long asOfMs, Double change24h, boolean stale, String venue) {
+        defaults.put(market.id(), new BigDecimal(raw));
+        latest.put(market.id(), new PriceQuote(new BigDecimal(raw), asOfMs, change24h, stale, venue));
+    }
+
+    /**
+     * Every round of the market runs on {@code venue} (Р-76): {@link #decidedVenue} says so, and what {@link #resolve} and
+     * {@link #soFar} hand over says it too. {@code null} takes it back: a market of one exchange, whose rounds have none.
+     */
+    public void setVenue(Market market, String venue) {
+        if (venue == null) {
+            venues.remove(market.id());
+        } else {
+            venues.put(market.id(), venue);
+        }
     }
 
     /** The ticks {@link #series} serves for the market, oldest first (what the price buffer would hold). */
@@ -139,7 +163,7 @@ public class ScriptedMarketPrices implements MarketPrices {
         }
         RoundPriceData scripted = scripts.get(key(market.id(), window.interval(), window.startMs()));
         if (scripted != null) {
-            return scripted;
+            return scripted.withVenue(venues.getOrDefault(market.id(), scripted.venue()));
         }
         BigDecimal raw = defaults.get(market.id());
         if (raw == null) {
@@ -148,11 +172,37 @@ public class ScriptedMarketPrices implements MarketPrices {
         BigDecimal flat = market.toEngine(raw);
         return new RoundPriceData(flat, flat,
                 List.of(new Candle(window.startMs(), window.endMs() - 1, flat, flat, flat, flat, BigDecimal.ZERO, 0)),
-                window.endMs() - 1);
+                window.endMs() - 1, venues.get(market.id()));
     }
 
     @Override
     public Optional<RoundPriceData> soFar(Market market, RoundWindow window, long nowMs) {
-        return Optional.ofNullable(soFar.get(market.id()));
+        return Optional.ofNullable(soFar.get(market.id())).map(data -> data.withVenue(venues.get(market.id())));
+    }
+
+    @Override
+    public Optional<String> decidedVenue(Market market, RoundWindow window) {
+        return Optional.ofNullable(venues.get(market.id()));
+    }
+
+    /** Records the ask (what the scheduler does every tick for a market with a backup) and fails it when told to. */
+    @Override
+    public Optional<String> openRound(Market market, RoundWindow window, long nowMs) {
+        opened.add(window.roundId());
+        RuntimeException failure = openFailures.get(market.id());
+        if (failure != null) {
+            throw failure;
+        }
+        return decidedVenue(market, window);
+    }
+
+    /** The ids of the rounds {@link #openRound} was asked for, in order, since {@link #reset}. */
+    public List<String> openedRounds() {
+        return List.copyOf(opened);
+    }
+
+    /** {@link #openRound} of the market throws {@code failure}, until {@link #reset}. */
+    public void failOpen(Market market, RuntimeException failure) {
+        openFailures.put(market.id(), failure);
     }
 }

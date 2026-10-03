@@ -7,6 +7,8 @@ import crowdvsmarket.server.dto.Ledger;
 import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.dto.ServerInfo;
+import crowdvsmarket.server.prices.PriceSource;
+import crowdvsmarket.server.prices.PriceSources;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.service.ServerInfoService;
 import crowdvsmarket.server.util.ConstantTimeTokens;
@@ -38,6 +40,8 @@ public class AdminResource {
     GameService gameService;
     @Inject
     ServerInfoService serverInfoService;
+    @Inject
+    PriceSources priceSources;
 
     private void requireOperator(String authorizationHeader) {
         String expected = "Bearer " + config.operatorToken();
@@ -140,12 +144,28 @@ public class AdminResource {
                 throw e;
             }
         }
-        return new AdminStatusDto(info, cancellations, corrections);
+        return new AdminStatusDto(info, cancellations, corrections, priceFeeds());
+    }
+
+    /** What the price feeds are doing — memory only, so the page answers whatever is wrong elsewhere. */
+    private java.util.List<PriceSource.FeedStatus> priceFeeds() {
+        try {
+            return priceSources.statuses(System.currentTimeMillis());
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "the operator status could not list the price feeds");
+            return null;
+        }
     }
 
     /** {@code recentCancellations} is {@code null} while the database does not answer, {@code
-     *  recentLedgerCorrections} while the engine is not ready ({@code server.engineReady} is {@code false}). */
+     *  recentLedgerCorrections} while the engine is not ready ({@code server.engineReady} is {@code false}).
+     *  {@code priceFeeds}: one row per price feed (Р-76) — {@code feed}, {@code venue}, {@code mode} ({@code poll} or
+     *  {@code stream}), {@code state} ({@code polling}; for a stream {@code connected}, {@code silent},
+     *  {@code rest-fallback}, {@code idle}; {@code disabled} for a venue in {@code herd.prices.disabled-venues};
+     *  {@code synthetic}), {@code lastMessageAtMs} and {@code restReads} (how many markets the last poll read over REST
+     *  because the stream had no quote). Not part of {@code contract.ts}: the operator's own page. */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
-                                   java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections) {
+                                   java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
+                                   java.util.List<PriceSource.FeedStatus> priceFeeds) {
     }
 }

@@ -34,6 +34,12 @@ import java.util.regex.Pattern;
  *                        quoted in USDC ({@code HYPE} is HYPE/USDC), one market each
  * @param spotMaxLeverage {@code herd.markets.spot.max-leverage}: the leverage cap per symbol of the two lists above
  *                        ({@code BTC:40,ETH:25,…}); neither venue has one of its own, and nothing is above 40
+ * @param spotBackup      {@code herd.markets.spot.backup}: the backup exchange per symbol of the two lists above
+ *                        ({@code BTC:kraken,…,HYPE:coinbase}; {@code none} for a symbol that has no backup) — recorded
+ *                        in the market's {@code sourceMeta} when it is listed and fixed from then on (Т-10), like
+ *                        everything else about a listed market; a symbol that is not in it has none
+ * @param disabledVenues  {@code herd.prices.disabled-venues}: venues that give no price at all, the catalog's requests
+ *                        to them included
  */
 public record CatalogConfig(
         boolean liveSources,
@@ -50,7 +56,19 @@ public record CatalogConfig(
         long gameCooldownMs,
         List<String> coinbase,
         List<String> hyperliquidSpot,
-        Map<String, Integer> spotMaxLeverage) {
+        Map<String, Integer> spotMaxLeverage,
+        Map<String, String> spotBackup,
+        Set<String> disabledVenues) {
+
+    /** The settings before the backup exchanges, with their defaults (the six default markets have one) and no venue off. */
+    public CatalogConfig(boolean liveSources, boolean syntheticSource, List<String> crypto, List<String> stocks,
+                         List<String> indices, List<String> commodities, boolean polymarketEnabled, int politicsCount,
+                         int sportsCount, int oddsMaxLeverage, boolean inPlayFirst, long gameCooldownMs,
+                         List<String> coinbase, List<String> hyperliquidSpot, Map<String, Integer> spotMaxLeverage) {
+        this(liveSources, syntheticSource, crypto, stocks, indices, commodities, polymarketEnabled, politicsCount,
+                sportsCount, oddsMaxLeverage, inPlayFirst, gameCooldownMs, coinbase, hyperliquidSpot, spotMaxLeverage,
+                parseBackups(DEFAULT_SPOT_BACKUP), Set.of());
+    }
 
     /** The settings before the spot markets, with their defaults. */
     public CatalogConfig(boolean liveSources, boolean syntheticSource, List<String> crypto, List<String> stocks,
@@ -81,7 +99,14 @@ public record CatalogConfig(
             }
         });
         spotMaxLeverage = Map.copyOf(spotMaxLeverage);
+        spotBackup = Map.copyOf(spotBackup);
+        disabledVenues = Set.copyOf(disabledVenues);
     }
+
+    /** The venues a backup may be: where a round can run besides the primary (Р-76). */
+    public static final Set<String> BACKUP_VENUES = Set.of("coinbase", "kraken");
+    /** What {@code herd.markets.spot.backup} says for a symbol that has no backup. */
+    public static final String NO_BACKUP = "none";
 
     /** A configured Hyperliquid coin name with the category its list puts it in. */
     public record PerpName(String name, String category) {
@@ -98,6 +123,12 @@ public record CatalogConfig(
     public static final String DEFAULT_HYPERLIQUID_SPOT = "HYPE";
     /** The caps the six markets had on Hyperliquid's perpetuals (hl_multi_asset_live.md §2.1: BTC 40x, ETH 25x, SOL 20x, XRP 20x, DOGE 10x, HYPE 10x). */
     public static final String DEFAULT_SPOT_MAX_LEVERAGE = "BTC:40,ETH:25,SOL:20,XRP:20,DOGE:10,HYPE:10";
+    /**
+     * Backup exchange per symbol (Р-76): Kraken's spot market behind Coinbase's for the five coins Coinbase prices, Coinbase's
+     * HYPE-USD behind Hyperliquid's own HYPE/USDC. Where Kraken's pair is named {@code <SYMBOL>/USD} and Coinbase's
+     * {@code <SYMBOL>-USD} — the names of both venues' streams ({@code SpotCatalog#backupRef}).
+     */
+    public static final String DEFAULT_SPOT_BACKUP = "BTC:kraken,ETH:kraken,SOL:kraken,XRP:kraken,DOGE:kraken,HYPE:coinbase";
     /** A spot symbol that is in no table gets this cap. */
     public static final int FALLBACK_SPOT_LEVERAGE = 10;
     /** Т-4: no market lets a player take more than 40x. */
@@ -188,6 +219,44 @@ public record CatalogConfig(
             }
         }
         return out;
+    }
+
+    /**
+     * {@code "BTC:kraken, HYPE:coinbase, DOGE:none"} → {@code {BTC=kraken, HYPE=coinbase, DOGE=none}}: symbol and the
+     * venue of its backup, lower case, order kept.
+     *
+     * @throws IllegalArgumentException when an entry is not {@code SYMBOL:venue} or the venue is none of
+     *         {@link #BACKUP_VENUES} and {@value #NO_BACKUP}
+     */
+    public static Map<String, String> parseBackups(String csv) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (String part : csv.split(",")) {
+            String entry = part.trim();
+            if (entry.isEmpty()) {
+                continue;
+            }
+            int colon = entry.indexOf(':');
+            String symbol = colon < 1 ? "" : entry.substring(0, colon).trim();
+            String venue = colon < 0 ? "" : entry.substring(colon + 1).trim().toLowerCase(Locale.ROOT);
+            if (symbol.isEmpty() || !(BACKUP_VENUES.contains(venue) || NO_BACKUP.equals(venue))) {
+                throw new IllegalArgumentException("herd.markets.spot.backup wants SYMBOL:venue pairs (BTC:kraken), the "
+                        + "venue one of " + new java.util.TreeSet<>(BACKUP_VENUES) + " or " + NO_BACKUP + ", got '"
+                        + entry + "'");
+            }
+            out.put(symbol, venue);
+        }
+        return out;
+    }
+
+    /** The backup exchange of a spot symbol ({@code kraken}, {@code coinbase}); empty for a symbol with none. */
+    public java.util.Optional<String> spotBackupVenue(String symbol) {
+        String venue = spotBackup.get(symbol);
+        return venue == null || NO_BACKUP.equals(venue) ? java.util.Optional.empty() : java.util.Optional.of(venue);
+    }
+
+    /** Whether the venue is in {@code herd.prices.disabled-venues}: it gives no price, over no channel, the catalog's request included. */
+    public boolean venueDisabled(String venue) {
+        return disabledVenues.contains(venue);
     }
 
     /** The leverage cap of a spot symbol: the configured one, {@link #FALLBACK_SPOT_LEVERAGE} for a symbol not listed, at most {@link #LEVERAGE_CAP}. */

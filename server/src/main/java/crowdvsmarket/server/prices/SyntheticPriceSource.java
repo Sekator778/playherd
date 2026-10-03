@@ -74,6 +74,11 @@ public class SyntheticPriceSource implements PriceSource {
         return NAME;
     }
 
+    @Override
+    public FeedStatus status(Feed feed, long nowMs) {
+        return new FeedStatus(feed.id(), NAME, "poll", "synthetic", null, 0);
+    }
+
     /** One feed that prices every market, whatever its {@code source} column says (BTC's row is {@code hyperliquid}). */
     @Override
     public List<Feed> feeds() {

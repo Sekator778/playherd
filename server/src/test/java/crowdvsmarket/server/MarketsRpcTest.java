@@ -111,21 +111,23 @@ class MarketsRpcTest extends LiveRpcTestBase {
         JsonNode node = marketNode(answer, "T_MR_PERP");
         assertKeys(node, "id", "kind", "category", "symbol", "title", "subtitle", "iconUrl", "maxLeverage",
                 "priceDecimals", "status", "endsAtMs", "eventStartsAtMs", "closedAtMs", "closeReason", "oracleIndex",
-                "source", "price", "series", "crowd");
+                "source", "backupSource", "price", "series", "crowd");
         assertThat(node.path("kind").asText()).isEqualTo("PERP");
         assertThat(node.path("category").asText()).isEqualTo("crypto");
         assertThat(node.path("symbol").asText()).isEqualTo("MRP");
         assertThat(node.path("maxLeverage").asInt()).isEqualTo(25);
         assertThat(node.path("priceDecimals").asInt()).isEqualTo(3);
         assertThat(node.path("status").asText()).isEqualTo("ACTIVE");
-        for (String nullField : List.of("subtitle", "iconUrl", "endsAtMs", "eventStartsAtMs", "closedAtMs", "closeReason")) {
+        for (String nullField : List.of("subtitle", "iconUrl", "endsAtMs", "eventStartsAtMs", "closedAtMs", "closeReason",
+                "backupSource")) {
             assertThat(node.get(nullField).isNull()).as(nullField + " is an explicit null").isTrue();
         }
         assertThat(node.path("source").asText()).isEqualTo("synthetic");
         assertThat(node.path("oracleIndex").asInt()).isEqualTo(perp.oracleIndex());
 
         JsonNode price = node.path("price");
-        assertKeys(price, "price", "asOfMs", "change24h", "stale");
+        assertKeys(price, "price", "asOfMs", "change24h", "stale", "venue");
+        assertThat(price.get("venue").isNull()).as("the market's own exchange: no venue named").isTrue();
         assertThat(price.path("price").asText()).isEqualTo("2500.123");
         assertThat(price.path("asOfMs").asLong()).isEqualTo(now - 500L);
         assertThat(price.path("change24h").asDouble()).isEqualTo(0.0125);
@@ -157,6 +159,29 @@ class MarketsRpcTest extends LiveRpcTestBase {
         assertThat(crowd.path("capital").asText()).isEqualTo("100000.00");
         assertThat(crowd.path("returnPct").asDouble()).isZero();
         assertThat(crowd.get("lastOutcome").isNull()).isTrue();
+    }
+
+    @Test
+    void aMarketWithABackupExchangeNamesItAndAPriceFromTheBackupSaysSo() throws Exception {
+        Market market = listWithBackup("T_MR_BKP", "MRK", "kraken", "MRK/USD");
+        long now = System.currentTimeMillis();
+        prices.setQuote(market, "100.5", now - 500L, 0.01, false, "kraken");
+        seedAhead(market);
+        marketView.invalidate();
+
+        JsonNode node = marketNode(ok(null, "markets"), "T_MR_BKP");
+
+        assertThat(node.path("source").asText()).as("the market's primary exchange").isEqualTo("coinbase");
+        assertThat(node.path("backupSource").asText()).isEqualTo("kraken");
+        assertThat(node.path("price").path("venue").asText()).as("the shown price is Kraken's").isEqualTo("kraken");
+        assertThat(node.path("price").path("price").asText()).isEqualTo("100.50");
+
+        // the same market with the primary's own quote: no venue named
+        prices.setQuote(market, "100.4", now - 400L, 0.01, false);
+        marketView.invalidate();
+        JsonNode primary = marketNode(ok(null, "markets"), "T_MR_BKP");
+        assertThat(primary.path("backupSource").asText()).isEqualTo("kraken");
+        assertThat(primary.path("price").get("venue").isNull()).isTrue();
     }
 
     @Test

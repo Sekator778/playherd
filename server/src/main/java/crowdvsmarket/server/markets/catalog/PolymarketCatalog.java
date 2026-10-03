@@ -192,7 +192,7 @@ public class PolymarketCatalog {
     }
 
     private boolean enabled() {
-        return config.liveSources() && config.polymarketEnabled();
+        return config.liveSources() && config.polymarketEnabled() && !config.venueDisabled(PolymarketPriceSource.NAME);
     }
 
     /** Every 30 s; refreshes every 5 minutes, sooner after a failure or after a market closed. */

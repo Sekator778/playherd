@@ -1,27 +1,27 @@
 {
   "method": "round",
   "args": [
-    "T_WIRE_PERP-1h-1790919060000"
+    "T_WIRE_PERP-1h-1791031260000"
   ],
   "response": {
-    "roundId": "T_WIRE_PERP-1h-1790919060000",
+    "roundId": "T_WIRE_PERP-1h-1791031260000",
     "window": {
       "interval": "HOURLY",
-      "startMs": 1790919060000,
-      "endMs": 1790919120000
+      "startMs": 1791031260000,
+      "endMs": 1791031320000
     },
     "marketId": "T_WIRE_PERP",
     "asset": "WPR",
     "kind": "PERP",
     "priceDecimals": 3,
-    "source": "hyperliquid",
+    "source": "coinbase",
     "phase": "SETTLED",
     "openPrice": "2400.000",
     "closePrice": "2412.000",
     "positions": [
       {
-        "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
-        "roundId": "T_WIRE_PERP-1h-1790919060000",
+        "playerId": "d922ff25-e728-4287-ba8c-b1288f9bdbb9",
+        "roundId": "T_WIRE_PERP-1h-1791031260000",
         "direction": "UP",
         "leverage": 5,
         "size": "0.06250000",
@@ -30,7 +30,7 @@
         "pnl": "7.500",
         "stake": "300.000",
         "player": {
-          "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
+          "playerId": "d922ff25-e728-4287-ba8c-b1288f9bdbb9",
           "nickname": "Alice_Wire",
           "walletAddress": "txch1alice0wire0player0000000000000000000000000000000000000q2k7ar",
           "displayName": "Alice_Wire (txch1a…k7ar)",
@@ -41,8 +41,8 @@
         "directionCorrect": true
       },
       {
-        "playerId": "b34ff01c-81fe-45b6-8bde-ab95ed06d9d5",
-        "roundId": "T_WIRE_PERP-1h-1790919060000",
+        "playerId": "c1df0341-77f6-45d1-92e1-ad80710ea466",
+        "roundId": "T_WIRE_PERP-1h-1791031260000",
         "direction": "UP",
         "leverage": 25,
         "size": "0.10416667",
@@ -51,7 +51,7 @@
         "pnl": "-100.000",
         "stake": "100.000",
         "player": {
-          "playerId": "b34ff01c-81fe-45b6-8bde-ab95ed06d9d5",
+          "playerId": "c1df0341-77f6-45d1-92e1-ad80710ea466",
           "nickname": "Bob_Wire",
           "walletAddress": "txch1bob0wire0player000000000000000000000000000000000000000q5h3xm",
           "displayName": "Bob_Wire (txch1b…h3xm)",
@@ -63,7 +63,7 @@
       }
     ],
     "crowd": {
-      "roundId": "T_WIRE_PERP-1h-1790919060000",
+      "roundId": "T_WIRE_PERP-1h-1791031260000",
       "traded": true,
       "direction": "UP",
       "leverage": 10,
@@ -73,7 +73,7 @@
       "capitalBefore": "90357.44",
       "capitalAfter": "90809.23"
     },
-    "resultsHash": "0x494fa609320db3dc5904e614e3f88c0949261a1c65c3c0d2fdd21f4d59f8d150",
+    "resultsHash": "0x171ceb9fd37adf72efaf485545fece4aee92b705f9bbe5897dc0a18e72a28507",
     "oracleAnchor": {
       "seq": 76,
       "state": "unknown",

@@ -15,6 +15,7 @@ import crowdvsmarket.server.prices.HistorySeeder;
 import crowdvsmarket.server.prices.HyperliquidInfoApi;
 import crowdvsmarket.server.prices.HyperliquidPriceSource;
 import crowdvsmarket.server.prices.HyperliquidSpotPriceSource;
+import crowdvsmarket.server.prices.KrakenPriceSource;
 import crowdvsmarket.server.prices.PriceHttpClients;
 import io.quarkus.arc.Unremovable;
 import io.quarkus.scheduler.Scheduled;
@@ -50,6 +51,13 @@ import org.jboss.logging.Logger;
  * {@code sourceMeta} {@code {"spot":true,"pair":"HYPE/USDC"}}. Leverage is {@code herd.markets.spot.max-leverage} of the
  * symbol (the caps the six markets had as perpetuals), at most 40; the lot exponent is {@link Market#lotExpFor} of the
  * first price read, fixed from then on (Т-3).
+ *
+ * <p><b>The backup exchange</b> (Р-76: a round runs entirely on one exchange, chosen when it opens): the listing records
+ * in {@code sourceMeta} the exchange a round moves to when the primary cannot price its start, from
+ * {@code herd.markets.spot.backup} — Kraken ({@code "backup":{"source":"kraken","ref":"BTC/USD"}}) behind Coinbase for BTC, ETH,
+ * SOL, XRP and DOGE, Coinbase ({@code {"source":"coinbase","ref":"HYPE-USD"}}) behind Hyperliquid's spot market for HYPE. Like
+ * the rest of a listing it is fixed from then on (Т-10): a change of the setting is for the markets listed after it. The backup is
+ * not asked at listing — a market is not kept from the lobby because the backup's pair does not answer right now.
  *
  * <p><b>Replacement, in this order, and only then.</b> For a market that is not in the registry yet: (1) the source is
  * read — the product's ticker, or the spot meta with the pair's {@code midPx} — and a source that cannot be reached
@@ -104,6 +112,7 @@ public class SpotCatalog {
     private final HistorySeeder seeder;
     private final LongSupplier clock;
     private final Set<String> knownBad = ConcurrentHashMap.newKeySet();
+    private final Set<String> sameVenueWarned = ConcurrentHashMap.newKeySet();
 
     @Inject
     public SpotCatalog(MarketRegistry registry, CatalogConfig config, PriceHttpClients clients, HistorySeeder seeder) {
@@ -161,6 +170,10 @@ public class SpotCatalog {
             if (registry.byId(id).isPresent()) {
                 continue; // listed by this or an earlier run, active or closed: never again
             }
+            if (config.venueDisabled(CoinbasePriceSource.NAME)) {
+                pending++; // herd.prices.disabled-venues: Coinbase gives no price, not even to a catalog; not listed, not asked
+                continue;
+            }
             BigDecimal mid;
             try {
                 mid = CoinbasePriceSource.midOf(coinbase.get().ticker(product));
@@ -184,6 +197,7 @@ public class SpotCatalog {
                 continue;
             }
             ObjectNode meta = JsonNodeFactory.instance.objectNode().put("product", product).put("quote", "USD");
+            recordBackup(meta, symbol, CoinbasePriceSource.NAME);
             NewMarket market = new NewMarket(id, MarketKind.PERP, Category.CRYPTO, symbol, MarketNames.title(symbol),
                     null, null, CoinbasePriceSource.NAME, product, meta.toString(), config.spotLeverage(symbol),
                     Market.lotExpFor(mid), null);
@@ -213,8 +227,8 @@ public class SpotCatalog {
             if (registry.byId(id).isPresent()) {
                 continue;
             }
-            if (unreachable) {
-                pending++; // the meta could not be read a moment ago: no second request for the next token
+            if (unreachable || config.venueDisabled(HyperliquidPriceSource.NAME)) {
+                pending++; // the meta could not be read a moment ago (or Hyperliquid is switched off): no request for this token
                 continue;
             }
             if (answer == null) {
@@ -244,6 +258,7 @@ public class SpotCatalog {
             }
             ObjectNode meta = JsonNodeFactory.instance.objectNode().put("spot", true).put("pair",
                     symbol + "/" + HYPERLIQUID_QUOTE);
+            recordBackup(meta, symbol, HyperliquidPriceSource.NAME);
             NewMarket market = new NewMarket(id, MarketKind.PERP, Category.CRYPTO, symbol, MarketNames.title(symbol),
                     null, null, HyperliquidPriceSource.NAME, pair.get(), meta.toString(), config.spotLeverage(symbol),
                     Market.lotExpFor(mid), null);
@@ -291,6 +306,34 @@ public class SpotCatalog {
                 replaced.isEmpty() ? "" : ", replacing " + replaced.stream().map(Market::id).toList());
         seeder.seed(listed); // its last minutes of history, fetched in the background
         return 0;
+    }
+
+    /**
+     * Writes the symbol's backup exchange into the market's {@code sourceMeta}
+     * ({@code "backup":{"source":"kraken","ref":"BTC/USD"}}) — what {@code Instruments} reads, and fixed from here on like
+     * everything else a listing records (Т-10). Not checked against the backup venue: its pair may not answer yet, and a
+     * market that cannot be listed for want of a backup's answer would be a worse thing than a backup that never gets a price.
+     * A symbol with none in {@code herd.markets.spot.backup}, or one named {@code none}, has no backup; a backup on the very
+     * venue that prices the market is no backup, said once and left out.
+     */
+    private void recordBackup(ObjectNode meta, String symbol, String primaryVenue) {
+        Optional<String> venue = config.spotBackupVenue(symbol);
+        if (venue.isEmpty()) {
+            return;
+        }
+        if (venue.get().equals(primaryVenue)) {
+            if (sameVenueWarned.add(symbol)) {
+                LOG.warnf("%s is priced by %s and its configured backup is the same venue: it has no backup", symbol,
+                        primaryVenue);
+            }
+            return;
+        }
+        meta.putObject("backup").put("source", venue.get()).put("ref", backupRef(venue.get(), symbol));
+    }
+
+    /** What a backup venue calls the USD pair of a symbol: Kraken's WebSocket v2 name {@code BTC/USD}, Coinbase's product {@code BTC-USD}. */
+    static String backupRef(String venue, String symbol) {
+        return KrakenPriceSource.NAME.equals(venue) ? symbol + "/USD" : symbol + "-USD";
     }
 
     private void markBad(String name, String why) {

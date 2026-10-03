@@ -396,6 +396,57 @@ class StreamSupervisorTest {
         assertThat(transport.attempts).isEqualTo(1);
     }
 
+    // ---------------------------------------------------------------------- what the operator sees
+
+    @Test
+    void theHealthSaysWhetherAnythingIsWantedOpenAndHeard() {
+        StreamSupervisor supervisor = supervisor();
+        assertThat(supervisor.health(START)).isEqualTo(new StreamSupervisor.Health(false, false, Long.MIN_VALUE, 0, 0));
+
+        supervisor.want(START);
+        assertThat(supervisor.health(START).wanted()).isTrue();
+        assertThat(supervisor.health(START).open()).as("wanted, not connected yet").isFalse();
+
+        step(supervisor, START);
+        now.set(START + 1_500);
+        transport.last().deliver("{\"m\":1}");
+        StreamSupervisor.Health open = supervisor.health(START + 2_000);
+        assertThat(open.open()).isTrue();
+        assertThat(open.lastMessageAtMs()).isEqualTo(START + 1_500);
+        assertThat(open.connects()).isEqualTo(1);
+        assertThat(open.drops()).isZero();
+
+        assertThat(supervisor.health(START + IDLE_MS + 1).wanted()).as("nobody asked for a minute").isFalse();
+        transport.last().serverCloses(1006, "");
+        step(supervisor, START + 2_000);
+        assertThat(supervisor.health(START + 2_000).drops()).isEqualTo(1);
+    }
+
+    @Test
+    void theStatusOfAStreamIsIdleRestFallbackSilentOrConnected() {
+        PriceSource.Feed feed = new PriceSource.Feed("test", 15_000L, 30_000L, m -> true);
+        long never = Long.MIN_VALUE;
+        long fresh = 5_000L;
+
+        assertThat(StreamSupervisor.status(feed, "venue", new StreamSupervisor.Health(false, false, never, 0, 0),
+                START, fresh, 0)).isEqualTo(new PriceSource.FeedStatus("test", "venue", "stream", "idle", null, 0));
+        assertThat(StreamSupervisor.status(feed, "venue", new StreamSupervisor.Health(false, true, START, 1, 0), START,
+                fresh, 0).state()).as("nobody wants it: closed soon, whatever it was doing").isEqualTo("idle");
+        assertThat(StreamSupervisor.status(feed, "venue", new StreamSupervisor.Health(true, false, never, 0, 0), START,
+                fresh, 3).state()).isEqualTo("rest-fallback");
+        assertThat(StreamSupervisor.status(feed, "venue", new StreamSupervisor.Health(true, false, never, 0, 0), START,
+                fresh, 3).restReads()).isEqualTo(3);
+        assertThat(StreamSupervisor.status(feed, "venue", new StreamSupervisor.Health(true, true, never, 1, 0), START,
+                fresh, 0).state()).as("open, nothing heard yet").isEqualTo("silent");
+        assertThat(StreamSupervisor.status(feed, "venue", new StreamSupervisor.Health(true, true, START - 6_000L, 1, 0),
+                START, fresh, 0).state()).as("open, not heard within the limit").isEqualTo("silent");
+        PriceSource.FeedStatus connected = StreamSupervisor.status(feed, "venue",
+                new StreamSupervisor.Health(true, true, START - 4_000L, 1, 0), START, fresh, 0);
+        assertThat(connected.state()).isEqualTo("connected");
+        assertThat(connected.lastMessageAtMs()).isEqualTo(START - 4_000L);
+        assertThat(connected.mode()).isEqualTo("stream");
+    }
+
     @Test
     void theThreadIsAVirtualOneStartedByTheFirstWantAndEndedByClose() {
         StreamSupervisor supervisor = new StreamSupervisor(stream, transport, System::currentTimeMillis, SILENCE_MS,
