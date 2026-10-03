@@ -24,7 +24,7 @@
 | # | Решение |
 |---|---|
 | Т-1 | Категории: `crypto`, `politics`, `sports`, `stocks`, `indices`, `commodities`. Первые три названы Алексом (Р-69: спорт, политика, криптовалюта); порядок показа `crypto → politics → sports` — предложение (крипто первой: в ней исходная пара BTC и больше всего живых пар), меняется в одном месте — `Category.ORDER` на сервере и `CATEGORY_ORDER` в `web/src/api/marketMeta.ts`; остальные три — потому что у Hyperliquid есть такие перпы (`hl_multi_asset_live.md` §7), а у Polymarket Perps — такие же чипы. |
-| Т-2 | Два вида рынков. `PERP` — mark price перпа Hyperliquid в USD (основной dex и dex `xyz`). `ODDS` — вероятность (0..1) одного исхода рынка Polymarket (CLOB midpoint). Механика одна: раунд, UP/DOWN, плечо, ликвидация по формуле Hyperliquid. |
+| Т-2 | Два вида рынков. `PERP` — цена актива в USD, с какой бы площадки она ни шла. С 2026-10-03 (§3.4) это спот Coinbase (запасная — Kraken) у BTC, ETH, SOL, XRP, DOGE и спот Hyperliquid (запасная — Coinbase) у HYPE; mark price перпов Hyperliquid dex `xyz` — у акций, индексов и сырья. `ODDS` — вероятность (0..1) одного исхода рынка Polymarket (CLOB midpoint). Механика одна: раунд, UP/DOWN, плечо, ликвидация по формуле Hyperliquid. |
 | Т-3 | Лот-цена. Движок считает цены с 2 знаками (`Candle`, `LiquidationCalculator`). Сервер подаёт в движок цену лота: `engine = raw × 10^lotExp`, `lotExp = clamp(3 − floor(log10(raw)), 0, 8)` в момент листинга (для `ODDS` всегда 4), дальше не меняется. `priceDecimals = 2 + lotExp`. Наружу (API, график) идёт сырая цена с `priceDecimals` знаками. P&L и ликвидация от масштаба не зависят. |
 | Т-4 | Плечо рынка: `PERP` — `min(40, maxLeverage)` из `meta` Hyperliquid (тир 0); `ODDS` — 10 (`herd.markets.odds.max-leverage`). Ставка поддерживающей маржи — `1/(2·maxLeverage)`. |
 | Т-5 | Один баланс PLAY на игрока. Позиция — одна на игрока на раунд пары (Р-13 читается «на раунд пары»): в одном окне можно держать позиции по разным парам. |
@@ -75,6 +75,92 @@ BTC всегда есть в реестре: строку создаёт миг�
 - `ODDS` (`herd.markets.polymarket.enabled`): раз в 5 минут `GET gamma-api /markets/keyset?tag_id=<2|1>&closed=false&order=volume24hr&ascending=false&limit=50`; кандидаты — `acceptingOrders`, `enableOrderBook`, два исхода, конец не раньше чем через 30 минут; затем живой `midpoint` и `spread` из CLOB: `0.10 ≤ mid ≤ 0.90`, спред ≤ 0.05. Берётся исход с индексом 0. Держим `herd.markets.politics.count` (3) и `herd.markets.sports.count` (3) активных; для спорта сначала идущие матчи (`events/keyset?tag_id=1&live=true`). Одно событие (игра) — не больше одного рынка. **Спорт — только «кто победит» (S1).** Кандидат спорта — рынок с `sportsMarketType == "moneyline"` (победитель игры; `child_moneyline` — одна карта или сет серии, `first_half_moneyline`, `q1_moneyline` — период, `totals`, `spreads`, `team_totals`, `nrfi` и ещё сотни типов — не кандидаты: у матча MLB 31 рынок восьми типов в одном событии, `polymarket_data_api.md` §13.7); рынок спорта без этого поля (фьючерс лиги) — не кандидат; у политики поля нет и оно не требуется. **Остывание игры:** после того как каталог закрыл любой рынок игры (`gameId`, любая причина), ни один рынок этой игры не листится `herd.markets.polymarket.game-cooldown` (6 часов по умолчанию; 0 выключает) — иначе, как видели вживую 2026-10-01, закрытый на 97% рынок победителя «Phillies — Braves» заменялся тоталом «O/U 8.5» той же игры под тем же тикером `PHI`. Остывание читается из реестра (`closedAtMs` закрытого рынка и `gameId` в его `sourceMeta`), поэтому переживает перезапуск; на политику и на игру без `gameId` оно не распространяется. Рынков меньше заданного числа — нормально: категория добирается, когда появляется следующая игра. Каждый листнутый рынок передаётся в засев истории (п. 8 §3.2).
 - **Подпись карточки** (`MarketLabels`; источники — `polymarket_data_api.md` §13.5, измерено 2026-10-02). *Тикер* — до 8 знаков, верхний регистр, **уникальный среди активных рынков любой категории** (закрытый свой тикер отдаёт): первый свободный из списка кандидатов, затем число (`PHI`, `PHI2`). Игра: `DRAW` для рынка на ничью, иначе аббревиатура команды, когда её даёт Gamma (`teams[].abbreviation` — только в `events/keyset` для идущих игр), иначе название команды, сокращённое до 8 знаков (короткое — целиком, длинное — по последнему слову: `PHILLIES`, иначе начало). Человек или предмет: последнее слово с заглавной буквы имени — имя берётся из собственной подписи рынка `groupItemTitle` («Luiz Inácio Lula da Silva» → `SILVA`), если вопрос её содержит, иначе из первого имени в вопросе («Will Elon Musk post …» → `MUSK`). Дальше — другие слова имени и вопроса: так разрешается совпадение («следующее отличительное слово»). **Общие слова тикером не бывают**: страна в любой записи (`US`, `U.S.`, `USA`), служебные и вопросительные слова (Will, The, A, Who, Which, Before, After, By …), месяцы, числа и годы, однобуквенные слова; голое Yes/No/Over/Under — тоже ничего не называет. *Подзаголовок* — что за исход у карточки: игра — «`<исход> to win · <лига или турнир>`» (лига — серия события, `series[0].title`, иначе `sport.name`; ничья — «Draw»; тоталы и форы подпись умеет — исход и лига, — но после S1 каталог их не листит), остальное — «`<исход> · <название события>`», название — только если оно не повторяет вопрос.
 - **Закрытие `ODDS`** (причины — простые предложения, они показываются игрокам как есть): *«The source market ended»* — рынок закрыт у источника, проверка Gamma раз в обновление **двумя запросами на пачку токенов**: поиск по `clob_token_ids` без `closed` и с `closed=false` закрытых не отдаёт — только с `closed=true` (`polymarket_data_api.md` §13.1), поэтому открытые читаются с `closed=false` (их `oneDayPriceChange`), закрытые — с `closed=true`; *«The source market stopped trading»* — токен пропал из ответа `/midpoints` на 60 с **в не меньше чем трёх успешных ответах подряд, последний не старше 15 с**; неудавшийся опрос, ответ без всех токенов (сбой CLOB, не закрытие всех рынков сразу) и ответ с токеном начинают счёт заново — один частичный ответ и таймаут CLOB закрыть рынок навсегда не могут; *«Price left the 3%–97% range»* — `mid` вышел из `[0.03, 0.97]`; *«The source market ends in less than 5 minutes»* — до конца меньше 5 минут (у игры конца нет: `endDate` — начало матча). Закрытый рынок не открывает новых раундов, закрытый id заново не листится; раунд в окне ставок и идущий раунд отменяются с возвратом ставок (причина «market closed»). Три последних правила проверяются раз в 5 с из памяти и просят ранний долив категории.
+
+### 3.4 Крипта с первоисточников: основная и запасная биржа (Р-74…Р-76, 2026-10-03)
+
+Первая итерация перевода на первоисточники (`docs/research/primary_sources.md` §4, Р-74). Код — `server/src/main/java/crowdvsmarket/server/prices/` (`CoinbasePriceSource`, `KrakenPriceSource`, `HyperliquidSpotPriceSource`, `StreamSupervisor`, `JdkWebSocketTransport`, `CandleHistory`, `Instruments`, `RoundVenues`) и `markets/catalog/SpotCatalog`. В комментариях этих классов — замеры с датами.
+
+**1. Рынки.**
+
+| Рынки | Основная биржа | Запасная |
+|---|---|---|
+| `spot_BTC`, `spot_ETH`, `spot_SOL`, `spot_XRP`, `spot_DOGE` | Coinbase Exchange: продукты `BTC-USD` … | Kraken: пары `BTC/USD` … |
+| `spot_HYPE` | спот Hyperliquid, пара HYPE/USDC | Coinbase, продукт `HYPE-USD` |
+
+- Пара Hyperliquid — имя `@<index>` из `spotMeta`; находится по именам токенов, не зашита в код.
+- `Market.source`/`sourceRef` — основная биржа; запасная записана при листинге в `sourceMeta.backup {source, ref}` и дальше не меняется (Т-10).
+- Kraken-пара перед записью сверяется с `/0/public/AssetPairs`; если Kraken её не знает, рынок листится без запасной.
+- Плечо — `herd.markets.spot.max-leverage` (прежние потолки: 40/25/20/20/10/10).
+- `lotExp` — по первой цене основной биржи.
+- **Замена (Т-10).** Перед листингом `SpotCatalog` закрывает активный рынок той же категории и символа с другим источником. Причина видна игрокам как есть: «Moved to a new price source: Coinbase» или «Moved to a new price source: Hyperliquid spot».
+  - Закрытие отменяет идущие раунды с возвратом ставок.
+  - Новый рынок листится только после успешного закрытия.
+  - BTC закрывается только этим путём; делистинг его не закрывает.
+  - На стенде 2026-10-03 в 16:18 UTC закрыты BTC, ETH, SOL, XRP, DOGE, HYPE: отменено 24 раунда, возвращено 41 ставка. Новые рынки получили индексы оракула 55–60.
+
+**2. Живые цены — по WebSocket (Р-76).**
+- Площадки и каналы:
+  - Coinbase `wss://ws-feed.exchange.coinbase.com` — каналы `ticker` и `heartbeat`;
+  - Kraken `wss://ws.kraken.com/v2` — `ticker` с `event_trigger=bbo`, потому что по сделкам он слишком редкий;
+  - Hyperliquid `wss://api.hyperliquid.xyz/ws` — `allMids`.
+- Соединения держит JDK `java.net.http.WebSocket`, обратные вызовы идут на виртуальных потоках.
+- `StreamSupervisor` переподключает соединение через 1, 2, 4… с, до 60 с. Отсрочка сбрасывается только после данных подписанного канала или 30 с жизни соединения; после короткой сессии — пауза не меньше 5 с.
+- Опрос из памяти идёт раз в 2 с; фиды `coinbase`, `kraken`, `hyperliquid:spot`.
+- Котировка старше `fresh-ms` (Coinbase и Kraken 5 с, Hyperliquid spot 8 с) заменяется одним REST-запросом той же биржи:
+  - Coinbase — `/products/{id}/ticker`;
+  - Kraken — `/0/public/Ticker`, несколько пар за раз; если Kraken не знает одну из пар, запрос повторяется по одной паре;
+  - Hyperliquid — `spotMetaAndAssetCtxs`, поле `midPx`.
+- Тик = (bid + ask) / 2; у спота Hyperliquid — значение `allMids`.
+
+**Замеры 2026-10-03 из Германии.**
+- Частота сообщений:
+  - Coinbase `ticker` — 172 в минуту у BTC-USD и 6 в минуту у DOGE-USD (тишина до 53 с), heartbeat раз в секунду;
+  - Kraken `bbo` — средний промежуток 0,27–0,58 с, самый длинный 7,4–23,1 с;
+  - `allMids` — раз в 5,0 с.
+- Мидпоинт против диапазона своей минутной свечи: Coinbase — не дальше 1,62 б.п. (99-й перцентиль 0,42), Kraken — не дальше 4,19 б.п. (99-й перцентиль 2,84). Отсюда `max-basis` 15 б.п. у каждой площадки.
+- Мидпоинт Kraken против Coinbase: в среднем 0,36–1,24 б.п. по парам, максимум 5,03 б.п. (DOGE).
+
+**3. История** — минутные свечи сделок, `HistoryKind.TRADE_PRICES`; правила §3.2 п. 5 и п. 8 те же.
+- Coinbase — `/products/{id}/candles`, не больше 300 за запрос.
+- Kraken — `/0/public/OHLC`. Отдаёт только последние 720 строк, около 12 часов, при любом `since` (замер 2026-10-03). Всё старше — «нет данных»: мост через более старую дыру не строится, засев довольствуется тем, что есть.
+- Hyperliquid — `candleSnapshot` по `@<index>`.
+
+**4. Раунд целиком на одной бирже (Р-76).**
+- **Отдельное кольцо тиков на каждую площадку.** Ключ запасной — `<marketId>~<источник>` (например `spot_BTC~kraken`), в `TickStore` и в `price_snapshots`; при старте восстанавливается как любой тик. Теневые рынки не попадают в реестр, движок, API и реестр оракула.
+- **Выбор биржи** делается один раз — на ближайшем такте планировщика после начала окна, по состоянию колец на момент начала:
+  1. живой тик, свежий на начале (`staleMs` 15 с): сначала основная, потом запасная. Пин и перенос считаются тем живым тиком, за которым стоят;
+  2. иначе прочие свидетельства — история, перенос, пин: сначала основная;
+  3. иначе решение откладывается до расчёта, и при лечении основная снова первой.
+- Выбор записывается в `round_venues` (миграция V9) один раз и читается обратно.
+- Раунд считается только по кольцу своей биржи: открытие, закрытие, путь, ликвидация. Если его биржа не даёт цены — ожидание и возврат по Р-23 (лечение свечами до 30 минут, возврат через час после конца). На другую биржу раунд не переключается.
+- На стыке смены биржи открытие следующего раунда может отличаться от закрытия предыдущего на базис бирж (замер выше). Р-40 действует внутри одной биржи.
+- **Проверено на стенде 2026-10-03.** Coinbase выключали с 16:38 до 16:47 UTC (`herd.prices.disabled-venues=coinbase`):
+  - раунды BTC, ETH, SOL, XRP, начавшиеся в 16:39 и 16:45, рассчитаны по Kraken;
+  - раунд, начатый на Coinbase в 16:36, после возвращения Coinbase закрыт его свечами;
+  - у DOGE дыра не закрылась: в минуте правого живого тика не было свечи со сделками, и раунд ждёт.
+- **Пока раунд ждёт свою биржу, серия рынка стоит.** Следующий раунд не открывается, потому что раунды серии рассчитываются по порядку. Окна, на которые за это время не открывались ставки, пропускаются; на стенде пропущено окно 16:42–16:45. Решение — за Алексом (`docs/product/decisions.md`, открытые вопросы).
+
+**5. Что раунд сообщает о себе.**
+- Биржа раунда записывается в `round_results.venue`, в событие `RoundResolved` и в канонический JSON — корневым ключом `"venue"`. Ключ есть только у рынков с биржами; у BTC и прежних форм его нет, байты прежние (Т-13).
+- Журнал записей оракула (`/api/oracle/records`) показывает биржу каждой записи; `registry.json` — `backup {source, ref}` у рынка.
+- Запись на цепи прежняя: биржа входит в неё только через `resultsHash`.
+- `tools/verify-oracle` сверяет биржу журнала и документа и проверяет, что это основная или запасная из реестра. Прогон 2026-10-03: 7520 раундов совпали по хешу, цене, активу и бирже.
+
+**6. Показ.**
+- `latest` — основная, пока свежа, иначе запасная; источник цены — в `MarketPriceDto.venue`.
+- График — только серия основной биржи; пока она молчит, на графике разрыв и подпись.
+- `MarketDto.backupSource` — запасная биржа рынка; `RoundBase.source` — биржа раунда.
+- Состояние потоков (connected, silent, rest-fallback, disabled) — в операторском `GET /api/admin/status`, поле `priceFeeds`. Публичная страница статуса показывает источники по рынкам.
+
+**7. Выключатель** `herd.prices.disabled-venues` (например `coinbase`): площадка не даёт цены вовсе — ни потока, ни REST. Нужен, чтобы проверить запасную биржу на стенде.
+
+**8. Не сделано (UNVERIFIED или на потом).**
+- Канал `ticker` Coinbase идёт только по сделкам, поэтому тихую пару (DOGE) почти каждый опрос читает REST.
+- У Kraken нет времени последней сделки, поэтому тихая дыра в конце окна остаётся дырой.
+- `HYPE-USD` при листинге не сверяется.
+- Отказ Kraken в подписке только пишется в журнал.
+- Лимит публичного REST Kraken не опубликован.
+- Допуск базиса спота Hyperliquid не измерялся: стоят 15 б.п. перпов.
 
 ## 4. Раунды
 
@@ -155,7 +241,17 @@ FIXED INTERFACE (E) — `engine/README.md`, раздел «Markets»: `MarketSpe
 |---|---|---|
 | `herd.mode` | `HERD_MODE` | `replay` (стенд и VPS — `live`) |
 | `herd.prices.source` | `HERD_PRICES_SOURCE` | `live` |
-| `herd.markets.crypto` | `HERD_MARKETS_CRYPTO` | `BTC,ETH,SOL,XRP,DOGE,HYPE` |
+| `herd.markets.crypto` | `HERD_MARKETS_CRYPTO` | пусто — перпы Hyperliquid в крипте больше не листятся (до 2026-10-03 было `BTC,ETH,SOL,XRP,DOGE,HYPE`, §3.4) |
+| `herd.markets.coinbase` | `HERD_MARKETS_COINBASE` | `BTC-USD,ETH-USD,SOL-USD,XRP-USD,DOGE-USD` (§3.4) |
+| `herd.markets.hyperliquid-spot` | `HERD_MARKETS_HYPERLIQUID_SPOT` | `HYPE` |
+| `herd.markets.spot.max-leverage` | `HERD_MARKETS_SPOT_MAX_LEVERAGE` | `BTC:40,ETH:25,SOL:20,XRP:20,DOGE:10,HYPE:10` (не выше 40) |
+| `herd.markets.spot.backup` | `HERD_MARKETS_SPOT_BACKUP` | `BTC:kraken,ETH:kraken,SOL:kraken,XRP:kraken,DOGE:kraken,HYPE:coinbase`; `none` — без запасной |
+| `herd.prices.disabled-venues` | `HERD_PRICES_DISABLED_VENUES` | пусто; `hyperliquid`, `coinbase`, `kraken` через запятую — площадка не даёт цены вовсе |
+| `herd.prices.coinbase.poll-every` / `kraken.poll-every` / `hyperliquid.spot-poll-every` | `HERD_PRICES_COINBASE_POLL_EVERY` / … | `2s` — опрос из памяти потока |
+| `herd.prices.coinbase.fresh-ms` / `kraken.fresh-ms` / `hyperliquid.spot-fresh-ms` | … | `5000` / `5000` / `8000` — старше этого котировка читается REST той же биржи |
+| `herd.prices.coinbase.silence-ms` / `kraken.silence-ms` / `hyperliquid.spot-silence-ms` | … | `10000` / `10000` / `15000` — молчание соединения, после которого оно переподключается |
+| `herd.prices.coinbase.stale-ms`, `max-gap-ms`, `max-basis` (и так же у `kraken`, `hyperliquid.spot-*`) | … | `15000`, `30000`, `0.0015` |
+| `herd.prices.stream.reconnect-max-ms` / `herd.prices.stream.idle-ms` | `HERD_PRICES_STREAM_RECONNECT_MAX_MS` / `HERD_PRICES_STREAM_IDLE_MS` | `60000` / `60000` |
 | `herd.markets.stocks` | `HERD_MARKETS_STOCKS` | `xyz:NVDA,xyz:TSLA` |
 | `herd.markets.indices` | `HERD_MARKETS_INDICES` | `xyz:SP500,xyz:XYZ100` |
 | `herd.markets.commodities` | `HERD_MARKETS_COMMODITIES` | `xyz:GOLD,xyz:BRENTOIL` |
