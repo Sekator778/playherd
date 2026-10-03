@@ -69,6 +69,32 @@ class InstrumentsTest {
     }
 
     @Test
+    void theShadowHasTheLotExponentAndTheDecimalsOfItsMarketWhateverTheExponentIs() {
+        // BTC has exponent 0, where the raw and the engine price are one and the same: it cannot tell a shadow that was
+        // given the market's exponent from one that was given none. DOGE (5) and HYPE (2) can, and so can every other
+        Market doge = TestMarkets.coinbaseWithKraken("DOGE", 5, 5);
+        Market dogeShadow = Instruments.shadowOf(doge).orElseThrow();
+        Market hypeShadow = Instruments.shadowOf(hype).orElseThrow();
+
+        assertThat(dogeShadow.lotExp()).isEqualTo(5);
+        assertThat(dogeShadow.priceDecimals()).as("2 + 5").isEqualTo(7);
+        assertThat(hypeShadow.lotExp()).isEqualTo(2);
+        assertThat(hypeShadow.priceDecimals()).as("2 + 2").isEqualTo(4);
+
+        for (int exp = 0; exp <= Market.MAX_LOT_EXP; exp++) {
+            Market market = TestMarkets.coinbaseWithKraken("X" + exp, exp, 3);
+            Market shadow = Instruments.shadowOf(market).orElseThrow();
+            assertThat(shadow.lotExp()).as("exponent %d", exp).isEqualTo(exp);
+            assertThat(shadow.priceDecimals()).isEqualTo(market.priceDecimals()).isEqualTo(2 + exp);
+            BigDecimal raw = new BigDecimal("0.0928");
+            assertThat(shadow.toEngine(raw)).as("the engine's lot price of the same raw price").isEqualByComparingTo(market.toEngine(raw));
+            assertThat(shadow.toRaw(new BigDecimal("9281.50"))).isEqualByComparingTo(market.toRaw(new BigDecimal("9281.50")));
+        }
+        assertThat(dogeShadow.toEngine(new BigDecimal("0.0928"))).isEqualByComparingTo("9280.00");
+        assertThat(hypeShadow.toEngine(new BigDecimal("87.9"))).isEqualByComparingTo("8790.00");
+    }
+
+    @Test
     void aMarketWithNoBackupHasNoShadowWhateverItsNoteSays() {
         assertThat(Instruments.shadowOf(TestMarkets.btc())).isEmpty();
         assertThat(Instruments.of(TestMarkets.btc())).hasSize(1);

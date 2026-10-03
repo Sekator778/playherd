@@ -544,6 +544,49 @@ class LiveMarketPricesVenuesTest {
     }
 
     @Test
+    void aRoundOnTheBackupOfAMarketWithLotExponentFiveIsScaledByTheMarketsExponentOpenCloseAndPath() {
+        // DOGE: raw prices around 0.0928, lot exponent 5 — the engine's lot price is raw × 10^5, 9280.00 here. BTC (exponent 0)
+        // cannot tell a shadow that has the market's exponent from one that has none: the raw and the engine price are the same
+        Market doge = TestMarkets.coinbaseWithKraken("DOGE", 5, 5);
+        Market dogeShadow = Instruments.shadowOf(doge).orElseThrow();
+        RoundWindow window = window(doge);
+        // the primary has no tick at the start (its first is 10 s after it), so the round opens on the backup, and trades at
+        // 0.0900 (9000.00) all through — a price that must appear nowhere
+        for (long at = START + 10_000L; at <= END + 3_000L; at += 3_000L) {
+            store.append("coinbase", at, Map.of(doge.id(), new BigDecimal("0.09000")));
+        }
+        // the backup steps up by 0.00001 (one lot price unit) every 18 s: 0.09280 at the start, 0.09289 at 162 s
+        for (long at = START - 2_000L; at <= END + 3_000L; at += 3_000L) {
+            long step = Math.max(0L, at - START) / 18_000L;
+            store.append("kraken", at, Map.of(dogeShadow.id(), new BigDecimal("0.09280").add(new BigDecimal("0.00001")
+                    .multiply(BigDecimal.valueOf(step)))));
+        }
+        assertThat(prices.openRound(doge, window, START + 500)).contains("kraken");
+        now.set(END + 1_000);
+
+        RoundPriceData data = prices.resolve(doge, window);
+
+        assertThat(data.venue()).isEqualTo("kraken");
+        assertThat(data.open()).as("raw 0.09280 at lot exponent 5").isEqualByComparingTo("9280.00");
+        assertThat(data.close()).as("the last Kraken tick at or before the end, 178 s in: raw 0.09289").isEqualByComparingTo("9289.00");
+        assertThat(data.path()).hasSize(30);
+        assertThat(data.path().get(0).open()).isEqualByComparingTo("9280.00");
+        assertThat(data.path().get(data.path().size() - 1).close()).isEqualByComparingTo("9289.00");
+        assertThat(data.path()).allSatisfy(c -> {
+            assertThat(c.low()).isGreaterThanOrEqualTo(new BigDecimal("9280.00"));
+            assertThat(c.high()).isLessThanOrEqualTo(new BigDecimal("9289.00"));
+        });
+        assertThat(data.path().stream().map(crowdvsmarket.engine.market.Candle::high).max(BigDecimal::compareTo).orElseThrow())
+                .isEqualByComparingTo("9289.00");
+        assertThat(data.path().stream().map(crowdvsmarket.engine.market.Candle::low).min(BigDecimal::compareTo).orElseThrow())
+                .isEqualByComparingTo("9280.00");
+        assertThat(data.path()).as("the primary's 9000.00 is nowhere in it").noneMatch(c -> c.low().compareTo(new BigDecimal("9100")) < 0);
+        // and a price that goes back out of the engine is the raw one, with the market's seven decimals
+        assertThat(doge.toRaw(data.close()).toPlainString()).isEqualTo("0.0928900");
+        assertThat(dogeShadow.toRaw(data.close()).toPlainString()).isEqualTo("0.0928900");
+    }
+
+    @Test
     void aRoundOnThePrimaryIsSettledFromThePrimarysRingAlone() {
         primary(START - 2_000, END + 3_000, 3_000, 100.0);
         backup(START - 2_000, END + 3_000, 3_000, 80.0);
