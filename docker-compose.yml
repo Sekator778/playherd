@@ -24,8 +24,9 @@ name: herd
 networks:
   default:
     name: herd_default
-    # `server` fetches live prices from api.hyperliquid.xyz and Polymarket (HERD_PRICES_SOURCE=live,
-    # the default below). This Mac's Docker daemon turns IP masquerading off for every bridge
+    # `server` fetches live prices from api.hyperliquid.xyz, Coinbase Exchange, Kraken and Polymarket
+    # (HERD_PRICES_SOURCE=live, the default below; HERD_PRICES_DISABLED_VENUES switches any of them off).
+    # This Mac's Docker daemon turns IP masquerading off for every bridge
     # network (`ip-masq: false` in ~/.orbstack/config/docker.json — see the chainsvc fix note
     # below), which leaves containers on a bridge with no route to the internet. Re-enabling it for
     # this one network gives `server` egress without touching the daemon-wide setting; it is the
