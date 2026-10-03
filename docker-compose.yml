@@ -158,6 +158,11 @@ services:
       HERD_MARKETS_SPOT_MAX_LEVERAGE: "${HERD_MARKETS_SPOT_MAX_LEVERAGE:-BTC:40,ETH:25,SOL:20,XRP:20,DOGE:10,HYPE:10}"
       HERD_MARKETS_SPOT_BACKUP: "${HERD_MARKETS_SPOT_BACKUP:-BTC:kraken,ETH:kraken,SOL:kraken,XRP:kraken,DOGE:kraken,HYPE:coinbase}"
       HERD_PRICES_DISABLED_VENUES: "${HERD_PRICES_DISABLED_VENUES:-}"
+      # A round whose exchange stopped sending prices holds its series (the rounds of a series are settled in order).
+      # HERD_PRICES_VENUE_RELEASE_AFTER_MS after the end of such a round of a crypto market, while the market's other
+      # exchange is alive, the round is cancelled with a refund and the series goes on; 0 turns that off — the round then
+      # waits for its exchange and is refunded an hour after its end (Р-77).
+      HERD_PRICES_VENUE_RELEASE_AFTER_MS: "${HERD_PRICES_VENUE_RELEASE_AFTER_MS:-120000}"
       HERD_MARKETS_STOCKS: "${HERD_MARKETS_STOCKS:-xyz:NVDA,xyz:TSLA}"
       HERD_MARKETS_INDICES: "${HERD_MARKETS_INDICES:-xyz:SP500,xyz:XYZ100}"
       HERD_MARKETS_COMMODITIES: "${HERD_MARKETS_COMMODITIES:-xyz:GOLD,xyz:BRENTOIL}"
