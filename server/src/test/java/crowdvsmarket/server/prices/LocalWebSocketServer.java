@@ -75,7 +75,13 @@ final class LocalWebSocketServer implements AutoCloseable {
             socket = client;
             InputStream in = client.getInputStream();
             OutputStream output = client.getOutputStream();
-            String request = readHeaders(in);
+            String request;
+            try {
+                request = readHeaders(in);
+            } catch (IOException e) { // the client left before it had even finished its request
+                leftDuringHandshake = true;
+                return;
+            }
             if (handshakeDelayMs > 0 && clientLeftWithin(client, in, handshakeDelayMs)) {
                 leftDuringHandshake = true;
                 return; // the client called the handshake off: nothing to answer

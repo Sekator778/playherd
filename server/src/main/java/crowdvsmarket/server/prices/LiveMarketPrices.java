@@ -77,7 +77,10 @@ import org.jboss.logging.Logger;
  * the gap has a closed candle with trades; the live price on each side lies inside the range of its own minute's
  * candle, widened by the feed's own tolerance ({@link PriceSource.Feed#maxBasis}: {@link PricesConfig#hyperliquidMaxBasis()}
  * for Hyperliquid's perpetuals, one setting each for Coinbase and for Hyperliquid spot, {@link SpotPricesConfig}); and
- * the gap is not longer than {@link PricesConfig#hyperliquidMaxHealMs()}. What a candle contributes is what the
+ * the gap is not longer than {@link PricesConfig#hyperliquidMaxHealMs()}; and the source keeps candles that old at all
+ * ({@link PriceSource.History#coveredFromMs}: Kraken serves the latest 720 minutes and nothing before them — a gap older
+ * than that is refused at once, and a hole older than that is not carried across as a quiet asset's flat price either:
+ * what the source does not keep is no data, and its silence says nothing). What a candle contributes is what the
  * liquidation check needs, its
  * low and its high (a third and two thirds into the minute) and its close at the end of the minute — points at
  * most 20.001 s apart, so a fully covered gap satisfies the maximum gap of 30 s and a candle missing from the answer
