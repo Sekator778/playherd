@@ -146,10 +146,17 @@ services:
       # xyz dex). Polymarket politics/sports markets are picked from the live catalog. Crypto is priced by
       # the asset's own venue: Coinbase Exchange USD products (BTC-USD …) and the Hyperliquid spot pair HYPE/USDC,
       # each with the leverage cap of the pair; HERD_MARKETS_CRYPTO lists Hyperliquid *perpetuals* (empty: none).
+      # HERD_MARKETS_SPOT_BACKUP names the exchange behind each of them (Kraken for the Coinbase coins, Coinbase for
+      # HYPE; `none` for a coin without one): a round opens on the main exchange when it has a live price at the start,
+      # on the backup otherwise, and runs and settles there to its end (Р-76). It is fixed when a market is listed.
+      # HERD_PRICES_DISABLED_VENUES (hyperliquid, coinbase, kraken; comma-separated) switches an exchange off entirely:
+      # no stream and no request to it, the rounds of its markets open on the backup.
       HERD_MARKETS_CRYPTO: "${HERD_MARKETS_CRYPTO:-}"
       HERD_MARKETS_COINBASE: "${HERD_MARKETS_COINBASE:-BTC-USD,ETH-USD,SOL-USD,XRP-USD,DOGE-USD}"
       HERD_MARKETS_HYPERLIQUID_SPOT: "${HERD_MARKETS_HYPERLIQUID_SPOT:-HYPE}"
       HERD_MARKETS_SPOT_MAX_LEVERAGE: "${HERD_MARKETS_SPOT_MAX_LEVERAGE:-BTC:40,ETH:25,SOL:20,XRP:20,DOGE:10,HYPE:10}"
+      HERD_MARKETS_SPOT_BACKUP: "${HERD_MARKETS_SPOT_BACKUP:-BTC:kraken,ETH:kraken,SOL:kraken,XRP:kraken,DOGE:kraken,HYPE:coinbase}"
+      HERD_PRICES_DISABLED_VENUES: "${HERD_PRICES_DISABLED_VENUES:-}"
       HERD_MARKETS_STOCKS: "${HERD_MARKETS_STOCKS:-xyz:NVDA,xyz:TSLA}"
       HERD_MARKETS_INDICES: "${HERD_MARKETS_INDICES:-xyz:SP500,xyz:XYZ100}"
       HERD_MARKETS_COMMODITIES: "${HERD_MARKETS_COMMODITIES:-xyz:GOLD,xyz:BRENTOIL}"

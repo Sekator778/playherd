@@ -34,6 +34,16 @@ reference for an outside auditor.
    `closePriceCents == priceCents`, and that the asset on chain is the asset the stand gives
    the round (and that the stand's `GET /api/markets/registry.json` maps it to the round's
    market).
+5. For a crypto market that has a backup exchange, also the **venue** of each round (Р-76): a
+   round opens on the market's main exchange or on its backup and runs on that one exchange to
+   the end. The round names it in a root key `"venue"` of its `results.json` — inside the
+   hash the chain anchored, and `priceCents` is the close on that exchange — and the journal
+   repeats it per record. The two must agree (also when only one of them names an exchange),
+   and the venue must be the market's main exchange or its backup in the stand's registry
+   (`source` and `backup.source`). A round with no venue — every round of a market without a
+   backup, every round from before venues, a cancelled round no exchange could price —
+   has no `"venue"` key and its document is byte for byte what it always was. The summary
+   counts the rounds by exchange and lists the registry's markets that have a backup.
 
 ## Requirements
 
@@ -132,19 +142,23 @@ python3 -m unittest discover -s tools/verify-oracle -p 'test_*.py'   # from the 
 serving exactly the JSON the real services serve, and the CLVM spends are real, so every case
 goes through the same lineage walk, parser, `seq` analysis, cross-check, verdict and exit code
 as a real run. The announcement bytes are the golden ones the Rust tests
-(`chain/c2-svc/tests/oracle_golden/mod.rs`) pin, tying both decoders to one byte string.
+(`chain/c2-svc/tests/oracle_golden/mod.rs`) pin, tying both decoders to one byte string; the
+`results.json` documents with a venue are the ones the server's `ResultsHasherTest` pins, so the
+Java hasher and this verifier share those bytes too.
 
 ## Scope, stated plainly
 
 Verified: the singleton lineage is a single unforked chain; every announcement decodes
 to the declared schema; `seq` accounting (duplicates/conflicts/gaps); with a stand,
 that its live `results.json` bytes still hash to what was anchored on chain, its
-close price matches what the chain says was published, and the market (asset) it
-assigns to a round is the one the chain announced.
+close price matches what the chain says was published, the market (asset) it
+assigns to a round is the one the chain announced, and the exchange a crypto round ran on
+is the same in the hashed document and in the journal and is one the registry lists for it.
 
 **Not** verified by this tool: that a published price was itself an honest price
-(trust in the operator key + the price source, Hyperliquid or Polymarket, is a deliberate,
-documented tradeoff — Р-11, `PLAN.md` §2); that a round's payouts were computed correctly by
+(trust in the operator key + the price source — Hyperliquid, Coinbase, Kraken or Polymarket —
+is a deliberate, documented tradeoff — Р-11, `PLAN.md` §2; the venue only tells you which
+exchange to compare the price with); that a round's payouts were computed correctly by
 the game engine (covered by `engine/`'s own unit tests, a different concern); AGG_SIG_ME
 signatures on each spend (the public chain already rejected any spend that failed that check
 before confirming it — this tool reads already-confirmed chain data).

@@ -84,14 +84,16 @@ def canonical_json(doc: dict) -> bytes:
 
 class Round:
     """One settled round as a stand serves it: results.json, its hash, the journal row, and the
-    announcement message the chain carries for it."""
+    announcement message the chain carries for it. `venue`: the exchange it ran on (Р-76) — a root key
+    of the document, so inside the hash, and a field of the journal row (null when there is none)."""
 
     def __init__(self, seq: int, *, market: str = "BTC", asset: int = 0, price: int = 8_561_200,
-                 status: str = "SETTLED", close_price: Any = "same"):
+                 status: str = "SETTLED", close_price: Any = "same", venue: Optional[str] = None):
         self.seq = seq
         self.market = market
         self.asset = asset
         self.price = price
+        self.venue = venue
         self.round_id = f"1h-{1_790_000_000_000 + seq * 180_000}" if market == "BTC" else (
             f"{market}-1h-{1_790_000_000_000 + seq * 180_000}")
         doc = {
@@ -105,6 +107,8 @@ class Round:
         }
         if market != "BTC":
             doc["market"] = market
+        if venue is not None:
+            doc["venue"] = venue
         self.body = canonical_json(doc)
         self.results_hash = hashlib.sha256(self.body).digest()
 
@@ -123,6 +127,7 @@ class Round:
             "priceCents": self.price,
             "resultsHash": "0x" + self.results_hash.hex(),
             "state": state,
+            "venue": self.venue,  # the server's rows always have the key; null for a round with no exchange of its own
         }
 
 
@@ -703,11 +708,234 @@ class StandJournalTests(unittest.TestCase):
                     {"firstSeq": 1, "records": [{"seq": "1", "roundId": "x"}]},
                     {"firstSeq": 1, "records": [{"seq": 1}]},
                     {"firstSeq": 1, "records": [{"seq": 1, "roundId": "x", "asset": "3"}]},
+                    {"firstSeq": 1, "records": [{"seq": 1, "roundId": "x", "venue": 5}]},
                     ["not", "an", "object"]):
             stand = FakeStand([])
             stand.oracle_records = lambda from_seq, limit, page=bad: page  # type: ignore[method-assign]
             with self.subTest(bad=bad), self.assertRaises(v.NetworkError):
                 v.fetch_records_journal(stand, None)
+
+
+# ======================================================================================
+# Venues (Р-76): the exchange a crypto round ran on, in the hashed document and in the journal
+# ======================================================================================
+
+# Byte for byte the documents server/.../util/ResultsHasherTest.java pins (ResultsHasher.build with a venue), so the
+# Java hasher and this verifier are tied to one byte string, as the CLVM messages above are tied to the Rust encoder.
+GOLDEN_VENUE_SETTLED = (
+    '{"closePriceCents":5100000,"crowd":{"direction":"UP","leverage":5,"marginUsdCents":1000000,"pnlUsdCents":100000},'
+    '"market":"spot_BTC","openPriceCents":5000000,"positions":[{"direction":"UP","leverage":5,"outcome":"SETTLED",'
+    '"payoutMojos":550000,"playerId":"p1","stakeMojos":500000},{"direction":"DOWN","leverage":5,"outcome":"SETTLED",'
+    '"payoutMojos":90000,"playerId":"p2","stakeMojos":100000},{"direction":"UP","leverage":40,"outcome":"LIQUIDATED",'
+    '"payoutMojos":0,"playerId":"p3","stakeMojos":250000}],"roundId":"spot_BTC-1h-1790889263076","series":"HOURLY",'
+    '"status":"SETTLED","venue":"kraken"}'
+)
+GOLDEN_VENUE_SETTLED_HASH = "0xb44603801af528e7f30279d00bc85929190fcb8de1a9bb2e76b384c7e15b4fd8"
+GOLDEN_VENUE_CANCELLED = (
+    '{"closePriceCents":null,"crowd":null,"market":"spot_ETH","openPriceCents":null,"positions":[],'
+    '"roundId":"spot_ETH-1d-1790889263076","series":"DAILY","status":"CANCELLED","venue":"coinbase"}'
+)
+GOLDEN_VENUE_CANCELLED_HASH = "0x2c34933d78b5ef4964804329971e1bbe39aa749b8b69258344033872e9bce204"
+
+# A registry as a stand with backup exchanges publishes it: BTC from before them, spot_BTC (Coinbase, backup Kraken),
+# spot_HYPE (Hyperliquid, backup Coinbase), spot_DOGE (Coinbase, none).
+VENUE_REGISTRY = [
+    {"index": 0, "id": "BTC", "kind": "PERP", "symbol": "BTC", "priceDecimals": 2, "source": "hyperliquid",
+     "sourceRef": "BTC", "listedAtMs": 0, "backup": None},
+    {"index": 9, "id": "spot_BTC", "kind": "PERP", "symbol": "BTC", "priceDecimals": 2, "source": "coinbase",
+     "sourceRef": "BTC-USD", "listedAtMs": 5, "backup": {"source": "kraken", "ref": "BTC/USD"}},
+    {"index": 10, "id": "spot_HYPE", "kind": "PERP", "symbol": "HYPE", "priceDecimals": 4, "source": "hyperliquid",
+     "sourceRef": "@107", "listedAtMs": 6, "backup": {"source": "coinbase", "ref": "HYPE-USD"}},
+    {"index": 11, "id": "spot_DOGE", "kind": "PERP", "symbol": "DOGE", "priceDecimals": 5, "source": "coinbase",
+     "sourceRef": "DOGE-USD", "listedAtMs": 7, "backup": None},
+]
+
+
+def venue_stand(rounds: list[Round], **kwargs: Any) -> tuple[FakeCoinset, FakeStand]:
+    return chain_of([r.message() for r in rounds]), FakeStand(rounds, registry=VENUE_REGISTRY, **kwargs)
+
+
+class VenueTests(unittest.TestCase):
+    def test_the_golden_documents_are_what_the_servers_hasher_pins(self) -> None:
+        # canonical_json (sorted keys, no whitespace) reproduces the Java bytes, and their hashes are the pinned ones
+        for doc, expected_hash in ((GOLDEN_VENUE_SETTLED, GOLDEN_VENUE_SETTLED_HASH),
+                                   (GOLDEN_VENUE_CANCELLED, GOLDEN_VENUE_CANCELLED_HASH)):
+            with self.subTest(doc=doc[:60]):
+                self.assertEqual(canonical_json(json.loads(doc)), doc.encode())
+                self.assertEqual("0x" + hashlib.sha256(doc.encode()).hexdigest(), expected_hash)
+                self.assertEqual(list(json.loads(doc))[-1], "venue", "the venue key sorts after status")
+
+    def test_a_golden_document_with_a_venue_verifies_end_to_end(self) -> None:
+        golden = Round(1, market="spot_BTC", asset=9, price=5_100_000, venue="kraken")
+        golden.round_id = "spot_BTC-1h-1790889263076"
+        golden.body = GOLDEN_VENUE_SETTLED.encode()
+        golden.results_hash = hashlib.sha256(golden.body).digest()
+        self.assertEqual("0x" + golden.results_hash.hex(), GOLDEN_VENUE_SETTLED_HASH)
+        coinset, stand = venue_stand([golden])
+        result, code = run(coinset, stand, strict=True)
+        check = result["stand_check"]
+        self.assertEqual(check["mismatches"], [])
+        self.assertEqual(check["checked"][0]["venue"], "kraken")
+        self.assertTrue(check["checked"][0]["hash_match"] and check["checked"][0]["venue_match"])
+        self.assertEqual(code, 0)
+
+    def test_a_cancelled_golden_document_with_a_venue_verifies(self) -> None:
+        golden = Round(1, market="spot_ETH", asset=12, status="CANCELLED", close_price=None, venue="coinbase")
+        golden.round_id = "spot_ETH-1d-1790889263076"
+        golden.body = GOLDEN_VENUE_CANCELLED.encode()
+        golden.results_hash = hashlib.sha256(golden.body).digest()
+        registry = VENUE_REGISTRY + [
+            {"index": 12, "id": "spot_ETH", "kind": "PERP", "symbol": "ETH", "priceDecimals": 2, "source": "coinbase",
+             "sourceRef": "ETH-USD", "listedAtMs": 8, "backup": {"source": "kraken", "ref": "ETH/USD"}}]
+        coinset = chain_of([golden.message()])
+        result, code = run(coinset, FakeStand([golden], registry=registry), strict=True)
+        self.assertEqual(result["stand_check"]["mismatches"], [])
+        self.assertEqual(result["stand_check"]["checked"][0]["venue"], "coinbase")
+        self.assertEqual(code, 0)
+
+    def test_rounds_on_either_exchange_verify_and_are_counted_by_venue(self) -> None:
+        rounds = [Round(1, market="spot_BTC", asset=9, venue="coinbase"),
+                  Round(2, market="spot_BTC", asset=9, venue="kraken"),
+                  Round(3, market="spot_HYPE", asset=10, venue="hyperliquid"),
+                  Round(4, market="spot_HYPE", asset=10, venue="coinbase"),
+                  Round(5, market="spot_DOGE", asset=11, venue="coinbase"),
+                  Round(6)]  # a BTC round of before the venues: no venue anywhere, byte for byte what it was
+        coinset, stand = venue_stand(rounds)
+        result, code = run(coinset, stand, strict=True)
+        check = result["stand_check"]
+        self.assertEqual(check["mismatches"], [])
+        self.assertEqual({c["seq"]: c["venue"] for c in check["checked"]},
+                         {1: "coinbase", 2: "kraken", 3: "hyperliquid", 4: "coinbase", 5: "coinbase", 6: None})
+        self.assertTrue(all(c["venue_match"] and c["hash_match"] for c in check["checked"]))
+        self.assertEqual(code, 0)
+        text = summary_text(result, strict=True)
+        self.assertIn("venue matches: 6  (rounds by exchange: coinbase 3, hyperliquid 1, kraken 1)", text)
+        self.assertIn("Markets with a backup exchange (the stand's registry): "
+                      "asset 9 (spot_BTC) coinbase -> kraken, asset 10 (spot_HYPE) hyperliquid -> coinbase", text)
+
+    def test_a_stand_without_venues_prints_no_venue_lines(self) -> None:
+        coinset, stand = world([Round(1), Round(2, market="ETH", asset=3)])
+        result, _ = run(coinset, stand, strict=True)
+        text = summary_text(result, strict=True)
+        self.assertNotIn("venue", text)
+        self.assertNotIn("backup", text)
+        self.assertTrue(all(c["venue"] is None and c["venue_match"] for c in result["stand_check"]["checked"]))
+
+    def test_the_venue_is_inside_the_hash(self) -> None:
+        # Somebody rewrites the exchange in the served document (and in the journal, to match): the chain's hash no
+        # longer fits, whatever the journal says.
+        genuine = Round(1, market="spot_BTC", asset=9, venue="coinbase")
+        rewritten = canonical_json({**json.loads(genuine.body), "venue": "kraken"})
+        row = genuine.journal_row()
+        row["venue"] = "kraken"
+        coinset, stand = venue_stand([genuine], bodies={genuine.round_id: rewritten})
+        stand.journal["records"][0] = row
+        result, code = run(coinset, stand)
+        mismatch = result["stand_check"]["mismatches"][0]
+        self.assertFalse(mismatch["hash_match"])
+        self.assertTrue(mismatch["venue_match"], "the document and the journal agree with each other")
+        self.assertEqual(mismatch["venue"], "kraken")
+        self.assertTrue(any("sha256" in p for p in mismatch["problems"]), mismatch["problems"])
+        self.assertEqual(code, 1)
+
+    def test_a_journal_that_names_another_exchange_than_the_document_is_a_mismatch(self) -> None:
+        genuine = Round(1, market="spot_BTC", asset=9, venue="coinbase")
+        coinset, stand = venue_stand([genuine])
+        stand.journal["records"][0]["venue"] = "kraken"
+        result, code = run(coinset, stand)
+        mismatch = result["stand_check"]["mismatches"][0]
+        self.assertTrue(mismatch["hash_match"], "the document is the one the chain anchored")
+        self.assertFalse(mismatch["venue_match"])
+        self.assertEqual(mismatch["venue"], "coinbase", "the hashed document's word comes first")
+        self.assertEqual(mismatch["problems"],
+                         ["results.json says venue 'coinbase' but the stand's journal says 'kraken'"])
+        self.assertEqual(code, 1)
+        text = summary_text(result)
+        self.assertIn("seq=1 round=spot_BTC-1h-", text)
+        self.assertIn("venue=coinbase", text)
+
+    def test_a_journal_venue_the_document_does_not_carry_is_a_mismatch(self) -> None:
+        genuine = Round(1, market="spot_BTC", asset=9)  # the document names no exchange
+        coinset, stand = venue_stand([genuine])
+        stand.journal["records"][0]["venue"] = "kraken"
+        result, code = run(coinset, stand)
+        self.assertEqual(result["stand_check"]["mismatches"][0]["problems"],
+                         ["the stand's journal says venue 'kraken' but results.json carries none"])
+        self.assertEqual(code, 1)
+
+    def test_a_document_venue_the_journal_does_not_give_is_a_mismatch(self) -> None:
+        genuine = Round(1, market="spot_BTC", asset=9, venue="kraken")
+        coinset, stand = venue_stand([genuine])
+        stand.journal["records"][0]["venue"] = None
+        result, code = run(coinset, stand)
+        self.assertEqual(result["stand_check"]["mismatches"][0]["problems"],
+                         ["results.json carries venue 'kraken' but the stand's journal gives none"])
+        self.assertEqual(code, 1)
+
+        del stand.journal["records"][0]["venue"]  # an older journal without the key at all reads the same way
+        result, code = run(coinset, stand)
+        self.assertEqual(len(result["stand_check"]["mismatches"]), 1)
+        self.assertEqual(code, 1)
+
+    def test_a_venue_that_is_neither_the_main_exchange_nor_the_backup_is_a_mismatch(self) -> None:
+        # document and journal agree and the hash fits — but spot_BTC runs on Coinbase and Kraken only
+        wrong = Round(1, market="spot_BTC", asset=9, venue="hyperliquid")
+        coinset, stand = venue_stand([wrong])
+        result, code = run(coinset, stand)
+        mismatch = result["stand_check"]["mismatches"][0]
+        self.assertTrue(mismatch["hash_match"])
+        self.assertFalse(mismatch["venue_match"])
+        self.assertEqual(mismatch["problems"], [
+            "venue 'hyperliquid' is neither the main exchange nor the backup the stand's registry lists for asset 9: "
+            "coinbase, kraken"])
+        self.assertEqual(code, 1)
+
+        # a market without a backup runs on its main exchange only
+        coinset, stand = venue_stand([Round(1, market="spot_DOGE", asset=11, venue="kraken")])
+        result, code = run(coinset, stand)
+        self.assertEqual(len(result["stand_check"]["mismatches"]), 1)
+        self.assertEqual(code, 1)
+
+    def test_a_registry_that_names_no_exchanges_allows_any_venue(self) -> None:
+        # a stand whose registry predates `source`/`backup`: nothing to hold the venue against, only the two sides
+        # of the stand's own story agree with each other
+        rounds = [Round(1, market="spot_BTC", asset=9, venue="kraken")]
+        registry = [{"index": 9, "id": "spot_BTC", "kind": "PERP", "symbol": "BTC"}]
+        coinset = chain_of([rounds[0].message()])
+        result, code = run(coinset, FakeStand(rounds, registry=registry), strict=True)
+        self.assertEqual(result["stand_check"]["mismatches"], [])
+        self.assertEqual(code, 0)
+
+    def test_a_cancelled_round_that_never_got_a_venue_verifies(self) -> None:
+        # a round that was refunded because no exchange could price its start was never decided: no venue anywhere
+        cancelled = Round(1, market="spot_BTC", asset=9, status="CANCELLED", close_price=None)
+        coinset, stand = venue_stand([cancelled])
+        result, code = run(coinset, stand, strict=True)
+        self.assertEqual(result["stand_check"]["mismatches"], [])
+        self.assertIsNone(result["stand_check"]["checked"][0]["venue"])
+        self.assertEqual(code, 0)
+
+    def test_a_venue_that_is_not_a_string_in_the_document_is_a_mismatch(self) -> None:
+        genuine = Round(1, market="spot_BTC", asset=9, venue="coinbase")
+        body = canonical_json({**json.loads(genuine.body), "venue": 5})
+        genuine.body, genuine.results_hash = body, hashlib.sha256(body).digest()
+        coinset, stand = venue_stand([genuine])
+        stand.journal["records"][0]["resultsHash"] = "0x" + genuine.results_hash.hex()
+        result, code = run(coinset, stand)
+        problems = result["stand_check"]["mismatches"][0]["problems"]
+        self.assertEqual(problems, ["results.json has a venue that is not a string: 5"])
+        self.assertEqual(code, 1)
+
+    def test_without_a_journal_the_venue_is_read_but_not_compared(self) -> None:
+        # a stand with no /api/oracle/records has no journal side to compare with (and no venues)
+        rounds = [Round(1, venue="coinbase")]
+        coinset = chain_of([rounds[0].message()])
+        stand = FakeStand(rounds, journal=None, registry=None, rpc=rpc_for(rounds))
+        result, code = run(coinset, stand)
+        self.assertEqual(result["stand_check"]["mode"], "rounds-rpc-fallback")
+        self.assertEqual(result["stand_check"]["mismatches"], [])
+        self.assertEqual(result["stand_check"]["checked"][0]["venue"], "coinbase")
+        self.assertEqual(code, 0)
 
 
 # ======================================================================================

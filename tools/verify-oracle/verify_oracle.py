@@ -51,11 +51,22 @@ What "verified" means here, precisely:
     stand assigns to that round (and its registry maps that index to that round's market).
     This is Р-41's whole point: "любой может сверить, что итоги не поменяли задним числом" —
     this tool is that anyone.
+  - (with --stand-url) Which exchange a crypto round ran on (Р-76). A market that has a backup
+    exchange (the registry's `backup`) opens each round on its main exchange or on the backup and
+    runs on that one exchange to the end; the round says which in a root key "venue" of its
+    results.json — so the venue is inside the hash the chain anchored, and priceCents is the
+    close ON THAT EXCHANGE — and the journal repeats it per record. The two must agree (a round
+    whose document names another exchange than the journal, or only one of them names one, is a
+    mismatch), and the venue must be the market's main or backup exchange in the stand's
+    registry. A round with no venue (every round of a market without a backup, every BTC round
+    before multi-venue, a cancelled round that never got one) has no "venue" key, and its
+    document is byte for byte what it always was.
 
 What this tool does NOT verify (out of scope, said plainly instead of implied): that the
-priceCents the oracle published was itself a correct/honest price (that trust is in the
-operator key + the price source, Hyperliquid or Polymarket, Р-11/PLAN.md §2 — a centralized-
-oracle tradeoff made on purpose and documented, not hidden); that the positions/payouts
+priceCents the oracle published was itself a correct/honest price on the exchange it names (that
+trust is in the operator key + the price source, Hyperliquid, Coinbase, Kraken or Polymarket,
+Р-11/PLAN.md §2 — a centralized-oracle tradeoff made on purpose and documented, not hidden; the
+venue only tells you WHICH exchange to compare it against); that the positions/payouts
 inside results.json were computed correctly by the engine's leverage math (a separate
 concern, covered by engine/'s own unit tests, not by this tool); AGG_SIG_ME signatures on
 each spend (coinset's own full nodes already rejected any spend that failed that check before
@@ -65,7 +76,8 @@ chain data this tool already reads, not adding any).
 --- How rounds map to seq ---
 
 Preferred: the stand's records journal, `GET /api/oracle/records?fromSeq=N&limit=1000` →
-`{firstSeq, records: [{seq, roundId, marketId, asset, ts, priceCents, resultsHash, state}]}`,
+`{firstSeq, records: [{seq, roundId, marketId, asset, ts, priceCents, resultsHash, state, venue}]}`
+(`venue` is null or absent for a round that ran on no particular exchange),
 paged by `limit` (1000) until a short page. It is a thin read over the stand's own
 `oracle_records` table, so it covers every market and every round the stand ever queued, not
 only the ones a walk could reach. `firstSeq` is the lowest seq in that table: the start of THIS
@@ -632,6 +644,7 @@ def fetch_records_journal(stand: Any, from_seq: Optional[int]) -> Optional[dict]
                 or not isinstance(row.get("roundId"), str)
                 or not row["roundId"]
                 or not isinstance(row.get("asset", 0), (int, type(None)))
+                or not isinstance(row.get("venue"), (str, type(None)))
             ):
                 raise NetworkError(f"the stand's /api/oracle/records has a malformed row: {str(row)[:160]!r}")
             records.setdefault(row["seq"], row)
@@ -707,6 +720,25 @@ def asset_label(registry: dict[int, dict], asset: int) -> str:
     return f"asset {asset} ({entry['id']})"
 
 
+def backup_of(entry: Optional[dict]) -> Optional[dict]:
+    """The registry entry's backup exchange, `{source, ref}`, or None for a market with none (or a stand that
+    predates backups and has no such key)."""
+    backup = entry.get("backup") if entry else None
+    return backup if isinstance(backup, dict) and backup.get("source") else None
+
+
+def venues_of(entry: Optional[dict]) -> set[str]:
+    """The exchanges a round of this registry entry may have run on: the market's main exchange and its backup.
+    Empty when the entry names none (a stand whose registry predates `source`), which allows any."""
+    venues = set()
+    if entry and entry.get("source"):
+        venues.add(entry["source"])
+    backup = backup_of(entry)
+    if backup:
+        venues.add(backup["source"])
+    return venues
+
+
 def cross_check(
     chain_seqs: dict[int, dict],
     stand: Any,
@@ -717,8 +749,9 @@ def cross_check(
 ) -> dict:
     """Checks every on-chain seq in scope against the stand's round for it.
 
-    `stand_records`: {seq: {roundId, marketId (or None), asset (or None), state}} — the records
-    journal, or what the BTC-only fallback discovered (asset/marketId None: "BTC, by assumption").
+    `stand_records`: {seq: {roundId, marketId (or None), asset (or None), state, venue (or None)}} —
+    the records journal, or what the BTC-only fallback discovered (asset/marketId None: "BTC, by
+    assumption"; venue None: that stand has no venues).
     `asset_known`: whether `stand_records` carries a real asset per seq (the journal) or not."""
     checked = []
     mismatches = []
@@ -755,6 +788,11 @@ def cross_check(
                     f"the stand's registry maps asset {chain_asset} to {reg.get('id')} but the round's market is {market_id}"
                 )
 
+        # Which exchange the round ran on (Р-76): what the journal says, and below what the hashed document says.
+        journal_venue = record.get("venue") if asset_known else None
+        doc_venue: Any = None
+        venue_ok = True
+
         body = stand.results_json_bytes(round_id)
         results: Any = None
         computed_hash = None
@@ -763,6 +801,7 @@ def cross_check(
         if body is None:
             problems.append("results.json not found on stand")
         else:
+            # The bytes as served, hashed as they are: a root key "venue" is inside them and so inside the hash.
             computed_hash = "0x" + hashlib.sha256(body).hexdigest()
             try:
                 results = json.loads(body)
@@ -783,8 +822,33 @@ def cross_check(
                 doc_market = results.get("market")
                 if doc_market is not None and market_id is not None and doc_market != market_id:
                     problems.append(f"results.json says market {doc_market!r} but the stand's journal says {market_id!r}")
+                doc_venue = results.get("venue")
+                if doc_venue is not None and not isinstance(doc_venue, str):
+                    problems.append(f"results.json has a venue that is not a string: {doc_venue!r}")
+                    venue_ok = False
+                elif asset_known and doc_venue != journal_venue:
+                    # Unlike the market, the venue is compared when only one side has it: a journal that names an
+                    # exchange the hashed document does not (or the other way round) is two different stories.
+                    if doc_venue is not None and journal_venue is not None:
+                        problems.append(f"results.json says venue {doc_venue!r} but the stand's journal says {journal_venue!r}")
+                    elif doc_venue is not None:
+                        problems.append(f"results.json carries venue {doc_venue!r} but the stand's journal gives none")
+                    else:
+                        problems.append(f"the stand's journal says venue {journal_venue!r} but results.json carries none")
+                    venue_ok = False
             elif results is not None:
                 problems.append("results.json is not a JSON object")
+
+        # The hashed document's word first (it is what the chain anchored); the journal's when there is no document.
+        venue = doc_venue if isinstance(doc_venue, str) else journal_venue
+        if venue is not None:
+            allowed = venues_of(registry.get(chain_asset))
+            if allowed and venue not in allowed:
+                problems.append(
+                    f"venue {venue!r} is neither the main exchange nor the backup the stand's registry lists for "
+                    f"asset {chain_asset}: {', '.join(sorted(allowed))}"
+                )
+                venue_ok = False
 
         entry = {
             "seq": seq,
@@ -800,6 +864,8 @@ def cross_check(
             "priceCents_onchain": announcement["priceCents"],
             "closePriceCents_stand": close_cents,
             "price_match": price_ok,
+            "venue": venue,
+            "venue_match": venue_ok,
             "stand_state": record.get("state"),
             "problems": problems,
         }
@@ -893,6 +959,7 @@ def verify(
                     "marketId": row.get("marketId"),
                     "asset": row.get("asset") or 0,  # absent or null = BTC, the only market there was
                     "state": row.get("state"),
+                    "venue": row.get("venue"),  # absent or null = the round ran on no particular exchange
                 }
                 for seq, row in journal["records"].items()
             }
@@ -909,7 +976,7 @@ def verify(
             eprint("  the stand has no /api/oracle/records — falling back to the BTC round walk")
             discovered = discover_rounds(stand, verbose)
             stand_records = {
-                seq: {"roundId": d["roundId"], "marketId": None, "asset": None, "state": d.get("state")}
+                seq: {"roundId": d["roundId"], "marketId": None, "asset": None, "state": d.get("state"), "venue": None}
                 for seq, d in discovered.items()
             }
             stand_first_seq = None
@@ -1052,11 +1119,26 @@ def print_human_summary(result: dict, strict: bool = False) -> None:
         print(f"  hash matches:  {sum(1 for c in stand_check['checked'] if c['hash_match'])}")
         print(f"  price matches: {sum(1 for c in stand_check['checked'] if c['price_match'])}")
         print(f"  asset matches: {sum(1 for c in stand_check['checked'] if c['asset_match'])}")
+        by_venue: dict[str, int] = {}
+        for c in stand_check["checked"]:
+            if c.get("venue"):
+                by_venue[c["venue"]] = by_venue.get(c["venue"], 0) + 1
+        if by_venue:
+            # Rounds with no venue are every round of a market without a backup; only the others are counted here.
+            print(f"  venue matches: {sum(1 for c in stand_check['checked'] if c.get('venue_match', True))}"
+                  f"  (rounds by exchange: {', '.join(f'{venue} {n}' for venue, n in sorted(by_venue.items()))})")
+        stand_registry = {int(k): e for k, e in stand_check["registry"].items()}
+        with_backup = [(a, e) for a, e in sorted(stand_registry.items()) if backup_of(e)]
+        if with_backup:
+            print("Markets with a backup exchange (the stand's registry): " + ", ".join(
+                f"{asset_label(stand_registry, a)} {e.get('source')} -> {backup_of(e)['source']}"
+                for a, e in with_backup))
         print(f"Mismatches:                                                {len(stand_check['mismatches'])}")
         if stand_check["mismatches"]:
             print("\nMISMATCH DETAILS:")
             for m in stand_check["mismatches"]:
-                print(f"  seq={m['seq']} round={m['roundId']} [{m['asset_label']}]")
+                print(f"  seq={m['seq']} round={m['roundId']} [{m['asset_label']}]"
+                      + (f" venue={m['venue']}" if m.get("venue") else ""))
                 for p in m["problems"]:
                     print(f"    - {p}")
         if stand_check["unmapped_in_scope"]:
