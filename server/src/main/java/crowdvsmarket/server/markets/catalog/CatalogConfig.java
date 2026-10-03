@@ -103,6 +103,13 @@ public record CatalogConfig(
         disabledVenues = Set.copyOf(disabledVenues);
     }
 
+    /** The same settings with these venues switched off ({@code herd.prices.disabled-venues}). */
+    public CatalogConfig withDisabledVenues(Set<String> venues) {
+        return new CatalogConfig(liveSources, syntheticSource, crypto, stocks, indices, commodities, polymarketEnabled,
+                politicsCount, sportsCount, oddsMaxLeverage, inPlayFirst, gameCooldownMs, coinbase, hyperliquidSpot,
+                spotMaxLeverage, spotBackup, venues);
+    }
+
     /** The venues a backup may be: where a round can run besides the primary (Р-76). */
     public static final Set<String> BACKUP_VENUES = Set.of("coinbase", "kraken");
     /** What {@code herd.markets.spot.backup} says for a symbol that has no backup. */

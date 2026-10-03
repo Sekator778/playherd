@@ -1028,9 +1028,10 @@ class PolymarketCatalogTest {
                 3, 10, true);
         CatalogConfig synthetic = new CatalogConfig(false, true, List.of("BTC"), List.of(), List.of(), List.of(), true,
                 3, 3, 10, true);
+        CatalogConfig venueOff = config(3, 3, true).withDisabledVenues(java.util.Set.of("polymarket")); // herd.prices.disabled-venues
         registry.add(activePm("PM1", "tok1", Category.POLITICS, NOW + 1_000, null));
 
-        for (CatalogConfig config : List.of(disabled, replay, synthetic)) {
+        for (CatalogConfig config : List.of(disabled, replay, synthetic, venueOff)) {
             PolymarketCatalog catalog = catalog(config);
             catalog.refreshJob();
             catalog.watchJob();

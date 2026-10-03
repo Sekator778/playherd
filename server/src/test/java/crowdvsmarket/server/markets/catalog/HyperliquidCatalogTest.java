@@ -275,6 +275,27 @@ class HyperliquidCatalogTest {
         assertThat(registry.log).containsExactly("listed ETH");
     }
 
+    @Test
+    void theScheduledRunAsksNothingOfASwitchedOffHyperliquid() {
+        CatalogConfig off = config(List.of("ETH"), List.of(), List.of(), List.of())
+                .withDisabledVenues(java.util.Set.of("hyperliquid"));
+
+        catalog(off).run();
+
+        assertThat(api.info.requests).as("not even the catalog asks a venue that is off").isEmpty();
+        assertThat(registry.log).isEmpty();
+    }
+
+    @Test
+    void theScheduledRunIsNotStoppedByAnotherVenueBeingOff() {
+        CatalogConfig coinbaseOff = config(List.of("ETH"), List.of(), List.of(), List.of())
+                .withDisabledVenues(java.util.Set.of("coinbase", "kraken", "polymarket"));
+
+        catalog(coinbaseOff).run();
+
+        assertThat(registry.log).containsExactly("listed ETH");
+    }
+
     // ------------------------------------------------------------- a delisted asset closes its market (G2)
 
     private HyperliquidCatalog catalog(HyperliquidLiveState state) {
