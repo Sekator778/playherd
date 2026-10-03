@@ -136,7 +136,7 @@ async function main() {
   }
 
   // --- 2. find the currently open-for-betting HOURLY round of the bitcoin pair. Its market id depends on where
-  //     its price comes from — BTC (Hyperliquid, or the offline walk) or cb_BTC (Coinbase, once the stand has
+  //     its price comes from — BTC (Hyperliquid, or the offline walk) or spot_BTC (Coinbase, once the stand has
   //     "moved to a new price source" and the BTC row is closed) — so the pair is looked up, never assumed. ---
   let marketId;
   try {

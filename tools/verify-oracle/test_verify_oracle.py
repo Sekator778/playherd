@@ -520,16 +520,16 @@ class StandJournalTests(unittest.TestCase):
 
     def test_a_stand_whose_btc_moved_to_coinbase_verifies_both_eras(self) -> None:
         # BTC's price moved from Hyperliquid to Coinbase ("Moved to a new price source: Coinbase"): the old BTC row
-        # (asset 0) is closed but stays in the registry, the new market cb_BTC has an index of its own and the source
+        # (asset 0) is closed but stays in the registry, the new market spot_BTC has an index of its own and the source
         # "coinbase". The verifier reads the registry for ids and indexes only — no source is special, none needs to be
         # known — so rounds of both eras verify, and each is labelled with its own market.
-        rounds = [Round(1), Round(2), Round(3, market="cb_BTC", asset=9), Round(4, market="cb_BTC", asset=9)]
+        rounds = [Round(1), Round(2), Round(3, market="spot_BTC", asset=9), Round(4, market="spot_BTC", asset=9)]
         registry = [
             {"index": 0, "id": "BTC", "kind": "PERP", "symbol": "BTC", "priceDecimals": 2, "source": "hyperliquid",
              "sourceRef": "BTC", "listedAtMs": 0},
-            {"index": 9, "id": "cb_BTC", "kind": "PERP", "symbol": "BTC", "priceDecimals": 2, "source": "coinbase",
+            {"index": 9, "id": "spot_BTC", "kind": "PERP", "symbol": "BTC", "priceDecimals": 2, "source": "coinbase",
              "sourceRef": "BTC-USD", "listedAtMs": 5},
-            {"index": 10, "id": "hls_HYPE", "kind": "PERP", "symbol": "HYPE", "priceDecimals": 4,
+            {"index": 10, "id": "spot_HYPE", "kind": "PERP", "symbol": "HYPE", "priceDecimals": 4,
              "source": "hyperliquid", "sourceRef": "@107", "listedAtMs": 6},
         ]
         coinset = chain_of([r.message() for r in rounds])
@@ -537,7 +537,7 @@ class StandJournalTests(unittest.TestCase):
         check = result["stand_check"]
         self.assertEqual(check["mismatches"], [])
         self.assertEqual({c["seq"]: c["asset_label"] for c in check["checked"]},
-                         {1: "asset 0 (BTC)", 2: "asset 0 (BTC)", 3: "asset 9 (cb_BTC)", 4: "asset 9 (cb_BTC)"})
+                         {1: "asset 0 (BTC)", 2: "asset 0 (BTC)", 3: "asset 9 (spot_BTC)", 4: "asset 9 (spot_BTC)"})
         self.assertEqual(code, 0)
 
     def test_a_stand_whose_epoch_starts_mid_chain(self) -> None:

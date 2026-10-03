@@ -23,6 +23,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.WebApplicationException;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,15 +35,17 @@ import org.jboss.logging.Logger;
 
 /**
  * Lists the crypto markets that are priced by the exchange of the asset itself — one market per Coinbase Exchange USD
- * product of {@code herd.markets.coinbase} ({@code BTC-USD} → {@code cb_BTC}) and per token of
- * {@code herd.markets.hyperliquid-spot} ({@code HYPE} → {@code hls_HYPE}, the pair HYPE/USDC of Hyperliquid's spot
+ * product of {@code herd.markets.coinbase} ({@code BTC-USD} → {@code spot_BTC}) and per token of
+ * {@code herd.markets.hyperliquid-spot} ({@code HYPE} → {@code spot_HYPE}, the pair HYPE/USDC of Hyperliquid's spot
  * market) — and <b>retires the market each of them replaces</b>
  * (docs/research/primary_sources.md §4; iteration 1 of the move from Hyperliquid's perpetuals to the venues' own
  * prices). A source change is a new market (Т-10): the new one has its own id, source, lot exponent and oracle index.
  *
  * <p><b>The market.</b> Kind {@code PERP} — which now means "the USD price of an asset", whatever the venue — category
- * {@code crypto}, the symbol the coin's own ({@code BTC}), the title from {@link MarketNames}. {@code cb_*}: source
- * {@code coinbase}, {@code sourceRef} the product id; {@code hls_*}: source {@code hyperliquid}, {@code sourceRef} the
+ * {@code crypto}, the symbol the coin's own ({@code BTC}), the title from {@link MarketNames}. The id is
+ * {@code spot_<SYMBOL>} whichever venue prices the market (a market may be priced by its backup exchange, so the id says
+ * nothing about a venue). Priced by Coinbase: source {@code coinbase}, {@code sourceRef} the product id; priced by Hyperliquid's
+ * spot market: source {@code hyperliquid}, {@code sourceRef} the
  * pair's name in Hyperliquid's spot meta ({@code "@107"}, found by the token names HYPE and USDC — never hard-coded),
  * {@code sourceMeta} {@code {"spot":true,"pair":"HYPE/USDC"}}. Leverage is {@code herd.markets.spot.max-leverage} of the
  * symbol (the caps the six markets had as perpetuals), at most 40; the lot exponent is {@link Market#lotExpFor} of the
@@ -84,8 +87,8 @@ public class SpotCatalog {
     /** Shown to the players as it stands. */
     static final String REASON_COINBASE = "Moved to a new price source: Coinbase";
     static final String REASON_HYPERLIQUID_SPOT = "Moved to a new price source: Hyperliquid spot";
-    static final String COINBASE_ID_PREFIX = "cb_";
-    static final String HYPERLIQUID_SPOT_ID_PREFIX = "hls_";
+    /** The id of every market of this catalog: {@code spot_BTC}, whichever venue prices it (a market can move to its backup). */
+    static final String ID_PREFIX = "spot_";
     /** What a spot pair of Hyperliquid is quoted in. */
     static final String HYPERLIQUID_QUOTE = "USDC";
 
@@ -150,7 +153,7 @@ public class SpotCatalog {
                 continue;
             }
             String symbol = m.group(1);
-            String id = COINBASE_ID_PREFIX + symbol;
+            String id = ID_PREFIX + symbol;
             if (!LEGAL_ID.matcher(id).matches()) {
                 markBad(product, "'" + id + "' is not a legal market id");
                 continue;
@@ -196,12 +199,13 @@ public class SpotCatalog {
     private int syncHyperliquidSpot(long nowMs) {
         int pending = 0;
         JsonNode answer = null; // one read of Hyperliquid's spot meta serves every token of this pass
+        Map<String, JsonNode> contexts = null;
         boolean unreachable = false;
         for (String symbol : config.hyperliquidSpot()) {
             if (knownBad.contains(symbol)) {
                 continue;
             }
-            String id = HYPERLIQUID_SPOT_ID_PREFIX + symbol;
+            String id = ID_PREFIX + symbol;
             if (!HYPERLIQUID_TOKEN.matcher(symbol).matches() || !LEGAL_ID.matcher(id).matches()) {
                 markBad(symbol, "not a token name a market can be made of");
                 continue;
@@ -216,9 +220,11 @@ public class SpotCatalog {
             if (answer == null) {
                 try {
                     answer = hyperliquid.get().info(HyperliquidSpotPriceSource.spotMetaAndAssetCtxsRequest());
-                } catch (RuntimeException e) {
+                    contexts = HyperliquidSpotPriceSource.contexts(answer); // refuses what is not [meta, ctxs]
+                } catch (RuntimeException e) { // unreachable, or an error body that is no meta: not a pair that is missing
                     LOG.warnf("Hyperliquid spot meta unavailable, the spot market(s) wait for the next run: %s",
                             e.toString());
+                    answer = null;
                     unreachable = true;
                     pending++;
                     continue;
@@ -229,15 +235,8 @@ public class SpotCatalog {
                 markBad(symbol, "Hyperliquid's spot meta has no single pair " + symbol + "/" + HYPERLIQUID_QUOTE);
                 continue;
             }
-            BigDecimal mid;
-            try {
-                JsonNode ctx = HyperliquidSpotPriceSource.contexts(answer).get(pair.get());
-                mid = ctx == null ? null : Dec.of(ctx.path("midPx"));
-            } catch (IllegalStateException e) {
-                LOG.warnf("Hyperliquid's spot answer is not what it was, %s waits for the next run: %s", id, e.toString());
-                pending++;
-                continue;
-            }
+            JsonNode ctx = contexts.get(pair.get());
+            BigDecimal mid = ctx == null ? null : Dec.of(ctx.path("midPx"));
             if (mid == null || mid.signum() <= 0) {
                 LOG.warnf("%s (%s) has no midPx yet, will try again", pair.get(), symbol);
                 pending++;

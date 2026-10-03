@@ -108,7 +108,7 @@ class CoinbasePriceSourceTest {
     void aPollIsAnsweredFromTheNewestTickerMessageWithNoRequestAtAll() throws Exception {
         // the stream is not up yet: the first poll reads the REST ticker (best bid 84631.94, ask 84631.95) and asks for the stream
         Map<String, PriceSource.Quote> first = source.poll(feed, List.of(btc));
-        assertThat(first.get("cb_BTC").raw()).isEqualByComparingTo("84631.945");
+        assertThat(first.get("spot_BTC").raw()).isEqualByComparingTo("84631.945");
         assertThat(api.ticker.requests).containsExactly("BTC-USD");
 
         connectTheStream();
@@ -121,10 +121,10 @@ class CoinbasePriceSourceTest {
 
         Map<String, PriceSource.Quote> second = source.poll(feed, List.of(btc));
 
-        assertThat(second.get("cb_BTC").raw()).as("(best bid + best ask) / 2").isEqualByComparingTo("84635.565");
+        assertThat(second.get("spot_BTC").raw()).as("(best bid + best ask) / 2").isEqualByComparingTo("84635.565");
         assertThat(api.ticker.requests).as("no further request: the quote is 1 s old").hasSize(1);
         // open_24h 86412.21 in the same message
-        assertThat(second.get("cb_BTC").change24h()).isCloseTo(-0.02056, org.assertj.core.data.Offset.offset(1e-5));
+        assertThat(second.get("spot_BTC").change24h()).isCloseTo(-0.02056, org.assertj.core.data.Offset.offset(1e-5));
     }
 
     @Test
@@ -142,12 +142,12 @@ class CoinbasePriceSourceTest {
         now.addAndGet(500);
         Map<String, PriceSource.Quote> quotes = source.poll(feed, markets);
 
-        assertThat(quotes).containsOnlyKeys("cb_BTC", "cb_ETH", "cb_SOL", "cb_XRP", "cb_DOGE");
-        assertThat(quotes.get("cb_BTC").raw()).isEqualByComparingTo(midOf("ws_ticker_btc.json"));
-        assertThat(quotes.get("cb_ETH").raw()).isEqualByComparingTo(midOf("ws_ticker_eth.json"));
-        assertThat(quotes.get("cb_SOL").raw()).isEqualByComparingTo(midOf("ws_ticker_sol.json"));
-        assertThat(quotes.get("cb_XRP").raw()).isEqualByComparingTo(new BigDecimal("1.48245")); // 1.4824 and 1.4825
-        assertThat(quotes.get("cb_DOGE").raw()).isEqualByComparingTo(new BigDecimal("0.09282500")); // 0.09281 and 0.09284
+        assertThat(quotes).containsOnlyKeys("spot_BTC", "spot_ETH", "spot_SOL", "spot_XRP", "spot_DOGE");
+        assertThat(quotes.get("spot_BTC").raw()).isEqualByComparingTo(midOf("ws_ticker_btc.json"));
+        assertThat(quotes.get("spot_ETH").raw()).isEqualByComparingTo(midOf("ws_ticker_eth.json"));
+        assertThat(quotes.get("spot_SOL").raw()).isEqualByComparingTo(midOf("ws_ticker_sol.json"));
+        assertThat(quotes.get("spot_XRP").raw()).isEqualByComparingTo(new BigDecimal("1.48245")); // 1.4824 and 1.4825
+        assertThat(quotes.get("spot_DOGE").raw()).isEqualByComparingTo(new BigDecimal("0.09282500")); // 0.09281 and 0.09284
         assertThat(api.ticker.requests).isEmpty();
     }
 
@@ -171,8 +171,8 @@ class CoinbasePriceSourceTest {
         Map<String, PriceSource.Quote> pastIt = source.poll(feed, markets);
 
         assertThat(api.ticker.requests).as("only DOGE-USD is stale").containsExactly("DOGE-USD");
-        assertThat(pastIt.get("cb_BTC").raw()).isEqualByComparingTo(midOf("ws_ticker_btc.json"));
-        assertThat(pastIt.get("cb_DOGE").raw()).as("the REST ticker's bid 0.09267, ask 0.09268")
+        assertThat(pastIt.get("spot_BTC").raw()).isEqualByComparingTo(midOf("ws_ticker_btc.json"));
+        assertThat(pastIt.get("spot_DOGE").raw()).as("the REST ticker's bid 0.09267, ask 0.09268")
                 .isEqualByComparingTo("0.092675");
     }
 
@@ -186,8 +186,8 @@ class CoinbasePriceSourceTest {
         now.addAndGet(2_000);
         Map<String, PriceSource.Quote> second = source.poll(feed, markets);
 
-        assertThat(first).containsOnlyKeys("cb_BTC", "cb_DOGE");
-        assertThat(second).containsOnlyKeys("cb_BTC", "cb_DOGE");
+        assertThat(first).containsOnlyKeys("spot_BTC", "spot_DOGE");
+        assertThat(second).containsOnlyKeys("spot_BTC", "spot_DOGE");
         assertThat(api.ticker.requests).containsExactlyInAnyOrder("BTC-USD", "DOGE-USD", "BTC-USD", "DOGE-USD");
         assertThat(transport.attempts).isEqualTo(1);
     }
@@ -204,7 +204,7 @@ class CoinbasePriceSourceTest {
         Map<String, PriceSource.Quote> quotes = source.poll(feed, List.of(btc));
 
         assertThat(transport.last().aborted).isTrue();
-        assertThat(quotes.get("cb_BTC").raw()).as("... and the poll reads the venue's REST ticker")
+        assertThat(quotes.get("spot_BTC").raw()).as("... and the poll reads the venue's REST ticker")
                 .isEqualByComparingTo("84631.945");
         assertThat(api.ticker.requests).containsExactly("BTC-USD");
     }
@@ -216,7 +216,7 @@ class CoinbasePriceSourceTest {
         deliver("ws_ticker_btc.json"); // open_24h 86412.21
         now.addAndGet(60_000); // long past the freshness limit: REST
 
-        PriceSource.Quote viaRest = source.poll(feed, List.of(btc)).get("cb_BTC");
+        PriceSource.Quote viaRest = source.poll(feed, List.of(btc)).get("spot_BTC");
 
         assertThat(viaRest.raw()).isEqualByComparingTo("84631.945");
         assertThat(viaRest.change24h()).as("(84631.945 - 86412.21) / 86412.21")
@@ -235,7 +235,7 @@ class CoinbasePriceSourceTest {
         now.addAndGet(100);
         Map<String, PriceSource.Quote> quotes = source.poll(feed, List.of(btc, doge)); // DOGE has no quote and its read fails
 
-        assertThat(quotes).containsOnlyKeys("cb_BTC");
+        assertThat(quotes).containsOnlyKeys("spot_BTC");
     }
 
     @Test
@@ -264,7 +264,7 @@ class CoinbasePriceSourceTest {
         transport.last().deliver("{\"type\":\"ticker\",\"product_id\":\"BTC-USD\",\"price\":\"84640\"}"); // no book at all
         now.addAndGet(1_000);
 
-        assertThat(source.poll(feed, List.of(btc)).get("cb_BTC").raw()).isEqualByComparingTo(good);
+        assertThat(source.poll(feed, List.of(btc)).get("spot_BTC").raw()).isEqualByComparingTo(good);
         assertThat(CoinbasePriceSource.isBook(new BigDecimal("1"), new BigDecimal("1"))).as("a locked book is a price").isTrue();
         assertThat(CoinbasePriceSource.isBook(new BigDecimal("2"), new BigDecimal("1"))).isFalse();
     }
@@ -294,7 +294,7 @@ class CoinbasePriceSourceTest {
 
         Map<String, PriceSource.Quote> quotes = source.poll(feed, List.of(btc));
 
-        assertThat(quotes.get("cb_BTC").raw()).as("no quote from the stream: the REST read").isEqualByComparingTo("84631.945");
+        assertThat(quotes.get("spot_BTC").raw()).as("no quote from the stream: the REST read").isEqualByComparingTo("84631.945");
         assertThat(api.ticker.requests).containsExactly("BTC-USD");
     }
 

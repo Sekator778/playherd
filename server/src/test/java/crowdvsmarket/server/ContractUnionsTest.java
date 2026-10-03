@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import crowdvsmarket.server.config.GameMode;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.markets.Category;
+import crowdvsmarket.server.prices.CoinbasePriceSource;
 import crowdvsmarket.server.prices.HyperliquidPriceSource;
 import crowdvsmarket.server.prices.PolymarketPriceSource;
 import crowdvsmarket.server.prices.PricesConfig;
@@ -84,9 +85,9 @@ class ContractUnionsTest {
     }
 
     private static final Side SOURCES = new Side("the names of the price sources (HyperliquidPriceSource, "
-            + "PolymarketPriceSource, SyntheticPriceSource)",
-            new LinkedHashSet<>(List.of(HyperliquidPriceSource.NAME, PolymarketPriceSource.NAME,
-                    SyntheticPriceSource.NAME)), Set.of());
+            + "CoinbasePriceSource, PolymarketPriceSource, SyntheticPriceSource)",
+            new LinkedHashSet<>(List.of(HyperliquidPriceSource.NAME, CoinbasePriceSource.NAME,
+                    PolymarketPriceSource.NAME, SyntheticPriceSource.NAME)), Set.of());
 
     private static Side priceSources() {
         Set<String> values = new LinkedHashSet<>(lowerCase(PricesConfig.SourceKind.class).values());

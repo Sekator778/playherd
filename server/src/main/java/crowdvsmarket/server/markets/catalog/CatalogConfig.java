@@ -198,7 +198,7 @@ public record CatalogConfig(
     /**
      * What the offline walk lists as perpetuals: {@link #perpNames} — but with no crypto configured, the six crypto
      * markets the list used to have before they moved to their venues, under their own ids ({@code ETH}, not
-     * {@code cb_ETH}), so that CI and the e2e run on the same markets as ever.
+     * {@code spot_ETH}), so that CI and the e2e run on the same markets as ever.
      */
     public List<PerpName> syntheticPerpNames() {
         if (!crypto.isEmpty()) {
