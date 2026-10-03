@@ -627,7 +627,7 @@ describe("Room — the exchange behind the price, and behind the round (Р-76)",
     await screen.findByText("BTC/USD");
     const note = await screen.findByRole("note");
     expect(note).toHaveTextContent(
-      "This round runs on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation are Kraken's.",
+      "The live round runs on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation are Kraken's.",
     );
   });
 
@@ -643,7 +643,7 @@ describe("Room — the exchange behind the price, and behind the round (Р-76)",
       markets: SPOT,
       running: (marketId) => ({ ...runningRoundOf(marketId, "BTC", { source: "kraken" }), phase: "SETTLED", openPrice: "84000.00", closePrice: "84100.00", positions: [], crowd: null }) as unknown as RoundRunning,
     });
-    expect(await screen.findByRole("note")).toHaveTextContent("This round ran on Kraken, the backup exchange");
+    expect(await screen.findByRole("note")).toHaveTextContent("The round that just ended ran on Kraken, the backup exchange");
   });
 
   it("an odds market's room names its source in the tag's hover text — Polymarket's here, a simulated one's elsewhere", async () => {

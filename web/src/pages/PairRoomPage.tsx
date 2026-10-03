@@ -561,7 +561,10 @@ function Room({ market }: { market: MarketDto }) {
         </div>
       </div>
       <OracleDisclosureLine source={market.source} backup={market.backupSource} />
-      {(running.phase === "RUNNING" || running.phase === "SETTLED") && <RoundVenueNote source={running.source} market={market} phase={running.phase} />}
+      {/* The exchange of the round open for bets is chosen when it starts: the note is about the one already running. */}
+      {(running.phase === "RUNNING" || running.phase === "SETTLED") && (
+        <RoundVenueNote source={running.source} market={market} phase={running.phase} subject="live" />
+      )}
 
       <div className="room-arena-wrap">
         <div className={`room-arena ${lockedOverlay ? "room-arena--locked" : ""}`}>

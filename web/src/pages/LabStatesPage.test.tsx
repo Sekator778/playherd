@@ -43,6 +43,7 @@ describe("/lab/states — the designed states are all drawn", () => {
     const notes = screen.getAllByRole("note").map((n) => n.textContent);
     expect(notes).toContain("This round runs on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation are Kraken's.");
     expect(notes).toContain("This round ran on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation were Kraken's.");
+    expect(notes).toContain("The live round runs on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation are Kraken's.");
     expect(screen.getByText("Latest point: Kraken's price — Coinbase has no fresh price right now")).toBeInTheDocument();
   });
 

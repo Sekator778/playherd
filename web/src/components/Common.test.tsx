@@ -59,6 +59,11 @@ describe("RoundVenueNote — a round on the backup exchange says so", () => {
     expect(screen.getByRole("note")).toHaveTextContent("every liquidation were Kraken's");
   });
 
+  it("in a room it is about the live round — the round open for bets beside it has no exchange yet", () => {
+    render(<RoundVenueNote source="kraken" market={btc} phase="RUNNING" subject="live" />);
+    expect(screen.getByRole("note")).toHaveTextContent("The live round runs on Kraken, the backup exchange — Coinbase had no price when it started.");
+  });
+
   it("nothing for a round on the main exchange, nor for a market that is not on the list (its source line still names the exchange)", () => {
     const { rerender } = render(<RoundVenueNote source="coinbase" market={btc} phase="SETTLED" />);
     expect(screen.queryByRole("note")).not.toBeInTheDocument();

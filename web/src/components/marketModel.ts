@@ -230,9 +230,14 @@ export function backupRoundOf(
   return name === null || primaryName === null ? null : { name, primaryName };
 }
 
+/** Which round a sentence is about: `this` — the round whose own page it is on; `live` — the round now running (or just
+ *  ended) among the rounds of a room, where the round open for bets is another one and has no exchange yet. */
+export type RoundSubject = "this" | "live";
+
 /** What the page says about such a round, in the tense of its phase. */
-export function backupRoundNote(backup: BackupRound, phase: "RUNNING" | "SETTLED"): string {
+export function backupRoundNote(backup: BackupRound, phase: "RUNNING" | "SETTLED", subject: RoundSubject = "this"): string {
   const runs = phase === "SETTLED" ? "ran" : "runs";
   const are = phase === "SETTLED" ? "were" : "are";
-  return `This round ${runs} on ${backup.name}, the backup exchange — ${backup.primaryName} had no price when it started. Its open and close prices and every liquidation ${are} ${backup.name}'s.`;
+  const which = subject === "live" ? (phase === "SETTLED" ? "The round that just ended" : "The live round") : "This round";
+  return `${which} ${runs} on ${backup.name}, the backup exchange — ${backup.primaryName} had no price when it started. Its open and close prices and every liquidation ${are} ${backup.name}'s.`;
 }

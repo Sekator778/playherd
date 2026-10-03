@@ -246,4 +246,14 @@ describe("backupRoundOf — a round that runs on its market's backup exchange (R
       "This round ran on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation were Kraken's.",
     );
   });
+
+  it("in a room — which also shows the round open for bets, whose exchange is not chosen yet — it is about the live round, not 'this' one", () => {
+    const kraken = { name: "Kraken", primaryName: "Coinbase" };
+    expect(backupRoundNote(kraken, "RUNNING", "live")).toBe(
+      "The live round runs on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation are Kraken's.",
+    );
+    expect(backupRoundNote(kraken, "SETTLED", "live")).toBe(
+      "The round that just ended ran on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation were Kraken's.",
+    );
+  });
 });

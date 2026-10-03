@@ -433,8 +433,11 @@ export function LabStatesPage() {
         </p>
         <div className="stack" style={{ gap: 10 }}>
           <OracleDisclosureLine source="coinbase" backup="kraken" />
+          <p className="faint">The round's own page — running, then settled:</p>
           <RoundVenueNote source="kraken" market={{ source: "coinbase", backupSource: "kraken" }} phase="RUNNING" />
           <RoundVenueNote source="kraken" market={{ source: "coinbase", backupSource: "kraken" }} phase="SETTLED" />
+          <p className="faint">The room, which also shows the round open for bets (its exchange is chosen when it starts):</p>
+          <RoundVenueNote source="kraken" market={{ source: "coinbase", backupSource: "kraken" }} phase="RUNNING" subject="live" />
           <PriceChart
             market={market0}
             ticks={TICKS.slice(0, 250)}

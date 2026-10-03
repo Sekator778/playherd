@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { useApi } from "../api/ApiContext";
 import type { MarketDto, RoundPhase, ServerInfoDto } from "../api/contract";
 import { formatCountdown } from "../format";
-import { backupRoundNote, backupRoundOf, originPhrase, sourceName } from "./marketModel";
+import { backupRoundNote, backupRoundOf, originPhrase, sourceName, type RoundSubject } from "./marketModel";
 
 export function DemoBanner() {
   return (
@@ -170,17 +170,21 @@ export function RoundVenueNote({
   source,
   market,
   phase,
+  subject = "this",
 }: {
   /** `RoundBase.source`: the exchange the round runs on. */
   source: MarketDto["source"] | undefined;
   market: Pick<MarketDto, "source" | "backupSource"> | undefined;
   phase: "RUNNING" | "SETTLED";
+  /** `this` on the round's own page; `live` in a room, which also shows the round open for bets (its exchange is not
+   *  chosen yet — it is the one that starts next). */
+  subject?: RoundSubject;
 }) {
   const backup = backupRoundOf({ source }, market);
   if (!backup) return null;
   return (
     <p className="venue-note" role="note">
-      {backupRoundNote(backup, phase)}
+      {backupRoundNote(backup, phase, subject)}
     </p>
   );
 }
