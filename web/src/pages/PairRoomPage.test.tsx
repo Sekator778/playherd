@@ -15,6 +15,7 @@ import {
   publicPosition,
   runningRoundOf,
   seriesDto,
+  spotCatalogue,
   ticksOf,
 } from "../components/testFixtures";
 import { PairRoomPage } from "./PairRoomPage";
@@ -573,6 +574,92 @@ describe("Room — a closed market", () => {
     await screen.findByRole("heading", { name: "This market is closed" });
     expect(document.querySelector(".room-closed__reason")).toBeNull();
     expect(screen.queryByText(/^Closed 20/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Room — the exchange behind the price, and behind the round (Р-76)", () => {
+  const SPOT = spotCatalogue();
+  const spotRunning = (source: RoundRunning["source"], over: Partial<RoundRunning> = {}) => (marketId: string) =>
+    runningRoundOf(marketId, SPOT.find((m) => m.id === marketId)!.symbol, { source, ...over });
+
+  it("the oracle line names the exchange and its backup — and says a round runs on the backup only if the main one has no price at its start", async () => {
+    renderRoom("/play/spot_BTC", { markets: SPOT });
+    await screen.findByText("BTC/USD");
+    expect(screen.getByText(/^Price from Coinbase, published by our team's key/)).toHaveTextContent(
+      "Price from Coinbase, published by our team's key — not a decentralized oracle. Backup: Kraken, used for a round only if Coinbase has no price when it starts.",
+    );
+  });
+
+  it("HYPE is priced by Hyperliquid's spot market, with Coinbase behind it", async () => {
+    renderRoom("/play/spot_HYPE", { markets: SPOT });
+    await screen.findByText("HYPE/USD");
+    expect(screen.getByText(/^Price from Hyperliquid, published by our team's key/)).toHaveTextContent(
+      "Backup: Coinbase, used for a round only if Hyperliquid has no price when it starts.",
+    );
+  });
+
+  it("a market with no backup names none", async () => {
+    renderRoom("/play/BTC");
+    await screen.findByText("BTC/USD");
+    expect(document.querySelector(".disclaimer-line__backup")).toBeNull();
+    expect(screen.queryByText(/Backup:/)).not.toBeInTheDocument();
+  });
+
+  it("a price that is the backup's is marked beside the number, and the chart says its latest point is Kraken's", async () => {
+    renderRoom("/play/spot_ETH", { markets: SPOT });
+    await screen.findByText("ETH/USD");
+    const mark = await screen.findByText("Kraken price");
+    expect(mark).toHaveAttribute("title", "Coinbase has no fresh price right now, so this is Kraken's — its backup.");
+    expect(mark.closest(".room-pricebar")).not.toBeNull();
+    expect(await screen.findByText("Latest point: Kraken's price — Coinbase has no fresh price right now")).toBeInTheDocument();
+  });
+
+  it("a price from the main exchange has no mark and the chart no such caption", async () => {
+    renderRoom("/play/spot_BTC", { markets: SPOT });
+    await screen.findByText("BTC/USD");
+    await screen.findByRole("img", { name: /BTC price/ });
+    expect(document.querySelector(".room-venue")).toBeNull();
+    expect(screen.queryByText(/Latest point:/)).not.toBeInTheDocument();
+  });
+
+  it("a running round on the backup says so: which exchange, why, and whose prices they are", async () => {
+    renderRoom("/play/spot_BTC", { markets: SPOT, running: spotRunning("kraken") });
+    await screen.findByText("BTC/USD");
+    const note = await screen.findByRole("note");
+    expect(note).toHaveTextContent(
+      "This round runs on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation are Kraken's.",
+    );
+  });
+
+  it("a running round on the main exchange says nothing of the backup", async () => {
+    renderRoom("/play/spot_BTC", { markets: SPOT, running: spotRunning("coinbase") });
+    await screen.findByText("BTC/USD");
+    await screen.findByRole("button", { name: /^UP/ });
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
+  it("the round that just settled on the backup says it ran there", async () => {
+    renderRoom("/play/spot_BTC", {
+      markets: SPOT,
+      running: (marketId) => ({ ...runningRoundOf(marketId, "BTC", { source: "kraken" }), phase: "SETTLED", openPrice: "84000.00", closePrice: "84100.00", positions: [], crowd: null }) as unknown as RoundRunning,
+    });
+    expect(await screen.findByRole("note")).toHaveTextContent("This round ran on Kraken, the backup exchange");
+  });
+
+  it("an odds market's room names its source in the tag's hover text — Polymarket's here, a simulated one's elsewhere", async () => {
+    renderRoom("/play/PM900104");
+    await screen.findByText("GER");
+    expect(screen.getByText("ODDS")).toHaveAttribute("title", "A Polymarket odds market: the price is a probability");
+  });
+
+  it("the market a new source replaced keeps its closed room: the server's reason as it sent it", async () => {
+    renderRoom("/play/BTC", { markets: SPOT });
+    expect(await screen.findByRole("heading", { name: "This market is closed" })).toBeInTheDocument();
+    expect(screen.getByText("Moved to a new price source: Coinbase")).toBeInTheDocument();
+    expect(screen.getByText(/refunded in full/)).toBeInTheDocument();
+    // a closed room's last price is a last price — not marked as any exchange's
+    expect(screen.getByText("Last price")).toBeInTheDocument();
+    expect(document.querySelector(".room-venue")).toBeNull();
   });
 });
 

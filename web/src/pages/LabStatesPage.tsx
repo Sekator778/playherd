@@ -13,6 +13,7 @@ import type { Direction, MarketDto, MyPositionDto } from "../api/contract";
 import { reportEngineNotReady, reportEngineReady } from "../api/engineState";
 import { AnchorLine } from "../components/AnchorLine";
 import { HerdPicker } from "../components/BetSlip";
+import { OracleDisclosureLine, RoundVenueNote } from "../components/Common";
 import { EngineNotice } from "../components/EngineBanner";
 import { LazyCrowdChart } from "../components/LazyCrowdChart";
 import { MarketCard } from "../components/MarketCard";
@@ -85,6 +86,19 @@ const CARDS: Array<{ label: string; market: MarketDto; hot?: boolean; favorite?:
     }),
   },
   {
+    label: "A crypto market on its main exchange, with a backup behind it (Р-76) — nothing to mark while the price is Coinbase's own",
+    market: market("SOL", { title: "Solana", source: "coinbase", backupSource: "kraken", price: { price: "117.84", asOfMs: NOW - 600, change24h: 0.0187, stale: false, venue: null } }),
+  },
+  {
+    label: "The same market while Coinbase has no fresh price — the number is Kraken's, and the card says so under it",
+    market: market("ETH", {
+      title: "Ethereum",
+      source: "coinbase",
+      backupSource: "kraken",
+      price: { price: "2696.80", asOfMs: NOW - 800, change24h: -0.0141, stale: false, venue: "kraken" },
+    }),
+  },
+  {
     label: "Stale price",
     market: market("NVDA", { title: "NVIDIA", category: "stocks", price: { price: "231.70", asOfMs: NOW - 190_000, change24h: 0.0021, stale: true } }),
   },
@@ -120,6 +134,18 @@ const CARDS: Array<{ label: string; market: MarketDto; hot?: boolean; favorite?:
       closedAtMs: NOW - 180_000,
       closeReason: "Price left the 3%–97% range",
       price: { price: "0.970000", asOfMs: NOW - 180_000, change24h: null, stale: false },
+    }),
+  },
+  {
+    label: "Closed — the market moved to a new price source (Р-76: the server's reason as it sent it; open bets were refunded)",
+    market: market("XRP", {
+      status: "CLOSED",
+      title: "XRP",
+      source: "hyperliquid",
+      priceDecimals: 4,
+      closedAtMs: NOW - 240_000,
+      closeReason: "Moved to a new price source: Coinbase",
+      price: { price: "1.4964", asOfMs: NOW - 240_000, change24h: 0.0042, stale: false },
     }),
   },
   {
@@ -396,6 +422,29 @@ export function LabStatesPage() {
           loading={false}
           error={false}
         />
+      </section>
+
+      <section className="lab-section">
+        <h2>The backup exchange (Р-76) — the oracle line, a round that runs on it, and the chart while the main exchange is silent</h2>
+        <p className="faint">
+          A crypto market names its backup in the oracle line. A round runs entirely on one exchange, chosen when it starts — when that was
+          the backup, the round says so, running and settled. The chart is the main exchange's ticks alone: while it is silent the line
+          stops, and only the latest point is the backup's, which its legend says.
+        </p>
+        <div className="stack" style={{ gap: 10 }}>
+          <OracleDisclosureLine source="coinbase" backup="kraken" />
+          <RoundVenueNote source="kraken" market={{ source: "coinbase", backupSource: "kraken" }} phase="RUNNING" />
+          <RoundVenueNote source="kraken" market={{ source: "coinbase", backupSource: "kraken" }} phase="SETTLED" />
+          <PriceChart
+            market={market0}
+            ticks={TICKS.slice(0, 250)}
+            current={{ price: "83580.00", asOfMs: NOW }}
+            lines={[]}
+            loading={false}
+            error={false}
+            backup={{ name: "Kraken", primaryName: "Coinbase" }}
+          />
+        </div>
       </section>
 
       <section className="lab-section">

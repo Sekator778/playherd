@@ -10,7 +10,7 @@ import type { RoundDto } from "../api/contract";
 import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
 import { AnchorLine } from "../components/AnchorLine";
 import { BetSlip } from "../components/BetSlip";
-import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, Skeleton } from "../components/Common";
+import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, RoundVenueNote, Skeleton } from "../components/Common";
 import { MarketIcon } from "../components/MarketIcon";
 import { roundPriceInfo } from "../components/marketModel";
 import { OwnPositionCard } from "../components/OwnPositionCard";
@@ -198,6 +198,8 @@ export function RoundPage() {
             <div className="stack reveal-flip-in" style={{ gap: 16 }}>
               {round.openPrice !== null && <p className="mono">Open price: {priceText(round.openPrice)}</p>}
               <OracleDisclosureLine source={source} />
+              {/* A round runs entirely on one exchange (Р-76): when it ran on the market's backup, it says so. */}
+              <RoundVenueNote source={round.source} market={market} phase={round.phase} />
               {round.phase === "SETTLED" && (
                 <AnchorLine
                   roundId={round.roundId}

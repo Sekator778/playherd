@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiWrapper, fakeApi } from "../api/apiTestUtils";
 import type { Api, MarketDto, MarketsDto } from "../api/contract";
 import { FAVORITES_STORAGE_KEY, reloadFavoritesFromStorage } from "../api/favorites";
-import { catalogue, market, marketsOf } from "../components/testFixtures";
+import { catalogue, market, marketsOf, spotCatalogue } from "../components/testFixtures";
 import { LobbyPage } from "./LobbyPage";
 
 function LocationProbe() {
@@ -437,6 +437,108 @@ describe("Lobby — the card: a sports game, the odds' 24 h change, a closed mar
     renderLobby();
     await screen.findAllByRole("article");
     expect(within(cardOf("OLD")).getByText(/open bets refunded\. This market takes no more bets\./)).toBeInTheDocument();
+  });
+});
+
+describe("Lobby — the card: which exchange the price is from (Р-76)", () => {
+  /** The card of a market by its id: the new `spot_BTC` and the legacy `BTC` it replaced share a ticker. */
+  const cardById = (id: string) => within(document.querySelector<HTMLElement>(`[data-market-id="${id}"]`)!);
+
+  it("a price that is the backup exchange's says so under the number — the main exchange has no fresh price", async () => {
+    renderLobby(spotCatalogue());
+    await screen.findAllByRole("article");
+    const eth = cardById("spot_ETH");
+    const mark = eth.getByText("Kraken price");
+    expect(mark).toHaveAttribute("title", "Coinbase has no fresh price right now, so this is Kraken's — its backup.");
+    // a screen reader gets the reason too, not only the hover text
+    expect(eth.getByText(/Coinbase has no fresh price right now, so this is Kraken's — its backup\./, { selector: ".visually-hidden" })).toBeInTheDocument();
+    expect(eth.getByText("$2,696.80")).toBeInTheDocument();
+  });
+
+  it("a price from the main exchange is not marked: a null venue, an absent one, a market with no backup", async () => {
+    renderLobby([...spotCatalogue(), ...catalogue().filter((m) => m.id === "xyz_NVDA")]);
+    await screen.findAllByRole("article");
+    for (const id of ["spot_BTC", "spot_DOGE", "spot_HYPE", "xyz_NVDA"]) {
+      expect(document.querySelector(`[data-market-id="${id}"] .mk-card__venue`), id).toBeNull();
+    }
+    // …and exactly one card carries the mark: spot_ETH's, the only one whose price is Kraken's
+    expect(document.querySelectorAll(".mk-card__venue")).toHaveLength(1);
+    expect(document.querySelector('[data-market-id="spot_ETH"] .mk-card__venue')).not.toBeNull();
+  });
+
+  it("a stale backup price says both: it is old, and it is the backup's", async () => {
+    const stale = market("spot_ETH", {
+      symbol: "ETH",
+      title: "Ethereum",
+      source: "coinbase",
+      backupSource: "kraken",
+      price: { price: "2696.80", asOfMs: 1_000_000 - 90_000, change24h: -0.0141, stale: true, venue: "kraken" },
+    });
+    renderLobby([stale]);
+    await screen.findAllByRole("article");
+    const eth = cardById("spot_ETH");
+    expect(eth.getByText(/^Stale · /)).toBeInTheDocument();
+    expect(eth.getByText("Kraken price")).toBeInTheDocument();
+  });
+
+  it("the price of HYPE can be Coinbase's — its backup, behind Hyperliquid's spot market", async () => {
+    const hype = market("spot_HYPE", {
+      symbol: "HYPE",
+      title: "Hyperliquid",
+      source: "hyperliquid",
+      backupSource: "coinbase",
+      price: { price: "87.235", asOfMs: 999_500, change24h: 0.03, stale: false, venue: "coinbase" },
+    });
+    renderLobby([hype]);
+    await screen.findAllByRole("article");
+    expect(cardById("spot_HYPE").getByText("Coinbase price")).toHaveAttribute("title", "Hyperliquid has no fresh price right now, so this is Coinbase's — its backup.");
+  });
+
+  it("a venue equal to the market's own exchange is the main exchange's price — nothing to mark", async () => {
+    const own = market("spot_BTC", {
+      symbol: "BTC",
+      source: "coinbase",
+      backupSource: "kraken",
+      price: { price: "84010.50", asOfMs: 999_500, change24h: 0, stale: false, venue: "coinbase" },
+    });
+    renderLobby([own]);
+    await screen.findAllByRole("article");
+    expect(document.querySelector(".mk-card__venue")).toBeNull();
+  });
+
+  it("a closed market's card marks no price: it is a last price, and says Last price", async () => {
+    const closed = market("spot_ETH", {
+      symbol: "ETH",
+      status: "CLOSED",
+      source: "coinbase",
+      backupSource: "kraken",
+      price: { price: "2696.80", asOfMs: 820_000, change24h: 0, stale: false, venue: "kraken" },
+    });
+    renderLobby([closed]);
+    await screen.findAllByRole("article");
+    const eth = cardById("spot_ETH");
+    expect(eth.getByText("Last price")).toBeInTheDocument();
+    expect(eth.queryByText("Kraken price")).not.toBeInTheDocument();
+  });
+
+  it("the market a new source replaced is closed like any closed market: the server's reason as it sent it, open bets refunded", async () => {
+    renderLobby(spotCatalogue());
+    await screen.findAllByRole("article");
+    const legacy = cardById("BTC");
+    expect(legacy.getByRole("note")).toHaveTextContent(/Closed [23] min ago — Moved to a new price source: Coinbase/);
+    expect(legacy.getByText(/Open bets were refunded\. This market takes no more bets\./)).toBeInTheDocument();
+    expect(legacy.queryByRole("link", { name: /Bet UP/ })).not.toBeInTheDocument();
+    // …while the market that replaced it is open for bets, with the same ticker
+    expect(cardById("spot_BTC").getByRole("link", { name: /^Bet UP on BTC/ })).toBeInTheDocument();
+  });
+
+  it("an odds tag names whose odds they are only when the market says: Polymarket's, a simulated one's", async () => {
+    const odds = (id: string, source: "polymarket" | "synthetic") =>
+      market(id, { kind: "ODDS", category: "politics", symbol: id, title: `Will ${id} happen?`, subtitle: "Yes · Politics", source, priceDecimals: 6, maxLeverage: 10, price: { price: "0.500000", asOfMs: 999_500, change24h: null, stale: false } });
+    renderLobby([odds("REAL", "polymarket"), odds("FAKE", "synthetic")]);
+    await screen.findAllByRole("article");
+    expect(cardById("REAL").getByText("ODDS")).toHaveAttribute("title", "A Polymarket odds market: the price is a probability");
+    expect(cardById("FAKE").getByText("ODDS")).toHaveAttribute("title", "A simulated odds market: the price is a probability");
   });
 });
 

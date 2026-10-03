@@ -6,6 +6,9 @@
  *
  * - the live price (rolling digits) with its 24 h change, a favourite star, and a live price chart with the
  *   round's open price and — over a position — entry and liquidation lines, the herd's as a fainter pair;
+ *   a crypto market says which exchange its price is from when that is its BACKUP ("Kraken price", Р-76: the main
+ *   exchange has no fresh price), names the backup in the oracle line, and a running round that runs on the backup
+ *   says so (a round runs entirely on one exchange, chosen when it starts);
  * - the two series of rounds as chips named by their real length, a dot on the one where the player has bets;
  * - the arena (UP/DOWN halves as wide as the live split), «With the herd» / «Against the herd» and the bet
  *   slip with the leverage dial capped at the market's own maximum;
@@ -45,7 +48,7 @@ import type {
 import { LONG, SHORT, unrealizedPnl } from "../api/liquidation";
 import { outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
 import { BetSlip } from "../components/BetSlip";
-import { BotBadge, Countdown, ErrorState, OracleDisclosureLine, Skeleton } from "../components/Common";
+import { BotBadge, Countdown, ErrorState, OracleDisclosureLine, RoundVenueNote, Skeleton } from "../components/Common";
 import { CrowdPositionCard, IntervalTabs } from "../components/RoundParts";
 import { Avatar } from "../components/Avatar";
 import { ArrowLeftIcon, DirectionGlyph, LockIcon, StarIcon } from "../components/icons";
@@ -56,7 +59,16 @@ import { PriceChart } from "../components/PriceChart";
 import { buildChartLines } from "../components/priceChartModel";
 import { formatStartsIn, trend, TREND_GLYPH } from "../components/marketFormat";
 import { rememberMarket } from "../components/lastMarket";
-import { crowdSplitOf, isOpenMarket, kickoffOf, subtitleOf, type CrowdSplit } from "../components/marketModel";
+import {
+  backupPriceNote,
+  backupPriceOf,
+  crowdSplitOf,
+  isOpenMarket,
+  kickoffOf,
+  oddsMarketPhrase,
+  subtitleOf,
+  type CrowdSplit,
+} from "../components/marketModel";
 import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
 import { useServerNow } from "../components/useServerNow";
 import { RollingDigits } from "../fx/RollingDigits";
@@ -375,6 +387,8 @@ function Room({ market }: { market: MarketDto }) {
   const changeTrend = trend(move.value);
   const kickoff = kickoffOf(market, nowMs);
   const stale = open && market.price?.stale === true;
+  // The shown price is the backup exchange's while the main one has no fresh price (`MarketPriceDto.venue`, Р-76).
+  const backupPrice = open ? backupPriceOf(market) : null;
   const symbolText = market.kind === "PERP" ? `${market.symbol}/USD` : market.symbol;
 
   const header = (
@@ -386,7 +400,7 @@ function Room({ market }: { market: MarketDto }) {
           <div className="room-head__name">
             <h1 className="room-head__symbol">{symbolText}</h1>
             {odds && (
-              <span className="mk-tag mk-tag--odds" title="A Polymarket odds market: the price is a probability">
+              <span className="mk-tag mk-tag--odds" title={`${oddsMarketPhrase(market.source)}: the price is a probability`}>
                 ODDS
               </span>
             )}
@@ -421,6 +435,12 @@ function Room({ market }: { market: MarketDto }) {
             {move.text} <span className="room-change__unit">24h</span>
           </span>
           {stale && <span className="room-stale">Price is stale</span>}
+          {backupPrice && (
+            <span className="room-venue" title={backupPriceNote(backupPrice)}>
+              {backupPrice.name} price
+              <span className="visually-hidden"> — {backupPriceNote(backupPrice)}</span>
+            </span>
+          )}
           {!open && <span className="room-stale">Last price</span>}
         </div>
       </div>
@@ -445,6 +465,7 @@ function Room({ market }: { market: MarketDto }) {
       error={series.error}
       stale={stale}
       live={open}
+      backup={backupPrice}
     />
   );
 
@@ -453,7 +474,7 @@ function Room({ market }: { market: MarketDto }) {
       <div className="room-root stack" style={{ gap: 16 }}>
         {header}
         {chart}
-        <OracleDisclosureLine source={market.source} />
+        <OracleDisclosureLine source={market.source} backup={market.backupSource} />
         <div className="card room-closed">
           <div className="room-closed__title">
             <LockIcon />
@@ -539,7 +560,8 @@ function Room({ market }: { market: MarketDto }) {
           />
         </div>
       </div>
-      <OracleDisclosureLine source={market.source} />
+      <OracleDisclosureLine source={market.source} backup={market.backupSource} />
+      {(running.phase === "RUNNING" || running.phase === "SETTLED") && <RoundVenueNote source={running.source} market={market} phase={running.phase} />}
 
       <div className="room-arena-wrap">
         <div className={`room-arena ${lockedOverlay ? "room-arena--locked" : ""}`}>

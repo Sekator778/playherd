@@ -421,6 +421,29 @@ describe("the event names its market (Р-69)", () => {
   });
 });
 
+describe("the event names the exchange the round ran on (RoundBase.source, Р-76)", () => {
+  const settle = (source: RoundSettled["source"]) =>
+    detectResultEvent({
+      prev: undefined,
+      curr: { ...makeSettled([makePosition({ payout: "130.000", directionCorrect: true })]), source },
+      playerId: PLAYER_ID,
+      interval: "HOURLY",
+      alreadyEmitted: false,
+      currentBalance: 10_030,
+      nowMs: 5,
+    });
+
+  it("a live settlement carries it: Kraken for a round that ran on the backup, Coinbase for one on the main exchange", () => {
+    expect(settle("kraken")).toMatchObject({ kind: "WIN", venue: "kraken" });
+    expect(settle("coinbase")).toMatchObject({ kind: "WIN", venue: "coinbase" });
+  });
+
+  it("a history row of unseenResults() carries none — it names no exchange, so the card says nothing of one", () => {
+    const event = resultEventFromHistoryEntry(historyEntry({}), PLAYER_ID, { balanceBefore: 10_000, balanceAfter: 10_400 });
+    expect(event.venue).toBeUndefined();
+  });
+});
+
 describe("a server that predates markets (no marketId on its DTOs) means BTC", () => {
   it("the history-entry path and the live path both default marketId to BTC", () => {
     const legacyEntry: Partial<ProfileRoundEntryDto> = historyEntry();

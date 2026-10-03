@@ -3,7 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
 import { ApiRequestError, type CrowdRoundResultDto, type MyPositionDto, type RoundCancelled, type RoundDto, type RoundSettled } from "../api/contract";
-import { NOW, bettingRoundOf, catalogue, crowdPosition, marketsOf, publicPosition, runningRoundOf } from "../components/testFixtures";
+import { NOW, bettingRoundOf, catalogue, crowdPosition, marketsOf, publicPosition, runningRoundOf, spotCatalogue } from "../components/testFixtures";
 import { RoundPage } from "./RoundPage";
 
 const HASH = "0x4b88ce9712e97e73ad3759541fc23d38704e31d27d6586c28be14ee716080b70";
@@ -289,6 +289,53 @@ describe("Round page — prices and source from the ROUND's own fields: the mark
   it("a round of a market still on the list agrees with the list", async () => {
     renderRound(settled({ roundId: "PM900104-1h-0", marketId: "PM900104", asset: "GER", kind: "ODDS", priceDecimals: 6, source: "polymarket", openPrice: "0.620000", closePrice: "0.640000" }));
     expect(await screen.findByText(/GER closed UP — 62\.0% → 64\.0%/)).toBeInTheDocument();
+  });
+});
+
+describe("Round page — the exchange a round ran on (RoundBase.source, Р-76: one round, one exchange)", () => {
+  // `spot_BTC` is priced by Coinbase with Kraken behind it (the new catalogue); a round carries the exchange it runs on.
+  const onSpot = (source: RoundSettled["source"], over: Partial<RoundSettled> = {}) =>
+    settled({ roundId: "spot_BTC-1h-0", marketId: "spot_BTC", asset: "BTC", priceDecimals: 2, source, openPrice: "84000.00", closePrice: "84100.00", ...over });
+
+  it("a round that ran on the backup says so — which exchange, why, and that every price is its own — beside 'Price from Kraken'", async () => {
+    renderRound(onSpot("kraken"), false, [], spotCatalogue());
+    expect(await screen.findByText(/BTC closed UP — \$84,000\.00 → \$84,100\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/^Price from Kraken, published by our team's key — not a decentralized oracle\.$/)).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "This round ran on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation were Kraken's.",
+    );
+  });
+
+  it("a round on the main exchange names it and says nothing of a backup", async () => {
+    renderRound(onSpot("coinbase"), false, [], spotCatalogue());
+    expect(await screen.findByText(/^Price from Coinbase, published by our team's key — not a decentralized oracle\.$/)).toBeInTheDocument();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Backup|backup/);
+  });
+
+  it("a round of a market that has left the list still names its exchange — the 'backup' remark needs the market that says which one is main", async () => {
+    renderRound(onSpot("kraken"), false, [], catalogue()); // no spot_BTC in this list
+    expect(await screen.findByText(/^Price from Kraken, published by our team's key/)).toBeInTheDocument();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Hyperliquid|Coinbase/);
+  });
+
+  it("a running round on the backup says it runs there", async () => {
+    renderRound(runningRoundOf("spot_BTC", "BTC", { source: "kraken", openPrice: "84000.00" }), false, [], spotCatalogue());
+    expect(await screen.findByText(/Open price: \$84,000\.00/)).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("This round runs on Kraken, the backup exchange — Coinbase had no price when it started.");
+    expect(screen.getByText(/^Price from Kraken, published by our team's key/)).toBeInTheDocument();
+  });
+
+  it("a round still waiting for its opening price is not yet on any backup: no exchange has priced it, so none is claimed", async () => {
+    renderRound(runningRoundOf("spot_BTC", "BTC", { source: "coinbase", openPrice: null, positions: [], crowd: null }), false, [], spotCatalogue());
+    expect(await screen.findByRole("heading", { name: "Waiting for the opening price…" })).toBeInTheDocument();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
+  it("HYPE: a round on Coinbase is the backup of Hyperliquid's spot market", async () => {
+    renderRound(onSpot("coinbase", { roundId: "spot_HYPE-1h-0", marketId: "spot_HYPE", asset: "HYPE", priceDecimals: 3, openPrice: "87.100", closePrice: "87.235" }), false, [], spotCatalogue());
+    expect(await screen.findByRole("note")).toHaveTextContent("This round ran on Coinbase, the backup exchange — Hyperliquid had no price when it started.");
   });
 });
 

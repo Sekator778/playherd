@@ -23,6 +23,10 @@ export interface ResultEvent {
   /** The market's kind when the source of the event knows it (`ProfileRoundEntryDto.kind`, a round's own `kind`): an
    *  `ODDS` result is worded as odds ("GER odds"). Absent → the card reads it off the market list, if the market is on it. */
   marketKind?: MarketKind;
+  /** The exchange the round ran on (`RoundBase.source`), when the event comes from a round (a live settlement) — a history
+   *  row of `unseenResults()` carries none. With the market's backup (`MarketDto.backupSource`) the card can say that the
+   *  round settled on the backup exchange (Р-76). */
+  venue?: RoundDto["source"];
   interval: Interval;
   /** The real length of the round in seconds (`ProfileRoundEntryDto.durationSec`, or the live round's own window):
    *  the card names the series by it ("3 MIN" — never "Hourly"/"Daily"). Absent from a server that predates it:
@@ -236,6 +240,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       marketId: curr.marketId ?? BTC_MARKET_ID, // see resultEventFromHistoryEntry
       symbol: curr.asset,
       marketKind: curr.kind,
+      venue: curr.source,
       interval,
       durationSec: (curr.window.endMs - curr.window.startMs) / 1000,
       netPlay: net,

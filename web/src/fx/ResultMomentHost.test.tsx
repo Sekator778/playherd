@@ -86,6 +86,41 @@ describe("ResultMomentHost — a queue of moments", () => {
     expect(document.querySelector(".result-overlay")).toBeNull();
   });
 
+  // BTC of the default (mock) catalogue is priced by Coinbase with Kraken behind it (Р-76).
+  it("a round that settled on the market's backup exchange says so, under the figures", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "k:p", roundId: "k", marketId: "BTC", venue: "kraken" }));
+    });
+    await act(async () => {}); // the market list answers
+    expect(document.querySelector(".result-card__venue")).toHaveTextContent("Settled on Kraken, the backup exchange — Coinbase had no price when the round started");
+  });
+
+  it("…and says nothing when it settled on the main exchange, or when the event names no exchange (a history row)", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "c:p", roundId: "c", marketId: "BTC", venue: "coinbase" }));
+    });
+    await act(async () => {});
+    expect(document.querySelector(".result-card__venue")).toBeNull();
+    await act(async () => {
+      (document.querySelector(".result-overlay") as HTMLElement).click();
+      publish(event({ id: "h:p", roundId: "h", marketId: "BTC" }));
+    });
+    await act(async () => {});
+    expect(document.querySelector(".result-card__venue")).toBeNull();
+  });
+
+  it("a mid-round liquidation toast keeps its own words — the venue line is for a settlement", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "l:p", roundId: "l", kind: "LIQUIDATION", midRound: true, marketId: "BTC", venue: "kraken" }));
+    });
+    await act(async () => {});
+    expect(document.querySelector(".result-card__venue")).toBeNull();
+    expect(document.querySelector(".result-card__note")).toHaveTextContent("Your whole stake is lost.");
+  });
+
   it("a card dismissed by a tap is followed by the next, which is also its own card", async () => {
     renderHost();
     act(() => {

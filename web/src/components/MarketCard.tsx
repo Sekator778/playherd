@@ -7,7 +7,7 @@ import { Countdown, Skeleton } from "./Common";
 import { FlameIcon, LockIcon, StarIcon } from "./icons";
 import { MarketIcon } from "./MarketIcon";
 import { formatAgo, formatStartsIn, formatTimeLeft, trend, TREND_GLYPH } from "./marketFormat";
-import { crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, subtitleOf } from "./marketModel";
+import { backupPriceNote, backupPriceOf, crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, oddsMarketPhrase, subtitleOf } from "./marketModel";
 import "./MarketCard.css";
 
 /** The live crowd split (Р-62) as a slim UP/DOWN bar with its percentages and the player count — the
@@ -109,7 +109,8 @@ interface MarketCardProps {
  *
  * Designed states: stale price (kept, dimmed, with its age), no price yet (buttons off — such a round
  * could not settle), closed market (no buttons; the server's own reason when it gave one — `closeReason`,
- * `closedAtMs` — else "Closed — open bets refunded").
+ * `closedAtMs` — else "Closed — open bets refunded"), and a price that is the BACKUP exchange's (Р-76: the market's
+ * main exchange has no fresh price): "Kraken price" under the number, with the reason on hover and for a screen reader.
  */
 export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = false }: MarketCardProps) {
   const meta = symbolMeta(market.symbol);
@@ -117,6 +118,7 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
   const open = isOpenMarket(market);
   const price = market.price;
   const stale = open && price?.stale === true;
+  const backupPrice = open ? backupPriceOf(market) : null;
   const move = market24hMove(market, price);
   const changeTrend = trend(move.value);
   const kickoff = kickoffOf(market, nowMs);
@@ -155,7 +157,7 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
             </h3>
             {star}
             {odds && (
-              <span className="mk-tag mk-tag--odds" title="A Polymarket odds market: the price is a probability">
+              <span className="mk-tag mk-tag--odds" title={`${oddsMarketPhrase(market.source)}: the price is a probability`}>
                 ODDS
               </span>
             )}
@@ -185,6 +187,12 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
               {stale && (
                 <span className="mk-card__stale" role="status">
                   Stale · {formatAgo(nowMs - price.asOfMs)}
+                </span>
+              )}
+              {backupPrice && (
+                <span className="mk-card__venue" title={backupPriceNote(backupPrice)}>
+                  {backupPrice.name} price
+                  <span className="visually-hidden"> — {backupPriceNote(backupPrice)}</span>
                 </span>
               )}
               {!open && <span className="mk-card__stale">Last price</span>}

@@ -18,6 +18,7 @@ import {
   type RangeId,
 } from "./priceChartModel";
 import { Skeleton } from "./Common";
+import type { BackupPrice } from "./marketModel";
 import "./PriceChart.css";
 
 /** Tall enough to read on a desktop, short enough on a phone that the arena below it stays in the first screen. */
@@ -72,6 +73,10 @@ export interface PriceChartProps {
   stale?: boolean;
   /** The market is taking prices (default). A closed market's chart is a record: its end point does not pulse. */
   live?: boolean;
+  /** The latest price (`current`) is the BACKUP exchange's (`backupPriceOf`): the series is the main exchange's ticks
+   *  alone (`PriceSeriesDto` carries no venue), so while it is silent the line stops and only the last point is the
+   *  backup's — the legend says so. */
+  backup?: BackupPrice | null;
 }
 
 /**
@@ -83,7 +88,7 @@ export interface PriceChartProps {
  *
  * Hand-drawn SVG (no chart library): ~600 points, one path, redrawn on each 2 s poll.
  */
-export function PriceChart({ market, ticks, current, lines, roundStartMs, loading, error, stale = false, live = true }: PriceChartProps) {
+export function PriceChart({ market, ticks, current, lines, roundStartMs, loading, error, stale = false, live = true, backup = null }: PriceChartProps) {
   const [measureRef, measured] = useWidth();
   const gradientId = useId();
   const [picked, setPicked] = useState<RangeId | null>(null);
@@ -282,6 +287,11 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
         {lines.some((l) => l.id === "crowd-liq") && (
           <span>
             <i className="pchart__swatch pchart__swatch--liq pchart__swatch--faint" aria-hidden="true" /> Herd's liquidation price
+          </span>
+        )}
+        {backup && (
+          <span className="pchart__venue">
+            Latest point: {backup.name}'s price — {backup.primaryName ?? "the main exchange"} has no fresh price right now
           </span>
         )}
         {stale && <span className="pchart__stale">Price feed is stale — the last point is old</span>}

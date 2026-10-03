@@ -180,6 +180,23 @@ describe("PriceChart — states", () => {
     expect(screen.getByText("Price feed is stale — the last point is old")).toBeInTheDocument();
   });
 
+  it("when the latest price is the backup exchange's, the legend says the latest point is its — the line itself is the main exchange's ticks", () => {
+    chart({ current: { price: "123.45", asOfMs: NOW + 2_000 }, backup: { name: "Kraken", primaryName: "Coinbase" } });
+    expect(screen.getByText("Latest point: Kraken's price — Coinbase has no fresh price right now")).toBeInTheDocument();
+  });
+
+  it("a backup whose main exchange the server does not name says 'the main exchange'", () => {
+    chart({ backup: { name: "Kraken", primaryName: null } });
+    expect(screen.getByText("Latest point: Kraken's price — the main exchange has no fresh price right now")).toBeInTheDocument();
+  });
+
+  it("no backup (the default, null): no such caption", () => {
+    chart();
+    expect(screen.queryByText(/Latest point:/)).not.toBeInTheDocument();
+    chart({ backup: null });
+    expect(screen.queryByText(/Latest point:/)).not.toBeInTheDocument();
+  });
+
   it("a malformed price does not blank the chart", () => {
     const ticks = [...ticksOf(100, NOW), { atMs: NOW + 3_000, price: "garbage" }];
     chart({ ticks });

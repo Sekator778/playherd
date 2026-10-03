@@ -18,6 +18,7 @@ import type { MarketDto, MyPositionDto, PublicPositionDto, RoundBetting, RoundCa
 import { resetEngineStateForTests } from "./api/engineState";
 import { realApi } from "./api/realApi";
 import { WIRE_HELP, missingWireFiles, wire, wireFetch, wireResponse, type WireOverrides } from "./api/wireSource";
+import { sourceName } from "./components/marketModel";
 import { formatPercent, formatPlayAmount, formatPrice } from "./format";
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -357,6 +358,79 @@ describe("Status — what the server says about itself", () => {
       expect(el).toHaveTextContent(row.reason);
     }
     expectCleanPage("status, cancellations");
+  });
+});
+
+describe("The exchange behind a price and a round (Р-76), on the server's own answers", () => {
+  const backed = () => markets().find((m) => m.status === "ACTIVE" && m.backupSource);
+  const fromBackup = () => markets().find((m) => m.status === "ACTIVE" && m.price?.venue && m.price.venue !== m.source);
+
+  it("every source the server names is named on the page — the Status page prints each market's own exchange and its backup", async () => {
+    renderApp("/status", { signedIn: false });
+    await waitFor(() => expect(document.querySelectorAll(".status-market")).toHaveLength(markets().length));
+    await settle(300);
+    for (const market of markets()) {
+      const row = Array.from(document.querySelectorAll<HTMLElement>(".status-market")).find((r) => r.querySelector("strong")?.textContent === market.symbol && r.textContent?.includes(formatPrice(market.price?.price ?? "x", market)));
+      expect(row, `no row for ${market.id}`).toBeDefined();
+      const line = row!.querySelector(".status-market__id .faint")?.textContent ?? "";
+      expect(line, `${market.id}: source`).toContain(sourceName(market.source)!);
+      if (market.backupSource) expect(line, `${market.id}: backup`).toContain(`Backup: ${sourceName(market.backupSource)}`);
+      else expect(line, `${market.id}: names a backup it has not`).not.toContain("Backup");
+    }
+    // one row per source of an open market, none of them 'Hyperliquid' because nobody said
+    const named = new Set(markets().filter((m) => m.status === "ACTIVE").flatMap((m) => [m.source, m.backupSource ?? null]).filter((s): s is NonNullable<typeof s> => s !== null));
+    const rows = within(screen.getByRole("list", { name: "Sources behind the prices" })).getAllByRole("listitem");
+    expect(rows.map((r) => r.querySelector("strong")?.textContent).sort()).toEqual([...named].map((s) => sourceName(s)!).sort());
+    expectCleanPage("status, sources");
+  });
+
+  it("a market with a backup names it in its room's oracle line", async () => {
+    const market = backed();
+    if (!market) return; // the capture had no market with a backup; the unit tests cover the wording
+    renderApp(`/play/${encodeURIComponent(market.id)}`);
+    await screen.findByRole("heading", { level: 1 });
+    await settle(300);
+    expect(screen.getByText(new RegExp(`Backup: ${sourceName(market.backupSource)}, used for a round only if ${sourceName(market.source)} has no price when it starts\\.`))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`Price from ${sourceName(market.source)}, published by our team's key`))).toBeInTheDocument();
+    expectCleanPage(`room of ${market.id}`);
+  });
+
+  it("a price that is the backup's is marked on the card and in the room", async () => {
+    const market = fromBackup();
+    if (!market) return; // every price of the capture was its market's own
+    const name = sourceName(market.price!.venue)!;
+    renderApp("/");
+    await screen.findAllByRole("article");
+    await settle();
+    const card = document.querySelector<HTMLElement>(`[data-market-id="${CSS.escape(market.id)}"]`)!;
+    expect(card.querySelector(".mk-card__venue"), `${market.id}: the card's mark`).toHaveTextContent(`${name} price`);
+    expectCleanPage("lobby, a backup price");
+  });
+
+  it("…and the room says so beside the number and in the chart's legend", async () => {
+    const market = fromBackup();
+    if (!market) return;
+    const name = sourceName(market.price!.venue)!;
+    renderApp(`/play/${encodeURIComponent(market.id)}`);
+    await screen.findByRole("heading", { level: 1 });
+    await settle(300);
+    expect(document.querySelector(".room-venue")).toHaveTextContent(`${name} price`);
+    expect(document.body.textContent).toContain(`Latest point: ${name}'s price`);
+    expectCleanPage(`room of ${market.id}, a backup price`);
+  });
+
+  it("a round that ran on the backup says so on the round page — made from the server's own settled round and its market", async () => {
+    const market = backed();
+    if (!market) return;
+    const round = { ...wireResponse<RoundSettled>("round.settled"), marketId: market.id, source: market.backupSource! };
+    renderApp(`/round/${encodeURIComponent(round.roundId)}`, {
+      overrides: { round: () => ({ body: round }) },
+    });
+    await screen.findByText("SETTLED");
+    await settle(300);
+    expect(screen.getByRole("note")).toHaveTextContent(`This round ran on ${sourceName(market.backupSource)}, the backup exchange — ${sourceName(market.source)} had no price when it started.`);
+    expect(screen.getByText(new RegExp(`^Price from ${sourceName(market.backupSource)}, published by our team's key`))).toBeInTheDocument();
+    expectCleanPage("round, settled on the backup");
   });
 });
 

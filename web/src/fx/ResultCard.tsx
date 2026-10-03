@@ -11,6 +11,7 @@ import { Link } from "react-router-dom";
 import type { ResultEvent, Tier } from "./resultEvent";
 import type { DisplayItem } from "./resultQueue";
 import { useMarkets } from "../api/useMarkets";
+import { backupRoundOf, type BackupRound } from "../components/marketModel";
 import { formatDuration, formatPlayAmount } from "../format";
 import { RollingDigits } from "./RollingDigits";
 import { usePrefersReducedMotion } from "./reducedMotion";
@@ -65,11 +66,20 @@ function useIsOdds(event: Pick<ResultEvent, "marketId" | "marketKind">): boolean
   return (event.marketKind ?? byId.get(event.marketId)?.kind) === "ODDS";
 }
 
+/** The round settled on its market's BACKUP exchange (Р-76: a round runs entirely on one exchange, chosen when it starts):
+ *  the event carries the exchange the round ran on (a live settlement does; a history row does not), the market list says
+ *  which exchange is the main one. `null` otherwise — a result on the main exchange says nothing of any. */
+function useBackupRound(event: Pick<ResultEvent, "marketId" | "venue">): BackupRound | null {
+  const { byId } = useMarkets();
+  return backupRoundOf({ source: event.venue }, byId.get(event.marketId));
+}
+
 function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss: () => void }) {
   const reducedMotion = usePrefersReducedMotion();
   const fx = useFxSettings();
   const seriesLabel = useSeriesLabel(event);
   const odds = useIsOdds(event);
+  const backupRound = useBackupRound(event);
   const cardRef = useRef<HTMLDivElement>(null);
   // Coin-arc launch point for WIN (below) — deliberately the icon, not the whole card: the
   // card's own bounding-rect center used to be the arc's origin, which on a WIN sits at/just
@@ -253,6 +263,12 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             <strong className="result-card__symbol">{event.symbol}</strong>
             {odds ? " odds" : ""}
             {seriesLabel ? ` · ${seriesLabel} round` : ""}
+          </p>
+        )}
+        {/* Р-76: a round that ran on the backup exchange says whose prices settled it — one quiet line, under the figures. */}
+        {backupRound && event.kind !== "LIQUIDATION" && (
+          <p className="result-card__venue">
+            Settled on {backupRound.name}, the backup exchange — {backupRound.primaryName} had no price when the round started
           </p>
         )}
         {/* Р-50 / Р-7, said plainly while it is true: liquidated NOW, not at the end of the round. And the one rule

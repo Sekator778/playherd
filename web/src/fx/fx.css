@@ -207,6 +207,13 @@
   font-weight: 700;
   font-size: 14px;
 }
+/* The round settled on its market's backup exchange (Р-76): one quiet, muted line under the figures. */
+.result-card__venue {
+  margin: 2px 0 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
 .result-card__actions {
   display: flex;
   align-items: center;

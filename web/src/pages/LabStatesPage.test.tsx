@@ -29,6 +29,23 @@ describe("/lab/states — the designed states are all drawn", () => {
     expect(within(card("GER")).getByRole("note")).toHaveTextContent("Closed — open bets refunded. This market takes no more bets.");
   });
 
+  it("the backup exchange (Р-76): a card whose price is Kraken's says so, one on its own exchange does not, and the market a new source replaced is closed with its reason", () => {
+    renderLab();
+    const card = (symbol: string) => screen.getAllByRole("article").find((a) => within(a).queryByRole("heading", { level: 3, name: new RegExp(`^${symbol}\\b`) }))!;
+    expect(within(card("ETH")).getByText("Kraken price")).toBeInTheDocument();
+    expect(within(card("SOL")).queryByText(/ price$/)).not.toBeInTheDocument();
+    expect(within(card("XRP")).getByRole("note")).toHaveTextContent("Closed 4 min ago — Moved to a new price source: Coinbase");
+  });
+
+  it("the backup exchange: the oracle line names it, a round on it says so (running and settled), and the chart's legend says whose latest point it is", () => {
+    renderLab();
+    expect(screen.getByText(/^Price from Coinbase, published by our team's key/)).toHaveTextContent("Backup: Kraken, used for a round only if Coinbase has no price when it starts.");
+    const notes = screen.getAllByRole("note").map((n) => n.textContent);
+    expect(notes).toContain("This round runs on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation are Kraken's.");
+    expect(notes).toContain("This round ran on Kraken, the backup exchange — Coinbase had no price when it started. Its open and close prices and every liquidation were Kraken's.");
+    expect(screen.getByText("Latest point: Kraken's price — Coinbase has no fresh price right now")).toBeInTheDocument();
+  });
+
   it("the round with no opening price: the notice and the player's own bet in it — and one strip card, none of them with a number", () => {
     renderLab();
     expect(screen.getAllByText("Waiting for the opening price…").length).toBeGreaterThanOrEqual(3);

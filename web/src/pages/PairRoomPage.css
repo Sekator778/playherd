@@ -138,6 +138,18 @@
   font-weight: 800;
   color: var(--warning);
 }
+/* The number is the BACKUP exchange's (Р-76): a muted mark, the reason is its hover text — not a warning. */
+.room-venue {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+.room-root .venue-note {
+  margin-top: 10px;
+}
 .room-countdown {
   flex: none;
 }
