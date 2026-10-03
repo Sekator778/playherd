@@ -44,10 +44,16 @@ public class ScriptedMarketPrices implements MarketPrices {
     private final Map<String, String> venues = new ConcurrentHashMap<>();
     private final List<String> opened = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<String, RuntimeException> openFailures = new ConcurrentHashMap<>();
+    private final java.util.Set<String> otherVenueLive = ConcurrentHashMap.newKeySet();
+    private final Map<String, RuntimeException> otherVenueFailures = new ConcurrentHashMap<>();
+    private final List<String> otherVenueAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public void reset() {
         opened.clear();
         openFailures.clear();
+        otherVenueLive.clear();
+        otherVenueFailures.clear();
+        otherVenueAsked.clear();
         venues.clear();
         series.clear();
         latest.clear();
@@ -134,6 +140,33 @@ public class ScriptedMarketPrices implements MarketPrices {
         resolveFailures.put(market.id(), failure);
     }
 
+    /** The market's source is back: no resolve of it fails any more, whether one window's or every window's. */
+    public void healResolves(Market market) {
+        resolveFailures.keySet().removeIf(key -> key.equals(market.id()) || key.startsWith(market.id() + "/"));
+    }
+
+    /**
+     * What {@link #otherVenueLive} answers for the market, until {@link #reset}: whether the exchange its round was not
+     * decided on has a live tick now (Р-77). Not scripted means it has none.
+     */
+    public void setOtherVenueLive(Market market, boolean live) {
+        if (live) {
+            otherVenueLive.add(market.id());
+        } else {
+            otherVenueLive.remove(market.id());
+        }
+    }
+
+    /** {@link #otherVenueLive} of the market throws {@code failure}, until {@link #reset}: a table that does not answer. */
+    public void failOtherVenueLive(Market market, RuntimeException failure) {
+        otherVenueFailures.put(market.id(), failure);
+    }
+
+    /** The ids of the rounds {@link #otherVenueLive} was asked about, in order, since {@link #reset}. */
+    public List<String> otherVenueLiveAsked() {
+        return List.copyOf(otherVenueAsked);
+    }
+
     /** What {@code soFar} returns for the market; none scripted means "unknown yet" (empty). */
     public void setSoFar(Market market, String rawOpen, String rawNow) {
         BigDecimal open = market.toEngine(new BigDecimal(rawOpen));
@@ -183,6 +216,17 @@ public class ScriptedMarketPrices implements MarketPrices {
     @Override
     public Optional<String> decidedVenue(Market market, RoundWindow window) {
         return Optional.ofNullable(venues.get(market.id()));
+    }
+
+    /** What a test scripted ({@link #setOtherVenueLive}); the ask is recorded and fails when told to. */
+    @Override
+    public boolean otherVenueLive(Market market, RoundWindow window, long nowMs) {
+        otherVenueAsked.add(window.roundId());
+        RuntimeException failure = otherVenueFailures.get(market.id());
+        if (failure != null) {
+            throw failure;
+        }
+        return otherVenueLive.contains(market.id());
     }
 
     /** Records the ask (what the scheduler does every tick for a market with a backup) and fails it when told to. */

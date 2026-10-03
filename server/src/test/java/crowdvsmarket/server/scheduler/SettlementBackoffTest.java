@@ -89,6 +89,51 @@ class SettlementBackoffTest {
         assertThat(backoff.waiting(SERIES, W1, 10_500L + SettlementBackoff.delayMs(2), true)).isFalse();
     }
 
+    // ------------------------------------------------------------------ the instant a round is let go from a silent exchange (Р-77)
+
+    @Test
+    void theBackoffNeverWaitsPastTheInstantAWindowIsLetGoAt() {
+        SettlementBackoff backoff = new SettlementBackoff();
+        // the 6th failure: the backoff would wait a minute, from 100 s to 160 s — the window is let go at 120 s
+        for (int i = 0; i < 5; i++) {
+            backoff.failed(SERIES, W1, 10_000L + i, false);
+        }
+
+        SettlementBackoff.State capped = backoff.failed(SERIES, W1, 100_000L, false, 120_000L);
+
+        assertThat(capped.failures()).isEqualTo(6);
+        assertThat(capped.nextAttemptAtMs()).as("not 160 s").isEqualTo(120_000L);
+        assertThat(backoff.waiting(SERIES, W1, 119_999L, false)).isTrue();
+        assertThat(backoff.waiting(SERIES, W1, 120_000L, false)).as("due at the instant itself").isFalse();
+    }
+
+    @Test
+    void aBackoffThatEndsBeforeTheInstantIsLeftAlone() {
+        SettlementBackoff backoff = new SettlementBackoff();
+
+        SettlementBackoff.State first = backoff.failed(SERIES, W1, 10_000L, false, 120_000L);
+
+        assertThat(first.nextAttemptAtMs()).as("2 s from now, well before the instant").isEqualTo(12_000L);
+    }
+
+    @Test
+    void anInstantThatIsNotInTheFutureHoldsNothingBack() {
+        SettlementBackoff backoff = new SettlementBackoff();
+
+        assertThat(backoff.failed(SERIES, W1, 200_000L, false, 120_000L).nextAttemptAtMs()).as("past").isEqualTo(202_000L);
+        assertThat(backoff.failed(SERIES, W1, 300_000L, false, 300_000L).nextAttemptAtMs()).as("now").isEqualTo(304_000L);
+        assertThat(backoff.failed(SERIES, W1, 400_000L, false, Long.MAX_VALUE).nextAttemptAtMs()).as("never")
+                .isEqualTo(408_000L);
+    }
+
+    @Test
+    void theFourArgumentFailureIsTheOneWithNoInstant() {
+        SettlementBackoff backoff = new SettlementBackoff();
+
+        assertThat(backoff.failed(SERIES, W1, 10_000L, false).nextAttemptAtMs()).isEqualTo(12_000L);
+        assertThat(backoff.failed(SERIES, W1, 12_000L, false).nextAttemptAtMs()).isEqualTo(16_000L);
+    }
+
     @Test
     void aClockThatWentBackwardsPastTheFailureDoesNotHoldTheWindowUntilItCatchesUp() {
         SettlementBackoff backoff = new SettlementBackoff();

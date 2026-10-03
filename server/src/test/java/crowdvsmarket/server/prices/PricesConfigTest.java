@@ -15,10 +15,15 @@ class PricesConfigTest {
     }
 
     private static PricesConfig produce(String mode, String source, long dailySec, Optional<String> disabledVenues) {
+        return produce(mode, source, dailySec, 120_000L, disabledVenues);
+    }
+
+    private static PricesConfig produce(String mode, String source, long dailySec, long venueReleaseAfterMs,
+                                        Optional<String> disabledVenues) {
         return new PricesConfigProducer().pricesConfig(mode, source, dailySec, PricesConfig.DEFAULT_HYPERLIQUID_URL,
                 PricesConfig.DEFAULT_POLYMARKET_CLOB_URL, PricesConfig.DEFAULT_POLYMARKET_GAMMA_URL,
                 PricesConfig.DEFAULT_POLYMARKET_DATA_URL, 15_000, 20_000, 30_000, 30_000, 90_000, 5_000, 10_000, 60_000,
-                3_000, 5_000, 600_000L, 260, true, 0.0015, 1_800_000L, disabledVenues);
+                3_000, 5_000, 600_000L, 260, true, 0.0015, 1_800_000L, venueReleaseAfterMs, disabledVenues);
     }
 
     @Test
@@ -56,6 +61,53 @@ class PricesConfigTest {
         assertThat(off.withDailyRoundMs(1_000).disabledVenues()).containsExactly("coinbase");
         assertThat(off.withEndpoints("http://x", 1, 1).disabledVenues()).containsExactly("coinbase");
         assertThat(off.withMode(true, PricesConfig.SourceKind.SYNTHETIC).disabledVenues()).containsExactly("coinbase");
+        assertThat(off.withVenueReleaseAfterMs(5).disabledVenues()).containsExactly("coinbase");
+    }
+
+    // ------------------------------------------------------------------ the release of a round from a silent exchange (Р-77)
+
+    @Test
+    void aRoundIsLetGoFromASilentExchangeAfterTwoMinutesByDefault() {
+        assertThat(PricesConfig.defaults().venueReleaseAfterMs()).isEqualTo(120_000L);
+        assertThat(PricesConfig.DEFAULT_VENUE_RELEASE_AFTER_MS).isEqualTo("120000");
+        assertThat(produce("live", "live", 900).venueReleaseAfterMs()).isEqualTo(120_000L);
+        assertThat(produce("live", "live", 900, 30_000L, Optional.empty()).venueReleaseAfterMs()).isEqualTo(30_000L);
+    }
+
+    @Test
+    void zeroSwitchesTheReleaseOffAndANegativeWaitStopsTheServer() {
+        assertThat(PricesConfig.defaults().withVenueReleaseAfterMs(0).venueReleaseAfterMs()).isZero();
+        assertThat(produce("live", "live", 900, 0L, Optional.empty()).venueReleaseAfterMs()).isZero();
+        assertThatThrownBy(() -> PricesConfig.defaults().withVenueReleaseAfterMs(-1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("herd.prices.venue-release-after-ms");
+        assertThatThrownBy(() -> produce("live", "live", 900, -1L, Optional.empty()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("herd.prices.venue-release-after-ms");
+    }
+
+    @Test
+    void everyOtherSettingSurvivesTheChangeOfTheReleaseAndTheReleaseSurvivesEveryOtherChange() {
+        PricesConfig slow = PricesConfig.defaults().withVenueReleaseAfterMs(300_000L);
+
+        assertThat(slow.disabledVenues()).isEmpty();
+        assertThat(slow.hyperliquidMaxHealMs()).isEqualTo(1_800_000L);
+        assertThat(slow.withDisabledVenues(Set.of("kraken")).venueReleaseAfterMs()).isEqualTo(300_000L);
+        assertThat(slow.withHyperliquidMaxBasis(0.002).venueReleaseAfterMs()).isEqualTo(300_000L);
+        assertThat(slow.withHyperliquidMaxHealMs(5).venueReleaseAfterMs()).isEqualTo(300_000L);
+        assertThat(slow.withQuietCarryMaxMs(1).venueReleaseAfterMs()).isEqualTo(300_000L);
+        assertThat(slow.withHyperliquidSeedBudget(1).venueReleaseAfterMs()).isEqualTo(300_000L);
+        assertThat(slow.withDailyRoundMs(1_000).venueReleaseAfterMs()).isEqualTo(300_000L);
+        assertThat(slow.withEndpoints("http://x", 1, 1).venueReleaseAfterMs()).isEqualTo(300_000L);
+        assertThat(slow.withMode(true, PricesConfig.SourceKind.SYNTHETIC).venueReleaseAfterMs()).isEqualTo(300_000L);
+    }
+
+    @Test
+    void theConstructorOfBeforeTheReleaseKeepsWorkingWithTheDefault() {
+        PricesConfig before = new PricesConfig(true, PricesConfig.SourceKind.LIVE, 900_000L, "h", "c", "g", "d", 15_000,
+                20_000, 30_000, 30_000, 90_000, 5_000, 10_000, 60_000, 3_000, 5_000, 600_000L, 260, true, 0.0015,
+                1_800_000L, Set.of("kraken")); // the 23 components of before
+
+        assertThat(before.venueReleaseAfterMs()).isEqualTo(120_000L);
+        assertThat(before.disabledVenues()).containsExactly("kraken");
     }
 
     @Test

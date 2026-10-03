@@ -22,6 +22,9 @@ import java.util.Map;
  * thread ({@code concurrentExecution = SKIP}), the methods are synchronized for a test that calls {@code
  * tick} from two. A clock that went backwards past a failure counts as "long ago" (like {@code LogThrottle}):
  * a step back must not hold a window until the clock catches up.
+ *
+ * <p>The backoff never waits past the instant a round of a market with a backup exchange is let go from a silent
+ * exchange ({@code RoundSchedulerService}, Р-77): the attempt after a failure is made at that instant at the latest.
  */
 final class SettlementBackoff {
 
@@ -59,9 +62,25 @@ final class SettlementBackoff {
 
     /** An attempt on {@code window} failed at {@code nowMs}: one more failure, and the next attempt later. */
     synchronized State failed(RoundProgress.SeriesKey series, RoundWindow window, long nowMs, boolean wasRefund) {
+        return failed(series, window, nowMs, wasRefund, Long.MAX_VALUE);
+    }
+
+    /**
+     * {@link #failed(RoundProgress.SeriesKey, RoundWindow, long, boolean)} for a window that has an instant of its own
+     * to be tried at ({@code notLaterThanMs}: the venue release, Р-77, from which a round that its exchange cannot price
+     * is let go): the next attempt is made at that instant, not after it, even when the backoff would have waited past it
+     * — a round that is to be released two minutes after its end is released then, not up to a minute later. An instant that
+     * is not in the future ({@code <= nowMs}) holds nothing back.
+     */
+    synchronized State failed(RoundProgress.SeriesKey series, RoundWindow window, long nowMs, boolean wasRefund,
+                              long notLaterThanMs) {
         State previous = stateOf(series, window);
         int failures = previous == null ? 1 : previous.failures() + 1;
-        State next = new State(window.startMs(), failures, nowMs, nowMs + delayMs(failures),
+        long nextAttemptAtMs = nowMs + delayMs(failures);
+        if (notLaterThanMs > nowMs && notLaterThanMs < nextAttemptAtMs) {
+            nextAttemptAtMs = notLaterThanMs;
+        }
+        State next = new State(window.startMs(), failures, nowMs, nextAttemptAtMs,
                 wasRefund || (previous != null && previous.refundTried()));
         bySeries.put(series, next);
         return next;

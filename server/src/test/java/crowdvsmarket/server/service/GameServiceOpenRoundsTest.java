@@ -2,6 +2,7 @@ package crowdvsmarket.server.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -29,7 +30,9 @@ import org.junit.jupiter.api.Test;
 /**
  * {@link GameService#openRounds} on plain objects (Р-76): every tick the scheduler asks the prices to open the running
  * round of each series of each market that has a backup exchange, once that round has started — and only those. A market's
- * failure never stops the others, and nothing is asked in replay mode.
+ * failure never stops the others, and nothing is asked in replay mode. And {@link GameService#otherVenueLive} (Р-77), the
+ * scheduler's question whether a round may be let go, which reaches the prices only for a market that has another exchange
+ * to ask about.
  */
 class GameServiceOpenRoundsTest {
 
@@ -144,6 +147,43 @@ class GameServiceOpenRoundsTest {
         progress.seed(spot.id(), Interval.HOURLY, hourly(spot, STEP));
 
         service.openRounds(2 * STEP);
+
+        verifyNoInteractions(marketPrices);
+    }
+
+    // ------------------------------------------------------------------ the other exchange of a market (Р-77)
+
+    @Test
+    void theOtherExchangeIsAskedAboutOnlyForAMarketThatHasOne() {
+        Market spot = market("spot_BTC", BACKUP);
+        Market plain = market("BTC", null);
+        when(marketPrices.otherVenueLive(any(), any(), anyLong())).thenReturn(true);
+
+        assertThat(service.otherVenueLive(spot, hourly(spot, STEP), 3 * STEP)).isTrue();
+        assertThat(service.otherVenueLive(plain, hourly(plain, STEP), 3 * STEP)).as("a market with one exchange").isFalse();
+
+        verify(marketPrices).otherVenueLive(spot, hourly(spot, STEP), 3 * STEP);
+        verify(marketPrices, never()).otherVenueLive(eq(plain), any(), anyLong());
+    }
+
+    @Test
+    void theAnswerOfThePricesIsTheAnswerAndItsFailureIsTheCallersToHandle() {
+        Market spot = market("spot_BTC", BACKUP);
+        when(marketPrices.otherVenueLive(spot, hourly(spot, STEP), 3 * STEP)).thenReturn(false);
+        when(marketPrices.otherVenueLive(spot, hourly(spot, 2 * STEP), 3 * STEP))
+                .thenThrow(new IllegalStateException("db is down"));
+
+        assertThat(service.otherVenueLive(spot, hourly(spot, STEP), 3 * STEP)).isFalse();
+        assertThatThrownBy(() -> service.otherVenueLive(spot, hourly(spot, 2 * STEP), 3 * STEP))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void inReplayModeThereIsNoOtherExchange() {
+        when(config.mode()).thenReturn(GameMode.REPLAY);
+        Market spot = market("spot_BTC", BACKUP);
+
+        assertThat(service.otherVenueLive(spot, hourly(spot, STEP), 3 * STEP)).isFalse();
 
         verifyNoInteractions(marketPrices);
     }

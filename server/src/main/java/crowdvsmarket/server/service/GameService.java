@@ -522,6 +522,19 @@ public class GameService implements MarketListener {
         }
     }
 
+    /**
+     * The price half of letting a round go (Р-77): whether the exchange of {@code market} that {@code window} was <i>not</i>
+     * decided on is alive now ({@link MarketPrices#otherVenueLive}). Only a market that has a backup exchange has another
+     * exchange, and only {@code mode=live} has exchanges at all. Reads the price rings and, for a round that is not in
+     * memory, the table of decisions; takes no lock, so it is for the scheduler and never for code under the engine's lock.
+     */
+    public boolean otherVenueLive(Market market, RoundWindow window, long nowMs) {
+        if (config.mode() != GameMode.LIVE || !Instruments.hasBackup(market)) {
+            return false;
+        }
+        return marketPrices.otherVenueLive(market, window, nowMs);
+    }
+
     /** Gives {@code market} its engines and, when its rounds are played, a series per interval
      *  seeded at the window containing "now" (§4 п.2) — never at the calendar's first window, which
      *  would make the scheduler walk every window since the origin, and never behind a window that

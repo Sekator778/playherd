@@ -28,6 +28,9 @@
  * priced on two venues, each with a ring of its own — the market's id is the primary's key, {@code <id>~<backup>} the
  * backup's ({@code spot_BTC~kraken}); polling, snapshot rows, seeding, pins, healing and staleness work per instrument.
  * Which venue a round runs on is decided once, at its open ({@code RoundVenues}), and it settles only from that venue's ring.
+ * A round that cannot be priced there waits — and holds its series — until the scheduler lets it go: cancelled with a refund
+ * {@code herd.prices.venue-release-after-ms} after its end when the market's other venue has a live tick fresh now
+ * ({@link crowdvsmarket.server.prices.MarketPrices#otherVenueLive}, Р-77), else an hour after its end (Р-23).
  *
  * <p>The fixed contract is {@link crowdvsmarket.server.prices.MarketPrices} and its four records;
  * everything else here is replaceable. Nothing in this package runs with {@code herd.mode=replay}.

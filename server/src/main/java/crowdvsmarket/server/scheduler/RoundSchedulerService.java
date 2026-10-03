@@ -10,7 +10,9 @@ import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.persistence.RoundResultRepository;
+import crowdvsmarket.server.prices.Instruments;
 import crowdvsmarket.server.prices.PriceUnavailableException;
+import crowdvsmarket.server.prices.PricesConfig;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.util.FailureLog;
 import crowdvsmarket.server.util.LogThrottle;
@@ -40,7 +42,20 @@ import org.jboss.logging.Logger;
  * backup exchange which has started and has no exchange yet is given one ({@link GameService#openRounds}): the
  * primary if it has a live price at the round's start, else the backup, else the round waits. The settlement
  * of a round then asks that exchange alone for its prices — and if it cannot be priced the round waits and is
- * refunded an hour after its end as any round without a price (below), never moved to the other exchange.
+ * refunded an hour after its end as any round without a price (below), never moved to the other exchange — unless it
+ * is let go sooner (next paragraph).
+ *
+ * <p><b>Letting a round go (Р-77).</b> The rounds of a series are settled in order, so a round that waits for its
+ * exchange holds the whole series, however well the market's other exchange is doing. A round of a market that has a
+ * backup exchange, with an exchange decided for it, that cannot be settled for want of a price ({@link
+ * PriceUnavailableException}) is therefore cancelled with a refund — reason {@link #VENUE_RELEASE_REASON}, its exchange
+ * kept in the result — as soon as {@code herd.prices.venue-release-after-ms} (two minutes; 0 switches the rule off)
+ * have passed since its end and the market's <i>other</i> exchange has a live tick fresh now ({@link
+ * GameService#otherVenueLive}); the series goes on, and the next round opens on whichever exchange has a live tick at
+ * its start. A round whose exchange comes back first is settled as always; with the other exchange silent too nothing
+ * changes — the round waits, is healed from the candles for up to 30 minutes and is refunded an hour after its end
+ * (Р-23) — and a market without a backup is not touched. The backoff of the failed attempts is cut at the release
+ * instant ({@link SettlementBackoff}), so a round is let go when its two minutes are over, not up to a minute later.
  *
  * <p><b>Gates before anything runs.</b> While the engine is not ready ({@code
  * EngineRebuildService#isReady}: the first rebuild has not finished, or a failed settlement's
@@ -75,6 +90,8 @@ public class RoundSchedulerService {
     private static final long PRICE_GRACE_MS = 3_600_000L;
     private static final String NO_PRICE_REASON = "no oracle price available within 1 hour of round close";
     private static final String SETTLEMENT_FAILED_REASON = "settlement failed within 1 hour of round close";
+    /** Р-77: the reason of a round let go from an exchange that stopped sending prices; players read it as it is. */
+    static final String VENUE_RELEASE_REASON = "The exchange of this round stopped sending prices; stakes returned";
 
     @Inject
     RoundProgress roundProgress;
@@ -92,6 +109,8 @@ public class RoundSchedulerService {
     OracleSeqGate oracleSeqGate;
     @Inject
     GameConfig config;
+    @Inject
+    PricesConfig pricesConfig;
 
     /** One line a minute per condition: a closed oracle gate. */
     private final LogThrottle logThrottle = new LogThrottle(60_000L);
@@ -101,6 +120,8 @@ public class RoundSchedulerService {
     private final FailureLog settlementLog = new FailureLog(60_000L);
     /** A series whose pass fails with something other than a failed attempt (the database does not answer). */
     private final FailureLog passLog = new FailureLog(60_000L);
+    /** One line a minute per series: the question whether the other exchange is alive could not be answered. */
+    private final LogThrottle venueLog = new LogThrottle(60_000L);
 
     @Scheduled(every = "1s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void tick() {
@@ -228,7 +249,7 @@ public class RoundSchedulerService {
             }
             if (!oracleSeqGate.open()) {
                 // The gate is asked here and only here: a settlement reserves a seq, a refund does not.
-                if (!refundDue || !refund(series, next, SETTLEMENT_FAILED_REASON, now)) {
+                if (!refundDue || !refund(series, next, SETTLEMENT_FAILED_REASON, now, true)) {
                     return;
                 }
                 roundProgress.advance(marketId, interval, next);
@@ -242,11 +263,11 @@ public class RoundSchedulerService {
                 if (e.code() == Enums.ApiErrorCode.ENGINE_NOT_READY) {
                     throw e; // not a failed attempt of this round: the engine is being recovered
                 }
-                if (!failedAttempt(series, next, e, now)) {
+                if (!failedAttempt(series, market, next, e, now)) {
                     return;
                 }
             } catch (RuntimeException e) {
-                if (!failedAttempt(series, next, e, now)) {
+                if (!failedAttempt(series, market, next, e, now)) {
                     return;
                 }
             }
@@ -258,20 +279,31 @@ public class RoundSchedulerService {
      * One failed attempt to settle {@code window} — no price, a price the source gave that cannot be
      * settled on, any other failure of the source, a settlement transaction that failed (and had the
      * engine rebuilt behind it, when it had touched it). The round is tried again later ({@link
-     * SettlementBackoff}), until an hour after its end (Р-23): then it is cancelled, with a refund.
+     * SettlementBackoff}), until an hour after its end (Р-23): then it is cancelled, with a refund. A round of a
+     * market with a backup exchange that has no price is let go sooner, when the market's other exchange is alive
+     * (Р-77, the class comment): it is cancelled with a refund as soon as {@code herd.prices.venue-release-after-ms}
+     * have passed since its end — and only a failure to find a price counts for that, not any other failure.
      *
      * @return {@code true} when the round has been cancelled (the series moves on), {@code false}
      *         when it will be tried again (stop catching up on this series this tick)
      */
-    private boolean failedAttempt(RoundProgress.SeriesKey series, RoundWindow window, RuntimeException failure,
-                                  long now) {
+    private boolean failedAttempt(RoundProgress.SeriesKey series, Market market, RoundWindow window,
+                                  RuntimeException failure, long now) {
         boolean noPrice = failure instanceof PriceUnavailableException;
         if (now >= window.endMs() + PRICE_GRACE_MS) {
             LOG.warnf("round %s could not be settled within 1 hour of its end (%s) — cancelling it with a refund",
                     window.roundId(), failure.toString());
-            return refund(series, window, noPrice ? NO_PRICE_REASON : SETTLEMENT_FAILED_REASON, now);
+            return refund(series, window, noPrice ? NO_PRICE_REASON : SETTLEMENT_FAILED_REASON, now, true);
         }
-        SettlementBackoff.State state = backoff.failed(series, window, now, false);
+        long releaseAtMs = noPrice ? venueReleaseAt(market, window) : Long.MAX_VALUE;
+        if (now >= releaseAtMs && otherVenueLive(market, window, now)) {
+            LOG.warnf("round %s has no price from its exchange %d s after its end (%s) and the other exchange of %s is "
+                    + "alive — cancelling it with a refund so that the series goes on", window.roundId(),
+                    (now - window.endMs()) / 1000L, failure.getMessage(), market.id());
+            return refund(series, window, VENUE_RELEASE_REASON, now, false);
+        }
+        // the next attempt is made at the release instant at the latest, so that the round is let go when its time is up
+        SettlementBackoff.State state = backoff.failed(series, window, now, false, releaseAtMs);
         long delaySec = (state.nextAttemptAtMs() - now) / 1000L;
         if (noPrice) {
             LOG.debugf("round %s has no price yet (%s) — attempt %d failed, retrying in %d s", window.roundId(),
@@ -292,13 +324,46 @@ public class RoundSchedulerService {
     }
 
     /**
-     * Cancels {@code window} with a refund, an hour after its end. A refund that fails is an attempt that failed
-     * like any other (backed off, logged once per window with its trace, then a line a minute), not an
-     * exception out of the pass.
+     * The instant from which the round of {@code market} that cannot be priced is let go, if the market's other exchange
+     * is alive: its end plus {@code herd.prices.venue-release-after-ms}. {@link Long#MAX_VALUE} — never — for a market
+     * without a backup exchange and while the rule is switched off (0).
+     */
+    private long venueReleaseAt(Market market, RoundWindow window) {
+        long afterMs = pricesConfig.venueReleaseAfterMs();
+        if (afterMs <= 0 || !Instruments.hasBackup(market)) {
+            return Long.MAX_VALUE;
+        }
+        return afterMs > Long.MAX_VALUE - window.endMs() ? Long.MAX_VALUE : window.endMs() + afterMs;
+    }
+
+    /**
+     * {@link GameService#otherVenueLive} for a pass that must not fail on it: the table of the round's exchange not
+     * answering, say, is "not now" — the next attempt asks again, and the hour of Р-23 does not depend on any of it.
+     */
+    private boolean otherVenueLive(Market market, RoundWindow window, long now) {
+        try {
+            return gameService.otherVenueLive(market, window, now);
+        } catch (RuntimeException e) {
+            if (venueLog.allow(window.market() + "/" + window.interval(), now)) {
+                LOG.warnf("could not tell whether the other exchange of %s is alive for %s — the round is not let go "
+                        + "now: %s", market.id(), window.roundId(), e.toString());
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Cancels {@code window} with a refund: an hour after its end (Р-23), or earlier, when the round is let go from an
+     * exchange that stopped sending prices (Р-77). A refund that fails is an attempt that failed like any other (backed
+     * off, logged once per window with its trace, then a line a minute), not an exception out of the pass.
      *
+     * @param hourRefund whether this is the refund of the hour: only that one, when it fails, counts as "the refund has
+     *                   been tried" ({@link SettlementBackoff}) — the backoff never delays its first attempt, whatever a
+     *                   release that failed before it did
      * @return whether the round was cancelled
      */
-    private boolean refund(RoundProgress.SeriesKey series, RoundWindow window, String reason, long now) {
+    private boolean refund(RoundProgress.SeriesKey series, RoundWindow window, String reason, long now,
+                           boolean hourRefund) {
         try {
             gameService.cancelRound(window, reason, now);
             backoff.forget(series);
@@ -308,17 +373,17 @@ public class RoundSchedulerService {
             if (e.code() == Enums.ApiErrorCode.ENGINE_NOT_READY) {
                 throw e;
             }
-            refundFailed(series, window, e, now);
+            refundFailed(series, window, e, now, hourRefund);
             return false;
         } catch (RuntimeException e) {
-            refundFailed(series, window, e, now);
+            refundFailed(series, window, e, now, hourRefund);
             return false;
         }
     }
 
-    private void refundFailed(RoundProgress.SeriesKey series, RoundWindow window, RuntimeException failure,
-                              long now) {
-        SettlementBackoff.State state = backoff.failed(series, window, now, true);
+    private void refundFailed(RoundProgress.SeriesKey series, RoundWindow window, RuntimeException failure, long now,
+                              boolean hourRefund) {
+        SettlementBackoff.State state = backoff.failed(series, window, now, hourRefund);
         long delaySec = (state.nextAttemptAtMs() - now) / 1000L;
         switch (settlementLog.next(window.roundId(), now)) {
             case STACK_TRACE -> LOG.errorf(failure, "round %s could not be cancelled and refunded (attempt %d) — "

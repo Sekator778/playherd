@@ -66,6 +66,7 @@ class PricePipelineWiringTest {
         assertThat(prices.syntheticMaxGapMs()).isEqualTo(10_000);
         assertThat(prices.connectTimeoutMs()).isEqualTo(3_000);
         assertThat(prices.readTimeoutMs()).isEqualTo(5_000);
+        assertThat(prices.venueReleaseAfterMs()).as("herd.prices.venue-release-after-ms: two minutes").isEqualTo(120_000L);
         assertThat(prices.pipelineActive()).isFalse();
         assertThat(prices.liveSources()).isFalse();
         assertThat(prices.syntheticSource()).isFalse();

@@ -62,6 +62,8 @@ public class PricesConfigProducer {
                     defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_MAX_BASIS) double hyperliquidMaxBasis,
             @ConfigProperty(name = "herd.prices.hyperliquid.max-heal-ms",
                     defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_MAX_HEAL_MS) long hyperliquidMaxHealMs,
+            @ConfigProperty(name = "herd.prices.venue-release-after-ms",
+                    defaultValue = PricesConfig.DEFAULT_VENUE_RELEASE_AFTER_MS) long venueReleaseAfterMs,
             // Optional: SmallRye takes an empty value for none, and the default of this list is empty (no venue off)
             @ConfigProperty(name = "herd.prices.disabled-venues") Optional<String> disabledVenues) {
         return new PricesConfig(PricesConfig.isLiveMode(mode), PricesConfig.SourceKind.parse(source),
@@ -69,6 +71,6 @@ public class PricesConfigProducer {
                 hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs,
                 syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs,
                 quietCarryMaxMs, seedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
-                hyperliquidMaxHealMs, PricesConfig.parseVenues(disabledVenues.orElse("")));
+                hyperliquidMaxHealMs, PricesConfig.parseVenues(disabledVenues.orElse("")), venueReleaseAfterMs);
     }
 }

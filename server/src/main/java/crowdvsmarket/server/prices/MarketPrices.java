@@ -12,7 +12,9 @@ import java.util.Optional;
  * <p>A market with a backup exchange ({@link Instruments}, Р-76) is priced on two venues, and a round runs entirely on
  * one of them, chosen once when it opens: {@link #openRound} chooses, {@link #decidedVenue} says what was chosen,
  * {@link #resolve} and {@link #soFar} answer from that venue alone, and {@link #latest(Market)} shows the primary's
- * price while it is fresh and the backup's when it is not. For a market without a backup none of this exists.
+ * price while it is fresh and the backup's when it is not. For a market without a backup none of this exists. A round
+ * whose exchange stays silent is not moved to the other one: it waits, and the scheduler lets it go — cancels it with a refund,
+ * so that the series goes on — when {@link #otherVenueLive} says the other exchange is alive (Р-77).
  */
 public interface MarketPrices {
 
@@ -63,5 +65,22 @@ public interface MarketPrices {
      */
     default Optional<String> openRound(Market market, RoundWindow window, long nowMs) {
         return decidedVenue(market, window);
+    }
+
+    /**
+     * Whether the market's <i>other</i> exchange is alive — the half of the venue release (Р-77) that is about prices: the
+     * round of a market with a backup was decided on one of its two exchanges, and the other one, the primary if the round
+     * runs on the backup and the backup if it runs on the primary, has a <i>live</i> tick that is fresh at {@code nowMs} (a
+     * poll's answer no older than the feed's staleness limit; history, a carried tick and a pin do not count). The scheduler
+     * asks it for a round it cannot settle because its own exchange gives no price, once the round has waited long enough
+     * ({@link PricesConfig#venueReleaseAfterMs()}): with the other exchange alive the series can go on without the round, so
+     * the round is cancelled with a refund instead of holding the series for the hour of Р-23.
+     *
+     * <p>{@code false} for a market without a backup, for a round whose exchange is not decided (nothing says which one is the
+     * other), for a decision this configuration cannot read, and for an exchange that is switched off. May block on the
+     * database (the table of decisions, for a round that is not in memory), so never under the engine lock.
+     */
+    default boolean otherVenueLive(Market market, RoundWindow window, long nowMs) {
+        return false;
     }
 }

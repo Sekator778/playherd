@@ -43,6 +43,12 @@ import org.jboss.logging.Logger;
  * this one by the basis between the two venues (Р-40 holds within a venue). For the lobby, {@link #latest(Market)} shows
  * the primary's live tick while it is fresh and the backup's when it is not, saying which.
  *
+ * <p><b>Letting a round go (Р-77).</b> A round that waits for its venue holds its series, because the rounds of a series are
+ * settled in order. When the other venue is alive the scheduler lets such a round go after a while — cancels it with a refund
+ * — and asks {@link #otherVenueLive} whether it is: the market's venue that the round was not decided on has a live tick that is
+ * fresh now. Nothing is moved to the other venue and nothing is decided here; the next round opens on whichever venue has a
+ * live tick at its start, by the rule above.
+ *
  * <p><b>A pin is not a tick</b> ({@link TickRing#PIN}): {@link #latest} and {@link #series} never show
  * it, so during an outage it cannot make an old price look fresh to a bot or the bet slip; and the
  * {@code sourceTs} of a settlement is the time of the <i>real</i> tick its price comes from, whether the
@@ -212,6 +218,43 @@ public class LiveMarketPrices implements MarketPrices {
     public Optional<String> decidedVenue(Market market, RoundWindow window) {
         requireSameMarket(market, window);
         return Instruments.hasBackup(market) ? venues.decided(window.roundId()) : Optional.empty();
+    }
+
+    @Override
+    public boolean otherVenueLive(Market market, RoundWindow window, long nowMs) {
+        requireSameMarket(market, window);
+        Optional<Market> shadow = Instruments.shadowOf(market);
+        if (shadow.isEmpty()) {
+            return false;
+        }
+        // the table, for a round that is not in memory: a restart between the end of the round and its release keeps the venue
+        Optional<String> venue = venues.venueOfRound(window.roundId());
+        if (venue.isEmpty()) {
+            return false; // no venue decided: nothing says which one is "the other"
+        }
+        Market other;
+        if (venue.get().equals(market.source())) {
+            other = shadow.get();
+        } else if (venue.get().equals(shadow.get().source())) {
+            other = market;
+        } else {
+            return false; // a decision this configuration cannot read
+        }
+        return hasLiveTickAt(other, nowMs);
+    }
+
+    /**
+     * Whether the instrument's newest <i>live</i> tick — a poll's answer, never a history point, a carry or a pin — is no older
+     * than its feed's {@code staleMs} at {@code nowMs}: the venue is giving prices now. A venue with no source — switched off, or
+     * never configured — gives none, whatever its ring still holds (ticks restored at start, say).
+     */
+    private boolean hasLiveTickAt(Market instrument, long nowMs) {
+        Optional<PriceSource.Feed> feed = feedOf(instrument);
+        if (feed.isEmpty()) {
+            return false;
+        }
+        Optional<PricePoint> last = store.last(instrument.id());
+        return last.isPresent() && nowMs - last.get().atMs() <= feed.get().staleMs();
     }
 
     @Override
