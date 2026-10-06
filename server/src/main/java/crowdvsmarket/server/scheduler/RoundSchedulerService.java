@@ -76,6 +76,12 @@ import org.jboss.logging.Logger;
  * <p><b>A round nobody bet on</b> that cannot be priced is not worth a minute of its series' time (Р-79): it is stepped over at once, like
  * an overdue empty window — no result, no event, no oracle record, one log line. The bet of a bot is a bet: only a round with none at all
  * is skipped, and an empty round that can be priced is settled as ever.
+ * <b>The skip lives in memory only</b> — the cursor moves, nothing is written. A restart, or any rebuild of the engine, seeds a series
+ * again where its last result row says ({@code SeriesSeeder}), so a window that was skipped less than one step ago (an older empty one
+ * is stepped over by the catch-up rule anyway) is walked again: if its price is back it is settled as an empty round — a row, an
+ * event and an oracle record, once, exactly as an empty round that can be priced always was — and if it is still missing it is skipped
+ * again, with no row. That is kept on purpose: both ways the money and the oracle's sequence stay consistent (a round that is settled
+ * takes the next number of the sequence, one that is skipped takes none). {@code SourceReleaseTest} pins both.
  *
  * <p><b>Gates before anything runs.</b> While the engine is not ready ({@code
  * EngineRebuildService#isReady}: the first rebuild has not finished, or a failed settlement's
@@ -428,7 +434,8 @@ public class RoundSchedulerService {
     /**
      * A round nobody bet on whose price cannot be had (Р-79): not worth a minute of its series' time, it is stepped over like an
      * overdue empty window ({@code GameService#firstWindowToResolve}) — no result, no event, no oracle record — and the caller
-     * moves the cursor on.
+     * moves the cursor on. Nothing but the cursor remembers it: after a restart or a rebuild of the engine the window can be walked
+     * again (the class comment).
      */
     private boolean skipEmpty(RoundProgress.SeriesKey series, RoundWindow window, RuntimeException failure) {
         LOG.infof("market %s %s: skipped the empty window %s, which has no price (%s), without a result",

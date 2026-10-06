@@ -3,6 +3,7 @@ package crowdvsmarket.server;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import crowdvsmarket.engine.market.Interval;
+import crowdvsmarket.engine.round.RoundClock;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.bots.BotStrategy;
 import crowdvsmarket.server.dto.Enums;
@@ -464,5 +465,80 @@ class SourceReleaseTest extends LiveGameTestBase {
         assertThat(roundResults.exists(running.roundId())).isFalse();
         assertThat(settlementEvents(running)).isZero();
         assertThat(prices.otherVenueLiveAsked()).as("nothing to give back, so nothing to ask").isEmpty();
+    }
+
+    // ------------------------------------------------------------------ the skip lives in memory only
+
+    /**
+     * A market with a settled round behind it and the next one skipped: nobody bet on it and its price is missing, so the cursor has
+     * moved past it and nothing is written. Returns {@code skipped}, the window the cursor was on; the one after it is {@code next}.
+     */
+    private RoundWindow aMarketWhoseEmptyRoundWasSkipped(Market market) {
+        parkTheDailySeries(market);
+        RoundWindow settledBefore = roundProgress.next(market.id(), HOURLY);
+        RoundWindow skipped = roundProgress.bettingWindow(market.id(), HOURLY);
+        scheduler.tick(settledBefore.endMs()); // priced: settled, so the market has a result row, and the rebuild below starts after it
+        assertThat(roundResults.exists(settledBefore.roundId())).isTrue();
+        prices.failAllResolves(market, new PriceUnavailableException("no price from the source"));
+
+        scheduler.tick(skipped.endMs());
+
+        assertThat(roundProgress.next(market.id(), HOURLY)).as("the series went on").isEqualTo(RoundClock.next(skipped));
+        assertThat(roundResults.exists(skipped.roundId())).as("and nothing was written for the round that was skipped").isFalse();
+        assertThat(settlementEvents(skipped)).isZero();
+        return skipped;
+    }
+
+    @Test
+    void aSkippedEmptyRoundIsRememberedInMemoryOnlySoARebuildWalksItAgainAndSettlesItOnceWhenItsPriceIsBack() {
+        Market market = listPlain("T_SR_AGAIN", "SRG");
+        RoundWindow skipped = aMarketWhoseEmptyRoundWasSkipped(market);
+        RoundWindow next = RoundClock.next(skipped);
+
+        long restartAt = skipped.endMs() + 5_000L; // less than one step after its end: the catch-up rule does not step over it
+        rebuild.rebuild(restartAt);                // a restart, or any rebuild of the engine: the cursor is seeded where the last row says
+        parkTheDailySeries(market);
+        assertThat(roundProgress.next(market.id(), HOURLY)).as("back at the round that was skipped").isEqualTo(skipped);
+        prices.healResolves(market);               // its price is back
+
+        scheduler.tick(restartAt);
+
+        assertThat(roundResults.findRoundDto(skipped.roundId()).orElseThrow()).as("settled as an empty round, as one that can be priced always is")
+                .isInstanceOf(Rounds.RoundSettled.class);
+        assertThat(settlementEvents(skipped)).as("once").isEqualTo(1);
+        assertThat(oracleRowCount(skipped.roundId())).as("with the next number of the oracle's sequence, once").isEqualTo(1);
+        assertThat(roundProgress.next(market.id(), HOURLY)).isEqualTo(next);
+
+        scheduler.tick(restartAt + 1_000L);
+        scheduler.tick(restartAt + 2_000L);
+
+        assertThat(settlementEvents(skipped)).as("and not again").isEqualTo(1);
+        assertThat(oracleRowCount(skipped.roundId())).isEqualTo(1);
+    }
+
+    @Test
+    void aSkippedEmptyRoundIsSkippedAgainAfterARebuildWhileItsPriceIsStillMissingAndLeavesNoRow() {
+        Market market = listPlain("T_SR_AGAIN2", "SRH");
+        RoundWindow skipped = aMarketWhoseEmptyRoundWasSkipped(market);
+        RoundWindow next = RoundClock.next(skipped);
+
+        long restartAt = skipped.endMs() + 5_000L;
+        rebuild.rebuild(restartAt);
+        parkTheDailySeries(market);
+        assertThat(roundProgress.next(market.id(), HOURLY)).as("back at the round that was skipped").isEqualTo(skipped);
+
+        scheduler.tick(restartAt); // its price is still missing
+
+        assertThat(roundProgress.next(market.id(), HOURLY)).as("skipped again, at the first attempt").isEqualTo(next);
+        assertThat(roundResults.exists(skipped.roundId())).as("no row").isFalse();
+        assertThat(settlementEvents(skipped)).as("no event").isZero();
+        assertThat(oracleRowCount(skipped.roundId())).as("no oracle record").isZero();
+        assertThat(listedInTheCancellationsLog(skipped.roundId(), REASON)).as("and no cancellation to show").isFalse();
+
+        prices.healResolves(market); // the price comes back later: the series is on the next round, which is settled as always
+        scheduler.tick(next.endMs());
+
+        assertThat(roundResults.findRoundDto(next.roundId()).orElseThrow()).isInstanceOf(Rounds.RoundSettled.class);
+        assertThat(roundResults.exists(skipped.roundId())).as("the round that was skipped stays without a row").isFalse();
     }
 }
