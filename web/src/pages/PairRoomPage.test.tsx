@@ -710,3 +710,37 @@ describe("Room — states", () => {
   });
 
 });
+
+describe("Room — LIVE BETS shows one row per bet, the current one (first tester pass, D4)", () => {
+  const live = (id: string, name: string, stake: string, atMs: number) => ({
+    player: { playerId: id, nickname: name, walletAddress: "txch1" + id, displayName: name },
+    direction: "UP" as const,
+    leverage: 10,
+    stake,
+    atMs,
+  });
+  // newest first, as the server sends it: Ann edited her bet twice, the signed-in player (p1) changed theirs once
+  const feed = [live("ann", "Ann", "300.000", 5), live("player-1", "p1", "150.000", 4), live("ann", "Ann", "200.000", 3), live("player-1", "p1", "110.000", 2), live("ann", "Ann", "100.000", 1)];
+  const rows = () => [...document.querySelectorAll(".room-feed__row")].map((r) => r.textContent?.replace(/\s+/g, " ").trim());
+
+  it("an edited bet is one row — its newest version", async () => {
+    renderRoom("/play/BTC", { betting: () => bettingRoundOf("BTC", "BTC", { recentBets: feed, myBet: { playerId: "player-1", roundId: "BTC-1h-0", direction: "UP", leverage: 10, stake: "150.000" } }) }, true);
+    await screen.findByText("Live bets");
+    expect(rows()).toEqual([expect.stringContaining("300"), expect.stringContaining("150")]);
+    expect(rows().join(" ")).not.toMatch(/110|200|100\b/);
+  });
+
+  it("the signed-in player's cancelled bet leaves the list, with every version of it", async () => {
+    renderRoom("/play/BTC", { betting: () => bettingRoundOf("BTC", "BTC", { recentBets: feed, myBet: null }) }, true);
+    await screen.findByText("Live bets");
+    expect(rows()).toEqual([expect.stringContaining("Ann")]);
+    expect(rows()[0]).toContain("300");
+  });
+
+  it("when nothing is left to show the section goes too", async () => {
+    renderRoom("/play/BTC", { betting: () => bettingRoundOf("BTC", "BTC", { recentBets: [live("player-1", "p1", "110.000", 1)], myBet: null }) }, true);
+    await screen.findByText("BTC/USD");
+    await screen.findByRole("button", { name: "PLACE BET" });
+    expect(screen.queryByText("Live bets")).not.toBeInTheDocument();
+  });
+});

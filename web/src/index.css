@@ -1282,6 +1282,23 @@ ol {
   color: var(--down);
 }
 
+/* What just happened to the player's bet ("Bet updated.", "Bet cancelled — … is back in your balance."): a short line
+   with its own glyph, so the meaning is never the colour alone. */
+.bet-notice {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--up);
+  background: color-mix(in srgb, var(--up) 12%, transparent);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+.bet-notice--cancelled {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated-2);
+}
+
 /* Tables / lists ------------------------------------------------------------------ */
 
 .data-table {

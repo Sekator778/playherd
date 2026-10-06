@@ -34,7 +34,9 @@ import { herdSideOf } from "./marketModel";
 interface BetSlipProps {
   round: RoundBetting;
   nowMs: number;
-  onChanged: () => void;
+  /** The player's own bet changed (placed, updated, cancelled): reload the round. May answer with a promise — the slip
+   *  then waits for the reloaded round before it says what happened, so the "Your bet" card never shows the old bet. */
+  onChanged: () => void | Promise<void>;
   /** Round-only reassurance line (`ux_spec.md` §4's "Not signed in" state) — Home doesn't ask
    *  for it, so it stays an opt-in prop rather than baked into the shared "no player" card. */
   noPlayerHint?: string;
@@ -53,6 +55,9 @@ interface BetSlipProps {
    *  also passed. */
   hideDirectionPicker?: boolean;
 }
+
+/** How long the line that says what just happened to the player's bet stays ("Bet updated."). */
+const NOTICE_MS = 5000;
 
 /** The liquidation preview of the bet being composed (Р-7, Р-33: shown BEFORE the bet) — debounced, and
  *  an answer that arrives after a newer question was asked is dropped, not shown. */
@@ -425,7 +430,7 @@ function BetSlipForm({
   round: RoundBetting;
   market: MarketDto | undefined;
   maxLeverage: number;
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
   direction?: Direction;
   onDirectionChange?: (direction: Direction) => void;
   hideDirectionPicker?: boolean;
@@ -504,9 +509,33 @@ function BetSlipForm({
     };
   }, [api, round.roundId, existingStake, engineEpoch, balanceAttempt]);
 
+  // One line that says what just happened to the player's bet, for a few seconds. Placing a bet brings the "Your bet" card
+  // up at once, but an UPDATE used to leave the form open, its button unchanged and not a word of it — the header balance
+  // was the only sign it had worked — and a cancel only made the card vanish (first tester pass, D4).
+  const [notice, setNotice] = useState<{ kind: "placed" | "updated" | "cancelled"; text: string } | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+  const noticeLine = notice && (
+    <p className={`bet-notice bet-notice--${notice.kind}`} role="status">
+      <span aria-hidden="true">{notice.kind === "cancelled" ? "↩" : "✓"}</span> {notice.text}
+    </p>
+  );
+
+  // Editing starts from the bet as it is, not from whatever was typed and abandoned before.
+  const loadBetIntoForm = (bet: NonNullable<typeof existing>) => {
+    setErrorMessage(null);
+    setDirection(bet.direction);
+    setLeverage(bet.leverage);
+    setStake(stakeDisplay(bet.stake));
+  };
+
   if (!formOpen && existing) {
     return (
       <div className="card">
+        {noticeLine}
         {showCancelConfirm ? (
           <>
             <p>Cancel your bet and get {formatPlayAmount(existing.stake)} PLAY back?</p>
@@ -523,7 +552,8 @@ function BetSlipForm({
                   setCancelError(null);
                   try {
                     await api.cancelBet(round.roundId);
-                    onChanged();
+                    await onChanged();
+                    setNotice({ kind: "cancelled", text: `Bet cancelled — ${formatPlayAmount(existing.stake)} PLAY is back in your balance.` });
                   } catch (err) {
                     setCancelError(mutationErrorText(err, "Couldn't cancel the bet — try again."));
                   } finally {
@@ -543,7 +573,15 @@ function BetSlipForm({
               {formatPlayAmount(existing.stake)} PLAY
             </p>
             <div className="direction-row">
-              <button type="button" className="btn btn--secondary" onClick={() => setFormOpen(true)}>
+              <button
+                type="button"
+                className="btn btn--secondary"
+                onClick={() => {
+                  loadBetIntoForm(existing);
+                  setNotice(null);
+                  setFormOpen(true);
+                }}
+              >
                 EDIT BET
               </button>
               <button type="button" className="btn btn--danger" onClick={() => setShowCancelConfirm(true)}>
@@ -569,7 +607,10 @@ function BetSlipForm({
     setErrorMessage(null);
     try {
       await api.placeBet({ roundId: round.roundId, direction, leverage, stake: stakeNum.toFixed(3) });
-      onChanged();
+      // The round is reloaded first, so the card the form gives way to shows the bet as it is now, not the old one.
+      await onChanged();
+      setNotice(existing ? { kind: "updated", text: "Bet updated." } : { kind: "placed", text: "Bet placed." });
+      setFormOpen(false);
     } catch (err) {
       setErrorMessage(mutationErrorText(err, "Something went wrong."));
     } finally {
@@ -585,6 +626,7 @@ function BetSlipForm({
         void submit();
       }}
     >
+      {noticeLine}
       {!hideDirectionPicker && <DirectionPicker id="direction-label" direction={direction} onChange={setDirection} />}
       <HerdPicker herd={herdSideOf(round)} direction={direction} onPick={setDirection} />
 
@@ -644,6 +686,19 @@ function BetSlipForm({
       <button type="submit" className="btn btn--primary btn--lg btn--block" disabled={disabled}>
         {existing ? "UPDATE BET" : "PLACE BET"}
       </button>
+      {existing && (
+        // The way out of edit mode that does not send anything — and back to the card with CANCEL BET on it.
+        <button
+          type="button"
+          className="btn btn--secondary btn--block"
+          onClick={() => {
+            loadBetIntoForm(existing);
+            setFormOpen(false);
+          }}
+        >
+          BACK TO YOUR BET
+        </button>
+      )}
     </form>
   );
 }

@@ -48,6 +48,7 @@ import type {
 import { LONG, SHORT, unrealizedPnl } from "../api/liquidation";
 import { outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
 import { BetSlip } from "../components/BetSlip";
+import { liveBetRows } from "../components/liveBetsModel";
 import { BotBadge, Countdown, ErrorState, OracleDisclosureLine, RoundVenueNote, Skeleton } from "../components/Common";
 import { CrowdPositionCard, IntervalTabs } from "../components/RoundParts";
 import { Avatar } from "../components/Avatar";
@@ -306,8 +307,9 @@ function Room({ market }: { market: MarketDto }) {
   const prevBettingRef = useRef<{ interval: Interval; betting: Extract<RoundsPairDto["betting"], { phase: "BETTING" }> } | null>(null);
   const lockedOverlayTimeoutRef = useRef<number | null>(null);
 
+  // Answers with the request itself: the bet slip waits for the reloaded round before it says what happened to a bet.
   const load = useCallback(() => {
-    api
+    return api
       .rounds(interval, marketId)
       .then((p) => {
         setPairData(p);
@@ -528,6 +530,8 @@ function Room({ market }: { market: MarketDto }) {
 
   const split = roundSplit(betting.phase === "BETTING" ? betting : running);
   const upPct = split ? split.upPct : 50;
+  // One row per bet, the current one: the server's feed keeps every version of an edited bet and every cancelled one.
+  const liveBets = betting.phase === "BETTING" ? liveBetRows(betting.recentBets ?? [], player?.playerId, betting.myBet) : [];
 
   return (
     <div className="room-root">
@@ -621,10 +625,10 @@ function Room({ market }: { market: MarketDto }) {
             )}
           </p>
           <BetSlip round={betting} nowMs={nowMs} onChanged={load} direction={direction} onDirectionChange={setDirection} hideDirectionPicker />
-          {betting.recentBets && betting.recentBets.length > 0 && (
+          {liveBets.length > 0 && (
             <>
               <h3 className="room-section-title">Live bets</h3>
-              <LiveBetFeed bets={betting.recentBets} />
+              <LiveBetFeed bets={liveBets} />
             </>
           )}
         </>

@@ -51,9 +51,10 @@ export function RoundPage() {
     setError(null);
   }
 
+  // Answers with the request itself: the bet slip waits for the reloaded round before it says what happened to a bet.
   const load = useCallback(() => {
     if (!roundId) return;
-    api
+    return api
       .round(roundId)
       .then((r) => {
         setRound(r);
