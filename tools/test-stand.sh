@@ -3,7 +3,9 @@
 # every venue the server prices from — Hyperliquid, Coinbase, Kraken — from inside the server container, says so for each,
 # warns (never fails) for one that does not answer, and leaves out a venue that HERD_PRICES_DISABLED_VENUES switches off; and the
 # host port of the web: a second `up` on a stand that is already running keeps the port its own web container holds (a public
-# tunnel is pointed at it), where it used to call it busy and move the web to the next one.
+# tunnel is pointed at it), where it used to call it busy and move the web to the next one; and the `.env` with the stand's
+# secrets, which is created owner-only (mode 600, whatever the umask) and, when an earlier run or an editor left it readable by
+# others, tightened.
 # A fake `docker` stands in for the compose project and records what it would have been asked, a fake `lsof` for the
 # processes that listen.
 
@@ -172,6 +174,47 @@ OUT=$(HERD_FAKE_BUSY="8480" up_run)
 ok "the first up with another process on 8480: compose gets 8481" "$(grep -q '^UP HERD_WEB_PORT=8481$' "${CALLS}"; echo $?)"
 OUT=$(up_run)
 ok "the first up on a free machine: compose gets 8480" "$(grep -q '^UP HERD_WEB_PORT=8480$' "${CALLS}"; echo $?)"
+
+# --- .env: it holds the stand's secrets, so it is owner-only from its first byte, and a looser one is tightened
+mode_of() { file_mode "$1"; }
+rm -f "${ROOT_DIR}/.env"
+OUT=$( (umask 022; ensure_env_file) 2>&1 )
+ok "a new .env is created even under a permissive umask (022): mode 600" "$([[ "$(mode_of "${ROOT_DIR}/.env")" == 600 ]]; echo $?)"
+ok "... with the four secrets in it" "$([[ "$(grep -cE '^(HERD_OPERATOR_TOKEN|HERD_DB_PASSWORD|C2_SVC_TOKEN|HERD_CHAINSVC_TOKEN)=.' "${ROOT_DIR}/.env")" == 4 ]]; echo $?)"
+ok "... and no line about tightening anything: it was never looser" "$(grep -q 'now mode 600' <<<"${OUT}"; [[ $? -ne 0 ]]; echo $?)"
+SECRETS_BEFORE=$(cat "${ROOT_DIR}/.env")
+OUT=$(ensure_env_file 2>&1)
+ok "a second call changes nothing in the file" "$([[ "$(cat "${ROOT_DIR}/.env")" == "${SECRETS_BEFORE}" ]]; echo $?)"
+ok "... and says nothing about the mode" "$(grep -q 'mode' <<<"${OUT}"; [[ $? -ne 0 ]]; echo $?)"
+
+chmod 644 "${ROOT_DIR}/.env"
+OUT=$(ensure_env_file 2>&1)
+ok "an existing .env of mode 644 is set to 600" "$([[ "$(mode_of "${ROOT_DIR}/.env")" == 600 ]]; echo $?)"
+ok "... with a line that says what it was" "$(grep -q '.env had mode 644; it holds the stand.s secrets, now mode 600' <<<"${OUT}"; echo $?)"
+ok "... and its secrets are the ones it had" "$([[ "$(cat "${ROOT_DIR}/.env")" == "${SECRETS_BEFORE}" ]]; echo $?)"
+for loose in 640 604 666 755; do
+  chmod "${loose}" "${ROOT_DIR}/.env"
+  ensure_env_file >/dev/null 2>&1
+  ok "mode ${loose} (group or others can get at it) is set to 600" "$([[ "$(mode_of "${ROOT_DIR}/.env")" == 600 ]]; echo $?)"
+done
+chmod 400 "${ROOT_DIR}/.env"
+OUT=$(ensure_env_file 2>&1)
+ok "an owner-only .env (400) is left as it is" "$([[ "$(mode_of "${ROOT_DIR}/.env")" == 400 ]]; echo $?)"
+ok "... without a word" "$(grep -q 'mode' <<<"${OUT}"; [[ $? -ne 0 ]]; echo $?)"
+chmod 600 "${ROOT_DIR}/.env"
+
+# a .env that only has some of the secrets: the rest is added, and a loose file is tightened in the same call
+printf '# mine\nHERD_OPERATOR_TOKEN=keep-me\n' >"${ROOT_DIR}/.env"
+chmod 644 "${ROOT_DIR}/.env"
+ensure_env_file >/dev/null 2>&1
+ok "a partial .env: the secret it had is kept" "$(grep -q '^HERD_OPERATOR_TOKEN=keep-me$' "${ROOT_DIR}/.env"; echo $?)"
+ok "... the missing ones are added" "$([[ "$(grep -cE '^(HERD_DB_PASSWORD|C2_SVC_TOKEN|HERD_CHAINSVC_TOKEN)=.' "${ROOT_DIR}/.env")" == 3 ]]; echo $?)"
+ok "... and the file ends owner-only" "$([[ "$(mode_of "${ROOT_DIR}/.env")" == 600 ]]; echo $?)"
+
+# `up` itself goes through it
+rm -f "${ROOT_DIR}/.env"
+OUT=$(up_run)
+ok "stand.sh up creates the .env with mode 600" "$([[ "$(mode_of "${ROOT_DIR}/.env")" == 600 ]]; echo $?)"
 
 if [[ "${FAILS}" -ne 0 ]]; then
   echo "${FAILS} check(s) failed" >&2
