@@ -56,6 +56,7 @@ import { ArrowLeftIcon, DirectionGlyph, LockIcon, StarIcon } from "../components
 import { OwnPositionCard } from "../components/OwnPositionCard";
 import { MarketIcon } from "../components/MarketIcon";
 import { MarketRail } from "../components/MarketRail";
+import { ChartBoundary } from "../components/ErrorBoundary";
 import { PriceChart } from "../components/PriceChart";
 import { buildChartLines } from "../components/priceChartModel";
 import { formatStartsIn, trend, TREND_GLYPH } from "../components/marketFormat";
@@ -456,19 +457,22 @@ function Room({ market }: { market: MarketDto }) {
     </>
   );
 
+  // A chart that cannot be drawn leaves a line in its place — not a room, a header and an app that are gone with it.
   const chart = (
-    <PriceChart
-      market={market}
-      ticks={series.ticks}
-      current={current}
-      lines={lines}
-      roundStartMs={runningRound && !waitingOpen ? runningRound.window.startMs : null}
-      loading={series.loading}
-      error={series.error}
-      stale={stale}
-      live={open}
-      backup={backupPrice}
-    />
+    <ChartBoundary resetKey={series.ticks}>
+      <PriceChart
+        market={market}
+        ticks={series.ticks}
+        current={current}
+        lines={lines}
+        roundStartMs={runningRound && !waitingOpen ? runningRound.window.startMs : null}
+        loading={series.loading}
+        error={series.error}
+        stale={stale}
+        live={open}
+        backup={backupPrice}
+      />
+    </ChartBoundary>
   );
 
   if (!open) {

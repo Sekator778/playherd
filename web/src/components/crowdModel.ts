@@ -153,10 +153,17 @@ export interface CapitalAxis {
  * value to scale by: the chart's own default stands.
  */
 export function capitalAxis(values: readonly number[], targetTicks = 5): CapitalAxis | null {
-  const finite = values.filter((v) => Number.isFinite(v));
-  if (finite.length === 0) return null;
-  let min = Math.min(...finite);
-  let max = Math.max(...finite);
+  // A loop, not `Math.min(...values)`: that puts every value on the stack as an argument, and past a limit of tens of thousands
+  // (about 40 000 in V8, 22 000 in WebKit) it throws a RangeError. The chart hands over three values per point of the crowd's
+  // history, which a stand with 3-minute rounds fills within weeks — and an error thrown while drawing unmounted the whole app.
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (!Number.isFinite(value)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  if (min > max) return null; // no finite value at all
   const middle = (min + max) / 2;
   const minSpan = Math.max(1, Math.abs(middle) * 0.002);
   if (max - min < minSpan) {

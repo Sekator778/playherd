@@ -189,6 +189,43 @@ describe("capitalAxis — round ticks whose labels differ (first tester pass, D8
     expect(capitalAxis([])).toBeNull();
     expect(capitalAxis([Number.NaN, Number.POSITIVE_INFINITY])).toBeNull();
   });
+
+  // The axis used to spread every value into Math.min / Math.max, and a call takes only so many arguments: past about 40 000
+  // in V8 (22 000 in WebKit) it throws a RangeError, and with nothing to catch it the whole app unmounted. A stand with
+  // 3-minute rounds writes a crowd-capital point per settled round, three values each, so months of history get there.
+  describe("with a very long history (the chart reads every point, three values each)", () => {
+    const wave = (i: number) => 100_000 + ((i * 7919) % 2_003) * 0.37 - 300; // a few hundred dollars of drift, no two alike for long
+    const many = (n: number) => Array.from({ length: n }, (_, i) => wave(i));
+    /** What an axis says, without its `format` function (a new closure each time, never equal to another). */
+    const shapeOf = (axis: NonNullable<ReturnType<typeof capitalAxis>>) => ({ domain: axis.domain, ticks: axis.ticks, width: axis.width, labels: axis.ticks.map(axis.format) });
+
+    it.each([50_000, 150_000, 450_000])("%i values: an axis, not a RangeError", (n) => {
+      expect(() => capitalAxis(many(n))).not.toThrow();
+    });
+
+    it("150 000 values give the axis of their extremes — nothing else about them matters", () => {
+      const values = many(150_000);
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const v of values) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      const axis = capitalAxis(values)!;
+      expect(shapeOf(axis)).toEqual(shapeOf(capitalAxis([lo, hi])!));
+      expect(axis.domain[0]).toBeLessThanOrEqual(lo);
+      expect(axis.domain[1]).toBeGreaterThanOrEqual(hi);
+    });
+
+    it("a value that is not a number among them is passed over, as it is among a few", () => {
+      const values = many(150_000);
+      values[10] = Number.NaN;
+      values[20] = Number.POSITIVE_INFINITY;
+      values[149_999] = Number.NEGATIVE_INFINITY;
+      expect(shapeOf(capitalAxis(values)!)).toEqual(shapeOf(capitalAxis(values.filter(Number.isFinite))!));
+      expect(capitalAxis(Array.from({ length: 150_000 }, () => Number.NaN))).toBeNull();
+    });
+  });
 });
 
 describe("dedupeByTime — one point per instant", () => {
