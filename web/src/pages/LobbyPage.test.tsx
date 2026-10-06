@@ -2,7 +2,8 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiWrapper, fakeApi } from "../api/apiTestUtils";
+import { ApiInstanceContext, SessionContext, type SessionState } from "../api/ApiContext";
+import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
 import type { Api, MarketDto, MarketsDto } from "../api/contract";
 import { FAVORITES_STORAGE_KEY, reloadFavoritesFromStorage } from "../api/favorites";
 import { catalogue, market, marketsOf, spotCatalogue } from "../components/testFixtures";
@@ -21,6 +22,21 @@ function renderLobby(markets: MarketDto[] = catalogue(), path = "/", methods: Pa
       <LocationProbe />
     </MemoryRouter>,
     { wrapper: apiWrapper(api) },
+  );
+}
+
+/** The lobby for a given state of the session (signed out, signed in, still being read). */
+function renderLobbyAs(session: Partial<SessionState>) {
+  const api = fakeApi({ markets: vi.fn(async () => marketsOf(catalogue())) });
+  const state: SessionState = { player: null, loading: false, refresh: async () => {}, signOut: async () => {}, openConnectModal: () => {}, ...session };
+  return render(
+    <MemoryRouter>
+      <ApiInstanceContext.Provider value={api}>
+        <SessionContext.Provider value={state}>
+          <LobbyPage />
+        </SessionContext.Provider>
+      </ApiInstanceContext.Provider>
+    </MemoryRouter>,
   );
 }
 
@@ -611,5 +627,36 @@ describe("Lobby — a poll that fails after a good load", () => {
     });
     expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(screen.getByText(/Can't reach the server — showing the last prices we got/)).toBeInTheDocument();
+  });
+});
+
+describe("Lobby — says what this is, once, to a visitor who has not signed in (first tester pass, D10)", () => {
+  it("one small line above the markets: a toy-money game, bet UP or DOWN on real prices with leverage", async () => {
+    renderLobbyAs({});
+    const intro = screen.getByText("A toy-money game:").closest("p") as HTMLElement;
+    expect(intro).toHaveTextContent("A toy-money game: bet UP or DOWN on real prices, with leverage. How it works");
+    expect(within(intro).getByRole("link", { name: "How it works" })).toHaveAttribute("href", "/how-it-works");
+    await screen.findAllByRole("article");
+    // above the ribbon of panels, which stays the lobby's first control
+    expect(intro.compareDocumentPosition(screen.getByRole("tablist", { name: "Market categories" }))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.getAllByText(/toy-money game/i)).toHaveLength(1);
+  });
+
+  it("is also there while the first cards load", () => {
+    renderLobbyAs({});
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    expect(screen.getByText(/toy-money game/i)).toBeInTheDocument();
+  });
+
+  it("a signed-in player does not get it", async () => {
+    renderLobbyAs({ player: TEST_PLAYER });
+    await screen.findAllByRole("article");
+    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
+  });
+
+  it("nor does a session that is still being read, so a returning player never sees it flash", async () => {
+    renderLobbyAs({ loading: true });
+    await screen.findAllByRole("article");
+    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
   });
 });

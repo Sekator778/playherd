@@ -8,6 +8,20 @@
   gap: 14px;
 }
 
+/* What this is, for a visitor who has not signed in: one small muted line above the ribbon — the lobby stays the lobby. */
+.lobby-intro {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.lobby-intro strong {
+  color: var(--text);
+}
+.lobby-intro__link {
+  white-space: nowrap;
+}
+
 /* The ribbon sticks under the header (`--header-offset` includes the status-bar inset) and bleeds to
    the screen edges so cards never show through at its sides while they scroll under it. */
 .lobby-ribbon-wrap {

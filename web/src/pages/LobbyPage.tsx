@@ -13,6 +13,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { useSession } from "../api/ApiContext";
 import { useMarkets } from "../api/useMarkets";
 import { useFavorites } from "../api/favorites";
 import { BotsNote, ErrorState, Skeleton } from "../components/Common";
@@ -56,6 +57,22 @@ const SORT_NOTE = {
   closing: "closing first",
 } as const;
 
+/** What this is, in one small line above the markets, for a visitor who has not signed in (first tester pass, D10: nothing on the
+ *  first screen said what the app is or that the money is toy money — that came after eighteen cards). A signed-in player knows,
+ *  and a session still being read is not guessed at: no flash of it for a returning player. */
+function LobbyIntro() {
+  const { player, loading } = useSession();
+  if (loading || player) return null;
+  return (
+    <p className="lobby-intro">
+      <strong>A toy-money game:</strong> bet UP or DOWN on real prices, with leverage.{" "}
+      <Link to="/how-it-works" className="lobby-intro__link">
+        How it works
+      </Link>
+    </p>
+  );
+}
+
 export function LobbyPage() {
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => parseLobbyParams(params), [params]);
@@ -88,6 +105,7 @@ export function LobbyPage() {
     return (
       <div className="lobby-root" aria-busy="true">
         <h1 className="visually-hidden">Markets</h1>
+        <LobbyIntro />
         <Skeleton height={48} />
         <Skeleton height={44} />
         <ul className="lobby-grid">
@@ -108,6 +126,7 @@ export function LobbyPage() {
   return (
     <div className="lobby-root">
       <h1 className="visually-hidden">Markets</h1>
+      <LobbyIntro />
 
       <div className="lobby-ribbon-wrap">
         <div ref={ribbonRef} className="lobby-ribbon" role="tablist" aria-label="Market categories" data-fade={fade}>
