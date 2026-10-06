@@ -91,7 +91,8 @@ export function HerdBadge({ market }: { market: MarketDto }) {
  *  (first tester pass, D7: "Jasmine Paolini to …" left the percentage with no owner). */
 function OddsSubline({ market }: { market: MarketDto }) {
   const parts = subtitleParts(market);
-  if (!parts) return <p className="mk-card__title mk-card__title--odds">{market.title}</p>;
+  // No subtitle: nothing to add — the question below is the title, and says it once.
+  if (!parts) return null;
   return (
     <p className="mk-card__title mk-card__title--odds">
       <span className="mk-card__outcome">{parts.outcome}</span>

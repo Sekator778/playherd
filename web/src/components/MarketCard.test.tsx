@@ -33,9 +33,11 @@ describe("MarketCard — an odds card says what its percentage is the probabilit
     expect(container.querySelector(".mk-card__context")).toBeNull();
   });
 
-  it("an odds market with no subtitle falls back to its title, as before", () => {
+  it("an odds market with no subtitle has no subline: its title is the question under the ticker, said once (it used to be said twice)", () => {
     const { container } = renderCard("PM900104", { subtitle: null });
-    expect(container.querySelector(".mk-card__title--odds")).toHaveTextContent("Will Germany win against Serbia?");
+    expect(container.querySelector(".mk-card__title--odds")).toBeNull();
+    expect(container.querySelector(".mk-card__question")).toHaveTextContent("Will Germany win against Serbia?");
+    expect(container.textContent?.split("Will Germany win against Serbia?").length).toBe(2);
   });
 
   it("a perp keeps its plain title in the id column", () => {
