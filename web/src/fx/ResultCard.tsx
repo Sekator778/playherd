@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { Link } from "react-router-dom";
 import type { ResultEvent, Tier } from "./resultEvent";
 import type { DisplayItem } from "./resultQueue";
+import { outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { useMarkets } from "../api/useMarkets";
 import { backupRoundOf, type BackupRound } from "../components/marketModel";
 import { formatDuration, formatPlayAmount } from "../format";
@@ -89,6 +90,15 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
   // path moves away from the headline from the very first frame instead of through it.
   const iconRef = useRef<HTMLDivElement>(null);
   const dismissTimer = useRef<number | undefined>(undefined);
+  // One dismissal per card, from whoever asks first — the hold timer, a tap on the card, on the dimmed area around it, on
+  // "View round". Taps bubble from the card to the overlay, and a second `onDismiss` would skip the NEXT moment as well.
+  const dismissedRef = useRef(false);
+  const dismiss = () => {
+    if (dismissedRef.current) return;
+    dismissedRef.current = true;
+    window.clearTimeout(dismissTimer.current);
+    onDismiss();
+  };
   const playedRef = useRef(false);
   // The header balance pill is a plain, already-mounted DOM node (Layout.tsx, unrelated React
   // subtree) — looked up once, synchronously, so the initial `balanceDisplay` state below can
@@ -190,7 +200,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
 
   useEffect(() => {
     const total = activeMs + holdMs;
-    dismissTimer.current = window.setTimeout(onDismiss, reducedMotion ? Math.min(total, holdMs + 200) : total);
+    dismissTimer.current = window.setTimeout(dismiss, reducedMotion ? Math.min(total, holdMs + 200) : total);
     return () => {
       window.clearTimeout(dismissTimer.current);
       // Belt-and-braces: a tap-to-skip can dismiss the card before the coin-arc's `onAllArrive`
@@ -201,18 +211,13 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleTap = () => {
-    window.clearTimeout(dismissTimer.current);
-    onDismiss();
-  };
-
   const isLiquidation = event.kind === "LIQUIDATION";
   const kindClass = event.kind.toLowerCase();
 
   return (
     <div
       className={`result-overlay result-overlay--${kindClass} ${isLiquidation ? "result-overlay--toast" : ""} ${reducedMotion ? "result-overlay--reduced" : ""}`}
-      onClick={handleTap}
+      onClick={dismiss}
       role="status"
       aria-live="polite"
     >
@@ -228,7 +233,6 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             "--shake-amp": event.kind === "LOSS" ? `${LOSS_TABLE[event.tier].shakeAmp}px` : isLiquidation ? `${LIQ_TABLE[event.tier].shakeAmp}px` : undefined,
           } as CSSProperties
         }
-        onClick={(e) => e.stopPropagation()}
       >
         <div ref={iconRef} className="result-card__icon" aria-hidden="true">
           {event.kind === "WIN" && <TrophyIcon />}
@@ -287,7 +291,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
         )}
 
         <div className="result-card__actions">
-          <Link to={`/round/${event.roundId}`} className="result-card__link" onClick={handleTap}>
+          <Link to={`/round/${event.roundId}`} className="result-card__link" onClick={dismiss}>
             View round
           </Link>
           <button
@@ -309,34 +313,77 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
   );
 }
 
+/** How long the "+N more results" summary stays when nobody touches it — a little longer than a single moment (it names
+ *  more), but it LEAVES, like every other card: it used to sit there, dimming and blurring the app, until it was tapped. */
+const OVERFLOW_HOLD_MS = 3000;
+/** Once the player has opened the list to read it, the list is longer and so is the hold; it still leaves by itself. */
+const OVERFLOW_OPEN_HOLD_MS = 8000;
+
+function resultClass(e: ResultEvent): string {
+  return e.kind === "LIQUIDATION" ? "outcome-lost" : outcomeClassName(outcomeFromNet(e.netPlay));
+}
+
+/** One result on a line: the signed net first, then which bet it was — "-0.12 PLAY  BTC · x2", "liquidated · BTC · x2". */
+function ResultLine({ event }: { event: ResultEvent }) {
+  return (
+    <>
+      <span className={resultClass(event)}>{formatPlayAmount(event.netPlay, { sign: true })} PLAY</span>{" "}
+      <span className="muted">
+        {event.kind === "LIQUIDATION" ? "liquidated · " : ""}
+        {event.symbol} · x{event.leverage}
+      </span>
+    </>
+  );
+}
+
 function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss: () => void }) {
   const [expanded, setExpanded] = useState(false);
+  // One dismissal, whoever asks first (the hold timer, the dimmed area, the button) — as on a single card.
+  const dismissedRef = useRef(false);
+  const dismiss = () => {
+    if (dismissedRef.current) return;
+    dismissedRef.current = true;
+    onDismiss();
+  };
+  useEffect(() => {
+    const timer = window.setTimeout(dismiss, expanded ? OVERFLOW_OPEN_HOLD_MS : OVERFLOW_HOLD_MS);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
   const sum = events.reduce((acc, e) => acc + e.netPlay, 0);
   return (
-    <div className="result-overlay result-overlay--overflow" onClick={onDismiss} role="status" aria-live="polite">
+    <div className="result-overlay result-overlay--overflow" onClick={dismiss} role="status" aria-live="polite">
       <div className="result-card result-card--overflow" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="result-card__overflow-header" onClick={() => setExpanded((v) => !v)}>
-          <span>
-            +{events.length} more results — {formatPlayAmount(sum, { sign: true })} PLAY net
-          </span>
-          <span aria-hidden="true">{expanded ? "▲" : "▼"}</span>
-        </button>
-        {expanded && (
-          <ul className="result-card__overflow-list">
-            {events.map((e) => (
-              <li key={e.id}>
-                <span className={e.kind === "WIN" ? "outcome-won" : e.kind === "LOSS" || e.kind === "LIQUIDATION" ? "outcome-lost" : "outcome-even"}>
-                  {formatPlayAmount(e.netPlay, { sign: true })} PLAY
-                </span>{" "}
-                <span className="muted">
-                  {e.kind === "LIQUIDATION" ? "liquidated · " : ""}
-                  {e.symbol} · x{e.leverage}
-                </span>
+        {events.length === 1 ? (
+          // A "summary" of one result is that result: named, not "+1 more results" behind a tap.
+          <>
+            <p className="result-card__overflow-header result-card__overflow-header--one">1 more result</p>
+            <ul className="result-card__overflow-list">
+              <li>
+                <ResultLine event={events[0]} />
               </li>
-            ))}
-          </ul>
+            </ul>
+          </>
+        ) : (
+          <>
+            <button type="button" className="result-card__overflow-header" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
+              <span>
+                +{events.length} more results — <span className={outcomeClassName(outcomeFromNet(sum))}>{formatPlayAmount(sum, { sign: true })} PLAY</span> net
+              </span>
+              <span aria-hidden="true">{expanded ? "▲" : "▼"}</span>
+            </button>
+            {expanded && (
+              <ul className="result-card__overflow-list">
+                {events.map((e) => (
+                  <li key={e.id}>
+                    <ResultLine event={e} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
         )}
-        <button type="button" className="btn btn--secondary btn--block" onClick={onDismiss}>
+        <button type="button" className="btn btn--secondary btn--block" onClick={dismiss}>
           Dismiss
         </button>
       </div>

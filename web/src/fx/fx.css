@@ -72,7 +72,9 @@
   box-shadow: var(--shadow-card);
   padding: 24px 20px;
   text-align: center;
-  cursor: default;
+  /* A tap anywhere on a moment's card dismisses it, like a tap on the dimmed area around it (the summary card below
+     is the exception: its header and button are the controls). */
+  cursor: pointer;
   animation: result-card-settle var(--dur-fast) var(--ease-shake);
 }
 
@@ -294,6 +296,12 @@
 /* Overflow "+N more results" summary card (result-moment.md §1). */
 .result-card--overflow {
   text-align: left;
+  cursor: default;
+}
+/* A "summary" of exactly one result: a line of text naming it, not a button that opens one. */
+.result-card__overflow-header--one {
+  margin: 0;
+  cursor: default;
 }
 .result-card__overflow-header {
   width: 100%;

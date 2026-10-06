@@ -134,3 +134,138 @@ describe("ResultMomentHost — a queue of moments", () => {
     expect(balanceLine()).toContain("9,998.29 PLAY");
   });
 });
+
+function renderHost() {
+  return render(
+    <MemoryRouter>
+      <ResultMomentHost />
+    </MemoryRouter>,
+  );
+}
+
+/** The card (not the dimmed area around it) of the moment on screen. */
+const card = () => document.querySelector(".result-card") as HTMLElement;
+const tapOn = async (element: Element) => {
+  await act(async () => {
+    (element as HTMLElement).click();
+  });
+};
+
+describe("ResultMomentHost — a tap on the moment's card dismisses it (first tester pass, D3)", () => {
+  it("a tap on the card itself — not only on the dimmed area around it — dismisses it, and the next moment follows", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "a:p", roundId: "a", kind: "EVEN", netPlay: 0 }));
+      publish(event({ id: "b:p", roundId: "b" }));
+    });
+    expect(screen.getByText("No gain, no loss")).toBeInTheDocument();
+    await tapOn(card());
+    expect(screen.queryByText("No gain, no loss")).not.toBeInTheDocument();
+    expect(title()).toContain("-1.71 PLAY");
+  });
+
+  it("…so does a tap on its hint, which says exactly that", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "a:p", roundId: "a", kind: "EVEN", netPlay: 0 }));
+      publish(event({ id: "b:p", roundId: "b" }));
+    });
+    await tapOn(screen.getByText("Tap to dismiss"));
+    expect(title()).toContain("-1.71 PLAY");
+  });
+
+  it("a tap on the toast of a liquidation, which blocks nothing around it, dismisses it too", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "l:p", roundId: "l", kind: "LIQUIDATION", midRound: true, netPlay: -200 }));
+    });
+    await tapOn(card());
+    expect(document.querySelector(".result-overlay")).toBeNull();
+  });
+
+  it("'View round' dismisses once: the moment after it is shown, not skipped along with it", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "a:p", roundId: "a", kind: "EVEN", netPlay: 0 }));
+      publish(event({ id: "b:p", roundId: "b", netPlay: -1.71 }));
+      publish(event({ id: "c:p", roundId: "c", netPlay: -2.5, balanceAfter: 9_995.79 }));
+    });
+    await tapOn(screen.getByRole("link", { name: "View round" }));
+    expect(title()).toContain("-1.71 PLAY"); // b, not c
+  });
+
+  it("the sound switch is the one thing on the card that does not dismiss it", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "a:p", roundId: "a", kind: "EVEN", netPlay: 0 }));
+      publish(event({ id: "b:p", roundId: "b" }));
+    });
+    await tapOn(screen.getByRole("button", { name: /sound/i }));
+    expect(screen.getByText("No gain, no loss")).toBeInTheDocument();
+  });
+});
+
+describe("ResultMomentHost — the '+N more results' summary (first tester pass, D3)", () => {
+  /** Four results at once: two are shown one by one, the rest collapse into the summary. */
+  async function toSummary(extra: Array<Partial<ResultEvent>> = [{ id: "c:p", roundId: "c", netPlay: -2.5 }, { id: "d:p", roundId: "d", netPlay: -3.5 }]) {
+    renderHost();
+    act(() => {
+      publish(event({ id: "a:p", roundId: "a", kind: "EVEN", netPlay: 0 }));
+      publish(event({ id: "b:p", roundId: "b" }));
+      extra.forEach((e) => publish(event(e)));
+    });
+    await tapOn(card());
+    await tapOn(card());
+  }
+
+  it("leaves by itself, like a single result — it used to dim and blur the app until it was tapped", async () => {
+    await toSummary();
+    const header = screen.getByRole("button", { name: /\+2 more results/ });
+    expect(header).toHaveTextContent("+2 more results — -6 PLAY net");
+    expect(header.querySelector(".outcome-lost")).toHaveTextContent("-6 PLAY"); // the net is as loud as a win would be
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2900);
+    });
+    expect(document.querySelector(".result-overlay")).not.toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(document.querySelector(".result-overlay")).toBeNull();
+  });
+
+  it("once the player has opened the list to read it, it stays longer — and still leaves", async () => {
+    await toSummary();
+    await tapOn(screen.getByRole("button", { name: /\+2 more results/ }));
+    expect(screen.getByText("-2.50 PLAY")).toBeInTheDocument();
+    expect(screen.getByText("-3.50 PLAY")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7900);
+    });
+    expect(document.querySelector(".result-overlay")).not.toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(document.querySelector(".result-overlay")).toBeNull();
+  });
+
+  it("Dismiss and the dimmed area still dismiss it at once", async () => {
+    await toSummary();
+    await tapOn(screen.getByRole("button", { name: "Dismiss" }));
+    expect(document.querySelector(".result-overlay")).toBeNull();
+  });
+
+  it("a summary of ONE result names it — signed, with its market and leverage — instead of '+1 more results' behind a tap", async () => {
+    await toSummary([{ id: "c:p", roundId: "c", symbol: "ETH", leverage: 2, netPlay: -0.12 }]);
+    const summary = document.querySelector(".result-card--overflow") as HTMLElement;
+    expect(summary).toHaveTextContent("1 more result");
+    expect(summary).toHaveTextContent("-0.12 PLAY");
+    expect(summary).toHaveTextContent("ETH · x2");
+    expect(summary).not.toHaveTextContent(/\+1 more results/);
+    expect(summary.querySelector(".result-card__overflow-header")?.tagName).not.toBe("BUTTON"); // nothing to open
+  });
+
+  it("…and a liquidated one says so", async () => {
+    await toSummary([{ id: "c:p", roundId: "c", kind: "LIQUIDATION", symbol: "BOLT", leverage: 10, netPlay: -100 }]);
+    expect(document.querySelector(".result-card--overflow")).toHaveTextContent("-100 PLAY liquidated · BOLT · x10");
+  });
+});
