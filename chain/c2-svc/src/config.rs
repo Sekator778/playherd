@@ -15,7 +15,7 @@ use crate::fee_reserve::FeeCoinPolicy;
 /// `C2_MEMPOOL_REPLACE_AFTER_SECS`'s default (`Config::mempool_replace_after`).
 pub const DEFAULT_MEMPOOL_REPLACE_AFTER_SECS: u64 = 180;
 
-/// `C2_ORACLE_RETAIN_CONFIRMED_SECS`'s default (`Config::oracle_retain_confirmed`): a day.
+/// `C2_ORACLE_RETAIN_CONFIRMED_SECS`'s default (`Config::oracle_retain_confirmed`): a day -- a proposal, see there.
 pub const DEFAULT_ORACLE_RETAIN_CONFIRMED_SECS: u64 = 86_400;
 
 /// `C2_PUSH=0` (or `--dry-run` on the CLI, see `main.rs`) disables every
@@ -94,13 +94,18 @@ pub struct Config {
     /// one. 0 turns the replacement off (a bundle in the mempool is then left alone, as before).
     pub mempool_replace_after: std::time::Duration,
     /// How long a confirmed oracle record stays in the queue file after its confirmation
-    /// (`oracle/queue.rs::QueueFile::apply_retention`). `C2_ORACLE_RETAIN_CONFIRMED_SECS`, default
-    /// 86 400 (a day: decided 2026-10-06, after `docs/research/chain_service.md` §16.9 and §18.2 had
-    /// left the retention open). The queue file holds an entry of about 410 bytes for every confirmed
-    /// record -- some 10 000 a day on the stand -- while the server's own database holds the public
-    /// journal of the records and the chain the records themselves. After the retention a seq still
-    /// answers `confirmed` (no height, coin or content) and is never accepted again; a record that is not
-    /// confirmed is never dropped. 0 keeps every entry for good, as before.
+    /// (`oracle/queue.rs::QueueFile::apply_retention`). `C2_ORACLE_RETAIN_CONFIRMED_SECS`, **предложение**
+    /// default 86 400 (a day): `docs/research/chain_service.md` §16.9 and §18.2 left the term open (§18.2:
+    /// "решение о сроке хранения -- за сессия"); until a decision is written down there, a day is
+    /// a proposal. What a day costs: the queue file holds an entry of about 410 bytes (measured, §18.2)
+    /// for every confirmed record -- some 10 000 a day on the stand (`docs/HANDOFF.md` §6.1 item 1), so
+    /// about 4 MB -- while the server's own database holds the public journal of the records and the
+    /// chain the records themselves. After the retention a seq still answers `confirmed` (no height, coin
+    /// or content) and is never accepted again; a record that is not confirmed is never dropped. 0 keeps
+    /// every entry for good, as before. Two costs of dropping are accepted and written down in
+    /// `chain/README.md`: a different record under a dropped seq is not reported (a seq issued twice is
+    /// caught only inside the retention), and a build older than the retention must not be started on a
+    /// queue file that a pass has pruned.
     pub oracle_retain_confirmed: std::time::Duration,
     /// N consecutive `tick()` failures before `GET /v1/oracle/status`'s
     /// `stuckReason` and `GET /health` report degraded (task fix,

@@ -155,7 +155,42 @@ see `docs/research/chain_service.md` §1. Write-ups:
     `lastConfirmedSeq` do not move. A record that is pending, in flight or in conflict is never
     dropped. The file is read and parsed once and again only when it changed on disk (`QueueCache`:
     the stamp of the file -- length, modification time, inode -- decides), not on every tick, `POST`
-    and `GET`; what this process writes it keeps.
+    and `GET`; what this process writes it keeps. The default of a day is a proposal
+    (`src/config.rs`, `oracle_retain_confirmed`); a day of entries is about 4 MB on the stand (10 000
+    records a day, `docs/HANDOFF.md` §6.1 item 1).
+  - What the retention costs, said plainly -- two trade-offs that were accepted, not overlooked:
+    - **A different record under a pruned `seq` is not caught.** A dropped entry keeps no content, so
+      `GET /v1/oracle/records/{seq}` answers `confirmed` with `height`, `coinId`, `resultsHash`,
+      `priceCents`, `asset` and `ts` all `null`, and `POST /v1/oracle/records` takes any record under that
+      `seq` for a repeat: not queued, and not in `conflictSeqs` either, because there is nothing to compare
+      it with (pinned by `a_pruned_seq_is_confirmed_without_detail_and_is_never_accepted_again`). The Java
+      server compares content only when chainsvc sends some, so for such a `seq` it marks its own row
+      confirmed although the chain holds another record under that number. Inside the retention the same
+      mistake is caught (`conflictSeqs`, the content in the `GET`, `docs/research/chain_service.md` §18.2).
+      It takes a `seq` issued a second time: by a second writer on the singleton, or by a server that issues
+      numbers before it has read the floor (`maxKnownSeq` of `GET /v1/oracle/status`, which the retention
+      never lowers). The server raises its counter to the floor before its first `seq` and, with
+      `herd.oracle.require-seq-floor=true` (`HERD_ORACLE_REQUIRE_SEQ_FLOOR`), settles no round until it has.
+      The stand (`docker-compose.yml`) and production (`deploy/compose.prod.yml`) run with `true`; only the
+      CI smoke (`docker-compose.ci.yml`) and a server started with nothing configured have `false` (the
+      counter is raised there too, whenever a status can be read; only the wait is gone). So a reuse needs a
+      misconfigured server (the floor switched off, on a database that is new to the singleton) or a second
+      writer.
+      No fingerprint of a pruned `seq` is kept. It is state per `seq` ever confirmed -- the growth the ranges
+      of `pruned` exist to end (4 bytes a record is 40 KB a day, for ever, in a file that is read in full
+      whenever it changes) -- and one fingerprint per range could not say which `seq` is the odd one. What
+      still shows the mistake afterwards is the chain: `make verify-oracle` (`tools/verify-oracle`) compares
+      what is anchored under every `seq` with the stand's journal and the `results.json` of the round, and
+      reports a round whose record is not the one on the chain.
+    - **No rollback below this version once a pass has pruned.** `pruned` is a key of the queue file that an
+      earlier build does not know: it reads the file, ignores the key and writes the file back without it at
+      its next write, and every `seq` the ranges held is `unknown` again. The server's reconciliation then
+      re-sends the rows it never saw confirmed, `enqueue` takes them for late records and they are published
+      a second time (the same content, so `verify-oracle` calls it a benign duplicate, but each one is a
+      spend and a fee). A build from before the content of a confirmed record was kept
+      (`docs/research/chain_service.md` §18.2) forgets that content the same way. Once a pass has dropped
+      entries (the log says "oracle queue retention: dropped confirmed entries") run this build or a later one;
+      `C2_ORACLE_RETAIN_CONFIRMED_SECS=0` stops the passes but does not bring back what one has dropped.
   - `Dockerfile` — multi-stage release build, build context `chain/` (needs
     the `c2-cli` path dependency + the shared `Cargo.lock` in scope).
   - `--dry-run` / `C2_PUSH=0` — builds and signs spends, never broadcasts or

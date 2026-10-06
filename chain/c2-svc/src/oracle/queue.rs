@@ -12,8 +12,11 @@
 //! `confirmed` holds an entry per confirmed record, but not for ever: once an entry has been there
 //! for `C2_ORACLE_RETAIN_CONFIRMED_SECS` `apply_retention` drops it and notes its seq in `pruned`, a
 //! set of ranges, so the file stays about a retention long instead of growing by 4 MB a day. A
-//! dropped seq still answers `confirmed` and is never accepted again. `QueueCache` keeps the parsed
-//! file between calls, so that a tick, a `POST` or a `GET` that finds it unchanged does not parse it.
+//! dropped seq still answers `confirmed` and is never accepted again -- whatever record comes for it:
+//! its content is gone, so a different record is not told from a repeat (the trade-off, and why a build
+//! older than the retention must not read a pruned file, are written down in `chain/README.md`).
+//! `QueueCache` keeps the parsed file between calls, so that a tick, a `POST` or a `GET` that finds it
+//! unchanged does not parse it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
