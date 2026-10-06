@@ -95,7 +95,9 @@ async function main() {
     return summarize();
   }
   const roundId = roundsPair.betting.roundId;
-  const bettingEndMs = roundsPair.betting.window.endMs; // == the running round's endMs (Р-19)
+  // Betting closes where the round that is bet on starts: its window's startMs, which is the running round's endMs (Р-19) —
+  // not the window's endMs, the end of the round itself (MarketSeriesDto.bettingClosesAtMs is the same instant).
+  const bettingEndMs = roundsPair.betting.window.startMs;
 
   // --- 3. balances before betting (to check settlement deltas later) ---
   const balanceBefore = {};

@@ -230,6 +230,15 @@ test("a betting window that never has time left fails the market instead of bett
   assert.ok(!stand.calls.some((c) => c.method === "placeBet"), "no bet was risked on a window about to close");
 });
 
+test("by default a betting window must have a third of the round left, so rounds of any length have windows to use", async () => {
+  // no `minBettingMs` given: 20 s would never fit a window of 600 ms; a third of the round does
+  const { result, stand } = await run([SPOT], { timing: { minBettingMs: null } });
+  assert.deepEqual(failed(result), []);
+  const firstBet = stand.calls.find((c) => c.method === "placeBet");
+  const roundStartMs = Number(firstBet.args[0].roundId.split("-").pop());
+  assert.ok(roundStartMs - firstBet.atMs >= 150, `bets are placed with at least a third of the window left (${roundStartMs - firstBet.atMs} ms)`);
+});
+
 test("--ci leaves out the chain service's own state and nothing else", async () => {
   const normal = await run([SPOT]);
   const ci = await run([SPOT], { ci: true });

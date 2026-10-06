@@ -38,8 +38,9 @@ export const DEFAULT_TIMING = {
   startMarginMs: 90_000,
   /** beyond the length of the round: it settles. */
   settleMarginMs: 90_000,
-  /** a betting window with less left than this is not used — the bets would race its end — the next one is. */
-  minBettingMs: 20_000,
+  /** a betting window with less left than this is not used — the bets would race its end — the next one is. `null`: a third
+   *  of the round, at most 20 s (a stand with rounds of 20 s has windows of 20 s). */
+  minBettingMs: null,
   /** `resultsHash` is attached to a settled round a tick or two after settlement. */
   resultsWaitMs: 60_000,
   /** the record is handed to the chain service by the next tick of the publisher, and the journal learns it from the
@@ -161,6 +162,7 @@ async function checkChainService({ baseUrl, checks, log }) {
  */
 async function playMarket({ baseUrl, family, market, series, createWallet, registry, checks: c, timing, serverNow, log, print }) {
   const durationMs = series.durationSec * 1000;
+  const minBettingMs = timing.minBettingMs ?? Math.min(20_000, durationMs / 3);
   const plan = betPlanFor(market);
   const outcome = (kind, reason) => ({ market: market.id, family: family.id, outcome: kind, reason });
   const skip = (reason) => {
@@ -196,7 +198,7 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
     }
     // betting for a round closes where the round starts (Р-19: the bets go on the NEXT round): its window's start
     const left = pair.betting.window.startMs - serverNow();
-    if (pair.betting.phase === "BETTING" && left >= timing.minBettingMs) break;
+    if (pair.betting.phase === "BETTING" && left >= minBettingMs) break;
     if (Date.now() > windowDeadline) {
       c.fail("a betting window with time left opens", new Error(`phase ${pair.betting.phase}, ${left} ms left`));
       return outcome("failed", "no betting window");
