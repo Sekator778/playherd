@@ -71,7 +71,7 @@ describe("Stats → Crowd — the market selector (S4)", () => {
     const { crowdAccount } = renderCrowd();
     expect(await screen.findByLabelText("Market")).toHaveValue("BTC");
     await waitFor(() => expect(crowdAccount).toHaveBeenCalledWith("BTC"));
-    expect(await screen.findByText("Capital")).toBeInTheDocument();
+    expect(await screen.findByText("Capital (paper $)")).toBeInTheDocument();
   });
 
   it("opens on the market in ?m=", async () => {
@@ -271,7 +271,7 @@ describe("Stats → Crowd — the herd overview (S4)", () => {
       </MemoryRouter>,
       { wrapper: apiWrapper(api) },
     );
-    expect(await screen.findByText("Capital")).toBeInTheDocument();
+    expect(await screen.findByText("Capital (paper $)")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /The whole herd/ })).not.toBeInTheDocument();
   });
 });

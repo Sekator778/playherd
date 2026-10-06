@@ -176,7 +176,9 @@ export function CrowdChart({ history: rawHistory, variant = "full", symbol }: Cr
         </ResponsiveContainer>
       </div>
       {visibleSpanMs > 0 && variant === "full" && (
-        <p className="faint crowd-chart__axis-note">Dates and times are in your time zone ({timeZoneLabel(newest)}).</p>
+        <p className="faint crowd-chart__axis-note">
+          Amounts are paper dollars. Dates and times are in your time zone ({timeZoneLabel(newest)}).
+        </p>
       )}
     </div>
   );

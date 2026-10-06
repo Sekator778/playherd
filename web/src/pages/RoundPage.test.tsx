@@ -419,6 +419,33 @@ describe("Round page — the crowd's round that closed where it opened is flat, 
   });
 });
 
+describe("Round page — the crowd account's dollars are labelled as paper dollars (first tester pass, D12)", () => {
+  const note = (card: HTMLElement) => within(card).getByText("PAPER $").closest("p") as HTMLElement;
+
+  it("running: the card says its dollars are pretend ones — not PLAY, not real — under its heading", async () => {
+    renderRound(runningRoundOf("BTC", "BTC", { openPrice: "100.00", crowd: crowdPosition() }));
+    const card = (await screen.findByText("Margin: $10,000.00")).closest(".card") as HTMLElement;
+    expect(note(card)).toHaveTextContent("PAPER $ Pretend dollars: the herd's paper money — not PLAY, not real.");
+    expect(card.querySelector("h3")?.nextElementSibling).toBe(note(card)); // right under the heading, above the first amount
+  });
+
+  it("settled: the same, over the capital before and after", async () => {
+    renderRound(
+      settled({
+        crowd: { roundId: "BTC-1h-0", traded: true, direction: "UP", leverage: 5, margin: "10000.00", entryPrice: "100.00", liquidated: false, capitalBefore: "100000.00", capitalAfter: "100250.00" },
+      }),
+    );
+    const card = (await screen.findByText("Capital before: $100,000.00")).closest(".card") as HTMLElement;
+    expect(note(card)).toBeInTheDocument();
+  });
+
+  it("a round the crowd sat out has no dollars to label", async () => {
+    renderRound(settled({ crowd: { roundId: "BTC-1h-0", traded: false, direction: null, leverage: null, margin: null, entryPrice: null, liquidated: false, capitalBefore: "100000.00", capitalAfter: "100000.00" } }));
+    await screen.findByText(/The crowd tied this round/);
+    expect(screen.queryByText("PAPER $")).not.toBeInTheDocument();
+  });
+});
+
 describe("Round page — the live reference price is asked for only while a round RUNS", () => {
   function referenceCalls(round: RoundDto) {
     const referencePrice = vi.fn(async () => ({ price: "100.50", asOfMs: NOW }));

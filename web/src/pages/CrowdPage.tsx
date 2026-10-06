@@ -83,7 +83,7 @@ function Overview({ overview, onPick }: { overview: CrowdOverviewDto; onPick: (m
       </h2>
       <div className="crowd-overview__totals">
         <div>
-          <div className="stat-tile__label">Herd capital</div>
+          <div className="stat-tile__label">Herd capital (paper $)</div>
           <div className="crowd-overview__big mono">{formatUsd(overview.totalCapital)}</div>
           <div className="faint">of {formatUsd(overview.totalStartingCapital, { decimals: 0 })} paper money at the start</div>
         </div>
@@ -194,7 +194,7 @@ function CrowdAccount({ market }: { market: AccountMarket }) {
   return (
     <div className="stack" style={{ gap: 20 }}>
       <div className="crowd-tiles">
-        <LiveStatTile label="Capital" value={Number(crowd.capital)} format={(n) => formatUsd(n)} />
+        <LiveStatTile label="Capital (paper $)" value={Number(crowd.capital)} format={(n) => formatUsd(n)} />
         <LiveStatTile label="Return since day one" value={returnSinceDayOne} format={(n) => formatPercent(n, { sign: true })} />
         <LiveStatTile
           label="This season"

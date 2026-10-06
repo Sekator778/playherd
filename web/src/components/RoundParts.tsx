@@ -180,6 +180,19 @@ function StagePanel({
   );
 }
 
+/**
+ * The crowd account trades PAPER dollars — pretend money that is neither PLAY nor real — and every card that shows its dollars says so
+ * under its heading. The herd's block read "Margin: $10,026.74" in dollars next to PLAY everywhere else, with nothing to say whose
+ * dollars they were (first tester pass, D12).
+ */
+export function PaperMoneyNote() {
+  return (
+    <p className="paper-note faint">
+      <span className="paper-tag">PAPER $</span> Pretend dollars: the herd's paper money — not PLAY, not real.
+    </p>
+  );
+}
+
 interface CrowdPositionCardProps {
   phase: "RUNNING" | "SETTLED";
   crowd: CrowdRoundPositionDto | CrowdRoundResultDto | null;
@@ -219,6 +232,7 @@ export function CrowdPositionCard({ phase, crowd, referencePrice, market, format
     return (
       <div className="card">
         <h3>Crowd account's position</h3>
+        <PaperMoneyNote />
         <p>
           <DirectionGlyph direction={c.direction} /> {c.direction} · x{c.leverage}
         </p>
@@ -246,6 +260,7 @@ export function CrowdPositionCard({ phase, crowd, referencePrice, market, format
   return (
     <div className="card">
       <h3>Crowd account's position</h3>
+      <PaperMoneyNote />
       {c.liquidated && <p className="outcome-liquidated">Crowd account liquidated this round.</p>}
       {c.direction && (
         <p>
