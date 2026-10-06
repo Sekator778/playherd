@@ -55,9 +55,12 @@ export function ConnectWalletModal() {
   // The nickname step: the server's own refusal, shown beside the field — and whether a save is on its way.
   const [nicknameError, setNicknameError] = useState<string | null>(null);
   const [savingNickname, setSavingNickname] = useState(false);
-  // This sign-in made the player (`AuthSessionDto.isNewPlayer`), so the starter pack is theirs to be told about once the
-  // nickname is in. A returning player is never told again: their balance is in the header, whatever it has become.
+  // This sign-in made the player (`AuthSessionDto.isNewPlayer`): they pick a nickname and are told about the first pack. A returning
+  // player is not told about it again — their balance is in the header, whatever it has become — except when THIS sign-in credited
+  // a pack (`starterPackGranted`: the first sign-in of a new month, when a pack comes on top of the balance they have).
   const [startedAsNewPlayer, setStartedAsNewPlayer] = useState(false);
+  // This sign-in credited a starter pack, so the dialog that says so is owed — after the nickname, when one is asked for.
+  const [packGranted, setPackGranted] = useState(false);
 
   // What the "connect" step offers (the test wallet, Sage) depends on `serverInfo()`: `ConnectStep` below reads it from
   // the shared store — unknown until the server answers, never assumed. The answer is asked for as soon as the app
@@ -80,6 +83,7 @@ export function ConnectWalletModal() {
       setNicknameError(null);
       setSavingNickname(false);
       setStartedAsNewPlayer(false);
+      setPackGranted(false);
       setSageStalled(false);
     }
   }
@@ -155,11 +159,16 @@ export function ConnectWalletModal() {
     setAddress(session_.player.walletAddress);
     await session.refresh();
     if (attemptIdRef.current !== attemptId) return;
+    // A pack was credited by this sign-in: a new player's, or a returning player's new month's (an older server and the mock send
+    // no `starterPackGranted`, and `isNewPlayer` then stands for it).
+    const granted = session_.isNewPlayer || session_.starterPackGranted === true;
     setStartedAsNewPlayer(session_.isNewPlayer);
-    // A new player picks a nickname and is then told about the starter pack. A returning one is signed in: the sheet
-    // goes away and leaves them where they were — unless they left the first sign-in at the nickname step, which the
-    // server remembers as no nickname at all (the wallet address stands in), so it is asked for once more.
+    setPackGranted(granted);
+    // A new player picks a nickname and is then told about the starter pack. A returning one is signed in: the sheet goes away
+    // and leaves them where they were — unless a pack was credited (told once, below), or they left the first sign-in at the
+    // nickname step, which the server remembers as no nickname at all (the wallet address stands in): it is asked for once more.
     if (session_.isNewPlayer || hasPlaceholderNickname(session_.player)) setStep("nickname");
+    else if (granted) setStep("starter-pack");
     else close();
   };
 
@@ -244,7 +253,7 @@ export function ConnectWalletModal() {
       await api.setNickname(nicknameCheck.value);
       await session.refresh();
       if (attemptIdRef.current !== attemptId) return; // the sheet was closed meanwhile
-      if (startedAsNewPlayer) setStep("starter-pack");
+      if (packGranted) setStep("starter-pack");
       else close();
     } catch (err) {
       if (attemptIdRef.current !== attemptId) return;
@@ -252,6 +261,12 @@ export function ConnectWalletModal() {
     } finally {
       setSavingNickname(false);
     }
+  };
+
+  // "Not now" on the second asking: the player leaves the nickname for later, but not the news — a pack that was credited is still told.
+  const skipNickname = () => {
+    if (packGranted) setStep("starter-pack");
+    else close();
   };
 
   return (
@@ -388,20 +403,39 @@ export function ConnectWalletModal() {
               </p>
             </div>
             <MultiAccountDisclosureLine />
-            <div className="modal-actions">
+            <div className="modal-actions stack" style={{ gap: 10 }}>
               <button type="submit" className="btn btn--primary btn--block btn--lg" disabled={!nicknameCheck.ok || savingNickname}>
                 {savingNickname ? "SAVING…" : "CONTINUE"}
               </button>
+              {/* A returning player who left their first sign-in at this step is asked once more — and may leave it again. A new
+                  player is picking the first one. */}
+              {!startedAsNewPlayer && (
+                <button type="button" className="btn btn--secondary btn--block" disabled={savingNickname} onClick={skipNickname}>
+                  Not now
+                </button>
+              )}
             </div>
           </form>
         )}
 
         {step === "starter-pack" && (
           <div className="text-center">
-            <h2 id="connect-modal-title">You've got {formatPlayAmount(STARTER_PACK_PLAY)} PLAY</h2>
-            <p className="muted">
-              PLAY — test tokens for this demo, not real money. Place your first bet or explore the crowd account.
-            </p>
+            {startedAsNewPlayer ? (
+              <>
+                <h2 id="connect-modal-title">You've got {formatPlayAmount(STARTER_PACK_PLAY)} PLAY</h2>
+                <p className="muted">
+                  PLAY — test tokens for this demo, not real money. Place your first bet or explore the crowd account.
+                </p>
+              </>
+            ) : (
+              <>
+                {/* A returning player's pack comes on top of the balance they have: "You've got 10,000" would be wrong. */}
+                <h2 id="connect-modal-title">New season: +{formatPlayAmount(STARTER_PACK_PLAY)} PLAY</h2>
+                <p className="muted">
+                  A new month started, so a new starter pack was added to your balance. PLAY — test tokens for this demo, not real money.
+                </p>
+              </>
+            )}
             <div className="modal-actions stack" style={{ gap: 10 }}>
               <button
                 type="button"

@@ -266,8 +266,16 @@ describe("Connect-wallet modal — the nickname step (the server's rule, said be
   });
 });
 
-/** A server that signs a visitor in as a player it already knows (`isNewPlayer: false`) — one who has a nickname of their own, or none. */
-function returningPlayerApi(nickname: string, setNickname: Api["setNickname"] = vi.fn(async (n: string) => ({ ...TEST_PLAYER, nickname: n }))) {
+/**
+ * A server that signs a visitor in as a player it already knows (`isNewPlayer: false`) — one who has a nickname of their own, or none.
+ * `starterPackGranted`: what the server says of this sign-in — true on the first sign-in of a new month (a pack was credited), false
+ * on any other, and left out by an older server.
+ */
+function returningPlayerApi(
+  nickname: string,
+  setNickname: Api["setNickname"] = vi.fn(async (n: string) => ({ ...TEST_PLAYER, nickname: n })),
+  starterPackGranted?: boolean,
+) {
   const wallet = "txch1abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuv";
   let player: typeof TEST_PLAYER | null = null;
   return fakeApi({
@@ -276,10 +284,18 @@ function returningPlayerApi(nickname: string, setNickname: Api["setNickname"] = 
     authChallenge: async () => ({ nonce: "n", message: "sign me", expiresAtMs: 1 }),
     authVerify: async () => {
       player = { ...TEST_PLAYER, walletAddress: wallet, nickname };
-      return { player, isNewPlayer: false };
+      return starterPackGranted === undefined ? { player, isNewPlayer: false } : { player, isNewPlayer: false, starterPackGranted };
     },
     setNickname,
   });
+}
+
+/** Opens the sheet on `api` and presses "Continue with test wallet". */
+async function signInWithTestWallet(api: Api, path = "/") {
+  const dialog = await openModal(api, path);
+  const user = userEvent.setup();
+  await user.click(await within(dialog).findByRole("button", { name: "Continue with test wallet" }));
+  return { dialog, user };
 }
 
 describe("Connect-wallet modal — the starter pack is told once, to the player who just got it (first tester pass, D1)", () => {
@@ -314,6 +330,95 @@ describe("Connect-wallet modal — the starter pack is told once, to the player 
     await user.type(field, "moon Walker");
     await user.click(within(dialog).getByRole("button", { name: "CONTINUE" }));
     expect(await within(dialog).findByRole("heading", { name: "You've got 10,000 PLAY" })).toBeInTheDocument();
+  });
+});
+
+describe("Connect-wallet modal — a pack credited by THIS sign-in is told, to a returning player too (first tester pass, D1)", () => {
+  it("the first sign-in of a new month (the server says it credited a pack): the dialog, with the pack named as what it is — on top of the balance", async () => {
+    const { dialog } = await signInWithTestWallet(returningPlayerApi("Tester_One", undefined, true));
+    expect(await within(dialog).findByRole("heading", { name: "New season: +10,000 PLAY" })).toBeInTheDocument();
+    expect(within(dialog).getByText(/a new starter pack was added to your balance/)).toBeInTheDocument();
+    // not the first-pack wording: "You've got 10,000 PLAY" would be wrong over a balance that has the old PLAY in it too
+    expect(screen.queryByText(/You've got/)).not.toBeInTheDocument();
+  });
+
+  it("…and the dialog is the same one: PLACE A BET keeps the room, EXPLORE closes it", async () => {
+    const { dialog, user } = await signInWithTestWallet(returningPlayerApi("Tester_One", undefined, true), "/play/spot_ETH?side=down");
+    await user.click(await within(dialog).findByRole("button", { name: "PLACE A BET" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/play/spot_ETH?side=down");
+  });
+
+  it("…EXPLORE just closes it, wherever the player is", async () => {
+    const { dialog, user } = await signInWithTestWallet(returningPlayerApi("Tester_One", undefined, true), "/stats");
+    await user.click(await within(dialog).findByRole("button", { name: "EXPLORE" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/stats");
+  });
+
+  it.each([
+    ["false: an ordinary second sign-in of the month", false],
+    ["left out: an older server, which cannot say", undefined],
+  ])("starterPackGranted %s: no dialog, the player stays where they were", async (_what, granted) => {
+    const { dialog } = await signInWithTestWallet(returningPlayerApi("Tester_One", undefined, granted), "/stats");
+    expect(dialog).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument(), { timeout: 3000 });
+    expect(screen.queryByText(/You've got|New season/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/stats");
+  });
+
+  it("a new player is told with the first-pack wording, whatever the flag says (an older server sends none)", async () => {
+    const { dialog, user, field } = await toNicknameStep(vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname })));
+    await user.type(field, "moon Walker");
+    await user.click(within(dialog).getByRole("button", { name: "CONTINUE" }));
+    expect(await within(dialog).findByRole("heading", { name: "You've got 10,000 PLAY" })).toBeInTheDocument();
+    expect(screen.queryByText(/New season/)).not.toBeInTheDocument();
+  });
+
+  it("a returning player with no nickname AND a pack: asked for the nickname first, then told about the pack", async () => {
+    const setNickname = vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname }));
+    const { dialog, user } = await signInWithTestWallet(returningPlayerApi("txch1a…stuv", setNickname, true));
+    await user.type(await within(dialog).findByLabelText("Nickname", {}, { timeout: 3000 }), "moon Walker");
+    await user.click(within(dialog).getByRole("button", { name: "CONTINUE" }));
+    expect(setNickname).toHaveBeenCalledWith("moon Walker");
+    expect(await within(dialog).findByRole("heading", { name: "New season: +10,000 PLAY" })).toBeInTheDocument();
+  });
+});
+
+describe("Connect-wallet modal — the nickname asked for once more can be left for later (first tester pass, D1)", () => {
+  it("a returning player who never picked a nickname gets 'Not now': it closes the sheet, nothing is saved, nothing is said about a pack", async () => {
+    const setNickname = vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname }));
+    const { dialog, user } = await signInWithTestWallet(returningPlayerApi("txch1a…stuv", setNickname, false), "/stats");
+    expect(await within(dialog).findByRole("heading", { name: "Pick a nickname" }, { timeout: 3000 })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Not now" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(setNickname).not.toHaveBeenCalled();
+    expect(screen.getByTestId("location")).toHaveTextContent("/stats");
+  });
+
+  it("…but not the news: when a pack was credited by this sign-in, 'Not now' leaves the nickname, not the dialog about the pack", async () => {
+    const setNickname = vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname }));
+    const { dialog, user } = await signInWithTestWallet(returningPlayerApi("txch1a…stuv", setNickname, true));
+    await user.click(await within(dialog).findByRole("button", { name: "Not now" }, { timeout: 3000 }));
+    expect(await within(dialog).findByRole("heading", { name: "New season: +10,000 PLAY" })).toBeInTheDocument();
+    expect(setNickname).not.toHaveBeenCalled();
+  });
+
+  it("a new player, picking the first nickname, is not offered it: the pack dialog follows the nickname", async () => {
+    const { dialog } = await toNicknameStep(vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname })));
+    expect(within(dialog).queryByRole("button", { name: "Not now" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "CONTINUE" })).toBeInTheDocument();
+  });
+
+  it("while a nickname is being saved it cannot be left for later", async () => {
+    let finish: (value: typeof TEST_PLAYER) => void = () => {};
+    const setNickname = vi.fn(() => new Promise<typeof TEST_PLAYER>((resolve) => (finish = resolve)));
+    const { dialog, user } = await signInWithTestWallet(returningPlayerApi("txch1a…stuv", setNickname, false));
+    await user.type(await within(dialog).findByLabelText("Nickname", {}, { timeout: 3000 }), "moon Walker");
+    await user.click(within(dialog).getByRole("button", { name: "CONTINUE" }));
+    expect(within(dialog).getByRole("button", { name: "Not now" })).toBeDisabled();
+    finish({ ...TEST_PLAYER, nickname: "moon Walker" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });
 
