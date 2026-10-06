@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { CrowdHistoryPointDto } from "../api/contract";
+import { DEFAULT_DISPLAY_TIME_ZONE, setDisplayTimeZone } from "../format";
 import { CrowdChart } from "./CrowdChart";
 import { LazyCrowdChart } from "./LazyCrowdChart";
 
@@ -15,6 +16,28 @@ function history(n: number): CrowdHistoryPointDto[] {
     antiCrowdCapital: (100_000 - ((i * 7919) % 2_003) * 0.37).toFixed(2),
   }));
 }
+
+describe("CrowdChart — the zone of its dates and times is named under it (first tester pass, D9)", () => {
+  const hostZone = process.env.TZ;
+  afterEach(() => {
+    setDisplayTimeZone(DEFAULT_DISPLAY_TIME_ZONE);
+    if (hostZone === undefined) delete process.env.TZ;
+    else process.env.TZ = hostZone;
+  });
+
+  it("UTC, by default and on a phone in any zone", () => {
+    process.env.TZ = "Asia/Kolkata";
+    render(<CrowdChart history={history(5)} variant="full" symbol="BTC" />);
+    expect(screen.getByText(/Dates and times are in UTC\./)).toBeInTheDocument();
+  });
+
+  it("the device's own zone, once it is switched on, is said to be the player's", () => {
+    process.env.TZ = "Asia/Kolkata";
+    setDisplayTimeZone(null);
+    render(<CrowdChart history={history(5)} variant="full" symbol="BTC" />);
+    expect(screen.getByText(/Dates and times are in your time zone \(GMT\+5:30\)\./)).toBeInTheDocument();
+  });
+});
 
 describe("CrowdChart — a long history is drawn, not a reason for the page to fail", () => {
   it("150 000 points (450 000 values for the axis to scale by): the chart renders, with its range chips", () => {

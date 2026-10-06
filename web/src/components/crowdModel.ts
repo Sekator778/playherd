@@ -101,7 +101,7 @@ export function defaultCrowdRange(spanMs: number): CrowdRange {
   return preferred ?? options[options.length - 1];
 }
 
-/** An axis tick: the time of day over a short history, the date over a long one — in the device's time zone, which the
+/** An axis tick: the time of day over a short history, the date over a long one — in the app's one zone (UTC), which the
  *  chart's note names (`format.ts`: one rule for every time in the app). */
 export function formatAxisTick(ms: number, spanMs: number): string {
   return isShortSpan(spanMs) ? formatClock(ms) : formatDate(ms);

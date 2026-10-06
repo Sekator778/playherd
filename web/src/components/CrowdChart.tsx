@@ -13,7 +13,7 @@ import {
 } from "recharts";
 import type { DotItemDotProps } from "recharts/types/util/types";
 import type { CrowdHistoryPointDto } from "../api/contract";
-import { formatUsd, timeZoneLabel } from "../format";
+import { formatUsd, timeZoneNote } from "../format";
 import { capitalAxis, crowdRanges, dedupeByTime, defaultCrowdRange, formatAxisTick, formatAxisTooltip } from "./crowdModel";
 
 const COLOR_CROWD = "#9147ff";
@@ -58,7 +58,7 @@ interface CrowdChartProps {
 /**
  * Crowd account vs hold vs anti-crowd for one market (Р-17, Р-25, Р-26, Т-6). The horizontal axis is a real
  * time axis, and follows how much history there is (`crowdModel.ts`): over a few hours (a stand with
- * 3-minute rounds) it ticks with the time of day (in the device's time zone, named under the chart) and the range chips are 1H · 6H · 1D · All; over
+ * 3-minute rounds) it ticks with the time of day (UTC, named under the chart) and the range chips are 1H · 6H · 1D · All; over
  * months it ticks with dates and keeps 1M · 3M · 1Y · All — the open critique item "the chart's x axis must
  * show time of day when the data span is short".
  */
@@ -177,7 +177,7 @@ export function CrowdChart({ history: rawHistory, variant = "full", symbol }: Cr
       </div>
       {visibleSpanMs > 0 && variant === "full" && (
         <p className="faint crowd-chart__axis-note">
-          Amounts are paper dollars. Dates and times are in your time zone ({timeZoneLabel(newest)}).
+          Amounts are paper dollars. Dates and times are in {timeZoneNote(newest)}.
         </p>
       )}
     </div>

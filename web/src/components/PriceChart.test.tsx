@@ -1,7 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setDisplayTimeZone } from "../format";
+import { DEFAULT_DISPLAY_TIME_ZONE, setDisplayTimeZone } from "../format";
 import { PriceChart, type PriceChartProps } from "./PriceChart";
 import { buildChartLines } from "./priceChartModel";
 import { NOW, ticksOf } from "./testFixtures";
@@ -153,25 +153,50 @@ describe("PriceChart — the betting lines", () => {
   });
 });
 
-describe("PriceChart — the time axis is in the device's zone, and says so (first tester pass, D9)", () => {
-  afterEach(() => setDisplayTimeZone("UTC"));
+describe("PriceChart — the time axis is in UTC, and says so (first tester pass, D9)", () => {
+  const hostZone = process.env.TZ;
+  afterEach(() => {
+    setDisplayTimeZone(DEFAULT_DISPLAY_TIME_ZONE);
+    if (hostZone === undefined) delete process.env.TZ;
+    else process.env.TZ = hostZone;
+  });
   const labels = (container: HTMLElement) => [...container.querySelectorAll(".pchart__axis")].map((t) => t.textContent).filter((t) => /^\d\d:\d\d/.test(t ?? ""));
+  const ticks = () => ticksOf(300, NOW, 100, 3_000);
 
-  it("the legend names the zone the labels are in", () => {
+  it("the legend names the zone the labels are in: UTC — the axis used to say nothing", () => {
     chart();
-    expect(screen.getByText("Times in your time zone (UTC)")).toBeInTheDocument();
+    expect(screen.getByText("Times in UTC")).toBeInTheDocument();
   });
 
-  it("a phone in Berlin reads its own clock — not the UTC the axis used to tick in — and the legend says GMT+2", () => {
-    const { container } = chart({ ticks: ticksOf(300, NOW, 100, 3_000) });
+  it("a phone in another zone reads the same UTC labels — the axis is not the device's clock — and the legend still says UTC", () => {
+    const { container } = chart({ ticks: ticks() });
     const utc = labels(container);
     expect(utc).toHaveLength(3);
+    expect(utc[2]).toBe("00:16:40"); // NOW is 1970-01-01 00:16:40 UTC
+    process.env.TZ = "Asia/Kolkata";
+    const { container: phone } = chart({ ticks: ticks() });
+    expect(labels(phone)).toEqual(utc);
+    expect(screen.queryByText(/your time zone/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("Times in UTC")).toHaveLength(2);
+  });
+
+  it("another zone, when one is set, is read off the axis and named in the legend", () => {
+    const { container } = chart({ ticks: ticks() });
+    const utc = labels(container);
     setDisplayTimeZone("Europe/Berlin");
-    const { container: berlin } = chart({ ticks: ticksOf(300, NOW, 100, 3_000) });
-    const local = labels(berlin);
-    // NOW is 1970-01-01 00:16:40 UTC; Berlin was UTC+1 then — an hour on, whatever the date's own summer time
-    expect(local[2].slice(0, 2)).not.toBe(utc[2].slice(0, 2));
-    expect(screen.getAllByText(/^Times in your time zone \(GMT\+\d\)$/).length).toBeGreaterThan(0);
+    const { container: berlin } = chart({ ticks: ticks() });
+    // Berlin was UTC+1 on 1970-01-01 — an hour on
+    expect(labels(berlin)[2]).toBe("01:16:40");
+    expect(labels(berlin)[2].slice(0, 2)).not.toBe(utc[2].slice(0, 2));
+    expect(screen.getAllByText(/^Times in GMT\+\d$/).length).toBeGreaterThan(0);
+  });
+
+  it("the device's own zone, once it is switched on, is said to be the player's", () => {
+    process.env.TZ = "Asia/Kolkata";
+    setDisplayTimeZone(null);
+    const { container } = chart({ ticks: ticks() });
+    expect(labels(container)[2]).toBe("05:46:40"); // 00:16:40 UTC is 05:46:40 at +5:30
+    expect(screen.getByText("Times in your time zone (GMT+5:30)")).toBeInTheDocument();
   });
 });
 

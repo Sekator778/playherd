@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import type { EpochMs, MarketDto, PriceTickDto } from "../api/contract";
-import { formatClock, formatPrice, timeZoneLabel } from "../format";
+import { formatClock, formatPrice, timeZoneNote } from "../format";
 import {
   availableRanges,
   axisValues,
@@ -291,8 +291,8 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
         )}
         {stale && <span className="pchart__stale">Price feed is stale — the last point is old</span>}
         {error && !stale && <span className="pchart__stale">Reconnecting to the price feed…</span>}
-        {/* The time axis is in the device's own zone: said, so it is never mistaken for the server's (first tester pass, D9). */}
-        <span className="pchart__zone">Times in your time zone ({timeZoneLabel(x1)})</span>
+        {/* The axis labels carry no zone of their own: it is said here, so a player does not read them off their own clock (first tester pass, D9). */}
+        <span className="pchart__zone">Times in {timeZoneNote(x1)}</span>
       </figcaption>
     </figure>
   );

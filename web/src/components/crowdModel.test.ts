@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CategoryDto } from "../api/contract";
-import { setDisplayTimeZone } from "../format";
+import { DEFAULT_DISPLAY_TIME_ZONE, setDisplayTimeZone } from "../format";
 import {
   SHORT_SPAN_MS,
   bestAndWorst,
@@ -116,7 +116,22 @@ describe("crowd chart ranges and axis follow the amount of history", () => {
     expect(formatAxisTooltip(at, 90 * DAY)).toBe("2026-09-25");
   });
 
-  it("ticks and tooltips are in the device's zone, named in the tooltip (first tester pass, D9)", () => {
+  it("ticks and tooltips are UTC and the tooltip says so — whatever zone the device is in (first tester pass, D9)", () => {
+    const hostZone = process.env.TZ;
+    process.env.TZ = "Asia/Kolkata"; // a phone five and a half hours on
+    try {
+      const at = Date.UTC(2026, 8, 25, 14, 23, 45);
+      expect(formatAxisTick(at, 3 * HOUR)).toBe("14:23");
+      expect(formatAxisTooltip(at, 3 * HOUR)).toBe("2026-09-25 14:23 UTC");
+      const lateEvening = Date.UTC(2026, 8, 25, 22, 30, 0); // already the 26th on that phone
+      expect(formatAxisTick(lateEvening, 90 * DAY)).toBe("2026-09-25");
+    } finally {
+      if (hostZone === undefined) delete process.env.TZ;
+      else process.env.TZ = hostZone;
+    }
+  });
+
+  it("another zone, when one is set, moves the ticks and the tooltip's date and names itself", () => {
     setDisplayTimeZone("Europe/Berlin");
     try {
       const at = Date.UTC(2026, 8, 25, 14, 23, 45);
@@ -126,7 +141,7 @@ describe("crowd chart ranges and axis follow the amount of history", () => {
       const lateEvening = Date.UTC(2026, 8, 25, 22, 30, 0);
       expect(formatAxisTick(lateEvening, 90 * DAY)).toBe("2026-09-26");
     } finally {
-      setDisplayTimeZone("UTC");
+      setDisplayTimeZone(DEFAULT_DISPLAY_TIME_ZONE);
     }
   });
 });

@@ -178,24 +178,30 @@ export function formatCountdown(msRemaining: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Times: ONE rule everywhere — the device's own time zone, named wherever a time of day is shown.
+// Times: ONE zone everywhere — UTC — and the zone is NAMED wherever a time of day is shown.
 //
-// The charts used to tick in UTC with no label while the phone's clock read two hours more, and the rows of the profile, the
-// wallet and the status page said "UTC" (first tester pass, D9): two rules, one of them unsaid. A player compares what the app
-// says with the clock in their hand, so every time is printed in the time zone of the device ("22:41 GMT+2") and the zone is
-// named — beside the time in a row, in the note under a chart. Rounds are UTC-aligned on the server and a season is a UTC
-// month (`api/season.ts`); those are ids and windows, not times the player reads off a clock.
+// The room chart ticked in UTC with no word of it while the phone's clock read two hours more (first tester pass, D9): the defect
+// was the unlabelled axis — the rows of the profile, the wallet and the status page already said "UTC". So the zone is UTC, as it
+// was, and every place that prints a time now says so: "2026-10-06 22:41 UTC" in a row, "Times in UTC" under a chart. Rounds are
+// UTC-aligned on the server and a season is a UTC month (`api/season.ts`), so UTC is also the clock their ids and windows are in.
+//
+// Printing the player's own zone instead ("22:41 GMT+2") is another product choice, not a defect fix, and it is Alex's to make.
+// The code for it is here and switched off: `setDisplayTimeZone(null)` prints in the device's zone, named the same way ("your time
+// zone (GMT+2)" under a chart, "GMT+2" beside a time in a row). Nothing in the app calls it.
 // ---------------------------------------------------------------------------
 
-let pinnedZone: string | null = null;
+/** The zone times are printed in unless something else is set: UTC (see above). */
+export const DEFAULT_DISPLAY_TIME_ZONE = "UTC";
 
-/** Pins the zone every time is printed in (an IANA name, "UTC"), or releases it (`null`: the device's own). The tests pin
- *  "UTC" (`test/setup.ts`) so that what they assert does not depend on where they run. */
+let pinnedZone: string | null = DEFAULT_DISPLAY_TIME_ZONE;
+
+/** Sets the zone every time is printed in (an IANA name, "UTC") — or, with `null`, the device's own. A test of another zone sets
+ *  its own and puts {@link DEFAULT_DISPLAY_TIME_ZONE} back. */
 export function setDisplayTimeZone(zone: string | null): void {
   pinnedZone = zone;
 }
 
-/** The zone times are printed in: the pinned one, else the device's. */
+/** The zone times are printed in: the one that was set (UTC unless something set another) or, with `null`, the device's. */
 export function displayTimeZone(): string {
   if (pinnedZone) return pinnedZone;
   try {
@@ -255,6 +261,16 @@ export function formatDate(ms: number): string {
 /** What the zone is called at that instant: "UTC", "GMT+2", "EDT". */
 export function timeZoneLabel(ms: number = Date.now()): string {
   return clockParts(ms).zone;
+}
+
+/**
+ * The zone as a chart's note says it, after "in": "UTC" — the default — or, once the device's own zone is switched on,
+ * "your time zone (GMT+2)". The labels on a chart's axis carry no zone of their own; the note under it is where it is named
+ * ("Times in UTC").
+ */
+export function timeZoneNote(ms: number = Date.now()): string {
+  const label = timeZoneLabel(ms);
+  return pinnedZone === null && label !== "UTC" ? `your time zone (${label})` : label;
 }
 
 /** A date and time with its zone: "2026-10-06 22:41 GMT+2". */

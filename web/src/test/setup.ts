@@ -1,11 +1,10 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
-import { setDisplayTimeZone } from "../format";
 
-// The app prints every time in the device's own zone (`format.ts`); the tests pin UTC so that what they assert does not
-// depend on where they run. A test about another zone sets its own and puts UTC back.
-setDisplayTimeZone("UTC");
+// The app prints every time in UTC and names the zone (`format.ts`), whatever zone the device is in — so the tests need no pin to be
+// the same wherever they run (`TZ=America/Los_Angeles npm test` and `TZ=Asia/Kolkata npm test` are the same run). A test about another
+// zone sets its own and puts DEFAULT_DISPLAY_TIME_ZONE back.
 
 // Explicit because vitest.config.ts does not enable `test.globals` — Testing Library's
 // auto-cleanup only self-registers when it can see a global `afterEach`.

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_DISPLAY_TIME_ZONE,
   displayTimeZone,
   formatChange24h,
   formatClock,
@@ -15,6 +16,7 @@ import {
   rollingPlayFormat,
   setDisplayTimeZone,
   timeZoneLabel,
+  timeZoneNote,
 } from "./format";
 
 describe("formatPlayAmount — auto decimals (independent critique, 2026-09-26)", () => {
@@ -226,52 +228,121 @@ describe("rollingPlayFormat — a count-up does not flicker between decimals on 
   });
 });
 
-describe("times — one rule: the device's own time zone, named wherever a time is shown (first tester pass, D9)", () => {
+describe("times — UTC, and the zone is named wherever a time is shown (first tester pass, D9)", () => {
   // 2026-10-06 06:12:06 UTC: the room chart's first label in the tester's pass, while his phone read 08:12
   const at = Date.UTC(2026, 9, 6, 6, 12, 6);
+  const hostZone = process.env.TZ;
 
-  afterEach(() => setDisplayTimeZone("UTC")); // the tests' own default (test/setup.ts)
+  /** The device's own zone, as the platform reports it — set for one test, put back after it. */
+  const deviceIn = (zone: string) => {
+    process.env.TZ = zone;
+  };
 
-  it("in UTC (what the tests pin): the plain strings, with the zone named", () => {
-    expect(formatClock(at)).toBe("06:12");
-    expect(formatClock(at, { seconds: true })).toBe("06:12:06");
-    expect(formatDate(at)).toBe("2026-10-06");
-    expect(formatDateTime(at)).toBe("2026-10-06 06:12 UTC");
-    expect(formatUpdatedAt(at)).toBe("Updated 06:12:06 UTC");
-    expect(timeZoneLabel(at)).toBe("UTC");
+  afterEach(() => {
+    setDisplayTimeZone(DEFAULT_DISPLAY_TIME_ZONE);
+    if (hostZone === undefined) delete process.env.TZ;
+    else process.env.TZ = hostZone;
   });
 
-  it("in a phone's zone: the clock the phone shows, and the zone's name beside the date", () => {
-    setDisplayTimeZone("Europe/Berlin"); // CEST in October: two hours on
-    expect(formatClock(at)).toBe("08:12");
-    expect(formatClock(at, { seconds: true })).toBe("08:12:06");
-    expect(formatDateTime(at)).toBe("2026-10-06 08:12 GMT+2");
-    expect(formatUpdatedAt(at)).toBe("Updated 08:12:06 GMT+2");
-    expect(timeZoneLabel(at)).toBe("GMT+2");
+  it("the tests can put the device in another zone (if this fails, the device-zone tests below prove nothing)", () => {
+    deviceIn("Asia/Kolkata");
+    expect(new Date(at).getHours()).toBe(11);
+    expect(new Date(at).getMinutes()).toBe(42);
   });
 
-  it("the zone name follows daylight saving — the same zone, another instant", () => {
-    setDisplayTimeZone("Europe/Berlin");
-    expect(formatDateTime(Date.UTC(2026, 11, 6, 6, 12))).toBe("2026-12-06 07:12 GMT+1");
+  describe("by default: UTC — on a device in any zone", () => {
+    it.each(["America/Los_Angeles", "Asia/Kolkata", "Pacific/Auckland", "Europe/Berlin", "UTC"])(
+      "a device in %s: the plain strings, with the zone named UTC",
+      (device) => {
+        deviceIn(device);
+        expect(DEFAULT_DISPLAY_TIME_ZONE).toBe("UTC");
+        expect(displayTimeZone()).toBe("UTC");
+        expect(formatClock(at)).toBe("06:12");
+        expect(formatClock(at, { seconds: true })).toBe("06:12:06");
+        expect(formatDate(at)).toBe("2026-10-06");
+        expect(formatDateTime(at)).toBe("2026-10-06 06:12 UTC");
+        expect(formatUpdatedAt(at)).toBe("Updated 06:12:06 UTC");
+        expect(timeZoneLabel(at)).toBe("UTC");
+        expect(timeZoneNote(at)).toBe("UTC");
+      },
+    );
+
+    it("the date is the UTC date too: 23:12 the evening before, in Los Angeles, is 06:12 of the 6th here", () => {
+      deviceIn("America/Los_Angeles");
+      expect(new Date(at).getDate()).toBe(5); // what a phone there would read
+      expect(formatDate(at)).toBe("2026-10-06");
+      expect(formatDateTime(at)).toBe("2026-10-06 06:12 UTC");
+    });
   });
 
-  it("the date follows the zone across midnight, and midnight is 00, never 24", () => {
-    setDisplayTimeZone("Asia/Tokyo"); // UTC+9, no daylight saving
-    const lateEvening = Date.UTC(2026, 9, 5, 15, 5, 0); // 2026-10-06 00:05 in Tokyo
-    expect(formatDate(lateEvening)).toBe("2026-10-06");
-    expect(formatClock(lateEvening)).toBe("00:05");
-    expect(formatDateTime(lateEvening)).toBe("2026-10-06 00:05 GMT+9");
+  describe("another zone, when one is set", () => {
+    it("the clock of that zone, and the zone's name beside the date", () => {
+      setDisplayTimeZone("Europe/Berlin"); // CEST in October: two hours on
+      expect(formatClock(at)).toBe("08:12");
+      expect(formatClock(at, { seconds: true })).toBe("08:12:06");
+      expect(formatDateTime(at)).toBe("2026-10-06 08:12 GMT+2");
+      expect(formatUpdatedAt(at)).toBe("Updated 08:12:06 GMT+2");
+      expect(timeZoneLabel(at)).toBe("GMT+2");
+      expect(timeZoneNote(at)).toBe("GMT+2"); // a set zone is not "your" zone: it is named, not claimed
+    });
+
+    it("the zone name follows daylight saving — the same zone, another instant", () => {
+      setDisplayTimeZone("Europe/Berlin");
+      expect(formatDateTime(Date.UTC(2026, 11, 6, 6, 12))).toBe("2026-12-06 07:12 GMT+1");
+    });
+
+    it("the date follows the zone across midnight, and midnight is 00, never 24", () => {
+      setDisplayTimeZone("Asia/Tokyo"); // UTC+9, no daylight saving
+      const lateEvening = Date.UTC(2026, 9, 5, 15, 5, 0); // 2026-10-06 00:05 in Tokyo
+      expect(formatDate(lateEvening)).toBe("2026-10-06");
+      expect(formatClock(lateEvening)).toBe("00:05");
+      expect(formatDateTime(lateEvening)).toBe("2026-10-06 00:05 GMT+9");
+    });
+
+    it("a half-hour zone keeps its minutes", () => {
+      setDisplayTimeZone("Asia/Kolkata");
+      expect(formatClock(at)).toBe("11:42");
+      expect(timeZoneLabel(at)).toBe("GMT+5:30");
+    });
   });
 
-  it("a half-hour zone keeps its minutes", () => {
-    setDisplayTimeZone("Asia/Kolkata");
-    expect(formatClock(at)).toBe("11:42");
-    expect(timeZoneLabel(at)).toBe("GMT+5:30");
-  });
+  describe("the device's own zone: kept behind setDisplayTimeZone(null), and switched off", () => {
+    it.each([
+      ["America/Los_Angeles", "2026-10-05 23:12", "PDT"],
+      ["Asia/Kolkata", "2026-10-06 11:42", "GMT+5:30"],
+      ["Europe/Berlin", "2026-10-06 08:12", "GMT+2"],
+      ["Pacific/Auckland", "2026-10-06 19:12", "GMT+13"],
+    ])("a device in %s: its own date and clock, and the chart's note says it is theirs", (device, dateAndClock, label) => {
+      deviceIn(device);
+      setDisplayTimeZone(null);
+      expect(formatDateTime(at)).toBe(`${dateAndClock} ${label}`);
+      expect(formatUpdatedAt(at)).toContain(label);
+      expect(timeZoneNote(at)).toBe(`your time zone (${label})`);
+    });
 
-  it("released, it is the device's: whatever the platform reports, a time is still printed", () => {
-    setDisplayTimeZone(null);
-    expect(displayTimeZone()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    expect(formatDateTime(at)).toMatch(/^2026-10-06 \d\d:\d\d \S+$/);
+    it("a device in UTC says plainly UTC", () => {
+      deviceIn("UTC");
+      setDisplayTimeZone(null);
+      expect(timeZoneNote(at)).toBe("UTC");
+      expect(formatDateTime(at)).toBe("2026-10-06 06:12 UTC");
+    });
+
+    it("released, it is the platform's own local time, whatever zone the platform is in", () => {
+      setDisplayTimeZone(null);
+      expect(displayTimeZone()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+      const local = new Date(at);
+      const two = (n: number) => String(n).padStart(2, "0");
+      expect(formatDateTime(at)).toMatch(
+        new RegExp(`^${local.getFullYear()}-${two(local.getMonth() + 1)}-${two(local.getDate())} ${two(local.getHours())}:${two(local.getMinutes())} \\S+$`),
+      );
+    });
+
+    it("and put back, it is UTC again", () => {
+      deviceIn("Asia/Kolkata");
+      setDisplayTimeZone(null);
+      expect(formatClock(at)).toBe("11:42");
+      setDisplayTimeZone(DEFAULT_DISPLAY_TIME_ZONE);
+      expect(formatClock(at)).toBe("06:12");
+    });
   });
 });
