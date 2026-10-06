@@ -96,12 +96,12 @@ export function HowItWorksPage() {
           published on-chain by a key our team controls.
         </p>
         <p>
-          <strong>No price, no round.</strong> If a reliable price can't be read within five minutes of a round closing
-          (fifteen for Polymarket's odds, two when the market's other exchange is still sending prices), the round is
-          cancelled and every bet is refunded, including any that would have been liquidated — so one round without a price
-          never holds up the rounds after it. Any other fault that stops a round from being settled gets an hour at most,
-          then the same refund. A round nobody bet on, if its price can't be read, is simply skipped. A cancelled round
-          always shows its reason on the round's page.
+          <strong>No price, no round.</strong> A round that has no reliable price holds up the rounds after it — betting on
+          that market, for that round length, pauses meanwhile — for five minutes at most (fifteen for Polymarket's odds, two
+          when the market's other exchange is still sending prices), counted again after the server restarts. Then the round
+          is cancelled and every bet is refunded, including any that would have been liquidated, and the market goes on. Any
+          other fault that stops a round from being settled gets an hour at most, then the same refund. A round nobody bet
+          on, if its price can't be read, is simply skipped. A cancelled round always shows its reason on the round's page.
         </p>
         <p>
           <strong>A round runs on one exchange.</strong> A crypto market has a main exchange and a backup (Kraken for
