@@ -320,10 +320,12 @@ function StakeField({
 
 /**
  * The heading of the liquidation preview card, with "What's this?" — which opens the explanation RIGHT THERE. It used to be a link
- * to /how-it-works in a new tab, so as not to lose a half-made bet; the tester asked for it to open in the same app instead (first
- * tester pass, D12 — what a new tab does inside the installed Android app is UNVERIFIED). The open state belongs to the slip, not to
- * this heading: the card around it disappears while the stake is not a number, and the explanation must not close under the
- * player's thumb when it does.
+ * to /how-it-works#liquidation that opened in a new tab (so as not to lose a half-made bet). That is all the first tester pass says of
+ * it (D12: "opens /how-it-works#liquidation in a new tab"): it records what the link did and asks for nothing. Showing the explanation
+ * in place instead is this slip's own choice. What a new tab does inside the INSTALLED app — whether it leaves the app for the system
+ * browser — is UNVERIFIED: the pass was a browser, and no installed-app run has looked. The open state belongs to the slip, not to this
+ * heading: the card around it disappears while the stake is not a number, and the explanation must not close under the player's
+ * thumb when it does.
  */
 function LiquidationPreviewHead({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const explainerId = useId();
