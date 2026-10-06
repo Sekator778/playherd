@@ -1341,8 +1341,10 @@ ol {
   margin-top: 6px;
 }
 
-/* What just happened to the player's bet ("Bet updated.", "Bet cancelled — … is back in your balance."): a short line
-   with its own glyph, so the meaning is never the colour alone. */
+/* What just happened to the player's bet ("Bet updated.", "Bet cancelled — … is back in your balance.", and "Saved, refreshing…"
+   until the page shows it): a short line with its own glyph, so the meaning is never the colour alone. The slip's status line is
+   always in the DOM (a live region is read when its text changes); with nothing to say it is `.visually-hidden`. It takes focus
+   after an action (`tabIndex={-1}`), and the global `:focus-visible` ring shows where it is. */
 .bet-notice {
   margin: 0 0 12px;
   padding: 8px 12px;
@@ -1353,7 +1355,8 @@ ol {
   font-size: 14px;
   font-weight: 700;
 }
-.bet-notice--cancelled {
+.bet-notice--cancelled,
+.bet-notice--saving {
   border-color: var(--border-strong);
   background: var(--bg-elevated-2);
 }

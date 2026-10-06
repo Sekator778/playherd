@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LEVERAGE_MAX, LEVERAGE_MIN } from "../api/contract";
-import { CAPPED_MARKET_DEFAULT_LEVERAGE, DEFAULT_LEVERAGE, defaultLeverage } from "./betSlipModel";
+import { LEVERAGE_MAX, LEVERAGE_MIN, type BetDto } from "../api/contract";
+import { CAPPED_MARKET_DEFAULT_LEVERAGE, DEFAULT_LEVERAGE, defaultLeverage, savedChangeIsShown, type SavedChange } from "./betSlipModel";
 
 describe("defaultLeverage — where a fresh slip opens (first tester pass, D2)", () => {
   // The whole rule: x10, as the slip has always opened, wherever the market's cap lies above it; x3 where x10 would BE the cap
@@ -40,5 +40,31 @@ describe("defaultLeverage — where a fresh slip opens (first tester pass, D2)",
       expect(value, `cap x${cap}`).toBeGreaterThanOrEqual(LEVERAGE_MIN);
       expect(value, `cap x${cap}`).toBeLessThanOrEqual(cap);
     }
+  });
+});
+
+describe("savedChangeIsShown — the page shows what the server was told (first tester pass, D4)", () => {
+  const bet = (over: Partial<BetDto> = {}): BetDto => ({ playerId: "p", roundId: "r", direction: "UP", leverage: 10, stake: "650.000", ...over });
+  const sent: SavedChange = { kind: "updated", roundId: "r", direction: "UP", leverage: 10, stake: "650.000" };
+
+  it("the bet as it was sent is shown — a stake is the number the server stores, whatever its spelling", () => {
+    expect(savedChangeIsShown(sent, bet())).toBe(true);
+    expect(savedChangeIsShown(sent, bet({ stake: "650" }))).toBe(true);
+    expect(savedChangeIsShown({ ...sent, kind: "placed" }, bet())).toBe(true);
+  });
+
+  it("the old bet is not, nor one that differs in its stake, side or leverage, nor no bet at all", () => {
+    expect(savedChangeIsShown(sent, bet({ stake: "500.000" }))).toBe(false);
+    expect(savedChangeIsShown(sent, bet({ stake: "650.001" }))).toBe(false);
+    expect(savedChangeIsShown(sent, bet({ direction: "DOWN" }))).toBe(false);
+    expect(savedChangeIsShown(sent, bet({ leverage: 5 }))).toBe(false);
+    expect(savedChangeIsShown(sent, null)).toBe(false);
+    expect(savedChangeIsShown({ ...sent, kind: "placed" }, null)).toBe(false);
+  });
+
+  it("after a cancel the page shows it when there is no bet — and not while the bet is still there", () => {
+    const cancelled: SavedChange = { kind: "cancelled", roundId: "r", refund: "500.000" };
+    expect(savedChangeIsShown(cancelled, null)).toBe(true);
+    expect(savedChangeIsShown(cancelled, bet({ stake: "500.000" }))).toBe(false);
   });
 });

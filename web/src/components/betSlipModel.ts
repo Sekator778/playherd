@@ -2,7 +2,7 @@
  * The bet slip's small pure rules — what the stake field accepts, what its chips and − / + buttons put in
  * it. Kept out of `BetSlip.tsx` so they have tests and so that file exports only components.
  */
-import { LEVERAGE_MIN, MIN_STAKE_PLAY } from "../api/contract";
+import { LEVERAGE_MIN, MIN_STAKE_PLAY, type BetDto, type Direction } from "../api/contract";
 
 /** Plain-integer default for the stake field's *initial* value — never `MIN_STAKE_PLAY` itself
  *  (contract.ts: `"100.000"`, PLAY's own exact 3-decimal scale) bound straight into the input.
@@ -75,4 +75,23 @@ export const STAKE_CHIPS: ReadonlyArray<{ label: string; fraction: number }> = [
 export function steppedStake(current: number, delta: number, balance?: number): string {
   const raised = current + delta;
   return trimStake(Math.max(0, balance !== undefined ? Math.min(balance, raised) : raised));
+}
+
+/**
+ * A change to the player's own bet that the SERVER has accepted — `placeBet` or `cancelBet` answered — and that the page has not
+ * shown yet: the round is read again to show it. What the player is told ("Bet updated.") waits for the page to show it
+ * (`savedChangeIsShown`): saying it earlier put "Bet updated." over a card that still held the old bet — and, when the reload
+ * failed, left it there with no word that the page was behind (first tester pass, D4, as first built).
+ */
+export type SavedChange =
+  | { kind: "placed" | "updated"; roundId: string; direction: Direction; leverage: number; stake: string }
+  | { kind: "cancelled"; roundId: string; refund: string };
+
+/**
+ * Whether the bet the page shows (`RoundBetting.myBet`) is what the change made it: the bet as it was sent (the stake as the
+ * number the server stores — "650.000" and 650 are one stake), or, after a cancel, none.
+ */
+export function savedChangeIsShown(saved: SavedChange, shown: BetDto | null): boolean {
+  if (saved.kind === "cancelled") return shown === null;
+  return shown !== null && shown.direction === saved.direction && shown.leverage === saved.leverage && Number(shown.stake) === Number(saved.stake);
 }

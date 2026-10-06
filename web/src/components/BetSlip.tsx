@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
@@ -25,9 +25,11 @@ import {
   STAKE_CHIPS,
   STAKE_STEP,
   sanitizeStakeInput,
+  savedChangeIsShown,
   stakeDisplay,
   stakeForFraction,
   steppedStake,
+  type SavedChange,
 } from "./betSlipModel";
 import { herdSideOf } from "./marketModel";
 
@@ -58,6 +60,15 @@ interface BetSlipProps {
 
 /** How long the line that says what just happened to the player's bet stays ("Bet updated."). */
 const NOTICE_MS = 5000;
+
+/** What the status line says from the moment the server has the player's change until the page shows it. */
+const SAVING_TEXT = "Saved, refreshing…";
+
+/** How long the slip waits for the page to show a change the server has accepted: ten polls of the room. Past it the slip stops
+ *  waiting (see where it is used) — the reload and the poll after it have had every chance. */
+const SAVED_PATIENCE_MS = 20_000;
+
+type NoticeKind = "placed" | "updated" | "cancelled";
 
 /** The liquidation preview of the bet being composed (Р-7, Р-33: shown BEFORE the bet) — debounced, and
  *  an answer that arrives after a newer question was asked is dropped, not shown. */
@@ -478,6 +489,11 @@ function BetSlipForm({
   // dial is on the market's default (`defaultLeverage`: x10 as always — x3 where x10 would be the market's cap).
   const leverage = Math.min(leverageChoice ?? defaultLeverage(maxLeverage), maxLeverage);
   const [stake, setStake] = useState<string>(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
+  // What happened to the player's own bet, said in the slip's status line: first that the server has the change and the page has
+  // not shown it yet (`saved`), then — once the page does — what it was, for a few seconds (`notice`). First tester pass, D4:
+  // an UPDATE left the form open with the same button and not a word of it, and a cancel only made the card vanish.
+  const [saved, setSaved] = useState<SavedChange | null>(null);
+  const [notice, setNotice] = useState<{ kind: NoticeKind; text: string } | null>(null);
 
   // Reset local form state when the round or the existence of an own bet changes — deliberately
   // keyed on `hasBet` (a boolean), not the `myBet` object reference, which changes on every poll
@@ -494,6 +510,23 @@ function BetSlipForm({
     setInternalDirection(existing?.direction ?? "UP");
     setLeverage(existing?.leverage ?? null);
     setStake(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
+  }
+  // The page shows what the server was told — the bet as it was sent, or none after a cancel: only now is the change said to have
+  // worked, and the form (or the cancel prompt) has done its work. Until then the status line says "Saved, refreshing…": the round is
+  // read again at once, and again every two seconds, so a reload that failed or was stale is made up for by itself. A round that
+  // has moved on (the window closed) leaves the change behind: the next round's slip starts clean.
+  if (saved) {
+    if (saved.roundId !== round.roundId) {
+      setSaved(null);
+    } else if (savedChangeIsShown(saved, existing)) {
+      setSaved(null);
+      if (saved.kind === "cancelled") {
+        setNotice({ kind: "cancelled", text: `Bet cancelled — ${formatPlayAmount(saved.refund)} PLAY is back in your balance.` });
+      } else {
+        setNotice(saved.kind === "updated" ? { kind: "updated", text: "Bet updated." } : { kind: "placed", text: "Bet placed." });
+        setFormOpen(false);
+      }
+    }
   }
   // A controlled direction belongs to the parent (the room's arena): the slip may not set the parent's
   // state while it renders (React: "cannot update a component while rendering a different one"), and a
@@ -541,18 +574,76 @@ function BetSlipForm({
     };
   }, [api, round.roundId, existingStake, engineEpoch, balanceAttempt]);
 
-  // One line that says what just happened to the player's bet, for a few seconds. Placing a bet brings the "Your bet" card
-  // up at once, but an UPDATE used to leave the form open, its button unchanged and not a word of it — the header balance
-  // was the only sign it had worked — and a cancel only made the card vanish (first tester pass, D4).
-  const [notice, setNotice] = useState<{ kind: "placed" | "updated" | "cancelled"; text: string } | null>(null);
+  // The line is shown for a few seconds.
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), NOTICE_MS);
     return () => window.clearTimeout(timer);
   }, [notice]);
-  const noticeLine = notice && (
-    <p className={`bet-notice bet-notice--${notice.kind}`} role="status">
-      <span aria-hidden="true">{notice.kind === "cancelled" ? "↩" : "✓"}</span> {notice.text}
+  // A change that the page has not shown for this long is not going to be (the player placed another bet from a second tab; a
+  // server that stores the bet differently from what was sent): the slip stops waiting for it and shows what the page has,
+  // instead of holding its buttons off for the rest of the round.
+  useEffect(() => {
+    if (!saved) return;
+    const timer = window.setTimeout(() => setSaved(null), SAVED_PATIENCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [saved]);
+
+  // FOCUS. A card, the cancel prompt and the form replace one another, and the button the player pressed goes with its view —
+  // focus then falls to <body>, and a keyboard or screen-reader user starts over from the top of the page (first tester pass, D4:
+  // after UPDATE BET and EDIT BET). So a press that changes the view says where focus goes next (`requestFocus`, in the handler),
+  // and once the view has rendered the place is focused — unless the player has meanwhile moved to something else outside the slip.
+  // The places are the status line (the result: "Saved, refreshing…", then "Bet updated."), the "Your bet" line of the card, the
+  // question of the cancel prompt and the form — each a non-tabbable stop (`tabIndex={-1}`) from which Tab goes on to the controls.
+  const slipRef = useRef<HTMLDivElement>(null);
+  const statusRef = useRef<HTMLParagraphElement>(null);
+  const cardRef = useRef<HTMLParagraphElement>(null);
+  const promptRef = useRef<HTMLParagraphElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const focusWanted = useRef<"status" | "card" | "prompt" | "form" | null>(null);
+  const requestFocus = (place: "status" | "card" | "prompt" | "form") => {
+    focusWanted.current = place;
+  };
+  useEffect(() => {
+    const place = focusWanted.current;
+    if (!place) return;
+    const target = { status: statusRef, card: cardRef, prompt: promptRef, form: formRef }[place].current;
+    if (!target) return; // that view is not on screen yet: after the next render
+    focusWanted.current = null;
+    const active = document.activeElement;
+    if (active && active !== document.body && !slipRef.current?.contains(active)) return; // the player has gone elsewhere: not pulled back
+    target.focus();
+  });
+
+  // Asks the room to read the round again, and does not wait for the answer: the slip says what it knows (the server has the
+  // change) and the page — this reload, or the poll that follows it — shows the rest. A reload that throws changes nothing here.
+  const reload = () => {
+    try {
+      void Promise.resolve(onChanged()).catch(() => {});
+    } catch {
+      // the poll brings the new state
+    }
+  };
+
+  // THE STATUS LINE: one element, always in the slip, and only its text changes — a live region that appears already filled is
+  // often not read at all, one that is there and changes is. It sits above whichever view the slip is showing, so it survives
+  // the card giving way to the form and back.
+  const statusText = saved ? SAVING_TEXT : (notice?.text ?? "");
+  const statusKind = saved ? "saving" : notice?.kind;
+  const statusGlyph = saved ? "↻" : notice?.kind === "cancelled" ? "↩" : "✓";
+  const statusLine = (
+    <p
+      ref={statusRef}
+      tabIndex={-1}
+      role="status"
+      aria-atomic="true"
+      className={statusText ? `bet-notice bet-notice--${statusKind}` : "visually-hidden"}
+    >
+      {statusText && (
+        <>
+          <span aria-hidden="true">{statusGlyph}</span> {statusText}
+        </>
+      )}
     </p>
   );
 
@@ -565,27 +656,43 @@ function BetSlipForm({
   };
 
   if (!formOpen && existing) {
+    // While the server's answer is on its way to the page (`saved`) the card is a picture of what is about to change: nothing on it
+    // is offered again — an edit or a cancel of a bet that has just been cancelled would only be refused.
+    const settling = saved !== null;
     return (
-      <div className="card">
-        {noticeLine}
+      <div className="card bet-slip" ref={slipRef}>
+        {statusLine}
         {showCancelConfirm ? (
           <>
-            <p>Cancel your bet and get {formatPlayAmount(existing.stake)} PLAY back?</p>
+            <p ref={promptRef} tabIndex={-1}>
+              Cancel your bet and get {formatPlayAmount(existing.stake)} PLAY back?
+            </p>
             <div className="direction-row">
-              <button type="button" className="btn btn--secondary" onClick={() => setShowCancelConfirm(false)}>
+              <button
+                type="button"
+                className="btn btn--secondary"
+                onClick={() => {
+                  setShowCancelConfirm(false);
+                  requestFocus("card");
+                }}
+              >
                 KEEP BET
               </button>
               <button
                 type="button"
                 className="btn btn--danger"
-                disabled={cancelling}
+                disabled={cancelling || settling}
                 onClick={async () => {
                   setCancelling(true);
                   setCancelError(null);
                   try {
                     await api.cancelBet(round.roundId);
-                    await onChanged();
-                    setNotice({ kind: "cancelled", text: `Bet cancelled — ${formatPlayAmount(existing.stake)} PLAY is back in your balance.` });
+                    // The bet is cancelled on the server; the question has been answered. That the player's PLAY is back is said when
+                    // the page shows the bet gone (above), and until then the line says "Saved, refreshing…".
+                    setSaved({ kind: "cancelled", roundId: round.roundId, refund: existing.stake });
+                    setShowCancelConfirm(false);
+                    requestFocus("status");
+                    reload();
                   } catch (err) {
                     setCancelError(mutationErrorText(err, "Couldn't cancel the bet — try again."));
                   } finally {
@@ -600,7 +707,7 @@ function BetSlipForm({
           </>
         ) : (
           <>
-            <p>
+            <p ref={cardRef} tabIndex={-1}>
               Your bet: <DirectionGlyph direction={existing.direction} /> {existing.direction} · x{existing.leverage} ·{" "}
               {formatPlayAmount(existing.stake)} PLAY
             </p>
@@ -608,15 +715,25 @@ function BetSlipForm({
               <button
                 type="button"
                 className="btn btn--secondary"
+                disabled={settling}
                 onClick={() => {
                   loadBetIntoForm(existing);
                   setNotice(null);
                   setFormOpen(true);
+                  requestFocus("form");
                 }}
               >
                 EDIT BET
               </button>
-              <button type="button" className="btn btn--danger" onClick={() => setShowCancelConfirm(true)}>
+              <button
+                type="button"
+                className="btn btn--danger"
+                disabled={settling}
+                onClick={() => {
+                  setShowCancelConfirm(true);
+                  requestFocus("prompt");
+                }}
+              >
                 CANCEL BET
               </button>
             </div>
@@ -632,17 +749,20 @@ function BetSlipForm({
   // balance can say "not enough": while it is unknown the server stays the judge of the bet.
   const effectiveBalance = (balance ?? 0) + (existing ? Number(existing.stake) : 0);
   const overBalance = balance !== null && stakeNum > effectiveBalance;
-  const disabled = submitting || !stake || belowMin || overBalance;
+  // Not again while the server's answer is on its way to the page: that bet is already placed.
+  const disabled = submitting || saved !== null || !stake || belowMin || overBalance;
 
   const submit = async () => {
     setSubmitting(true);
     setErrorMessage(null);
     try {
-      await api.placeBet({ roundId: round.roundId, direction, leverage, stake: stakeNum.toFixed(3) });
-      // The round is reloaded first, so the card the form gives way to shows the bet as it is now, not the old one.
-      await onChanged();
-      setNotice(existing ? { kind: "updated", text: "Bet updated." } : { kind: "placed", text: "Bet placed." });
-      setFormOpen(false);
+      const sent = stakeNum.toFixed(3);
+      await api.placeBet({ roundId: round.roundId, direction, leverage, stake: sent });
+      // The server has the bet. The player is told so now — "Saved, refreshing…" — and what it came to ("Bet updated.") when the
+      // page shows it: the card the form gives way to must show the bet as it is now, not the old one (see the block above).
+      setSaved({ kind: existing ? "updated" : "placed", roundId: round.roundId, direction, leverage, stake: sent });
+      requestFocus("status");
+      reload();
     } catch (err) {
       setErrorMessage(mutationErrorText(err, "Something went wrong."));
     } finally {
@@ -651,76 +771,81 @@ function BetSlipForm({
   };
 
   return (
-    <form
-      className="card bet-slip"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void submit();
-      }}
-    >
-      {noticeLine}
-      {!hideDirectionPicker && <DirectionPicker id="direction-label" direction={direction} onChange={setDirection} />}
-      <HerdPicker herd={herdSideOf(round)} direction={direction} onPick={setDirection} />
+    <div className="card bet-slip" ref={slipRef}>
+      {statusLine}
+      <form
+        ref={formRef}
+        tabIndex={-1}
+        aria-label={existing ? "Edit your bet" : "Place a bet"}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        {!hideDirectionPicker && <DirectionPicker id="direction-label" direction={direction} onChange={setDirection} />}
+        <HerdPicker herd={herdSideOf(round)} direction={direction} onPick={setDirection} />
 
-      <div className="field">
-        <label htmlFor="leverage-input" className="visually-hidden">
-          Leverage
-        </label>
-        <LeverageDial id="leverage-input" value={leverage} min={LEVERAGE_MIN} max={maxLeverage} onChange={setLeverage} />
-      </div>
-
-      <StakeField inputId="stake-input" label="Stake (PLAY)" value={stake} onChange={setStake} balance={balance === null ? undefined : effectiveBalance} />
-      {belowMin && <p className="field-error">Minimum stake is 100 PLAY.</p>}
-      {balance === null && balanceFailed && (
-        <div className="stack" style={{ gap: 8 }} role="status">
-          <p className="field-hint" style={{ margin: 0 }}>
-            Couldn't load your balance yet — trying again.
-          </p>
-          <button type="button" className="btn btn--secondary" onClick={() => setBalanceAttempt((n) => n + 1)}>
-            Try now
-          </button>
+        <div className="field">
+          <label htmlFor="leverage-input" className="visually-hidden">
+            Leverage
+          </label>
+          <LeverageDial id="leverage-input" value={leverage} min={LEVERAGE_MIN} max={maxLeverage} onChange={setLeverage} />
         </div>
-      )}
-      {!belowMin && overBalance && (
-        <p className="field-error">
-          Not enough PLAY — you have {formatPlayAmount(effectiveBalance)} PLAY, this bet needs {formatPlayAmount(stakeNum)} PLAY.
-        </p>
-      )}
 
-      {preview && (
-        <div className="card card--tight liquidation-preview">
-          <LiquidationPreviewHead open={explainOpen} onToggle={() => setExplainOpen((v) => !v)} />
-          <LiquidationBar
-            entryPrice={preview.entryPriceUsed}
-            liquidationPrice={preview.liquidationPrice}
-            percentToLiquidation={preview.percentToLiquidation}
-            market={market}
-          />
-          <p className="faint">
-            Estimated from the current price — your real entry price is set when the round starts.
+        <StakeField inputId="stake-input" label="Stake (PLAY)" value={stake} onChange={setStake} balance={balance === null ? undefined : effectiveBalance} />
+        {belowMin && <p className="field-error">Minimum stake is 100 PLAY.</p>}
+        {balance === null && balanceFailed && (
+          <div className="stack" style={{ gap: 8 }} role="status">
+            <p className="field-hint" style={{ margin: 0 }}>
+              Couldn't load your balance yet — trying again.
+            </p>
+            <button type="button" className="btn btn--secondary" onClick={() => setBalanceAttempt((n) => n + 1)}>
+              Try now
+            </button>
+          </div>
+        )}
+        {!belowMin && overBalance && (
+          <p className="field-error">
+            Not enough PLAY — you have {formatPlayAmount(effectiveBalance)} PLAY, this bet needs {formatPlayAmount(stakeNum)} PLAY.
           </p>
-        </div>
-      )}
+        )}
 
-      {errorMessage && <p className="field-error">{errorMessage}</p>}
+        {preview && (
+          <div className="card card--tight liquidation-preview">
+            <LiquidationPreviewHead open={explainOpen} onToggle={() => setExplainOpen((v) => !v)} />
+            <LiquidationBar
+              entryPrice={preview.entryPriceUsed}
+              liquidationPrice={preview.liquidationPrice}
+              percentToLiquidation={preview.percentToLiquidation}
+              market={market}
+            />
+            <p className="faint">
+              Estimated from the current price — your real entry price is set when the round starts.
+            </p>
+          </div>
+        )}
 
-      <BetSummary round={round} market={market} direction={direction} leverage={leverage} stake={stakeNum} />
-      <button type="submit" className="btn btn--primary btn--lg btn--block" disabled={disabled}>
-        {existing ? "UPDATE BET" : "PLACE BET"}
-      </button>
-      {existing && (
-        // The way out of edit mode that does not send anything — and back to the card with CANCEL BET on it.
-        <button
-          type="button"
-          className="btn btn--secondary btn--block"
-          onClick={() => {
-            loadBetIntoForm(existing);
-            setFormOpen(false);
-          }}
-        >
-          BACK TO YOUR BET
+        {errorMessage && <p className="field-error">{errorMessage}</p>}
+
+        <BetSummary round={round} market={market} direction={direction} leverage={leverage} stake={stakeNum} />
+        <button type="submit" className="btn btn--primary btn--lg btn--block" disabled={disabled}>
+          {existing ? "UPDATE BET" : "PLACE BET"}
         </button>
-      )}
-    </form>
+        {existing && (
+          // The way out of edit mode that does not send anything — and back to the card with CANCEL BET on it.
+          <button
+            type="button"
+            className="btn btn--secondary btn--block"
+            onClick={() => {
+              loadBetIntoForm(existing);
+              setFormOpen(false);
+              requestFocus("card");
+            }}
+          >
+            BACK TO YOUR BET
+          </button>
+        )}
+      </form>
+    </div>
   );
 }
