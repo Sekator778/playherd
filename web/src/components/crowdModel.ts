@@ -6,6 +6,7 @@
  */
 import type { CategoryDto, CategoryId, CrowdOverviewDto, MarketDto } from "../api/contract";
 import { categoryTitle } from "../api/marketMeta";
+import { formatClock, formatDate, formatDateTime, formatUsd } from "../format";
 
 export type OverviewRow = CrowdOverviewDto["markets"][number];
 
@@ -100,17 +101,77 @@ export function defaultCrowdRange(spanMs: number): CrowdRange {
   return preferred ?? options[options.length - 1];
 }
 
-/** An axis tick: the time of day (UTC) over a short history, the date over a long one. */
+/** An axis tick: the time of day over a short history, the date over a long one — in the device's time zone, which the
+ *  chart's note names (`format.ts`: one rule for every time in the app). */
 export function formatAxisTick(ms: number, spanMs: number): string {
-  const iso = new Date(ms).toISOString();
-  return isShortSpan(spanMs) ? iso.slice(11, 16) : iso.slice(0, 10);
+  return isShortSpan(spanMs) ? formatClock(ms) : formatDate(ms);
 }
 
-/** A tooltip's heading: always the full UTC date and time on a short history (a bare "14:20" is
+/** A tooltip's heading: always the full date and time, with its zone, on a short history (a bare "14:20" is
  *  ambiguous across midnight), the date alone on a long one. */
 export function formatAxisTooltip(ms: number, spanMs: number): string {
-  const iso = new Date(ms).toISOString();
-  return isShortSpan(spanMs) ? `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC` : iso.slice(0, 10);
+  return isShortSpan(spanMs) ? formatDateTime(ms) : formatDate(ms);
+}
+
+// ---------------------------------------------------------------------------
+// The capital axis
+// ---------------------------------------------------------------------------
+
+/** A tick step of 1, 2, 2.5, 5 × a power of ten, at least `rough`. */
+function niceStep(rough: number): number {
+  const base = 10 ** Math.floor(Math.log10(rough));
+  const f = rough / base;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * base;
+}
+
+/** An axis label of `value` for ticks `step` apart: "$96k" when whole thousands tell the ticks apart, "$99.5k" / "$99.75k" when
+ *  a step is smaller than that — enough decimals that no two ticks read alike — and whole dollars below 10. */
+function formatCapitalTick(value: number, step: number): string {
+  if (value === 0) return "$0";
+  if (step >= 10) {
+    const decimals = step % 1000 === 0 ? 0 : step % 100 === 0 ? 1 : 2;
+    return `$${(value / 1000).toFixed(decimals)}k`;
+  }
+  return formatUsd(value, { decimals: step % 1 === 0 ? 0 : 2 });
+}
+
+export interface CapitalAxis {
+  /** The scale: the first and the last tick. */
+  domain: [number, number];
+  ticks: number[];
+  format: (value: number) => string;
+  /** How wide the label column must be, in px at the chart's 12 px tick font. */
+  width: number;
+}
+
+/**
+ * The capital axis of the crowd chart, computed from what is drawn. A tick label used to be `$${round(v / 1000)}k` over
+ * whatever ticks the chart library picked, so a crowd account that had moved a few hundred dollars read "$101k $100k $100k
+ * $100k $100k" (first tester pass, D8). The ticks are now round numbers (1, 2, 2.5, 5 × 10ⁿ apart) that cover the data, and the
+ * labels carry exactly as many decimals as it takes to tell neighbouring ticks apart. A flat account (one value, or a span
+ * under 0.2 % of it) gets a little room above and below instead of five copies of the same number. `null` — no finite
+ * value to scale by: the chart's own default stands.
+ */
+export function capitalAxis(values: readonly number[], targetTicks = 5): CapitalAxis | null {
+  const finite = values.filter((v) => Number.isFinite(v));
+  if (finite.length === 0) return null;
+  let min = Math.min(...finite);
+  let max = Math.max(...finite);
+  const middle = (min + max) / 2;
+  const minSpan = Math.max(1, Math.abs(middle) * 0.002);
+  if (max - min < minSpan) {
+    min = middle - minSpan / 2;
+    max = middle + minSpan / 2;
+  }
+  const step = niceStep((max - min) / Math.max(1, targetTicks - 1));
+  const low = Math.floor(min / step) * step;
+  let high = Math.ceil(max / step) * step;
+  if (high === low) high = low + step;
+  const ticks: number[] = [];
+  for (let v = low; v <= high + step / 2; v += step) ticks.push(Number(v.toFixed(6)));
+  const format = (value: number) => formatCapitalTick(value, step);
+  const chars = Math.max(...ticks.map((t) => format(t).length));
+  return { domain: [ticks[0], ticks[ticks.length - 1]], ticks, format, width: Math.min(80, Math.max(44, 14 + chars * 7)) };
 }
 
 /**

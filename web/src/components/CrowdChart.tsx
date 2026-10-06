@@ -13,8 +13,8 @@ import {
 } from "recharts";
 import type { DotItemDotProps } from "recharts/types/util/types";
 import type { CrowdHistoryPointDto } from "../api/contract";
-import { formatUsd } from "../format";
-import { crowdRanges, dedupeByTime, defaultCrowdRange, formatAxisTick, formatAxisTooltip } from "./crowdModel";
+import { formatUsd, timeZoneLabel } from "../format";
+import { capitalAxis, crowdRanges, dedupeByTime, defaultCrowdRange, formatAxisTick, formatAxisTooltip } from "./crowdModel";
 
 const COLOR_CROWD = "#9147ff";
 const COLOR_HOLD = "#8b93a8";
@@ -58,7 +58,7 @@ interface CrowdChartProps {
 /**
  * Crowd account vs hold vs anti-crowd for one market (Р-17, Р-25, Р-26, Т-6). The horizontal axis is a real
  * time axis, and follows how much history there is (`crowdModel.ts`): over a few hours (a stand with
- * 3-minute rounds) it ticks with the time of day (UTC) and the range chips are 1H · 6H · 1D · All; over
+ * 3-minute rounds) it ticks with the time of day (in the device's time zone, named under the chart) and the range chips are 1H · 6H · 1D · All; over
  * months it ticks with dates and keeps 1M · 3M · 1Y · All — the open critique item "the chart's x axis must
  * show time of day when the data span is short".
  */
@@ -84,6 +84,15 @@ export function CrowdChart({ history: rawHistory, variant = "full", symbol }: Cr
   // ticks with times.
   const visibleSpanMs = visible.length > 1 ? visible[visible.length - 1].atMs - visible[0].atMs : 0;
   const boundaries = useMemo(() => visible.filter((p) => p.seasonBoundary !== null), [visible]);
+  // Round ticks that cover what is drawn, labelled with as many decimals as it takes to tell them apart (`capitalAxis`).
+  const capital = useMemo(
+    () =>
+      capitalAxis(
+        visible.flatMap((p) => [Number(p.crowdCapital), Number(p.holdCapital), Number(p.antiCrowdCapital)]),
+        variant === "full" ? 5 : 4,
+      ),
+    [visible, variant],
+  );
 
   // live-round.md §5: the rightmost "crowd" point pops in (scale 0→1) when a new one arrives,
   // instead of the whole line just redrawing — every other point renders invisibly (r=0) so this
@@ -128,7 +137,14 @@ export function CrowdChart({ history: rawHistory, variant = "full", symbol }: Cr
               minTickGap={40}
               tick={{ fontSize: 12 }}
             />
-            <YAxis stroke="#a7b0c4" tick={{ fontSize: 12 }} tickFormatter={(v: number) => `$${Math.round(v / 1000)}k`} width={56} domain={["auto", "auto"]} />
+            <YAxis
+              stroke="#a7b0c4"
+              tick={{ fontSize: 12 }}
+              tickFormatter={capital ? capital.format : (v: number) => `$${Math.round(v / 1000)}k`}
+              width={capital ? capital.width : 56}
+              domain={capital ? capital.domain : ["auto", "auto"]}
+              ticks={capital?.ticks}
+            />
             <Tooltip content={<TooltipContent spanMs={visibleSpanMs} />} />
             <Legend
               formatter={(value: string) =>
@@ -159,7 +175,9 @@ export function CrowdChart({ history: rawHistory, variant = "full", symbol }: Cr
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      {visibleSpanMs > 0 && variant === "full" && <p className="faint crowd-chart__axis-note">Dates and times are UTC.</p>}
+      {visibleSpanMs > 0 && variant === "full" && (
+        <p className="faint crowd-chart__axis-note">Dates and times are in your time zone ({timeZoneLabel(newest)}).</p>
+      )}
     </div>
   );
 }

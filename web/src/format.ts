@@ -163,12 +163,93 @@ export function formatCountdown(msRemaining: number): string {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-export function formatDateTimeUtc(ms: number): string {
-  const d = new Date(ms);
-  return `${d.toISOString().slice(0, 10)} ${d.toISOString().slice(11, 16)} UTC`;
+// ---------------------------------------------------------------------------
+// Times: ONE rule everywhere — the device's own time zone, named wherever a time of day is shown.
+//
+// The charts used to tick in UTC with no label while the phone's clock read two hours more, and the rows of the profile, the
+// wallet and the status page said "UTC" (first tester pass, D9): two rules, one of them unsaid. A player compares what the app
+// says with the clock in their hand, so every time is printed in the time zone of the device ("22:41 GMT+2") and the zone is
+// named — beside the time in a row, in the note under a chart. Rounds are UTC-aligned on the server and a season is a UTC
+// month (`api/season.ts`); those are ids and windows, not times the player reads off a clock.
+// ---------------------------------------------------------------------------
+
+let pinnedZone: string | null = null;
+
+/** Pins the zone every time is printed in (an IANA name, "UTC"), or releases it (`null`: the device's own). The tests pin
+ *  "UTC" (`test/setup.ts`) so that what they assert does not depend on where they run. */
+export function setDisplayTimeZone(zone: string | null): void {
+  pinnedZone = zone;
 }
 
-export function formatUpdatedAtUtc(ms: number): string {
-  const d = new Date(ms);
-  return `Updated ${d.toISOString().slice(11, 19)} UTC`;
+/** The zone times are printed in: the pinned one, else the device's. */
+export function displayTimeZone(): string {
+  if (pinnedZone) return pinnedZone;
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+
+interface ClockParts {
+  year: string;
+  month: string;
+  day: string;
+  hour: string;
+  minute: string;
+  second: string;
+  /** "UTC", "GMT+2", "EDT" — as the platform names the zone at that instant (daylight saving included). */
+  zone: string;
+}
+
+function clockParts(ms: number): ClockParts {
+  const zone = displayTimeZone();
+  let formatter = zoneFormatters.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+      timeZoneName: "short",
+    });
+    zoneFormatters.set(zone, formatter);
+  }
+  const parts: Record<string, string> = {};
+  for (const part of formatter.formatToParts(new Date(ms))) parts[part.type] = part.value;
+  return { year: parts.year, month: parts.month, day: parts.day, hour: parts.hour, minute: parts.minute, second: parts.second, zone: parts.timeZoneName };
+}
+
+/** The time of day: "22:41", or "22:41:44" with `seconds`. No zone — the chart or row that prints it names it once. */
+export function formatClock(ms: number, opts: { seconds?: boolean } = {}): string {
+  const p = clockParts(ms);
+  return opts.seconds ? `${p.hour}:${p.minute}:${p.second}` : `${p.hour}:${p.minute}`;
+}
+
+/** The calendar date, "2026-10-06". */
+export function formatDate(ms: number): string {
+  const p = clockParts(ms);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/** What the zone is called at that instant: "UTC", "GMT+2", "EDT". */
+export function timeZoneLabel(ms: number = Date.now()): string {
+  return clockParts(ms).zone;
+}
+
+/** A date and time with its zone: "2026-10-06 22:41 GMT+2". */
+export function formatDateTime(ms: number): string {
+  const p = clockParts(ms);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ${p.zone}`;
+}
+
+export function formatUpdatedAt(ms: number): string {
+  const p = clockParts(ms);
+  return `Updated ${p.hour}:${p.minute}:${p.second} ${p.zone}`;
 }

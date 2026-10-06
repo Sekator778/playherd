@@ -11,7 +11,7 @@ import { Avatar } from "../components/Avatar";
 import { BotBadge, ErrorState, Skeleton } from "../components/Common";
 import { ResultTile } from "../components/ResultTile";
 import { StreakBadge } from "../components/StreakBadge";
-import { formatDateTimeUtc, formatDuration, formatPercent, formatPlayAmount } from "../format";
+import { formatDateTime, formatDuration, formatPercent, formatPlayAmount } from "../format";
 import "./ProfilePage.css";
 
 /** `SeasonRecordDto` has no "growth" field of its own — derive it the same way the "Richest"
@@ -157,7 +157,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
               leverage={h.leverage}
               net={netFromPayoutAndStake(h.payout, h.stake)}
               liquidated={h.liquidated}
-              dateLabel={formatDateTimeUtc(h.settledAtMs)}
+              dateLabel={formatDateTime(h.settledAtMs)}
               odds={(h.kind ?? byId.get(h.marketId)?.kind) === "ODDS"}
               source={byId.get(h.marketId)?.source}
             />

@@ -8,7 +8,7 @@ import { outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { usePoll } from "../api/usePoll";
 import { MIN_WITHDRAWAL_PLAY, type LedgerEntryDto, type LedgerEntryType, type PlayerAccountDto, type WithdrawalRequestDto } from "../api/contract";
 import { CopyButton, EmptyState, ErrorState, ServerInfoBanner, Skeleton } from "../components/Common";
-import { formatDateTimeUtc, formatPlayAmount, shortenAddress } from "../format";
+import { formatDateTime, formatPlayAmount, shortenAddress } from "../format";
 import { settlementNets } from "./walletModel";
 import { RollingDigits } from "../fx/RollingDigits";
 import { useFxSettings } from "../fx/fxSettings";
@@ -510,7 +510,7 @@ export function WalletContent() {
                       <span>
                         {ledgerLabel(e.type)}
                         <br />
-                        <span className="faint">{formatDateTimeUtc(e.atMs)}</span>
+                        <span className="faint">{formatDateTime(e.atMs)}</span>
                         {net !== undefined && (
                           <span className={`ledger-result ${outcomeClassName(outcomeFromNet(net))}`}>
                             {net > 0 ? "won" : net < 0 ? "lost" : "even"} {formatPlayAmount(net, { sign: true })} PLAY

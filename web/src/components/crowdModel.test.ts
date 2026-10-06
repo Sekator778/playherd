@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { CategoryDto } from "../api/contract";
+import { setDisplayTimeZone } from "../format";
 import {
   SHORT_SPAN_MS,
   bestAndWorst,
+  capitalAxis,
   crowdRanges,
   dedupeByTime,
   defaultCrowdRange,
@@ -112,6 +114,80 @@ describe("crowd chart ranges and axis follow the amount of history", () => {
     const at = Date.UTC(2026, 8, 25, 0, 5, 0);
     expect(formatAxisTooltip(at, 3 * HOUR)).toBe("2026-09-25 00:05 UTC");
     expect(formatAxisTooltip(at, 90 * DAY)).toBe("2026-09-25");
+  });
+
+  it("ticks and tooltips are in the device's zone, named in the tooltip (first tester pass, D9)", () => {
+    setDisplayTimeZone("Europe/Berlin");
+    try {
+      const at = Date.UTC(2026, 8, 25, 14, 23, 45);
+      expect(formatAxisTick(at, 3 * HOUR)).toBe("16:23");
+      expect(formatAxisTooltip(at, 3 * HOUR)).toBe("2026-09-25 16:23 GMT+2");
+      // across midnight the DATE moves with the zone too
+      const lateEvening = Date.UTC(2026, 8, 25, 22, 30, 0);
+      expect(formatAxisTick(lateEvening, 90 * DAY)).toBe("2026-09-26");
+    } finally {
+      setDisplayTimeZone("UTC");
+    }
+  });
+});
+
+describe("capitalAxis — round ticks whose labels differ (first tester pass, D8: '$101k $100k $100k $100k $100k')", () => {
+  const labels = (axis: NonNullable<ReturnType<typeof capitalAxis>>) => axis.ticks.map(axis.format);
+
+  it("a crowd account that moved a few hundred dollars: five round, distinct, readable ticks", () => {
+    const axis = capitalAxis([100_000, 100_120, 100_350, 100_080, 100_240])!;
+    expect(labels(axis)).toEqual(["$100.0k", "$100.1k", "$100.2k", "$100.3k", "$100.4k"]);
+    expect(new Set(labels(axis)).size).toBe(axis.ticks.length);
+    expect(axis.domain).toEqual([100_000, 100_400]);
+  });
+
+  it("a flat account (no trade yet) gets room above and below, not five copies of $100k", () => {
+    const axis = capitalAxis([100_000, 100_000, 100_000])!;
+    expect(labels(axis)).toEqual(["$99.90k", "$99.95k", "$100.00k", "$100.05k", "$100.10k"]);
+    expect(axis.domain[0]).toBeLessThan(100_000);
+    expect(axis.domain[1]).toBeGreaterThan(100_000);
+  });
+
+  it("a wide range keeps whole thousands, as it always read", () => {
+    const axis = capitalAxis([92_300, 108_100, 99_000])!;
+    expect(labels(axis)).toEqual(["$90k", "$95k", "$100k", "$105k", "$110k"]);
+  });
+
+  it("a half-step (2.5 × 10ⁿ) gets the one decimal it needs, on every tick alike", () => {
+    const axis = capitalAxis([95_200, 104_300], 5)!; // 9100 over four intervals: steps of 2500
+    expect(labels(axis)).toEqual(["$95.0k", "$97.5k", "$100.0k", "$102.5k", "$105.0k"]);
+  });
+
+  it("a zero is '$0', never '$0k' (an account that lost everything on the way)", () => {
+    const axis = capitalAxis([0, 120_000, 200_000])!;
+    expect(labels(axis)[0]).toBe("$0");
+    expect(new Set(labels(axis)).size).toBe(axis.ticks.length);
+  });
+
+  it("covers the data, ascends, stays short and never repeats a label — over a sweep of centres and spans", () => {
+    for (const centre of [100_000, 96_500, 250_000, 1_000_000, 12_345.67]) {
+      for (const span of [0, 0.5, 3, 40, 150, 600, 2_500, 9_000, 60_000]) {
+        const lo = centre - span / 2;
+        const hi = centre + span / 2;
+        const axis = capitalAxis([lo, hi, centre])!;
+        const what = `centre ${centre}, span ${span}`;
+        expect(axis.domain[0], what).toBeLessThanOrEqual(lo);
+        expect(axis.domain[1], what).toBeGreaterThanOrEqual(hi);
+        expect(axis.ticks, what).toEqual([...axis.ticks].sort((a, b) => a - b));
+        expect(axis.ticks.length, what).toBeGreaterThanOrEqual(3);
+        expect(axis.ticks.length, what).toBeLessThanOrEqual(8);
+        expect(new Set(labels(axis)).size, `${what}: ${labels(axis).join(" ")}`).toBe(axis.ticks.length);
+      }
+    }
+  });
+
+  it("the label column is as wide as its widest label needs (a wide label must not be cut by the chart's edge)", () => {
+    expect(capitalAxis([92_300, 108_100])!.width).toBeLessThan(capitalAxis([100_000, 100_350])!.width);
+  });
+
+  it("nothing to scale by: null, and the chart keeps its own default", () => {
+    expect(capitalAxis([])).toBeNull();
+    expect(capitalAxis([Number.NaN, Number.POSITIVE_INFINITY])).toBeNull();
   });
 });
 

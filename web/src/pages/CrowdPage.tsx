@@ -29,7 +29,7 @@ import { bestAndWorst, marketGroups, rankedByReturn, type OverviewRow } from "..
 import { defaultMarket, subtitleOf } from "../components/marketModel";
 import { lastMarket, rememberMarket } from "../components/lastMarket";
 import { trend, TREND_GLYPH } from "../components/marketFormat";
-import { formatPercent, formatUpdatedAtUtc, formatUsd } from "../format";
+import { formatPercent, formatUpdatedAt, formatUsd } from "../format";
 import "./CrowdPage.css";
 
 /** The herd's return as a signed, arrowed figure — never colour alone. */
@@ -203,7 +203,7 @@ function CrowdAccount({ market }: { market: AccountMarket }) {
         />
       </div>
       <LazyCrowdChart history={crowd.history} variant="full" symbol={market.symbol} />
-      {updatedAt !== null && <p className="faint">{formatUpdatedAtUtc(updatedAt)}</p>}
+      {updatedAt !== null && <p className="faint">{formatUpdatedAt(updatedAt)}</p>}
       {market.source && <OracleDisclosureLine source={market.source} backup={market.backupSource} />}
       <OracleStatusLine />
       <h2>Season returns</h2>

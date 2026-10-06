@@ -1,5 +1,20 @@
-import { describe, expect, it } from "vitest";
-import { formatChange24h, formatDuration, formatPlayAmount, formatPoints, formatPrice, market24hMove, oddsMove24hPoints } from "./format";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  displayTimeZone,
+  formatChange24h,
+  formatClock,
+  formatDate,
+  formatDateTime,
+  formatDuration,
+  formatPlayAmount,
+  formatPoints,
+  formatPrice,
+  formatUpdatedAt,
+  market24hMove,
+  oddsMove24hPoints,
+  setDisplayTimeZone,
+  timeZoneLabel,
+} from "./format";
 
 describe("formatPlayAmount — auto decimals (independent critique, 2026-09-26)", () => {
   it("shows a whole amount with 0 decimals", () => {
@@ -177,5 +192,55 @@ describe("an ODDS market's 24 h change is in percentage points (the contract's f
     expect(formatPoints(1.04, { sign: true })).toBe("+1.0 pt");
     expect(formatPoints(-12.36, { sign: true })).toBe("-12.4 pt");
     expect(formatPoints(2.5)).toBe("2.5 pt");
+  });
+});
+
+describe("times — one rule: the device's own time zone, named wherever a time is shown (first tester pass, D9)", () => {
+  // 2026-10-06 06:12:06 UTC: the room chart's first label in the tester's pass, while his phone read 08:12
+  const at = Date.UTC(2026, 9, 6, 6, 12, 6);
+
+  afterEach(() => setDisplayTimeZone("UTC")); // the tests' own default (test/setup.ts)
+
+  it("in UTC (what the tests pin): the plain strings, with the zone named", () => {
+    expect(formatClock(at)).toBe("06:12");
+    expect(formatClock(at, { seconds: true })).toBe("06:12:06");
+    expect(formatDate(at)).toBe("2026-10-06");
+    expect(formatDateTime(at)).toBe("2026-10-06 06:12 UTC");
+    expect(formatUpdatedAt(at)).toBe("Updated 06:12:06 UTC");
+    expect(timeZoneLabel(at)).toBe("UTC");
+  });
+
+  it("in a phone's zone: the clock the phone shows, and the zone's name beside the date", () => {
+    setDisplayTimeZone("Europe/Berlin"); // CEST in October: two hours on
+    expect(formatClock(at)).toBe("08:12");
+    expect(formatClock(at, { seconds: true })).toBe("08:12:06");
+    expect(formatDateTime(at)).toBe("2026-10-06 08:12 GMT+2");
+    expect(formatUpdatedAt(at)).toBe("Updated 08:12:06 GMT+2");
+    expect(timeZoneLabel(at)).toBe("GMT+2");
+  });
+
+  it("the zone name follows daylight saving — the same zone, another instant", () => {
+    setDisplayTimeZone("Europe/Berlin");
+    expect(formatDateTime(Date.UTC(2026, 11, 6, 6, 12))).toBe("2026-12-06 07:12 GMT+1");
+  });
+
+  it("the date follows the zone across midnight, and midnight is 00, never 24", () => {
+    setDisplayTimeZone("Asia/Tokyo"); // UTC+9, no daylight saving
+    const lateEvening = Date.UTC(2026, 9, 5, 15, 5, 0); // 2026-10-06 00:05 in Tokyo
+    expect(formatDate(lateEvening)).toBe("2026-10-06");
+    expect(formatClock(lateEvening)).toBe("00:05");
+    expect(formatDateTime(lateEvening)).toBe("2026-10-06 00:05 GMT+9");
+  });
+
+  it("a half-hour zone keeps its minutes", () => {
+    setDisplayTimeZone("Asia/Kolkata");
+    expect(formatClock(at)).toBe("11:42");
+    expect(timeZoneLabel(at)).toBe("GMT+5:30");
+  });
+
+  it("released, it is the device's: whatever the platform reports, a time is still printed", () => {
+    setDisplayTimeZone(null);
+    expect(displayTimeZone()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(formatDateTime(at)).toMatch(/^2026-10-06 \d\d:\d\d \S+$/);
   });
 });

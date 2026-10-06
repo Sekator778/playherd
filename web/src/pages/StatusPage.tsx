@@ -32,7 +32,7 @@ import { CopyButton, ErrorState, Skeleton } from "../components/Common";
 import { MarketIcon } from "../components/MarketIcon";
 import { backupPriceOf } from "../components/marketModel";
 import { useServerNow } from "../components/useServerNow";
-import { formatDateTimeUtc, formatPrice } from "../format";
+import { formatDateTime, formatPrice } from "../format";
 import {
   ageText,
   betsCount,
@@ -349,7 +349,7 @@ function CancellationRow({ c }: { c: CancellationDto }) {
       <p className="status-cancel__head">
         <span className="status-cancel__when">
           {c.asset && <strong className="status-cancel__market">{c.asset}</strong>}
-          <span className="mono">{formatDateTimeUtc(c.cancelledAtMs)}</span>
+          <span className="mono">{formatDateTime(c.cancelledAtMs)}</span>
         </span>
         <span className="status-chip status-chip--none">{betsCount(c.refundedBetCount)} refunded</span>
       </p>

@@ -73,7 +73,7 @@ import {
 import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
 import { useServerNow } from "../components/useServerNow";
 import { RollingDigits } from "../fx/RollingDigits";
-import { formatDateTimeUtc, formatDuration, formatPlayAmount, formatPrice, market24hMove } from "../format";
+import { formatDateTime, formatDuration, formatPlayAmount, formatPrice, market24hMove } from "../format";
 import "./PairRoomPage.css";
 
 const POLL_MS = 2000;
@@ -494,7 +494,7 @@ function Room({ market }: { market: MarketDto }) {
           ) : (
             betting && betting.phase === "CANCELLED" && <p className="muted">{betting.cancellation.reason}</p>
           )}
-          {market.closedAtMs ? <p className="faint room-closed__when">Closed {formatDateTimeUtc(market.closedAtMs)}</p> : null}
+          {market.closedAtMs ? <p className="faint room-closed__when">Closed {formatDateTime(market.closedAtMs)}</p> : null}
           <div className="room-closed__actions">
             <Link to={`/?c=${market.category}`} className="btn btn--primary">
               Open markets in this panel

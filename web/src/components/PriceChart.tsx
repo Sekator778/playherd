@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import type { EpochMs, MarketDto, PriceTickDto } from "../api/contract";
-import { formatPrice } from "../format";
+import { formatClock, formatPrice, timeZoneLabel } from "../format";
 import {
   availableRanges,
   axisValues,
@@ -50,11 +50,6 @@ function useWidth(): [(element: HTMLDivElement | null) => void, number] {
     return () => observer.disconnect();
   }, [element]);
   return [setElement, width];
-}
-
-function clockLabel(ms: EpochMs, withSeconds: boolean): string {
-  const iso = new Date(ms).toISOString();
-  return withSeconds ? iso.slice(11, 19) : iso.slice(11, 16);
 }
 
 export interface PriceChartProps {
@@ -229,7 +224,7 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
               textAnchor={f === 0 ? "start" : f === 1 ? "end" : "middle"}
               className="pchart__axis"
             >
-              {clockLabel(x0 + f * (x1 - x0), showSeconds)}
+              {formatClock(x0 + f * (x1 - x0), { seconds: showSeconds })}
             </text>
           ))}
 
@@ -296,6 +291,8 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
         )}
         {stale && <span className="pchart__stale">Price feed is stale — the last point is old</span>}
         {error && !stale && <span className="pchart__stale">Reconnecting to the price feed…</span>}
+        {/* The time axis is in the device's own zone: said, so it is never mistaken for the server's (first tester pass, D9). */}
+        <span className="pchart__zone">Times in your time zone ({timeZoneLabel(x1)})</span>
       </figcaption>
     </figure>
   );
