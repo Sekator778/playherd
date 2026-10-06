@@ -20,7 +20,7 @@ import { DirectionGlyph } from "./icons";
 import { LeverageDial } from "./LeverageDial";
 import { LiquidationBar } from "./LiquidationBar";
 import {
-  DEFAULT_LEVERAGE,
+  defaultLeverage,
   DEFAULT_STAKE_DISPLAY,
   STAKE_CHIPS,
   STAKE_STEP,
@@ -363,8 +363,10 @@ function BetSlipPreview({
   const [internalDirection, setInternalDirection] = useState<Direction>("UP");
   const direction = controlledDirection ?? internalDirection;
   const setDirection = onDirectionChange ?? setInternalDirection;
-  const [leverageChoice, setLeverage] = useState<number>(DEFAULT_LEVERAGE);
-  const leverage = Math.min(leverageChoice, maxLeverage);
+  // `null`: the dial has not been touched, so it sits on the market's default — which follows the cap once the market
+  // list has arrived (`defaultLeverage`), instead of being fixed by whatever cap was assumed before it did.
+  const [leverageChoice, setLeverage] = useState<number | null>(null);
+  const leverage = Math.min(leverageChoice ?? defaultLeverage(maxLeverage), maxLeverage);
   const [stake, setStake] = useState<string>(DEFAULT_STAKE_DISPLAY);
   const preview = useLiquidationPreview(round.marketId, direction, leverage, stake);
 
@@ -435,9 +437,10 @@ function BetSlipForm({
   const [internalDirection, setInternalDirection] = useState<Direction>(existing?.direction ?? "UP");
   const direction = controlledDirection ?? internalDirection;
   const setDirection = onDirectionChange ?? setInternalDirection;
-  const [leverageChoice, setLeverage] = useState<number>(existing?.leverage ?? DEFAULT_LEVERAGE);
-  // Never above this market's own cap, even if the market list arrives after the player touched the dial.
-  const leverage = Math.min(leverageChoice, maxLeverage);
+  const [leverageChoice, setLeverage] = useState<number | null>(existing?.leverage ?? null);
+  // Never above this market's own cap, even if the market list arrives after the player touched the dial; an untouched
+  // dial is on the market's default (`defaultLeverage`: a quarter of the cap, never the cap itself).
+  const leverage = Math.min(leverageChoice ?? defaultLeverage(maxLeverage), maxLeverage);
   const [stake, setStake] = useState<string>(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
 
   // Reset local form state when the round or the existence of an own bet changes — deliberately
@@ -453,7 +456,7 @@ function BetSlipForm({
     setFormOpen(!hasBet);
     setShowCancelConfirm(false);
     setInternalDirection(existing?.direction ?? "UP");
-    setLeverage(existing?.leverage ?? DEFAULT_LEVERAGE);
+    setLeverage(existing?.leverage ?? null);
     setStake(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
   }
   // A controlled direction belongs to the parent (the room's arena): the slip may not set the parent's

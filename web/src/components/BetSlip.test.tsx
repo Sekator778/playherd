@@ -293,3 +293,58 @@ describe("the leverage dial's heat is relative to the market's cap", () => {
     expect(await screen.findByText("Calm")).toBeInTheDocument();
   });
 });
+
+describe("a fresh slip does not open on the market's cap (first tester pass, D2)", () => {
+  async function renderDial(marketId: string) {
+    const pair = await mockApi.rounds("HOURLY", marketId);
+    if (pair.betting.phase !== "BETTING") throw new Error("expected an open betting round");
+    render(
+      <MemoryRouter>
+        <ApiProvider>
+          <BetSlip round={pair.betting} nowMs={simNowMs()} onChanged={() => {}} />
+        </ApiProvider>
+      </MemoryRouter>,
+    );
+    return pair.betting;
+  }
+
+  it.each([
+    ["BTC", "40", "10", "Warm"],
+    ["SOL", "20", "5", "Warm"],
+    ["DOGE", "10", "3", "Warm"],
+    ["PM900101", "10", "3", "Warm"], // an odds market: it used to open on x10, its cap — Flame
+  ])("%s (cap x%s): the signed-in slip opens at x%s, in the %s zone", async (marketId, cap, expected, zone) => {
+    await renderDial(marketId);
+    await screen.findByLabelText("Stake (PLAY)");
+    const dial = screen.getByLabelText("Leverage") as HTMLInputElement;
+    await waitFor(() => expect(dial).toHaveAttribute("max", cap)); // once the market list has arrived
+    expect(dial.value).toBe(expected);
+    expect(document.querySelector(".leverage-dial__value")).toHaveTextContent(`x${expected}`);
+    expect(document.querySelector(".leverage-dial__zone")).toHaveTextContent(zone);
+  });
+
+  it("a dial the player moved stays where they put it — also when it goes up to the cap", async () => {
+    await renderDial("PM900101");
+    await screen.findByLabelText("Stake (PLAY)");
+    const dial = screen.getByLabelText("Leverage") as HTMLInputElement;
+    await waitFor(() => expect(dial).toHaveAttribute("max", "10"));
+    fireEvent.change(dial, { target: { value: "10" } });
+    expect(await screen.findByText("Flame")).toBeInTheDocument();
+    expect(dial.value).toBe("10");
+  });
+
+  it("the signed-out preview slip opens on the same default", async () => {
+    await mockApi.signOut();
+    try {
+      await renderDial("PM900101");
+      expect(await screen.findByText("PREVIEW — not signed in")).toBeInTheDocument();
+      const dial = screen.getByLabelText("Leverage") as HTMLInputElement;
+      await waitFor(() => expect(dial).toHaveAttribute("max", "10"));
+      expect(dial.value).toBe("3");
+    } finally {
+      const challenge = await mockApi.authChallenge({});
+      await mockApi.authVerify({ nonce: challenge.nonce, address: "txch1betsliptestaddress00000000000000000000000000000000q", publicKey: "pk", signature: "sig" });
+      await mockApi.setNickname("slipTester");
+    }
+  });
+});

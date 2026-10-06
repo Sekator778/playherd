@@ -2,7 +2,7 @@
  * The bet slip's small pure rules — what the stake field accepts, what its chips and − / + buttons put in
  * it. Kept out of `BetSlip.tsx` so they have tests and so that file exports only components.
  */
-import { MIN_STAKE_PLAY } from "../api/contract";
+import { LEVERAGE_MIN, MIN_STAKE_PLAY } from "../api/contract";
 
 /** Plain-integer default for the stake field's *initial* value — never `MIN_STAKE_PLAY` itself
  *  (contract.ts: `"100.000"`, PLAY's own exact 3-decimal scale) bound straight into the input.
@@ -16,8 +16,17 @@ export const DEFAULT_STAKE_DISPLAY = String(Number(MIN_STAKE_PLAY));
 /** What the stake field's − / + buttons move by: the minimum stake, the smallest bet there is. */
 export const STAKE_STEP = Number(MIN_STAKE_PLAY);
 
-/** Where a new slip's leverage starts (and no higher than the market allows). */
-export const DEFAULT_LEVERAGE = 10;
+/**
+ * Where a new slip's leverage starts: a quarter of the market's own cap, rounded — x10 on a x40 market (the number the
+ * slip always opened on), x6 on x25, x5 on x20, x3 on x10 — and never the cap itself. The dial's heat is already
+ * relative to the cap (`heat.ts`: Calm / Warm / Hot / Danger / Flame are shares of it), and a quarter of any cap is
+ * the same Warm zone; a flat "x10" put every odds market (cap x10) and DOGE and HYPE on their Flame setting, which a
+ * player who just pressed PLACE BET had not chosen (first tester pass, D2: two of three such bets lost the whole stake).
+ * Never below `LEVERAGE_MIN`.
+ */
+export function defaultLeverage(maxLeverage: number): number {
+  return Math.min(maxLeverage, Math.max(LEVERAGE_MIN, Math.round(maxLeverage / 4)));
+}
 
 /** Only digits and at most one decimal point — typed directly into a plain text field, immune to
  *  the locale-reformatting a native number input applies to its own value. Returns `null` (do
