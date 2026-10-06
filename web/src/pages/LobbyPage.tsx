@@ -59,7 +59,11 @@ const SORT_NOTE = {
 
 /** What this is, in one small line above the markets, for a visitor who has not signed in (first tester pass, D10: nothing on the
  *  first screen said what the app is or that the money is toy money — that came after eighteen cards). A signed-in player knows,
- *  and a session still being read is not guessed at: no flash of it for a returning player. */
+ *  and a session still being read is not guessed at: no flash of it for a returning player.
+ *
+ *  OFF: `LobbyPage`'s `intro` flag defaults to false. Р-63 took lines of this kind off the screens on Alex's word, so whether the
+ *  lobby gets one back is his decision, not a defect fix — the component, its style (`.lobby-intro`) and its tests are kept so that
+ *  turning it on is `<LobbyPage intro />` in `App.tsx` and nothing else. */
 function LobbyIntro() {
   const { player, loading } = useSession();
   if (loading || player) return null;
@@ -73,7 +77,12 @@ function LobbyIntro() {
   );
 }
 
-export function LobbyPage() {
+interface LobbyPageProps {
+  /** Say what this is to a visitor who has not signed in ({@link LobbyIntro}). Off unless a caller asks — see its note. */
+  intro?: boolean;
+}
+
+export function LobbyPage({ intro = false }: LobbyPageProps) {
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => parseLobbyParams(params), [params]);
   const nowMs = useServerNow(1000);
@@ -105,7 +114,7 @@ export function LobbyPage() {
     return (
       <div className="lobby-root" aria-busy="true">
         <h1 className="visually-hidden">Markets</h1>
-        <LobbyIntro />
+        {intro && <LobbyIntro />}
         <Skeleton height={48} />
         <Skeleton height={44} />
         <ul className="lobby-grid">
@@ -126,7 +135,7 @@ export function LobbyPage() {
   return (
     <div className="lobby-root">
       <h1 className="visually-hidden">Markets</h1>
-      <LobbyIntro />
+      {intro && <LobbyIntro />}
 
       <div className="lobby-ribbon-wrap">
         <div ref={ribbonRef} className="lobby-ribbon" role="tablist" aria-label="Market categories" data-fade={fade}>

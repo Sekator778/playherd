@@ -25,15 +25,15 @@ function renderLobby(markets: MarketDto[] = catalogue(), path = "/", methods: Pa
   );
 }
 
-/** The lobby for a given state of the session (signed out, signed in, still being read). */
-function renderLobbyAs(session: Partial<SessionState>) {
+/** The lobby for a given state of the session (signed out, signed in, still being read). `intro` is the lobby's own flag (off unless asked). */
+function renderLobbyAs(session: Partial<SessionState>, intro?: boolean) {
   const api = fakeApi({ markets: vi.fn(async () => marketsOf(catalogue())) });
   const state: SessionState = { player: null, loading: false, refresh: async () => {}, signOut: async () => {}, openConnectModal: () => {}, ...session };
   return render(
     <MemoryRouter>
       <ApiInstanceContext.Provider value={api}>
         <SessionContext.Provider value={state}>
-          <LobbyPage />
+          {intro === undefined ? <LobbyPage /> : <LobbyPage intro={intro} />}
         </SessionContext.Provider>
       </ApiInstanceContext.Provider>
     </MemoryRouter>,
@@ -630,9 +630,29 @@ describe("Lobby — a poll that fails after a good load", () => {
   });
 });
 
-describe("Lobby — says what this is, once, to a visitor who has not signed in (first tester pass, D10)", () => {
-  it("one small line above the markets: a toy-money game, bet UP or DOWN on real prices with leverage", async () => {
+describe("Lobby — the intro line is off: Р-63 took such lines away on Alex's word, so it is his decision to bring one back (first tester pass, D10)", () => {
+  it("a visitor who has not signed in sees the lobby as it was: no line above the ribbon, while the cards load and after", async () => {
     renderLobbyAs({});
+    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
+    await screen.findAllByRole("article");
+    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
+    expect(document.querySelector(".lobby-intro")).toBeNull();
+    // the lobby's first things are still the heading and the ribbon of panels
+    const root = document.querySelector(".lobby-root") as HTMLElement;
+    expect(root.firstElementChild).toHaveTextContent("Markets");
+    expect((root.children[1] as HTMLElement).className).toContain("lobby-ribbon-wrap");
+  });
+
+  it("the flag is false unless a caller says otherwise — the route in App.tsx renders <LobbyPage /> and nothing more", async () => {
+    renderLobbyAs({}, false);
+    await screen.findAllByRole("article");
+    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("Lobby — the intro line, when its flag is on: says what this is, once, to a visitor who has not signed in (first tester pass, D10)", () => {
+  it("one small line above the markets: a toy-money game, bet UP or DOWN on real prices with leverage", async () => {
+    renderLobbyAs({}, true);
     const intro = screen.getByText("A toy-money game:").closest("p") as HTMLElement;
     expect(intro).toHaveTextContent("A toy-money game: bet UP or DOWN on real prices, with leverage. How it works");
     expect(within(intro).getByRole("link", { name: "How it works" })).toHaveAttribute("href", "/how-it-works");
@@ -643,19 +663,19 @@ describe("Lobby — says what this is, once, to a visitor who has not signed in 
   });
 
   it("is also there while the first cards load", () => {
-    renderLobbyAs({});
+    renderLobbyAs({}, true);
     expect(screen.queryAllByRole("article")).toHaveLength(0);
     expect(screen.getByText(/toy-money game/i)).toBeInTheDocument();
   });
 
   it("a signed-in player does not get it", async () => {
-    renderLobbyAs({ player: TEST_PLAYER });
+    renderLobbyAs({ player: TEST_PLAYER }, true);
     await screen.findAllByRole("article");
     expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
   });
 
   it("nor does a session that is still being read, so a returning player never sees it flash", async () => {
-    renderLobbyAs({ loading: true });
+    renderLobbyAs({ loading: true }, true);
     await screen.findAllByRole("article");
     expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
   });
