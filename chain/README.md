@@ -155,8 +155,8 @@ see `docs/research/chain_service.md` §1. Write-ups:
     `lastConfirmedSeq` do not move. A record that is pending, in flight or in conflict is never
     dropped. The file is read and parsed once and again only when it changed on disk (`QueueCache`:
     the stamp of the file -- length, modification time, inode -- decides), not on every tick, `POST`
-    and `GET`; what this process writes it keeps. The default of a day is a proposal
-    (`src/config.rs`, `oracle_retain_confirmed`); a day of entries is about 4 MB on the stand (10 000
+    and `GET`; what this process writes it keeps. The default of a day was decided on 2026-10-06
+    (`docs/research/chain_service.md` §19; `src/config.rs`, `oracle_retain_confirmed`); a day of entries is about 4 MB on the stand (10 000
     records a day, `docs/HANDOFF.md` §6.1 item 1).
   - What the retention costs, said plainly -- two trade-offs that were accepted, not overlooked:
     - **A different record under a pruned `seq` is not caught.** A dropped entry keeps no content, so
