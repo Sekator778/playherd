@@ -15,7 +15,7 @@
 // is another reason, a string for every market or an object by market id), `flatRounds` (the price does not move),
 // `noOpenPrice` (a running round has no opening price yet), `closeOnRounds`/`closeOnBet` (the market closes the moment its
 // rounds, or a bet on it, are asked for), `hashDelayMs`/`oracleQueueDelayMs` (how long until the hash is on the round, until
-// the record is handed to the chain service).
+// the record is handed to the chain service), `registryDelayMs` (how long the market registry takes to answer).
 //
 // `clockOffsetMs` puts the whole stand on a clock of its own: `serverTimeMs`, every window and round id, the phase of every
 // round, the times it stamps on bets and records are `Date.now() + clockOffsetMs`, as a real stand's are on a host whose clock
@@ -114,6 +114,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {}, cloc
   };
   const queueDelayMs = faults.oracleQueueDelayMs ?? 250;
   const hashDelayMs = faults.hashDelayMs ?? 150;
+  const registryDelayMs = faults.registryDelayMs ?? 0;
 
   const marketList = markets.map(completeMarket);
   const byId = new Map(marketList.map((m) => [m.id, m]));
@@ -443,6 +444,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {}, cloc
         return send(200, { firstSeq: journal[0]?.seq ?? null, records: rows });
       }
       if (req.method === "GET" && url.pathname === "/api/markets/registry.json") {
+        if (registryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, registryDelayMs));
         return send(200, marketList.map((m) => ({
           index: m.oracleIndex, id: m.id, kind: m.kind, symbol: m.symbol, priceDecimals: m.priceDecimals, source: m.source,
           sourceRef: m.id, listedAtMs: 0, backup: m.backupSource ? { source: m.backupSource, ref: m.id } : null,

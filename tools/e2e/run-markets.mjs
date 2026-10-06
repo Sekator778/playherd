@@ -92,9 +92,13 @@ export async function runMarkets({ baseUrl, ci = false, createWallet, timing: ov
 
   log(`base URL: ${baseUrl}`);
   let lobby;
+  let lobbyAskedAtMs;
+  let lobbyAnsweredAtMs;
   let registry;
   try {
+    lobbyAskedAtMs = Date.now();
     lobby = await publicRpc(baseUrl, "markets");
+    lobbyAnsweredAtMs = Date.now();
     checks.check("read the lobby (markets)", true, `${lobby.markets.length} markets`);
   } catch (e) {
     checks.fail("read the lobby (markets)", e);
@@ -108,9 +112,10 @@ export async function runMarkets({ baseUrl, ci = false, createWallet, timing: ov
     return finish();
   }
 
-  // The stand's own clock decides how much of a betting window is left, wherever this runs: its serverTimeMs against this
-  // machine's clock at the moment of the answer, once. (The windows the stand names are on its clock, not this one's.)
-  const clockOffsetMs = lobby.serverTimeMs - Date.now();
+  // The stand's own clock decides how much of a betting window is left, wherever this runs (the windows it names are on its clock,
+  // not this machine's): its serverTimeMs against the middle of the time the lobby took to answer, once -- not against the time it
+  // is now, which is after the registry has been read too.
+  const clockOffsetMs = lobby.serverTimeMs - Math.round((lobbyAskedAtMs + lobbyAnsweredAtMs) / 2);
   const serverNow = () => Date.now() + clockOffsetMs;
 
   // A family that is not played is a skip only for a reason it may be skipped for (markets.mjs `FAMILIES`): a spot market that has

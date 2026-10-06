@@ -482,21 +482,31 @@ async function waitForPhase(periodMs, phaseMs) {
   await new Promise((resolve) => setTimeout(resolve, (phaseMs - phase + periodMs) % periodMs));
 }
 
+/**
+ * A run of the spot market against a stand whose clock is `clockOffsetMs` off this machine's, begun when this machine's clock
+ * (and so the stand's: the offsets are a multiple of the round) is `phaseMs` into a round of 1200 ms, asking of a betting window
+ * 600 ms. Resolves what the stand saw: the bets, and the window the first of them had left on the stand's clock.
+ */
+async function runOnAStandOffBy(clockOffsetMs, { phaseMs, faults = {} }) {
+  const roundMs = 1200;
+  const minBettingMs = 600;
+  await waitForPhase(roundMs, phaseMs);
+  const { result, stand } = await run([SPOT], { roundMs, clockOffsetMs, faults, timing: { minBettingMs, startMarginMs: 3_000, settleMarginMs: 3_000 } });
+  const bets = stand.calls.filter((c) => c.method === "placeBet");
+  const startOf = (bet) => Number(bet.args[0].roundId.split("-").pop());
+  return { result, stand, bets, startOf, minBettingMs, roundMs, firstLeftMs: bets.length > 0 ? startOf(bets[0]) - bets[0].atMs : null };
+}
+
 for (const [skewMs, where] of [[60_000, "ahead of"], [-60_000, "behind"]]) {
   test(`a stand 60 s ${where} this machine's clock is bet on with the window the run asked for left, on the stand's clock`, async () => {
-    const roundMs = 1200;
-    const minBettingMs = 600;
     // Begin when the window of the stand that is open has 400 ms left: not enough, the run has to wait for the next window.
     // (Taken for this machine's time, the stand 60 s ahead looks like a window with 60 s left, and the bets are placed at once,
     // with 300 ms of it to spare; the stand 60 s behind looks like no window at all.)
-    await waitForPhase(roundMs, 800);
-    const { result, stand } = await run([SPOT], { roundMs, clockOffsetMs: skewMs, timing: { minBettingMs, startMarginMs: 3_000, settleMarginMs: 3_000 } });
+    const { result, bets, startOf, minBettingMs, roundMs, firstLeftMs } = await runOnAStandOffBy(skewMs, { phaseMs: 800 });
 
     assert.deepEqual(failed(result), []);
     assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["spot_BTC", "settled"]]);
-    const bets = stand.calls.filter((c) => c.method === "placeBet");
     assert.equal(bets.length, 4, "all four bets were taken");
-    const startOf = (bet) => Number(bet.args[0].roundId.split("-").pop());
     // the stand is on the clock it was given: the rounds it names are minute-skewed relative to this machine's time
     assert.ok(Math.abs(startOf(bets[0]) - (Date.now() + skewMs)) < 10 * roundMs, `the round ${bets[0].args[0].roundId} is on the stand's clock`);
     for (const bet of bets) {
@@ -504,7 +514,15 @@ for (const [skewMs, where] of [[60_000, "ahead of"], [-60_000, "behind"]]) {
       assert.ok(left > 0, `the bet was taken inside the window (${left} ms left)`);
     }
     // 50 ms of the time between the run's look at the clock and the bet reaching the stand
-    const left = startOf(bets[0]) - bets[0].atMs;
-    assert.ok(left >= minBettingMs - 50, `the first bet had ${left} ms of the window left, the run asked for ${minBettingMs} ms`);
+    assert.ok(firstLeftMs >= minBettingMs - 50, `the first bet had ${firstLeftMs} ms of the window left, the run asked for ${minBettingMs} ms`);
   });
 }
+
+test("the stand's clock is read when the lobby answers, not when the market registry behind it has", async () => {
+  // The registry takes half a second. A run that sets its clock by the lobby's `serverTimeMs` against the time it has read the
+  // registry too thinks the stand is 500 ms behind where it is: begun 250 ms into a round, it looks at the window some 600 ms
+  // later, with 350 ms left, which looks like 850 ms to it -- more than the 600 ms it asked for -- and bets at once.
+  const { result, firstLeftMs, minBettingMs } = await runOnAStandOffBy(60_000, { phaseMs: 250, faults: { registryDelayMs: 500 } });
+  assert.deepEqual(failed(result), []);
+  assert.ok(firstLeftMs >= minBettingMs - 50, `the first bet had ${firstLeftMs} ms of the window left, the run asked for ${minBettingMs} ms`);
+});
