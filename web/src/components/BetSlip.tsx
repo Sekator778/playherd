@@ -475,7 +475,7 @@ function BetSlipForm({
   const setDirection = onDirectionChange ?? setInternalDirection;
   const [leverageChoice, setLeverage] = useState<number | null>(existing?.leverage ?? null);
   // Never above this market's own cap, even if the market list arrives after the player touched the dial; an untouched
-  // dial is on the market's default (`defaultLeverage`: a quarter of the cap, never the cap itself).
+  // dial is on the market's default (`defaultLeverage`: x10 as always — x3 where x10 would be the market's cap).
   const leverage = Math.min(leverageChoice ?? defaultLeverage(maxLeverage), maxLeverage);
   const [stake, setStake] = useState<string>(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
 

@@ -16,16 +16,22 @@ export const DEFAULT_STAKE_DISPLAY = String(Number(MIN_STAKE_PLAY));
 /** What the stake field's − / + buttons move by: the minimum stake, the smallest bet there is. */
 export const STAKE_STEP = Number(MIN_STAKE_PLAY);
 
+/** Where a slip has always opened: x10 — on every market whose cap lies above it. */
+export const DEFAULT_LEVERAGE = 10;
+
+/** Where a slip opens on a market capped at `DEFAULT_LEVERAGE` or lower, where x10 would be the cap itself. */
+export const CAPPED_MARKET_DEFAULT_LEVERAGE = 3;
+
 /**
- * Where a new slip's leverage starts: a quarter of the market's own cap, rounded — x10 on a x40 market (the number the
- * slip always opened on), x6 on x25, x5 on x20, x3 on x10 — and never the cap itself. The dial's heat is already
- * relative to the cap (`heat.ts`: Calm / Warm / Hot / Danger / Flame are shares of it), and a quarter of any cap is
- * the same Warm zone; a flat "x10" put every odds market (cap x10) and DOGE and HYPE on their Flame setting, which a
- * player who just pressed PLACE BET had not chosen (first tester pass, D2: two of three such bets lost the whole stake).
- * Never below `LEVERAGE_MIN`.
+ * Where a new slip's leverage starts. x10, as it always did, on a market whose cap is above x10 (BTC and the indices x40,
+ * ETH x25, SOL x20 …). On a market capped at x10 or lower — every odds market, DOGE, HYPE — x10 was the cap, so a slip opened
+ * on its Flame setting, which a player who just pressed PLACE BET had not chosen (first tester pass, D2: two of three such bets
+ * lost the whole stake): those open on x3 instead (and on the cap itself when that is below x3). Nothing else about the
+ * default changed — it is the minimal fix of the defect, not a new rule for every market. Never below `LEVERAGE_MIN`, never above the cap.
  */
 export function defaultLeverage(maxLeverage: number): number {
-  return Math.min(maxLeverage, Math.max(LEVERAGE_MIN, Math.round(maxLeverage / 4)));
+  const wanted = maxLeverage > DEFAULT_LEVERAGE ? DEFAULT_LEVERAGE : CAPPED_MARKET_DEFAULT_LEVERAGE;
+  return Math.min(maxLeverage, Math.max(LEVERAGE_MIN, wanted));
 }
 
 /** Only digits and at most one decimal point — typed directly into a plain text field, immune to

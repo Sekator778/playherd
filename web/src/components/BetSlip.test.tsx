@@ -354,7 +354,7 @@ describe("«What's this?» beside the liquidation preview opens in the app, in p
   });
 });
 
-describe("a fresh slip does not open on the market's cap (first tester pass, D2)", () => {
+describe("a fresh slip does not open on the market's cap where x10 would be it (first tester pass, D2)", () => {
   async function renderDial(marketId: string) {
     const pair = await mockApi.rounds("HOURLY", marketId);
     if (pair.betting.phase !== "BETTING") throw new Error("expected an open betting round");
@@ -369,9 +369,10 @@ describe("a fresh slip does not open on the market's cap (first tester pass, D2)
   }
 
   it.each([
-    ["BTC", "40", "10", "Warm"],
-    ["SOL", "20", "5", "Warm"],
-    ["DOGE", "10", "3", "Warm"],
+    ["BTC", "40", "10", "Warm"], // as it always opened
+    ["ETH", "25", "10", "Hot"], // as it always opened
+    ["SOL", "20", "10", "Hot"], // as it always opened
+    ["DOGE", "10", "3", "Warm"], // x10 was its cap — Flame
     ["PM900101", "10", "3", "Warm"], // an odds market: it used to open on x10, its cap — Flame
   ])("%s (cap x%s): the signed-in slip opens at x%s, in the %s zone", async (marketId, cap, expected, zone) => {
     await renderDial(marketId);
