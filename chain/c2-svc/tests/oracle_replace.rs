@@ -162,6 +162,7 @@ fn world(options: Options) -> Result<World> {
             FeeCoinAllocator::with_policy(FeeCoinPolicy { min_free: 0, coin_mojos: 200_000_000 })
                 .with_fallback_fee_rate(options.fallback_rate),
         ),
+        queue_cache: Default::default(),
     };
     Ok(World { _tmp: tmp, publisher, master_sk, manager, launcher_id, eve_coin })
 }

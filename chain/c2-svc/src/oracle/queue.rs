@@ -11,13 +11,15 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::Result;
 use c2_cli::state::ProofDto;
 use chia_protocol::{Bytes32, Coin, SpendBundle};
 use serde::{Deserialize, Serialize};
 
-use crate::atomic_file::{read_json_or_default, write_json_atomic};
+use crate::atomic_file::{FileStamp, file_stamp, read_json_or_default, write_json_atomic};
 use crate::fee_allocator::fee_coin_of;
 
 use super::lineage::{LineageWalkOutcome, WalkedGeneration};
@@ -733,6 +735,86 @@ impl QueueFile {
     }
 }
 
+/// The parsed queue file as this process last saw it, so that a tick, a `POST` or a `GET` that finds
+/// the file as it was left does not read and parse it again (`Publisher::load_queue`).
+///
+/// The file holds a confirmed entry of about 410 bytes (measured, `docs/research/chain_service.md`
+/// §18.2) for every record the service has confirmed: some 10 000 records a day on the stand, 4 MB a
+/// day -- read in full and parsed at least twice per tick (every 10 s), on every
+/// `GET /v1/oracle/records/{seq}` the server's reconciliation asks for, on every status and health
+/// read, and on every `POST`.
+///
+/// What is kept is the content of the file plus its [`FileStamp`] from before the read. A load that
+/// finds the same stamp hands out the same `Arc`; any other stamp -- the file written by something
+/// else, replaced, removed, or not there yet -- is read afresh. The stamp is taken *before* the read
+/// on purpose: a write that lands in between leaves a copy that is newer than its stamp, which costs
+/// one more read the next time; the other order would pair an old copy with the new stamp for good.
+/// [`QueueCache::save`] writes the file and keeps what it wrote under the stamp of the new file, so
+/// this process's own writes are not read back either. A write that failed drops the copy (the file
+/// may or may not have changed).
+///
+/// Holds no lock across the read, the parse or the write: two loads that miss at the same moment both
+/// read the file, and both are right.
+#[derive(Default)]
+pub struct QueueCache {
+    entry: Mutex<Option<CacheEntry>>,
+    reads: AtomicU64,
+}
+
+struct CacheEntry {
+    /// The queue file this copy is of: a cache belongs to one file, and asked for another it holds nothing.
+    path: PathBuf,
+    /// `None`: the file did not exist, and `queue` is the empty default that was handed out for it.
+    stamp: Option<FileStamp>,
+    queue: Arc<QueueFile>,
+}
+
+impl QueueCache {
+    /// The queue file's content: the copy this cache holds while the file is the one it was read
+    /// from, else the file, read and parsed (an absent file is an empty queue, as with
+    /// `QueueFile::load`).
+    pub fn load(&self, data_dir: &Path, name: &str) -> Result<Arc<QueueFile>> {
+        let path = QueueFile::path(data_dir, name);
+        let stamp = file_stamp(&path)?;
+        if let Some(entry) = self.entry.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
+            && entry.path == path
+            && entry.stamp == stamp
+        {
+            return Ok(Arc::clone(&entry.queue));
+        }
+        let queue = Arc::new(QueueFile::load(data_dir, name)?);
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        *self.entry.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(CacheEntry { path, stamp, queue: Arc::clone(&queue) });
+        Ok(queue)
+    }
+
+    /// `queue` written to the queue file (atomically, `QueueFile::save_atomic`) and kept as what the
+    /// file now holds.
+    pub fn save(&self, queue: &QueueFile, data_dir: &Path, name: &str) -> Result<()> {
+        let written = queue.save_atomic(data_dir, name);
+        let kept = match &written {
+            Ok(()) => {
+                let path = QueueFile::path(data_dir, name);
+                file_stamp(&path).ok().flatten().map(|stamp| CacheEntry {
+                    path,
+                    stamp: Some(stamp),
+                    queue: Arc::new(queue.clone()),
+                })
+            }
+            Err(_) => None,
+        };
+        *self.entry.lock().unwrap_or_else(PoisonError::into_inner) = kept;
+        written
+    }
+
+    /// How many times this cache has read and parsed the queue file since the process started --
+    /// a diagnostic: a service that has nothing to do should not move it.
+    pub fn reads(&self) -> u64 {
+        self.reads.load(Ordering::Relaxed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -959,5 +1041,113 @@ mod tests {
         let json = serde_json::to_string(&with_content).unwrap();
         assert!(json.contains("\"record\""), "{json}");
         assert_eq!(serde_json::from_str::<ConfirmedRecordInfo>(&json).unwrap(), with_content);
+    }
+
+    // --- QueueCache --------------------------------------------------------------------------------------------
+
+    /// A queue file with `n` pending records, written by something that is not the cache.
+    fn write_queue(dir: &Path, n: u64) {
+        QueueFile { pending: (1..=n).map(record).collect(), ..QueueFile::default() }.save_atomic(dir, "operator").unwrap();
+    }
+
+    /// The point of the cache: a load that finds the file as it was does not read it again, and hands out the
+    /// very copy it holds.
+    #[test]
+    fn a_load_that_finds_the_file_as_it_was_does_not_read_it_again() {
+        let dir = tempfile::tempdir().unwrap();
+        write_queue(dir.path(), 3);
+        let cache = QueueCache::default();
+
+        let first = cache.load(dir.path(), "operator").unwrap();
+        assert_eq!((first.pending.len(), cache.reads()), (3, 1));
+        for _ in 0..5 {
+            let again = cache.load(dir.path(), "operator").unwrap();
+            assert!(Arc::ptr_eq(&first, &again), "the same copy, not a new parse of the same file");
+        }
+        assert_eq!(cache.reads(), 1, "one read for six loads");
+    }
+
+    /// What the cache writes it keeps: the next load is the copy that was written, not the file read back.
+    #[test]
+    fn a_save_is_kept_as_what_the_file_holds_and_is_not_read_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = QueueCache::default();
+        let mut queue = (*cache.load(dir.path(), "operator").unwrap()).clone();
+        assert_eq!(cache.reads(), 1, "the file is not there yet: an empty queue, read once");
+        assert!(queue.pending.is_empty());
+
+        for n in 1..=4 {
+            queue.pending.push(record(n));
+            cache.save(&queue, dir.path(), "operator").unwrap();
+            let loaded = cache.load(dir.path(), "operator").unwrap();
+            assert_eq!(loaded.pending.len() as u64, n, "after save {n}");
+            // what the cache holds is what is on disk
+            assert_eq!(QueueFile::load(dir.path(), "operator").unwrap().pending, loaded.pending);
+        }
+        assert_eq!(cache.reads(), 1, "four saves and four loads, and the file was parsed once, by the first load");
+    }
+
+    /// A file that something else wrote -- renamed into place like every version of it, or overwritten where it
+    /// stands -- is read again; so is one that was removed.
+    #[test]
+    fn a_file_written_by_something_else_is_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        write_queue(dir.path(), 2);
+        let cache = QueueCache::default();
+        assert_eq!(cache.load(dir.path(), "operator").unwrap().pending.len(), 2);
+
+        // another atomic write of exactly the same length: a new file, whatever the clock says
+        let mut other = QueueFile { pending: vec![record(7), record(8)], ..QueueFile::default() };
+        other.save_atomic(dir.path(), "operator").unwrap();
+        assert_eq!(cache.load(dir.path(), "operator").unwrap().pending, vec![record(7), record(8)]);
+        assert_eq!(cache.reads(), 2);
+
+        // in place, a different length
+        other.pending.push(record(9));
+        std::fs::write(QueueFile::path(dir.path(), "operator"), serde_json::to_string_pretty(&other).unwrap()).unwrap();
+        assert_eq!(cache.load(dir.path(), "operator").unwrap().pending.len(), 3);
+        assert_eq!(cache.reads(), 3);
+
+        // removed: an empty queue, as for a file that was never there
+        std::fs::remove_file(QueueFile::path(dir.path(), "operator")).unwrap();
+        assert!(cache.load(dir.path(), "operator").unwrap().pending.is_empty());
+        assert_eq!(cache.reads(), 4);
+        assert!(cache.load(dir.path(), "operator").unwrap().pending.is_empty());
+        assert_eq!(cache.reads(), 4, "the absence itself is cached");
+
+        // and written again
+        write_queue(dir.path(), 1);
+        assert_eq!(cache.load(dir.path(), "operator").unwrap().pending.len(), 1);
+        assert_eq!(cache.reads(), 5);
+    }
+
+    /// A cache belongs to one file: asked for another, it holds nothing.
+    #[test]
+    fn a_cache_asked_about_another_file_reads_that_file() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_queue(a.path(), 1);
+        write_queue(b.path(), 2);
+        let cache = QueueCache::default();
+        assert_eq!(cache.load(a.path(), "operator").unwrap().pending.len(), 1);
+        assert_eq!(cache.load(b.path(), "operator").unwrap().pending.len(), 2);
+        assert_eq!(cache.load(a.path(), "operator").unwrap().pending.len(), 1);
+        assert_eq!(cache.reads(), 3);
+    }
+
+    /// A write that failed leaves no copy behind: the file may or may not have changed, so the next load asks it.
+    #[test]
+    fn a_failed_save_drops_the_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        write_queue(dir.path(), 2);
+        let cache = QueueCache::default();
+        cache.load(dir.path(), "operator").unwrap();
+
+        // a "directory" that is a regular file: the write cannot even start
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        assert!(cache.save(&QueueFile::default(), &blocker.join("sub"), "operator").is_err());
+
+        assert_eq!(cache.load(dir.path(), "operator").unwrap().pending.len(), 2, "the file is as it was");
+        assert_eq!(cache.reads(), 2, "read again: nothing was kept across the failed write");
     }
 }

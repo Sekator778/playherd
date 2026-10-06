@@ -382,6 +382,7 @@ fn set_up(retry_backoff: Duration) -> Result<Fixture> {
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: 3,
         fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
+        queue_cache: Default::default(),
     };
 
     Ok(Fixture {
@@ -895,6 +896,7 @@ async fn restart_recovers_when_the_in_flight_fee_coin_was_spent_while_down() -> 
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: 3,
         fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
+        queue_cache: Default::default(),
     };
 
     // `main.rs`'s own startup sequence: seed the allocator from whatever
@@ -1263,6 +1265,7 @@ async fn restart_resumes_a_pending_in_flight_spend() -> Result<()> {
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: 3,
         fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
+        queue_cache: Default::default(),
     };
 
     restarted.chain.set_confirmed(next_coin.coin_id(), 4_900_000);
@@ -2443,5 +2446,60 @@ async fn a_queue_file_written_before_the_content_was_kept_still_loads_and_answer
         assert_eq!(written["confirmed"][seq], old_confirmed[seq], "the old entry {seq} was written back unchanged");
     }
     assert!(written["confirmed"]["4"]["record"].is_object());
+    Ok(())
+}
+
+// --- the queue file is read once, not on every tick, POST and GET (`QueueCache`) ------------------------------------
+
+/// The file is parsed when this process first needs it and again only when somebody else has written it: an idle
+/// service, a working one, and every endpoint that only reads leave the counter where the first read put it -- and
+/// what they report is still the live queue, not a stale copy.
+#[tokio::test]
+async fn the_queue_file_is_not_read_again_while_it_is_as_this_process_left_it() -> Result<()> {
+    let fx = set_up(Duration::from_secs(300))?;
+    let publisher = &fx.publisher;
+
+    assert_eq!(publisher.tick().await?, TickOutcome::Idle);
+    assert_eq!(publisher.queue_cache.reads(), 1, "the first tick found no file and read it once");
+
+    // Idle: ticks, and every read-only endpoint.
+    for _ in 0..5 {
+        assert_eq!(publisher.tick().await?, TickOutcome::Idle);
+        publisher.status().await?;
+        publisher.record_status(1)?;
+        assert_eq!(publisher.health_check().await?, None);
+    }
+    assert_eq!(publisher.queue_cache.reads(), 1, "an idle service does not read its file");
+
+    // Working: a POST, a batch on its way, its confirmation, a resend of what is held, one more POST.
+    assert_eq!(publisher.enqueue(vec![record(1), record(2), record(3)]).await?, vec![1, 2, 3]);
+    assert_eq!(publisher.tick().await?, TickOutcome::Broadcast { records: 3, accepted: true });
+    assert_eq!(publisher.status().await?.pending_records, 3);
+    let in_flight = QueueFile::load(&publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    confirm_in_flight(&publisher.chain, &in_flight, 4_800_000);
+    assert_eq!(publisher.tick().await?, TickOutcome::Confirmed { records: 3 });
+    assert_eq!(publisher.submit(vec![record(2)]).await?, EnqueueOutcome::default());
+    assert_eq!(publisher.enqueue(vec![record(4)]).await?, vec![4]);
+    let status = publisher.status().await?;
+    assert_eq!((status.last_confirmed_seq, status.pending_records, status.max_known_seq), (Some(3), 1, 4));
+    assert_eq!(publisher.record_status(2)?.state, "confirmed");
+    assert_eq!(publisher.record_status(4)?.state, "queued");
+    assert_eq!(
+        publisher.queue_cache.reads(),
+        1,
+        "everything this process wrote it kept: the file was parsed once in all of that"
+    );
+
+    // What the cache holds is the file: the same as a fresh parse of it.
+    let on_disk = QueueFile::load(&publisher.data_dir, "operator")?;
+    let cached = publisher.queue_cache.load(&publisher.data_dir, "operator")?;
+    assert_eq!(serde_json::to_value(&on_disk)?, serde_json::to_value(&*cached)?);
+
+    // A change this process did not make is noticed at the next read.
+    let mut changed = on_disk;
+    changed.pending.push(record(9));
+    changed.save_atomic(&publisher.data_dir, "operator")?;
+    assert_eq!(publisher.status().await?.pending_records, 2);
+    assert_eq!(publisher.queue_cache.reads(), 2);
     Ok(())
 }

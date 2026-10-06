@@ -97,6 +97,48 @@ pub fn read_json_or_default<T: serde::de::DeserializeOwned>(path: &Path, default
     serde_json::from_str(&data).with_context(|| format!("parsing {}", path.display()))
 }
 
+/// What tells one version of a file from another without reading it: its length, the time it was last
+/// modified and -- on Unix -- its inode. A caller that holds a parsed copy of the file keeps the stamp
+/// the file had when it was read, and a later [`file_stamp`] that is equal says the copy is still the
+/// file, with one `stat` instead of a read and a parse (`oracle/queue.rs::QueueCache`).
+///
+/// Every version `write_json_atomic` writes is a new file renamed over the old one, and a new inode
+/// by necessity: the previous version still exists while the new one is being created, so the two
+/// never share a number. A file changed in place (an editor that truncates, a test that overwrites)
+/// keeps its inode and shows in the length or the modification time -- unless both stay the same, which a filesystem
+/// with a coarse clock (a whole second) allows for two writes of equal length within that second. That
+/// is the limit of this stamp, and nothing in this service writes that way: the one writer of the files
+/// it caches is `write_json_atomic`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl FileStamp {
+    fn of(meta: &fs::Metadata) -> Self {
+        Self {
+            len: meta.len(),
+            modified: meta.modified().ok(),
+            #[cfg(unix)]
+            inode: std::os::unix::fs::MetadataExt::ino(meta),
+        }
+    }
+}
+
+/// The stamp of the file at `path`; `Ok(None)` when there is no such file (a stamp of its own kind: the
+/// file that is not there yet and then appears differs from it). Any other failure to look at the file
+/// is an error -- the caller then does not trust a copy it holds.
+pub fn file_stamp(path: &Path) -> Result<Option<FileStamp>> {
+    match fs::metadata(path) {
+        Ok(meta) => Ok(Some(FileStamp::of(&meta))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("looking at {}", path.display())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +184,52 @@ mod tests {
         sync_dir(dir.path()).unwrap();
         let err = sync_dir(&dir.path().join("does-not-exist")).unwrap_err();
         assert!(format!("{err:#}").contains("opening directory"), "{err:#}");
+    }
+
+    /// A file that is not there has no stamp, one that is has the same stamp for as long as nobody writes
+    /// it, and every atomic write gives it another -- also when the new content is exactly as long as the
+    /// old (the inode and the modification time say so, the length cannot).
+    #[test]
+    fn a_stamp_is_stable_until_the_file_is_written_and_every_atomic_write_changes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        assert_eq!(file_stamp(&path).unwrap(), None, "no file, no stamp");
+
+        write_json_atomic(&path, &Doc { name: "same length".into(), n: 1 }).unwrap();
+        let first = file_stamp(&path).unwrap().expect("a stamp once the file exists");
+        assert_eq!(file_stamp(&path).unwrap(), Some(first), "nothing wrote it: the same stamp");
+
+        let mut stamps = vec![first];
+        for n in 2..=6 {
+            write_json_atomic(&path, &Doc { name: "same length".into(), n }).unwrap();
+            let stamp = file_stamp(&path).unwrap().expect("stamp");
+            assert_ne!(Some(&stamp), stamps.last(), "write {n} left the stamp as it was");
+            stamps.push(stamp);
+        }
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(file_stamp(&path).unwrap(), None, "a removed file has no stamp again");
+    }
+
+    /// A file changed in place -- no rename -- shows in its length.
+    #[test]
+    fn a_stamp_notices_a_file_that_is_overwritten_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        std::fs::write(&path, b"{\"name\":\"a\",\"n\":1}").unwrap();
+        let before = file_stamp(&path).unwrap();
+        std::fs::write(&path, b"{\"name\":\"a longer one\",\"n\":1}").unwrap();
+        assert_ne!(file_stamp(&path).unwrap(), before);
+    }
+
+    /// Anything but "no such file" is an error: a stamp that could not be taken must not pass for "unchanged".
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cannot_be_looked_at_is_an_error_and_not_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain_file = dir.path().join("plain");
+        std::fs::write(&plain_file, b"x").unwrap();
+        // "plain/state.json": a path below a regular file is "not a directory", not "not found"
+        let err = file_stamp(&plain_file.join("state.json")).unwrap_err();
+        assert!(format!("{err:#}").contains("looking at"), "{err:#}");
     }
 }

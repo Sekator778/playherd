@@ -47,6 +47,7 @@ fn router(data_dir: &std::path::Path) -> axum::Router {
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: 3,
         fee_allocator: fee_allocator.clone(),
+        queue_cache: Default::default(),
     });
     let withdrawals = Arc::new(WithdrawalPublisher {
         data_dir: data_dir.to_path_buf(),

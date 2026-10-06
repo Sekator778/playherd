@@ -110,6 +110,7 @@ fn set_up() -> Result<Fixture> {
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: 3,
         fee_allocator: std::sync::Arc::clone(&fee_allocator),
+        queue_cache: Default::default(),
     };
 
     let withdrawal = WithdrawalPublisher {
@@ -309,6 +310,7 @@ fn oracle_with(
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: 3,
         fee_allocator: allocator,
+        queue_cache: Default::default(),
     }
 }
 

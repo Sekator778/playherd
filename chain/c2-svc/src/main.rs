@@ -14,6 +14,7 @@ use c2_svc::fee_allocator::FeeCoinAllocator;
 use c2_svc::fee_reserve::FeeCoinPolicy;
 use c2_svc::oracle::chain_client::CoinsetChainClient;
 use c2_svc::oracle::publisher::{Publisher, TickFailureState};
+use c2_svc::oracle::queue::QueueCache;
 use c2_svc::play::deposit::DepositService;
 use c2_svc::play::withdrawal_publisher::WithdrawalPublisher;
 
@@ -94,6 +95,7 @@ async fn main() -> Result<()> {
         tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
         tick_failure_threshold: config.tick_failure_threshold,
         fee_allocator: Arc::clone(&fee_allocator),
+        queue_cache: QueueCache::default(),
     });
 
     // PLAY withdraw/deposit (Р-6, decision Р-53 2026-09-26): a separate

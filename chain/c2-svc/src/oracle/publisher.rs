@@ -82,7 +82,8 @@ use crate::state_file::{load_oracle_state, save_oracle_state_atomic};
 use super::chain_client::ChainClient;
 use super::lineage::{genesis_coin, tip_lineage_proof, walk_lineage};
 use super::queue::{
-    ConfirmedRecordInfo, EnqueueOutcome, InFlightSpend, QueueFile, ReconcileOutcome, RecordState, ResolvedInFlight,
+    ConfirmedRecordInfo, EnqueueOutcome, InFlightSpend, QueueCache, QueueFile, ReconcileOutcome, RecordState,
+    ResolvedInFlight,
 };
 use super::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
 use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusResponse, RECORD_FORMAT};
@@ -306,9 +307,26 @@ pub struct Publisher<C: ChainClient> {
     /// picking the same not-yet-confirmed fee coin. See `fee_allocator`'s
     /// module doc for the incident this closes.
     pub fee_allocator: std::sync::Arc<FeeCoinAllocator>,
+    /// The parsed queue file as this process last saw it (`QueueCache`): every read of the file in
+    /// this struct goes through `load_queue`, which reads and parses it only when it is not the file
+    /// the cache holds, and every write through `save_queue`, which keeps what it wrote -- so a tick,
+    /// a `POST` or a `GET` that finds the file as the last write left it does not parse it again.
+    pub queue_cache: QueueCache,
 }
 
 impl<C: ChainClient> Publisher<C> {
+    /// The queue file's content, from the cache while the file is the one it was read from
+    /// (`QueueCache::load`). Shared and not to be changed: a caller that is going to change the queue
+    /// takes a copy, `(*self.load_queue()?).clone()`, under `queue_lock`, and `save_queue`s it.
+    fn load_queue(&self) -> Result<std::sync::Arc<QueueFile>> {
+        self.queue_cache.load(&self.data_dir, &self.operator_name)
+    }
+
+    /// Writes the queue file atomically and keeps what was written as the cache's copy.
+    fn save_queue(&self, queue: &QueueFile) -> Result<()> {
+        self.queue_cache.save(queue, &self.data_dir, &self.operator_name)
+    }
+
     /// `POST /v1/oracle/records`'s handler: durably enqueues newly
     /// submitted records, deduped against records already known
     /// confirmed/in-flight/pending (see `QueueFile::enqueue`,
@@ -320,12 +338,10 @@ impl<C: ChainClient> Publisher<C> {
     /// took the same `seq`, and the log says so too.
     pub async fn submit(&self, records: Vec<OracleRecord>) -> Result<EnqueueOutcome> {
         let _guard = self.queue_lock.lock().await;
-        let mut queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        let mut queue = (*self.load_queue()?).clone();
         let outcome = queue.enqueue(records);
         if !outcome.accepted.is_empty() {
-            queue
-                .save_atomic(&self.data_dir, &self.operator_name)
-                .context("persisting newly queued oracle records")?;
+            self.save_queue(&queue).context("persisting newly queued oracle records")?;
         }
         if !outcome.conflicts.is_empty() {
             tracing::warn!(
@@ -348,7 +364,7 @@ impl<C: ChainClient> Publisher<C> {
     /// eventual-consistency reasoning as `status()` (see its doc comment and
     /// `queue_lock`'s).
     pub fn record_status(&self, seq: u64) -> Result<OracleRecordStatusResponse> {
-        let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        let queue = self.load_queue()?;
         // The held record's content rides along (`resultsHash`, `priceCents`, `asset`, `ts`,
         // `docs/research/chain_service.md` §18.2) wherever the queue still has it.
         let held = queue.held_record(seq);
@@ -370,14 +386,15 @@ impl<C: ChainClient> Publisher<C> {
     }
 
     /// `GET /v1/oracle/status`'s handler. Must never await a network call:
-    /// everything here is either a local file read (`QueueFile::load`,
+    /// everything here is either a local file read (`load_queue`, which
+    /// reads the queue file only when it is not the copy already held,
     /// `load_oracle_state` -- fast, and the queue/state files are exactly
     /// what a concurrent `enqueue`/`tick` is durably writing, so this still
     /// reflects the live queue) or a read of `balance_snapshot`, the cache
     /// `refresh_balance_snapshot` fills in from off to the side. See
     /// `balance_snapshot`'s doc comment for why (task fix).
     pub async fn status(&self) -> Result<OracleStatusResponse> {
-        let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        let queue = self.load_queue()?;
         let oracle_state = load_oracle_state(&self.data_dir, &self.operator_name).ok();
         let operator_balance_mojos = self.balance_snapshot.read().await.clone();
         // The fee-coin gauge is the last wallet scan's view, read from memory like the balance --
@@ -451,7 +468,7 @@ impl<C: ChainClient> Publisher<C> {
     /// that the same as degraded (fail toward "unhealthy" on unknown local
     /// state, not toward silently reporting healthy).
     pub async fn health_check(&self) -> Result<Option<String>> {
-        let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        let queue = self.load_queue()?;
         Ok(self.degraded_reason(&queue).await)
     }
 
@@ -546,12 +563,10 @@ impl<C: ChainClient> Publisher<C> {
     /// invoked directly and awaited to completion up front.
     pub async fn bootstrap_from_chain(&self) -> Result<ReconcileOutcome> {
         let _guard = self.queue_lock.lock().await;
-        let mut queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        let mut queue = (*self.load_queue()?).clone();
         let outcome = self.reconcile_queue_with_chain(&mut queue).await?;
         if outcome.changed() {
-            queue
-                .save_atomic(&self.data_dir, &self.operator_name)
-                .context("persisting chain-reconciled queue (bootstrap)")?;
+            self.save_queue(&queue).context("persisting chain-reconciled queue (bootstrap)")?;
         }
         Ok(outcome)
     }
@@ -564,7 +579,7 @@ impl<C: ChainClient> Publisher<C> {
     /// the restart still needs (task fix, `docs/research/chain_service.md`
     /// §15).
     pub fn in_flight_fee_coin_id(&self) -> Result<Option<chia_protocol::Bytes32>> {
-        let queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        let queue = self.load_queue()?;
         Ok(queue.in_flight.as_ref().and_then(|f| fee_coin_of(&f.bundle, f.spent_coin)).map(|c| c.coin_id()))
     }
 
@@ -785,7 +800,7 @@ impl<C: ChainClient> Publisher<C> {
         // and only usable coin, by the few blocks the split needs, once -- and that single-coin
         // trap is exactly what the reserve exists to end (`start_new_batch` waits, it does not
         // fail, see `FeeCoinsBusy`). Never fails the tick; not counted in `tick_failures`.
-        let may_start = QueueFile::load(&self.data_dir, &self.operator_name).is_ok_and(|queue| queue.in_flight.is_none());
+        let may_start = self.load_queue().is_ok_and(|queue| queue.in_flight.is_none());
         self.maintain_fee_coins(may_start).await;
 
         let result = self.tick_once().await;
@@ -812,7 +827,7 @@ impl<C: ChainClient> Publisher<C> {
         // never load a stale snapshot and clobber whatever this tick ends up
         // persisting.
         let _guard = self.queue_lock.lock().await;
-        let mut queue = QueueFile::load(&self.data_dir, &self.operator_name)?;
+        let mut queue = (*self.load_queue()?).clone();
 
         // Task fix (`docs/research/chain_service.md` §11): "also run that
         // forward scan periodically (cheap) so the confirmed map always
@@ -823,9 +838,7 @@ impl<C: ChainClient> Publisher<C> {
         // `start_new_batch` this tick either.
         let reconcile_outcome = self.reconcile_queue_with_chain(&mut queue).await?;
         if reconcile_outcome.changed() {
-            queue
-                .save_atomic(&self.data_dir, &self.operator_name)
-                .context("persisting chain-reconciled queue")?;
+            self.save_queue(&queue).context("persisting chain-reconciled queue")?;
         }
 
         if let Some(in_flight) = queue.in_flight.clone() {
@@ -910,9 +923,7 @@ impl<C: ChainClient> Publisher<C> {
         let mut in_flight = in_flight;
         if in_flight.replace_blocked.take().is_some() {
             queue.in_flight = Some(in_flight.clone());
-            queue
-                .save_atomic(&self.data_dir, &self.operator_name)
-                .context("clearing a stale 'replacement blocked' note from the in-flight spend")?;
+            self.save_queue(queue).context("clearing a stale 'replacement blocked' note from the in-flight spend")?;
         }
 
         // Task fix (`docs/research/chain_service.md` §15): the singleton
@@ -993,9 +1004,7 @@ impl<C: ChainClient> Publisher<C> {
         in_flight.last_push_error = outcome.error.clone();
         let accepted = outcome.accepted;
         queue.in_flight = Some(in_flight);
-        queue
-            .save_atomic(&self.data_dir, &self.operator_name)
-            .context("persisting retried in-flight spend")?;
+        self.save_queue(queue).context("persisting retried in-flight spend")?;
 
         Ok(TickOutcome::Retried { accepted })
     }
@@ -1023,9 +1032,7 @@ impl<C: ChainClient> Publisher<C> {
     ) -> Result<TickOutcome> {
         let outcome = self.reconcile_queue_with_chain(queue).await?;
         if queue.in_flight.is_none() {
-            queue
-                .save_atomic(&self.data_dir, &self.operator_name)
-                .context("clearing in-flight spend after confirmation")?;
+            self.save_queue(queue).context("clearing in-flight spend after confirmation")?;
             let records = outcome
                 .resolved_in_flight
                 .as_ref()
@@ -1035,8 +1042,7 @@ impl<C: ChainClient> Publisher<C> {
 
         if !in_flight.superseded.is_empty() {
             if outcome.changed() {
-                queue
-                    .save_atomic(&self.data_dir, &self.operator_name)
+                self.save_queue(queue)
                     .context("persisting chain-reconciled queue while waiting for the confirming spend")?;
             }
             tracing::warn!(
@@ -1084,9 +1090,7 @@ impl<C: ChainClient> Publisher<C> {
             self.fee_allocator.release(coin_id).await;
         }
         queue.in_flight = None;
-        queue
-            .save_atomic(&self.data_dir, &self.operator_name)
-            .context("clearing in-flight spend after confirmation")?;
+        self.save_queue(queue).context("clearing in-flight spend after confirmation")?;
 
         tracing::info!(
             records = confirmed_count,
@@ -1128,9 +1132,7 @@ impl<C: ChainClient> Publisher<C> {
         in_flight.replace_blocked = Some(reason.clone());
         in_flight.last_attempt_at_unix = now_unix();
         queue.in_flight = Some(in_flight);
-        queue
-            .save_atomic(&self.data_dir, &self.operator_name)
-            .context("persisting the 'replacement blocked' note on the in-flight spend")?;
+        self.save_queue(queue).context("persisting the 'replacement blocked' note on the in-flight spend")?;
         Ok(TickOutcome::ReplacementBlocked { reason })
     }
 
@@ -1246,7 +1248,7 @@ impl<C: ChainClient> Publisher<C> {
         queue.in_flight = Some(replacement);
         // Durability first, same invariant as `start_new_batch`: a crash after this line and
         // before the push leaves a persisted bundle that the next tick pushes.
-        if let Err(e) = queue.save_atomic(&self.data_dir, &self.operator_name) {
+        if let Err(e) = self.save_queue(queue) {
             // Nothing reached the disk, so nothing refers to a fee coin reserved for this
             // replacement; the next tick starts over and must be able to pick it again.
             if let Some(coin) = ready.newly_reserved {
@@ -1269,9 +1271,7 @@ impl<C: ChainClient> Publisher<C> {
                 current.last_push_accepted = true;
                 current.last_push_error = None;
             }
-            queue
-                .save_atomic(&self.data_dir, &self.operator_name)
-                .context("persisting the replacement's push outcome")?;
+            self.save_queue(queue).context("persisting the replacement's push outcome")?;
             tracing::info!(
                 records = batch_len,
                 fee_mojos = replacement_fee,
@@ -1568,18 +1568,14 @@ impl<C: ChainClient> Publisher<C> {
             replace_blocked: None,
         });
         // Durability first, same invariant as `start_new_batch`.
-        queue
-            .save_atomic(&self.data_dir, &self.operator_name)
-            .context("persisting rebuilt in-flight spend before broadcasting")?;
+        self.save_queue(queue).context("persisting rebuilt in-flight spend before broadcasting")?;
 
         let outcome = self.chain.push_tx(bundle).await.context("push_tx for rebuilt batch")?;
         if let Some(in_flight) = queue.in_flight.as_mut() {
             in_flight.last_push_accepted = outcome.accepted;
             in_flight.last_push_error = outcome.error.clone();
         }
-        queue
-            .save_atomic(&self.data_dir, &self.operator_name)
-            .context("persisting rebuilt push_tx outcome")?;
+        self.save_queue(queue).context("persisting rebuilt push_tx outcome")?;
 
         tracing::info!(
             records = batch_len,
@@ -1725,18 +1721,14 @@ impl<C: ChainClient> Publisher<C> {
         // the batch from `pending`. A crash right after this line and
         // before `push_tx` below just means the next tick's retry path
         // (`advance_in_flight`) broadcasts this exact persisted bundle.
-        queue
-            .save_atomic(&self.data_dir, &self.operator_name)
-            .context("persisting new in-flight spend before broadcasting")?;
+        self.save_queue(queue).context("persisting new in-flight spend before broadcasting")?;
 
         let outcome = self.chain.push_tx(bundle).await.context("push_tx for new batch")?;
         if let Some(in_flight) = queue.in_flight.as_mut() {
             in_flight.last_push_accepted = outcome.accepted;
             in_flight.last_push_error = outcome.error.clone();
         }
-        queue
-            .save_atomic(&self.data_dir, &self.operator_name)
-            .context("persisting push_tx outcome")?;
+        self.save_queue(queue).context("persisting push_tx outcome")?;
 
         Ok(TickOutcome::Broadcast {
             records: batch_len,
