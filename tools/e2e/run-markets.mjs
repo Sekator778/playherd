@@ -19,17 +19,31 @@
 // as its asset, the round's resultsHash and close price, and be handed to the chain service within two minutes. Once, at the
 // end, the chain service itself (`serverInfo().oracle`).
 //
-// A family that cannot be played is skipped, not failed (tools/e2e/markets.mjs `pickMarkets`): none listed, or every one of
-// them closed, without a price yet, with a stale price, or about to end — a weekend without stock prices, an unreachable
-// Polymarket. A round that is cancelled instead of settled (the odds market left its band, the source went away) is not
-// a failure either as long as every stake came back: the refund is what is checked, the market counts as skipped. What is
-// a failure: any check that fails, and a run in which not one round was played to its settlement — it proved nothing.
+// A family that cannot be played is skipped, not failed, only for a reason that family may be skipped for (tools/e2e/markets.mjs
+// `FAMILIES`, `pickMarkets`). Spot crypto is the 24/7 family — the exchanges never close — so for it a stale price, no price,
+// no series or round to bet on, a stand that lists no spot market, or a round cancelled for any reason but `market closed:`
+// is a failure: only a closed market is a day off. The xyz family may be skipped for a closed market and for a missing or
+// stale price while the market behind it is closed for the weekend (by the stand's own clock and the market's category); the
+// odds family for a closed market (the source event ended, the chance left the 3%–97% band, the source stopped trading) and
+// for an event that is about to end. A family with no market listed at all is skipped too (except spot): a stand may be set up
+// without xyz or Polymarket. A round that is cancelled instead of settled for a reason its family may be skipped for (`market
+// closed: …`) is not a failure as long as every stake came back: the refund is what is checked, the market counts as skipped.
+// What is a failure: any check that fails, a family played or skipped for a reason it may not be, and a run in which not one
+// round was played to its settlement — it proved nothing.
 //
 // `--ci` (or env HERD_E2E_CI=1): as for run.mjs, the on-chain check of the end (a chain service that has launched the
 // oracle singleton) is left out; every other check stays.
 import { pathToFileURL } from "node:url";
 import { Player, createChecks, parsePlay, publicRpc, sha256HexOfExactBytes, sleep } from "./lib.mjs";
-import { HANDED_OVER, betPlanFor, checkOracleRecord, checkResultsJson, expectedBalance, pickMarkets } from "./markets.mjs";
+import {
+  HANDED_OVER,
+  betPlanFor,
+  cancellationProblem,
+  checkOracleRecord,
+  checkResultsJson,
+  expectedBalance,
+  pickMarkets,
+} from "./markets.mjs";
 
 /** The waits of a run, in ms; a test hands in much shorter ones. */
 export const DEFAULT_TIMING = {
@@ -65,6 +79,8 @@ async function getJson(url) {
  * @param {(line: string) => void} [options.print]
  * @param {(code: number) => void} [options.setExitCode]
  * @returns {Promise<{ok: boolean, passed: number, failed: number, results: object[], outcomes: object[], skipped: object[]}>}
+ *   `outcomes`: what became of every market that was played (`settled`, `skipped` for a reason its family may be skipped for,
+ *   `failed`); `skipped`: the families that were not played, and the rounds that were let go, `allowed` or not.
  */
 export async function runMarkets({ baseUrl, ci = false, createWallet, timing: overrides = {}, print = console.log, setExitCode } = {}) {
   const timing = { ...DEFAULT_TIMING, ...overrides };
@@ -92,21 +108,29 @@ export async function runMarkets({ baseUrl, ci = false, createWallet, timing: ov
     return finish();
   }
 
-  // The stand's own clock decides how much of a betting window is left, wherever this runs.
+  // The stand's own clock decides how much of a betting window is left, wherever this runs: its serverTimeMs against this
+  // machine's clock at the moment of the answer, once. (The windows the stand names are on its clock, not this one's.)
   const clockOffsetMs = lobby.serverTimeMs - Date.now();
   const serverNow = () => Date.now() + clockOffsetMs;
 
+  // A family that is not played is a skip only for a reason it may be skipped for (markets.mjs `FAMILIES`): a spot market that has
+  // no live price, or whose stand lists none, is a failure — the 24/7 family has no days off.
   const { plays, skips } = pickMarkets(lobby);
   for (const skip of skips) {
-    print(`SKIP  ${skip.family.title}: ${skip.reason}`);
-    skipped.push({ family: skip.family.id, reason: skip.reason });
+    skipped.push({ family: skip.family.id, reason: skip.reason, allowed: skip.allowed });
+    if (skip.allowed) {
+      print(`SKIP  ${skip.family.title}: ${skip.reason}`);
+    } else {
+      checks.scoped(skip.family.id).check(`${skip.family.title} was played, or skipped for a reason its family allows`, false, `${skip.reason} (${skip.family.skipRule})`);
+    }
   }
   if (plays.length === 0) {
     checks.check("at least one market can be played", false, skips.map((s) => `${s.family.id}: ${s.reason}`).join(" | "));
     return finish();
   }
-  for (const { family, market, series } of plays) {
+  for (const { family, market, series, passedOver } of plays) {
     log(`${family.title}: ${market.id} (${market.symbol}, ${market.source}, leverage up to x${market.maxLeverage}, rounds of ${series.durationSec} s)`);
+    if (passedOver.length > 0) log(`${family.title}: passed over before it — ${passedOver.join("; ")}`);
   }
 
   const results = await Promise.all(
@@ -121,7 +145,7 @@ export async function runMarkets({ baseUrl, ci = false, createWallet, timing: ov
   );
   outcomes.push(...results);
   for (const r of results) {
-    if (r.outcome !== "settled" && r.outcome !== "failed") skipped.push({ family: r.family, market: r.market, reason: r.reason });
+    if (r.outcome !== "settled" && r.outcome !== "failed") skipped.push({ family: r.family, market: r.market, reason: r.reason, allowed: true });
   }
   print("\n--- markets ---");
   for (const skip of skips) print(`  ${skip.family.id}: not played — ${skip.reason}`);
@@ -157,17 +181,24 @@ async function checkChainService({ baseUrl, checks, log }) {
 }
 
 /**
- * One market from the first sign-in to the oracle record. Resolves what became of it: `settled`, `cancelled` (every
- * stake came back), `skipped` (it closed before there was a round to bet on) or `failed` (a check said so).
+ * One market from the first sign-in to the oracle record. Resolves what became of it: `settled`; `skipped` (it closed before
+ * there was a round to bet on, or the round was cancelled and every stake came back — for a reason its family may be skipped
+ * for, markets.mjs `FAMILIES`); `failed` (a check said so, among them a skip for a reason its family may not be skipped for:
+ * a round of the 24/7 spot family cancelled for want of a price is no day off).
  */
 async function playMarket({ baseUrl, family, market, series, createWallet, registry, checks: c, timing, serverNow, log, print }) {
   const durationMs = series.durationSec * 1000;
   const minBettingMs = timing.minBettingMs ?? Math.min(20_000, durationMs / 3);
   const plan = betPlanFor(market);
   const outcome = (kind, reason) => ({ market: market.id, family: family.id, outcome: kind, reason });
-  const skip = (reason) => {
-    print(`SKIP  [${market.id}] ${reason}`);
-    return outcome("skipped", reason);
+  // `problem` is why (markets.mjs: `{ kind, reason }`); what the family may be skipped for decides whether this is a skip at all.
+  const skip = (reason, problem) => {
+    if (family.mayBeSkippedFor(problem, market, { serverTimeMs: serverNow() })) {
+      print(`SKIP  [${market.id}] ${reason}`);
+      return outcome("skipped", reason);
+    }
+    c.check("was played, or skipped for a reason its family allows", false, `${reason} (${family.skipRule})`);
+    return outcome("failed", reason);
   };
   // Four players of this family's own: nicknames of at most 24 characters (`E2E herd e2e spot p1`).
   const players = plan.map((_, i) => new Player(`herd e2e ${family.id} p${i + 1}`, { baseUrl, createWallet }));
@@ -192,7 +223,7 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
     try {
       pair = await players[0].rpc("rounds", "HOURLY", market.id);
     } catch (e) {
-      if (e.code === "MARKET_CLOSED") return skip("the market closed before a round could be bet on");
+      if (e.code === "MARKET_CLOSED") return skip("the market closed before a round could be bet on", { kind: "closed" });
       c.fail("fetch HOURLY rounds pair", e);
       return outcome("failed", "no rounds pair");
     }
@@ -233,7 +264,7 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
       );
       placed.push(i);
     } catch (e) {
-      if (e.code === "MARKET_CLOSED") return skip("the market closed while the bets were placed");
+      if (e.code === "MARKET_CLOSED") return skip("the market closed while the bets were placed", { kind: "closed" });
       c.fail(`placeBet: ${nickOf(player)}`, e);
     }
   }
@@ -321,7 +352,7 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
       }
     }
     await checkResultsDocument({ baseUrl, c, roundId, market, timing, view });
-    return skip(`the round was cancelled — ${reason || "no reason given"} (the refund is checked)`);
+    return skip(`the round was cancelled — ${reason || "no reason given"} (the refund is checked)`, cancellationProblem(reason));
   }
 
   c.check("round settled", view.phase === "SETTLED", `phase=${view.phase}`);

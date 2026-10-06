@@ -6,12 +6,15 @@ import {
   BET_PLAN,
   FAMILIES,
   betPlanFor,
+  cancellationProblem,
   centsOf,
   checkOracleRecord,
   checkResultsJson,
   clampLeverage,
   expectedBalance,
   pickMarkets,
+  underlyingClosedAt,
+  unplayable,
   unplayableReason,
 } from "./markets.mjs";
 
@@ -142,6 +145,150 @@ test("a long list of reasons is cut to four", () => {
 test("markets of no family are left alone: the old BTC perpetual is not a spot market", () => {
   const { plays } = pickMarkets(lobby([market({ id: "BTC", source: "hyperliquid", backupSource: null }), market({ id: "ETH" })]));
   assert.deepEqual(plays, []);
+});
+
+// --- what a family may be skipped for ---
+
+const family = (id) => FAMILIES.find((f) => f.id === id);
+const MONDAY = NOW; // 2026-09-21 14:13 UTC
+const SATURDAY = Date.parse("2026-10-10T15:00:00Z");
+
+test("a problem has a kind, and the words that are printed are the old ones", () => {
+  const ctx = { serverTimeMs: NOW };
+  const kind = (m) => unplayable(m, ctx)?.kind ?? null;
+  assert.equal(kind(market()), null);
+  assert.equal(kind(market({ status: "CLOSED", closeReason: "The source market ended" })), "closed");
+  assert.equal(kind(market({ price: null })), "no_price");
+  assert.equal(kind(market({ price: { price: "1.00", stale: true } })), "stale");
+  assert.equal(kind(market({ series: [] })), "no_series");
+  assert.equal(kind(market({ series: [{ interval: "DAILY", durationSec: 900, bettingRoundId: "x" }] })), "no_series");
+  assert.equal(kind(market({ series: [{ interval: "HOURLY", durationSec: 180, bettingRoundId: null }] })), "no_round");
+  assert.equal(kind(market({ maxLeverage: 1 })), "no_leverage");
+  assert.equal(kind(odds("PM1", "0.5", { endsAtMs: NOW + 5 * 60_000 })), "event_ending");
+  assert.equal(unplayable(market({ price: null }), ctx).reason, unplayableReason(market({ price: null }), ctx));
+});
+
+test("a round is cancelled for a closed market only when the server says `market closed:`", () => {
+  assert.deepEqual(cancellationProblem("market closed: Price left the 3%–97% range"), { kind: "closed", reason: "market closed: Price left the 3%–97% range" });
+  assert.equal(cancellationProblem("market closed: The source market ended").kind, "closed");
+  assert.equal(cancellationProblem("market closed: Moved to a new price source: Coinbase").kind, "closed");
+  assert.equal(cancellationProblem("Market closed: the first letter is a capital").kind, "closed", "the case is not what is checked");
+  assert.equal(cancellationProblem("  market closed: leading blanks").kind, "closed");
+  // the other reasons the server cancels a round for (RoundSchedulerService, AdminResource)
+  for (const other of [
+    "No price from the source; stakes returned",
+    "The exchange of this round stopped sending prices; stakes returned",
+    "no oracle price available within 1 hour of round close",
+    "settlement failed within 1 hour of round close",
+    "cancelled by operator",
+    "the market closed: said in other words",
+    "price market closed: not at the start",
+  ]) {
+    assert.equal(cancellationProblem(other).kind, "cancelled", other);
+  }
+  assert.deepEqual(cancellationProblem(""), { kind: "cancelled", reason: "no reason given" });
+  assert.deepEqual(cancellationProblem(undefined), { kind: "cancelled", reason: "no reason given" });
+});
+
+test("the market behind an xyz market is closed for the weekend from the Friday close to the Sunday opening, New York time", () => {
+  const closed = (category, iso) => underlyingClosedAt(category, Date.parse(iso));
+  // stocks: Sunday 20:00 – Friday 20:00 (EDT is UTC-4 until 2026-11-01)
+  assert.equal(closed("stocks", "2026-10-07T15:00:00Z"), false, "Wednesday");
+  assert.equal(closed("stocks", "2026-10-09T23:59:00Z"), false, "Friday 19:59");
+  assert.equal(closed("stocks", "2026-10-10T00:00:00Z"), true, "Friday 20:00");
+  assert.equal(closed("stocks", "2026-10-10T15:00:00Z"), true, "Saturday");
+  assert.equal(closed("stocks", "2026-10-11T23:59:00Z"), true, "Sunday 19:59");
+  assert.equal(closed("stocks", "2026-10-12T00:00:00Z"), false, "Sunday 20:00");
+  // indices (and gold): Sunday 18:00 – Friday 17:00
+  assert.equal(closed("indices", "2026-10-09T20:59:00Z"), false, "Friday 16:59");
+  assert.equal(closed("indices", "2026-10-09T21:00:00Z"), true, "Friday 17:00");
+  assert.equal(closed("indices", "2026-10-11T21:59:00Z"), true, "Sunday 17:59");
+  assert.equal(closed("indices", "2026-10-11T22:00:00Z"), false, "Sunday 18:00");
+  // commodities close with the later of gold (17:00) and Brent (18:00)
+  assert.equal(closed("commodities", "2026-10-09T21:30:00Z"), false, "Friday 17:30");
+  assert.equal(closed("commodities", "2026-10-09T22:00:00Z"), true, "Friday 18:00");
+  assert.equal(closed("commodities", "2026-10-11T22:00:00Z"), false, "Sunday 18:00");
+  // winter time (EST, UTC-5): the same hours an hour later in UTC
+  assert.equal(closed("indices", "2026-12-04T21:59:00Z"), false, "Friday 16:59 EST");
+  assert.equal(closed("indices", "2026-12-04T22:00:00Z"), true, "Friday 17:00 EST");
+  // what has no such hours, or is not known, or has no clock to ask, is never closed
+  assert.equal(closed("crypto", "2026-10-10T15:00:00Z"), false);
+  assert.equal(closed("politics", "2026-10-10T15:00:00Z"), false);
+  assert.equal(closed("something new", "2026-10-10T15:00:00Z"), false);
+  assert.equal(underlyingClosedAt("stocks", Number.NaN), false);
+  assert.equal(underlyingClosedAt("stocks", undefined), false);
+});
+
+test("each family may be skipped for its own reasons: spot only for a closed market, xyz and odds for a little more", () => {
+  const problem = (kind) => ({ kind, reason: "…" });
+  const may = (id, kind, { market: m = market(), serverTimeMs = MONDAY } = {}) => family(id).mayBeSkippedFor(problem(kind), m, { serverTimeMs });
+  const kinds = ["closed", "no_price", "stale", "no_series", "no_round", "no_leverage", "event_ending", "cancelled"];
+  const row = (id, opts) => kinds.filter((kind) => may(id, kind, opts));
+
+  assert.deepEqual(row("spot"), ["closed"], "the 24/7 family: a day off is a closed market and nothing else");
+  assert.deepEqual(row("spot", { serverTimeMs: SATURDAY }), ["closed"], "no weekend for the exchanges");
+  assert.deepEqual(row("xyz", { market: xyz("NVDA") }), ["closed"], "a weekday: the price must be there");
+  assert.deepEqual(row("xyz", { market: xyz("NVDA"), serverTimeMs: SATURDAY }), ["closed", "no_price", "stale"], "a weekend: no live price is the weekend");
+  assert.deepEqual(row("xyz", { market: xyz("SP500", { category: "indices" }), serverTimeMs: SATURDAY }), ["closed", "no_price", "stale"]);
+  assert.deepEqual(row("xyz", { market: xyz("NVDA", { category: "crypto" }), serverTimeMs: SATURDAY }), ["closed"], "a category with no hours has no weekend");
+  assert.deepEqual(row("odds"), ["closed", "event_ending"]);
+  assert.deepEqual(row("odds", { serverTimeMs: SATURDAY }), ["closed", "event_ending"], "no weekend for the odds");
+  // whatever the family and the day, a market with nothing to bet on, or a round cancelled for want of a price, is a broken stand
+  for (const id of ["spot", "xyz", "odds"]) {
+    for (const kind of ["no_series", "no_round", "no_leverage", "cancelled"]) assert.equal(may(id, kind, { market: xyz("NVDA"), serverTimeMs: SATURDAY }), false, `${id} ${kind}`);
+  }
+  assert.equal(family("spot").alwaysOn, true);
+  assert.deepEqual(FAMILIES.filter((f) => f.alwaysOn).map((f) => f.id), ["spot"]);
+  for (const f of FAMILIES) assert.match(f.skipRule, /skipped only when/, f.id);
+});
+
+test("a skip says whether its family may be skipped for it, and names what it may not be skipped for", () => {
+  const { skips } = pickMarkets(
+    lobby([
+      market({ price: { price: "1.00", stale: true } }),
+      xyz("NVDA", { status: "CLOSED", closeReason: "The source market ended" }),
+      odds("PM1", "0.5", { price: null }),
+    ]),
+  );
+  assert.deepEqual(skips.map((s) => [s.family.id, s.allowed]), [["spot", false], ["xyz", true], ["odds", false]]);
+  assert.deepEqual(skips[0].offending, ["spot_BTC: its price is stale"]);
+  assert.deepEqual(skips[1].offending, []);
+  assert.deepEqual(skips[2].offending, ["PM1: no price yet"]);
+  assert.match(skips[0].reason, /none of the 1 listed can be played — spot_BTC: its price is stale/, "the words are as they were");
+});
+
+test("a family is skipped only when every market tried is a reason it may be skipped for", () => {
+  const skipOf = (id, markets, serverTimeMs = MONDAY) => pickMarkets({ serverTimeMs, categories: [], markets }).skips.find((s) => s.family.id === id);
+  // closed markets only: a day off
+  assert.equal(skipOf("spot", [market({ status: "CLOSED", closeReason: "Moved to a new price source: Coinbase" })]).allowed, true);
+  assert.equal(skipOf("xyz", [xyz("NVDA", { status: "CLOSED" }), xyz("TSLA", { status: "CLOSED" })]).allowed, true);
+  // one that is not closed and not playable spoils it, wherever it stands in the list
+  const spoiled = skipOf("spot", [market({ id: "spot_BTC", status: "CLOSED" }), market({ id: "spot_ETH", price: null }), market({ id: "spot_SOL", status: "CLOSED" })]);
+  assert.equal(spoiled.allowed, false);
+  assert.deepEqual(spoiled.offending, ["spot_ETH: no price yet"]);
+  // the odds: an event about to end is a day off, an odds source that is silent is not
+  assert.equal(skipOf("odds", [odds("PM1", "0.5", { endsAtMs: NOW + 60_000 }), odds("PM2", "0.5", { status: "CLOSED", closeReason: "Price left the 3%–97% range" })]).allowed, true);
+  assert.equal(skipOf("odds", [odds("PM1", "0.5", { endsAtMs: NOW + 60_000 }), odds("PM2", "0.5", { price: { price: "0.5", stale: true } })]).allowed, false);
+  // the xyz: no price is the weekend only on a weekend
+  const noPrice = [xyz("NVDA", { price: null }), xyz("TSLA", { price: { price: "1.00", stale: true } })];
+  assert.equal(skipOf("xyz", noPrice, MONDAY).allowed, false);
+  assert.equal(skipOf("xyz", noPrice, SATURDAY).allowed, true);
+  assert.equal(skipOf("xyz", [...noPrice, xyz("GOLD", { series: [] })], SATURDAY).allowed, false, "a weekend does not excuse a market with no series");
+});
+
+test("a family with no market listed is skipped, except the 24/7 family: a stand with no spot market is broken", () => {
+  const { skips } = pickMarkets(lobby([]));
+  assert.deepEqual(skips.map((s) => [s.family.id, s.reason, s.allowed]), [
+    ["spot", "no spot crypto market is listed", false],
+    ["xyz", "no xyz market is listed", true],
+    ["odds", "no odds market is listed", true],
+  ]);
+  assert.deepEqual(skips[0].offending, ["no spot crypto market is listed"]);
+});
+
+test("the markets passed over before the one that is played are named", () => {
+  const { plays } = pickMarkets(lobby([market({ id: "spot_BTC", price: { price: "1.00", stale: true } }), market({ id: "spot_ETH" }), xyz("NVDA")]));
+  assert.deepEqual(plays.map((p) => [p.market.id, p.passedOver]), [["spot_ETH", ["spot_BTC: its price is stale"]], ["xyz_NVDA", []]]);
 });
 
 test("leverage runs from x2 to the ceiling of the market", () => {

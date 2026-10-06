@@ -3,7 +3,7 @@
 // touches a real stand, a wallet or a network beyond localhost; the run itself is the one `make e2e-markets` starts, with
 // shorter waits and a wallet that signs nothing.
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { describe, it, test } from "node:test";
 import { fakeWallet, startFakeStand } from "./fake-stand.mjs";
 import { runMarkets } from "./run-markets.mjs";
 
@@ -89,19 +89,20 @@ test("one market of each source is played in the same pass and every check passe
   for (const a of spans) for (const b of spans) assert.ok(a.first < b.over, "the markets were played side by side, not one after the other");
 });
 
-test("a family that cannot be played is skipped with its reason, and the others are played", async () => {
+test("a family that cannot be played for a reason it may be skipped for is skipped with that reason, and the others are played", async () => {
   const { result, lines, stand } = await run([
     SPOT,
     { ...XYZ, id: "xyz_NVDA", status: "CLOSED", closeReason: "The source market ended" },
-    { ...XYZ, id: "xyz_TSLA", price: null },
-    { ...ODDS, price: { stale: true } },
+    { ...XYZ, id: "xyz_TSLA", status: "CLOSED", closeReason: "The asset was delisted at the source" },
+    { ...ODDS, id: "PM1", endsAtMs: Date.now() + 30_000 }, // its event ends within the minutes a run takes
+    { ...ODDS, id: "PM2", status: "CLOSED", closeReason: "Price left the 3%–97% range" },
   ]);
   assert.deepEqual(failed(result), []);
   assert.equal(result.ok, true);
   assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["spot_BTC", "settled"]]);
-  assert.deepEqual(result.skipped.map((s) => s.family), ["xyz", "odds"]);
-  assert.ok(lines.some((l) => l.startsWith("SKIP  xyz: none of the 2 listed can be played") && l.includes("xyz_NVDA: closed (The source market ended)") && l.includes("xyz_TSLA: no price yet")), lines.join("\n"));
-  assert.ok(lines.some((l) => l.startsWith("SKIP  odds:") && l.includes("PM1: its price is stale")));
+  assert.deepEqual(result.skipped.map((s) => [s.family, s.allowed]), [["xyz", true], ["odds", true]]);
+  assert.ok(lines.some((l) => l.startsWith("SKIP  xyz: none of the 2 listed can be played") && l.includes("xyz_NVDA: closed (The source market ended)") && l.includes("xyz_TSLA: closed (The asset was delisted at the source)")), lines.join("\n"));
+  assert.ok(lines.some((l) => l.startsWith("SKIP  odds:") && l.includes("PM1: the event it is about ends within minutes") && l.includes("PM2: closed (Price left the 3%–97% range)")), lines.join("\n"));
   assert.ok(lines.some((l) => l.startsWith("  xyz: not played — none of the 2 listed")), "the table at the end names what was not played");
   assert.ok(lines.includes("  spot_BTC (spot): settled"));
   assert.equal(stand.state.players.size, 4, "only the market that is played has players");
@@ -111,12 +112,19 @@ test("a family that cannot be played is skipped with its reason, and the others 
 test("a stand with no market that can be played fails: the run proved nothing", async () => {
   const { result, codes, lines } = await run([{ ...SPOT, price: null }, { ...XYZ, status: "CLOSED" }]);
   assert.equal(result.ok, false);
-  assert.deepEqual(failed(result), ["at least one market can be played"]);
+  assert.deepEqual(failed(result), ["[spot] spot crypto was played, or skipped for a reason its family allows", "at least one market can be played"]);
   assert.deepEqual(codes, [1]);
   assert.equal(result.outcomes.length, 0);
-  assert.ok(lines.some((l) => l.startsWith("SKIP  spot crypto:")));
+  assert.ok(lines.some((l) => l.startsWith("FAIL  [spot] spot crypto was played") && l.includes("spot_BTC: no price yet")), lines.join("\n"));
+  assert.ok(lines.some((l) => l.startsWith("SKIP  xyz:")), "a closed xyz market is an ordinary skip");
+
+  // nothing the family may be skipped for, and nothing playable: the day off alone proves nothing either
+  const closed = await run([{ ...SPOT, status: "CLOSED" }, { ...XYZ, status: "CLOSED" }, { ...ODDS, status: "CLOSED" }]);
+  assert.deepEqual(failed(closed.result), ["at least one market can be played"]);
+  assert.deepEqual(closed.result.skipped.map((s) => s.allowed), [true, true, true]);
+
   const empty = await run([]);
-  assert.deepEqual(failed(empty.result), ["at least one market can be played"]);
+  assert.deepEqual(failed(empty.result), ["[spot] spot crypto was played, or skipped for a reason its family allows", "at least one market can be played"]);
 });
 
 test("a stand that cannot be read fails the run without crashing it", async () => {
@@ -247,6 +255,216 @@ test("--ci leaves out the chain service's own state and nothing else", async () 
   assert.deepEqual(failed(ci.result), []);
   const names = (r) => r.result.results.map((x) => x.name);
   assert.deepEqual(names(normal).filter((n) => !names(ci).includes(n)), ["chainsvc reachable via serverInfo (oracle block populated)"]);
+});
+
+// --- the spot family has no days off ---
+//
+// Spot crypto is the 24/7 family: the exchanges never close. A run in which it was not played, or its round was cancelled, for
+// any reason but a closed market, must not be green because the other two families were — the failure of the stand it is.
+
+const SPOT_FAMILY_CHECK = "[spot] spot crypto was played, or skipped for a reason its family allows";
+const SPOT_MARKET_CHECK = "[spot_BTC] was played, or skipped for a reason its family allows";
+
+describe("a spot market that cannot be played fails the run whatever the other families do", { concurrency: 5 }, () => {
+  const broken = [
+    ["its price is stale", { price: { stale: true } }, "spot_BTC: its price is stale"],
+    ["it has no price", { price: null }, "spot_BTC: no price yet"],
+    ["it has no series", { noSeries: true }, "spot_BTC: no running series"],
+    ["it has no round open for bets", { noBettingRound: true }, "spot_BTC: no round open for bets"],
+    ["it allows no leverage", { maxLeverage: 1 }, "spot_BTC: it allows no leverage"],
+  ];
+  for (const [name, spec, words] of broken) {
+    it(name, async () => {
+      const { result, codes, stand, lines } = await run([{ ...SPOT, ...spec }, XYZ, ODDS]);
+      assert.equal(result.ok, false);
+      assert.deepEqual(codes, [1]);
+      assert.deepEqual(failed(result), [SPOT_FAMILY_CHECK]);
+      const check = result.results.find((r) => !r.ok);
+      assert.ok(check.detail.includes(words) && check.detail.includes("the exchanges never close"), check.detail);
+      assert.deepEqual(result.skipped.map((s) => [s.family, s.allowed]), [["spot", false]]);
+      // the other two are still played, side by side, and settle: their results are not lost to the spot's failure
+      assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["xyz_NVDA", "settled"], ["PM1", "settled"]]);
+      assert.equal(stand.state.players.size, 8, "no spot player was made");
+      assert.ok(lines.includes("\nE2E FAILED"));
+    });
+  }
+});
+
+test("a stand that lists no spot market fails the run, and the other families are played", async () => {
+  const { result, codes } = await run([XYZ, ODDS]);
+  assert.equal(result.ok, false);
+  assert.deepEqual(codes, [1]);
+  assert.deepEqual(failed(result), [SPOT_FAMILY_CHECK]);
+  assert.match(result.results.find((r) => !r.ok).detail, /no spot crypto market is listed/);
+  assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["xyz_NVDA", "settled"], ["PM1", "settled"]]);
+});
+
+test("a spot market that is closed is a day off: skipped, and the run is green when the others settle", async () => {
+  const { result, codes, lines } = await run([{ ...SPOT, status: "CLOSED", closeReason: "Moved to a new price source: Coinbase" }, XYZ, ODDS]);
+  assert.deepEqual(failed(result), []);
+  assert.equal(result.ok, true);
+  assert.deepEqual(codes, []);
+  assert.deepEqual(result.skipped.map((s) => [s.family, s.allowed]), [["spot", true]]);
+  assert.ok(lines.some((l) => l.startsWith("SKIP  spot crypto:") && l.includes("spot_BTC: closed (Moved to a new price source: Coinbase)")), lines.join("\n"));
+  assert.deepEqual(result.outcomes.map((o) => o.outcome), ["settled", "settled"]);
+});
+
+test("a closed spot market does not excuse another one that has no price: the family fails, naming the one", async () => {
+  const { result } = await run([
+    { ...SPOT, id: "spot_BTC", status: "CLOSED", closeReason: "Moved to a new price source: Coinbase" },
+    { ...SPOT, id: "spot_ETH", price: null },
+    XYZ,
+  ]);
+  assert.deepEqual(failed(result), [SPOT_FAMILY_CHECK]);
+  const detail = result.results.find((r) => !r.ok).detail;
+  assert.ok(detail.includes("spot_ETH: no price yet"), detail);
+  assert.ok(result.skipped[0].reason.includes("spot_BTC: closed (Moved to a new price source: Coinbase)"), "the closed one is still in the words of the skip");
+});
+
+test("a spot market passed over for a stale price is said, and the next spot market is played", async () => {
+  const { result, lines } = await run([{ ...SPOT, id: "spot_BTC", price: { stale: true } }, { ...SPOT, id: "spot_ETH" }]);
+  assert.deepEqual(failed(result), []);
+  assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["spot_ETH", "settled"]]);
+  assert.ok(lines.some((l) => l.includes("spot crypto: passed over before it — spot_BTC: its price is stale")), lines.join("\n"));
+});
+
+describe("a spot round that is cancelled for any reason but a closed market fails the run, after its refunds are checked", { concurrency: 5 }, () => {
+  const reasons = [
+    "No price from the source; stakes returned",
+    "The exchange of this round stopped sending prices; stakes returned",
+    "no oracle price available within 1 hour of round close",
+    "settlement failed within 1 hour of round close",
+    "cancelled by operator",
+  ];
+  for (const reason of reasons) {
+    it(reason, async () => {
+      const { result, codes } = await run([SPOT, XYZ, ODDS], { faults: { cancelRounds: new Set(["spot_BTC"]), cancelReason: reason } });
+      assert.equal(result.ok, false);
+      assert.deepEqual(codes, [1]);
+      assert.deepEqual(failed(result), [SPOT_MARKET_CHECK]);
+      assert.ok(result.results.find((r) => !r.ok).detail.includes(reason));
+      assert.equal(result.results.filter((r) => r.ok && r.name.startsWith("[spot_BTC] stake refunded")).length, 4, "the four stakes came back, and that is checked all the same");
+      assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["spot_BTC", "failed"], ["xyz_NVDA", "settled"], ["PM1", "settled"]]);
+      assert.deepEqual(result.skipped, [], "it is no skip");
+    });
+  }
+});
+
+test("a spot round cancelled because its market closed is a day off: the refunds are checked, the run is green", async () => {
+  const reason = "market closed: Moved to a new price source: Coinbase";
+  const { result, lines } = await run([SPOT, XYZ, ODDS], { faults: { cancelRounds: new Set(["spot_BTC"]), cancelReason: reason } });
+  assert.deepEqual(failed(result), []);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["spot_BTC", "skipped"], ["xyz_NVDA", "settled"], ["PM1", "settled"]]);
+  assert.equal(result.results.filter((r) => r.ok && r.name.startsWith("[spot_BTC] stake refunded")).length, 4);
+  assert.ok(lines.some((l) => l.startsWith("SKIP  [spot_BTC] the round was cancelled — " + reason)), lines.join("\n"));
+  assert.deepEqual(result.skipped.map((s) => [s.family, s.market, s.allowed]), [["spot", "spot_BTC", true]]);
+});
+
+test("a spot market that closes before the first round or while the bets are placed is a day off too", async () => {
+  const [before, during] = await Promise.all([
+    run([SPOT, XYZ], { faults: { closeOnRounds: new Set(["spot_BTC"]) } }),
+    run([SPOT, XYZ], { faults: { closeOnBet: new Set(["spot_BTC"]) } }),
+  ]);
+  for (const { result } of [before, during]) {
+    assert.deepEqual(failed(result), []);
+    assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["spot_BTC", "skipped"], ["xyz_NVDA", "settled"]]);
+  }
+});
+
+test("a run in which spot is a day off and nothing else settles is no green run", async () => {
+  const { result } = await run([{ ...SPOT, status: "CLOSED" }, { ...XYZ, status: "CLOSED" }], {});
+  assert.equal(result.ok, false);
+  assert.deepEqual(failed(result), ["at least one market can be played"]);
+});
+
+// --- xyz and odds: a day off only for the reasons their families have ---
+
+test("an xyz market without a live price is skipped on a weekend by the stand's clock, and fails on any other day", async () => {
+  // The stand's clock is put on a day (whatever day it is on this machine): a Saturday, a Wednesday, and the two sides of the
+  // close of the stocks on a Friday (20:00 in New York; October is UTC-4).
+  const at = (iso) => Date.parse(iso) - Date.now();
+  const noPrice = [SPOT, { ...XYZ, price: null }, ODDS];
+  const stale = [SPOT, { ...XYZ, price: { stale: true } }];
+  const [weekend, weekday, beforeClose, afterClose] = await Promise.all([
+    run(noPrice, { clockOffsetMs: at("2026-10-10T15:00:00Z") }), // Saturday 11:00
+    run(noPrice, { clockOffsetMs: at("2026-10-07T15:00:00Z") }), // Wednesday 11:00
+    run(stale, { clockOffsetMs: at("2026-10-09T23:30:00Z") }), // Friday 19:30: the stocks still trade
+    run(stale, { clockOffsetMs: at("2026-10-10T00:30:00Z") }), // Friday 20:30: they do not
+  ]);
+
+  assert.deepEqual(failed(weekend.result), []);
+  assert.equal(weekend.result.ok, true);
+  assert.deepEqual(weekend.result.skipped.map((s) => [s.family, s.allowed]), [["xyz", true]]);
+  assert.ok(weekend.lines.some((l) => l.startsWith("SKIP  xyz:") && l.includes("xyz_NVDA: no price yet")), weekend.lines.join("\n"));
+  assert.deepEqual(weekend.result.outcomes.map((o) => o.outcome), ["settled", "settled"]);
+
+  assert.equal(weekday.result.ok, false);
+  assert.deepEqual(failed(weekday.result), ["[xyz] xyz was played, or skipped for a reason its family allows"]);
+  assert.match(weekday.result.results.find((r) => !r.ok).detail, /xyz_NVDA: no price yet/);
+  assert.deepEqual(weekday.result.outcomes.map((o) => o.outcome), ["settled", "settled"], "the others are played all the same");
+
+  assert.deepEqual(failed(beforeClose.result), ["[xyz] xyz was played, or skipped for a reason its family allows"]);
+  assert.deepEqual(failed(afterClose.result), []);
+});
+
+test("a weekend does not excuse an xyz market that has nothing to bet on, nor a category that has no weekend", async () => {
+  const saturday = Date.parse("2026-10-10T15:00:00Z") - Date.now();
+  const [noSeries, crypto] = await Promise.all([
+    run([SPOT, { ...XYZ, noSeries: true }], { clockOffsetMs: saturday }),
+    run([SPOT, { ...XYZ, category: "crypto", price: null }], { clockOffsetMs: saturday }),
+  ]);
+  assert.deepEqual(failed(noSeries.result), ["[xyz] xyz was played, or skipped for a reason its family allows"]);
+  assert.deepEqual(failed(crypto.result), ["[xyz] xyz was played, or skipped for a reason its family allows"]);
+});
+
+test("an xyz or odds round cancelled for want of a price fails the run; cancelled because its market closed it is a day off", async () => {
+  // (a round the server lets go for want of a price is cancelled minutes after its end, Р-79; a stand that did it sooner is
+  // still no day off: the family has no such reason)
+  const noPrice = "No price from the source; stakes returned";
+  const [xyz, odds, closed] = await Promise.all([
+    run([SPOT, XYZ], { faults: { cancelRounds: new Set(["xyz_NVDA"]), cancelReason: noPrice } }),
+    run([SPOT, ODDS], { faults: { cancelRounds: new Set(["PM1"]), cancelReason: noPrice } }),
+    run([SPOT, XYZ, ODDS], {
+      faults: {
+        cancelRounds: true,
+        cancelReason: { xyz_NVDA: "market closed: The source market stopped trading", PM1: "market closed: Price left the 3%–97% range", spot_BTC: "market closed: The asset was delisted at the source" },
+      },
+    }),
+  ]);
+  assert.deepEqual(failed(xyz.result), ["[xyz_NVDA] was played, or skipped for a reason its family allows"]);
+  assert.deepEqual(xyz.result.outcomes.map((o) => [o.market, o.outcome]), [["spot_BTC", "settled"], ["xyz_NVDA", "failed"]]);
+  assert.deepEqual(failed(odds.result), ["[PM1] was played, or skipped for a reason its family allows"]);
+  assert.deepEqual(failed(closed.result), ["at least one round was played to its settlement"], "every round was a day off: nothing was played");
+  assert.deepEqual(closed.result.outcomes.map((o) => o.outcome), ["skipped", "skipped", "skipped"]);
+});
+
+describe("an odds market that has no live price, or nothing to bet on, fails the run; a closed one or one about to end is a day off", { concurrency: 5 }, () => {
+  const broken = [
+    ["its price is stale", { price: { stale: true } }, "PM1: its price is stale"],
+    ["it has no price", { price: null }, "PM1: no price yet"],
+    ["it has no series", { noSeries: true }, "PM1: no running series"],
+    ["it has no round open for bets", { noBettingRound: true }, "PM1: no round open for bets"],
+  ];
+  for (const [name, spec, words] of broken) {
+    it(name, async () => {
+      const { result } = await run([SPOT, { ...ODDS, ...spec }]);
+      assert.equal(result.ok, false);
+      assert.deepEqual(failed(result), ["[odds] odds was played, or skipped for a reason its family allows"]);
+      assert.ok(result.results.find((r) => !r.ok).detail.includes(words));
+      assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["spot_BTC", "settled"]]);
+    });
+  }
+  it("it is closed (the chance left the 3%–97% band) or its event is about to end", async () => {
+    const [closed, ending] = await Promise.all([
+      run([SPOT, { ...ODDS, status: "CLOSED", closeReason: "Price left the 3%–97% range" }]),
+      run([SPOT, { ...ODDS, endsAtMs: Date.now() + 30_000 }]),
+    ]);
+    for (const { result } of [closed, ending]) {
+      assert.deepEqual(failed(result), []);
+      assert.deepEqual(result.skipped.filter((s) => s.family === "odds").map((s) => s.allowed), [true]);
+    }
+  });
 });
 
 // --- the stand's clock is not this machine's ---

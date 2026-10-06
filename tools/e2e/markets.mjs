@@ -1,9 +1,79 @@
 // What the multi-market run (tools/e2e/run-markets.mjs) decides and checks, as functions of what the stand says —
-// no network, no clock, no wallet: which market of each price source to play (and why a family is skipped), what
-// leverage a market allows, and what the stand's own public documents of a played round must agree on. Tested offline
-// in markets.test.mjs against the shapes the server sends (`MarketDto`, `RoundSettled`, results.json, the oracle
-// records journal and the market registry: server/.../dto/Markets.java, Rounds.java, util/ResultsHasher.java,
-// api/OracleRecordsResource.java, api/MarketRegistryResource.java).
+// no network, no wallet, and the only clock is the stand's own (`serverTimeMs`): which market of each price source to play
+// (and why a family is skipped, and whether it may be), what leverage a market allows, and what the stand's own public
+// documents of a played round must agree on. Tested offline in markets.test.mjs against the shapes the server sends
+// (`MarketDto`, `RoundSettled`, results.json, the oracle records journal and the market registry: server/.../dto/
+// Markets.java, Rounds.java, util/ResultsHasher.java, api/OracleRecordsResource.java, api/MarketRegistryResource.java).
+
+// --- the weekend of the underlying markets (xyz) ---
+
+/**
+ * The weekly closure of the markets behind the xyz perpetuals, New York time, per lobby category
+ * (docs/research/primary_sources.md §2.4, from https://docs.trade.xyz and Pyth `market_hours`, 2026-10-03): stocks trade
+ * from Sunday 20:00 to Friday 20:00; indices and gold from Sunday 18:00 to Friday 17:00; Brent from Sunday 18:00 to Friday
+ * 18:00. The category is called closed only when every market in it is, so `commodities` closes with Brent (18:00). The
+ * daily break of 17:00–18:00 on weekdays is not counted, and neither is a holiday: there is no calendar here, and the
+ * stand's own behaviour on one was never measured (UNVERIFIED) — a holiday is seen only as a market the stand closed.
+ */
+const WEEKLY_CLOSURE = {
+  stocks: { fridayCloseMin: 20 * 60, sundayOpenMin: 20 * 60 },
+  indices: { fridayCloseMin: 17 * 60, sundayOpenMin: 18 * 60 },
+  commodities: { fridayCloseMin: 18 * 60, sundayOpenMin: 18 * 60 },
+};
+
+const NEW_YORK_CLOCK = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+/**
+ * Whether the market behind a market of `category` is closed for the weekend at `ms` (the stand's own clock, never this
+ * machine's): from the Friday close to the Sunday opening of the category, New York time. `false` for a category that has
+ * no such hours (crypto, politics, sports) and for one this table does not know — a skip that rests on this answer is
+ * never taken on a guess.
+ */
+export function underlyingClosedAt(category, ms) {
+  const hours = WEEKLY_CLOSURE[category];
+  if (!hours || !Number.isFinite(ms)) return false;
+  const parts = Object.fromEntries(NEW_YORK_CLOCK.formatToParts(ms).map((p) => [p.type, p.value]));
+  const minuteOfDay = Number(parts.hour) * 60 + Number(parts.minute);
+  switch (parts.weekday) {
+    case "Sat":
+      return true;
+    case "Fri":
+      return minuteOfDay >= hours.fridayCloseMin;
+    case "Sun":
+      return minuteOfDay < hours.sundayOpenMin;
+    default:
+      return false;
+  }
+}
+
+// --- what a skip may be for ---
+
+// Why a market is not played — a market that cannot be played now, or one a round of which was cancelled — is a `problem`,
+// `{ kind, reason }`: the `kind` is what the skip rules of the families below are written in, the `reason` the words that are
+// printed. The kinds:
+//
+// - `closed`: the market is closed — `status` not `ACTIVE` at the pick, or a round cancelled with the reason `market closed:
+//   <why>` (what the server writes whenever a catalog closes a market: the source event ended, the chance left the 3%–97%
+//   band, the source stopped trading, the asset was delisted, the market moved to a new price source …). All of those are a
+//   market that is closed, and nothing else is "market closed";
+// - `no_price`, `stale`: the market is listed and open but has no live price;
+// - `no_series`, `no_round`, `no_leverage`: it is open but has nothing to bet on;
+// - `event_ending` (odds): the event it is about ends within the minutes a run takes;
+// - `cancelled`: a round of it was cancelled for any other reason (no price from the source, a failed settlement, an
+//   operator's cancellation …).
+
+const CLOSED_CANCELLATION = /^\s*market closed:/i;
+
+/** The problem of a round that was cancelled with `reason`: `closed` when the server says the market closed, else `cancelled`. */
+export function cancellationProblem(reason) {
+  return { kind: CLOSED_CANCELLATION.test(reason ?? "") ? "closed" : "cancelled", reason: reason || "no reason given" };
+}
 
 /**
  * The price sources of the stand, one family each: a run plays one market of every family it can (the BTC run,
@@ -13,11 +83,31 @@
  *   spot market for HYPE (docs/research/markets_architecture.md §3.4); market ids `spot_<SYMBOL>`.
  * - `xyz`: stocks, indices and commodities, perpetuals of the Hyperliquid dex `xyz`; market ids `xyz_<SYMBOL>`.
  * - `odds`: the chance of one outcome of an event, Polymarket (kind `ODDS`); market ids `PM<id>`.
+ *
+ * A family that is not played is not always an ordinary day — `mayBeSkippedFor(problem, market, { serverTimeMs })` says
+ * whether the reason (`problem`, see above) is one it may be skipped for, `skipRule` says so in words:
+ *
+ * - `spot` is the 24/7 family: the exchanges never close, so a spot market that is not played for want of a price (none,
+ *   a stale one), of a series or of a round to bet on, or whose round was cancelled for any reason but a closed market, is a
+ *   stand that is broken, not a day off. Only a closed market is a skip, and a stand that lists no spot market at all is a
+ *   failure too (`alwaysOn`).
+ * - `xyz` trades round the clock on Hyperliquid, but the markets behind it do not: it may be skipped for a closed market,
+ *   and for a missing or stale price while the market behind it is closed for the weekend (`underlyingClosedAt`, by the
+ *   stand's clock and the market's category).
+ * - `odds` may be skipped for a closed market (the source event ended, the chance left the 3%–97% band, the source stopped
+ *   trading …) and for an event that is about to end. An unreachable Polymarket — odds without a live price — is not on the
+ *   list: that is the stand's odds source being down.
+ *
+ * A family that has no market listed at all is skipped, except `alwaysOn` ones: a stand may be set up without xyz or
+ * without Polymarket.
  */
 export const FAMILIES = [
   {
     id: "spot",
     title: "spot crypto",
+    alwaysOn: true,
+    skipRule: "the exchanges never close: it is skipped only when its market is closed",
+    mayBeSkippedFor: (problem) => problem.kind === "closed",
     matches: (m) => m.kind === "PERP" && m.category === "crypto" && m.id.startsWith("spot_"),
     // The most liquid first; whatever else is listed follows in the lobby's order.
     preferred: ["spot_BTC", "spot_ETH", "spot_SOL", "spot_XRP", "spot_DOGE", "spot_HYPE"],
@@ -25,6 +115,11 @@ export const FAMILIES = [
   {
     id: "xyz",
     title: "xyz",
+    alwaysOn: false,
+    skipRule: "it is skipped only when its market is closed, or has no live price while the market behind it is closed for the weekend",
+    mayBeSkippedFor: (problem, market, { serverTimeMs }) =>
+      problem.kind === "closed" ||
+      ((problem.kind === "no_price" || problem.kind === "stale") && underlyingClosedAt(market.category, serverTimeMs)),
     matches: (m) => m.kind === "PERP" && m.id.startsWith("xyz_"),
     // Which of them trade outside US hours is not measured (docs/HANDOFF.md §6.2): the first one with a live price is taken.
     preferred: ["xyz_SP500", "xyz_NVDA", "xyz_GOLD", "xyz_TSLA", "xyz_XYZ100", "xyz_BRENTOIL"],
@@ -32,6 +127,9 @@ export const FAMILIES = [
   {
     id: "odds",
     title: "odds",
+    alwaysOn: false,
+    skipRule: "it is skipped only when its market is closed (the source event ended, the chance left the 3%–97% band …) or its event is about to end",
+    mayBeSkippedFor: (problem) => problem.kind === "closed" || problem.kind === "event_ending",
     matches: (m) => m.kind === "ODDS",
     // Not by name: the one whose chance is nearest to one half is the least likely to leave the 3%–97% band the catalog
     // closes a market at (docs/research/markets_architecture.md §3.3) before the round is over.
@@ -63,26 +161,31 @@ export function hourlySeries(market) {
 }
 
 /**
- * Why `market` cannot be played now — `null` when it can. Not played: a market that is closed, that has no price yet
- * or whose price is stale (no live source behind it; the stand then settles nothing for it, Р-77/Р-79), whose series
- * is not running or has no round open for bets, whose underlying event is about to end (its rounds would be cancelled),
- * or that allows no leverage. `serverTimeMs` is the stand's own clock (`MarketsDto.serverTimeMs`).
+ * What keeps `market` from being played now — `null` when nothing does (a `problem`, see above). Not played: a market that
+ * is closed, that has no price yet or whose price is stale (no live source behind it; the stand then settles nothing for it,
+ * Р-77/Р-79), whose series is not running or has no round open for bets, whose underlying event is about to end (its rounds
+ * would be cancelled), or that allows no leverage. `serverTimeMs` is the stand's own clock (`MarketsDto.serverTimeMs`).
  */
-export function unplayableReason(market, { serverTimeMs }) {
+export function unplayable(market, { serverTimeMs }) {
   if (market.status !== "ACTIVE") {
-    return `closed${market.closeReason ? ` (${market.closeReason})` : ""}`;
+    return { kind: "closed", reason: `closed${market.closeReason ? ` (${market.closeReason})` : ""}` };
   }
-  if (!market.price) return "no price yet";
-  if (market.price.stale) return "its price is stale";
+  if (!market.price) return { kind: "no_price", reason: "no price yet" };
+  if (market.price.stale) return { kind: "stale", reason: "its price is stale" };
   const series = hourlySeries(market);
-  if (!series) return "no running series";
-  if (!series.bettingRoundId) return "no round open for bets";
-  if (!(market.maxLeverage >= 2)) return `it allows no leverage (maxLeverage ${market.maxLeverage})`;
+  if (!series) return { kind: "no_series", reason: "no running series" };
+  if (!series.bettingRoundId) return { kind: "no_round", reason: "no round open for bets" };
+  if (!(market.maxLeverage >= 2)) return { kind: "no_leverage", reason: `it allows no leverage (maxLeverage ${market.maxLeverage})` };
   if (market.kind === "ODDS" && market.endsAtMs != null) {
     const needMs = 3 * series.durationSec * 1000 + 60_000; // the wait for the window, the round, the settlement
-    if (market.endsAtMs - serverTimeMs < needMs) return "the event it is about ends within minutes";
+    if (market.endsAtMs - serverTimeMs < needMs) return { kind: "event_ending", reason: "the event it is about ends within minutes" };
   }
   return null;
+}
+
+/** The words of `unplayable`: why `market` cannot be played now — `null` when it can. */
+export function unplayableReason(market, context) {
+  return unplayable(market, context)?.reason ?? null;
 }
 
 /** The chance of an `ODDS` market as a number in 0..1 (the raw price is the probability); `NaN` when it is not one. */
@@ -109,35 +212,42 @@ function inTryOrder(family, markets) {
 
 /**
  * The markets to play out of the lobby (`markets()`): one of every family, the first of its try order that can be
- * played. A family with no playable market is skipped, with the reason — never an error: a stand that lists no xyz
- * market, a weekend with no live price on the stocks, a Polymarket that is out of reach are all ordinary days.
+ * played. A family with no playable market is skipped, with the reason, and the skip says whether the family may be
+ * skipped for it (`allowed`, `FAMILIES`): a stand that lists no xyz market, a closed market, an event about to end are
+ * ordinary days; a spot market without a live price is a stand that is broken. `offending` are the markets whose reason the
+ * family may not be skipped for, and a family that is `alwaysOn` and not listed at all.
  *
- * @returns {{ plays: {family, market, series}[], skips: {family, reason: string}[] }}
+ * @returns {{ plays: {family, market, series, passedOver: string[]}[], skips: {family, reason: string, allowed: boolean, offending: string[]}[] }}
+ *   `passedOver`: the markets of the family tried before the one that is played, with why each could not be.
  */
 export function pickMarkets(lobby) {
   const plays = [];
   const skips = [];
+  const context = { serverTimeMs: lobby.serverTimeMs };
   for (const family of FAMILIES) {
     const tried = inTryOrder(family, lobby.markets);
     if (tried.length === 0) {
-      skips.push({ family, reason: `no ${family.title} market is listed` });
+      const reason = `no ${family.title} market is listed`;
+      skips.push({ family, reason, allowed: !family.alwaysOn, offending: family.alwaysOn ? [reason] : [] });
       continue;
     }
     let picked = null;
-    const reasons = [];
+    const problems = []; // { market, problem } of every market tried and given up
     for (const market of tried) {
-      const reason = unplayableReason(market, { serverTimeMs: lobby.serverTimeMs });
-      if (reason === null) {
+      const problem = unplayable(market, context);
+      if (problem === null) {
         picked = market;
         break;
       }
-      reasons.push(`${market.id}: ${reason}`);
+      problems.push({ market, problem });
     }
+    const words = ({ market, problem }) => `${market.id}: ${problem.reason}`;
     if (picked) {
-      plays.push({ family, market: picked, series: hourlySeries(picked) });
+      plays.push({ family, market: picked, series: hourlySeries(picked), passedOver: problems.map(words) });
     } else {
-      const shown = reasons.slice(0, 4).join("; ") + (reasons.length > 4 ? `; … (${reasons.length} in all)` : "");
-      skips.push({ family, reason: `none of the ${tried.length} listed can be played — ${shown}` });
+      const shown = problems.slice(0, 4).map(words).join("; ") + (problems.length > 4 ? `; … (${problems.length} in all)` : "");
+      const offending = problems.filter(({ market, problem }) => !family.mayBeSkippedFor(problem, market, context)).map(words);
+      skips.push({ family, reason: `none of the ${tried.length} listed can be played — ${shown}`, allowed: offending.length === 0, offending });
     }
   }
   return { plays, skips };

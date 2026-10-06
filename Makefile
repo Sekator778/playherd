@@ -139,8 +139,11 @@ tunnel-down: ## stop the detached tunnel
 e2e: web-deps ## 4-player end-to-end run against WEB_URL (default the local stand)
 	node --experimental-wasm-modules tools/e2e/run.mjs $(WEB_URL)
 
-# One market of each price source (spot crypto, an xyz market, an odds market), side by side in the same pass; a family with
-# no market that has a live price is skipped. Needs the stand to be up; see the header of tools/e2e/run-markets.mjs.
+# One market of each price source (spot crypto, an xyz market, an odds market), side by side in the same pass. Spot is the 24/7
+# family: it is skipped only when its market is closed, and a spot market without a live price, or a spot round cancelled for any
+# other reason, fails the run; xyz and odds are skipped only for the reasons of their own (a closed market, an event about to
+# end, no price while the market behind xyz is closed for the weekend). Needs the stand to be up; see the header of
+# tools/e2e/run-markets.mjs.
 e2e-markets: web-deps ## one market of each price source (spot crypto, xyz, odds) played in the same pass against WEB_URL
 	node --experimental-wasm-modules tools/e2e/run-markets.mjs $(WEB_URL)
 
