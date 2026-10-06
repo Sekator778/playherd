@@ -60,10 +60,13 @@ class SourceReleaseAfterAPauseTest {
     /** 2026-10-03T12:00:00Z: a whole hour. */
     private static final long S = 1_791_028_800_000L;
     private static final String SOURCE_REASON = "No price from the source; stakes returned";
+    private static final String VENUE_REASON = "The exchange of this round stopped sending prices; stakes returned";
     private static final String NO_PRICE_REASON = "no oracle price available within 1 hour of round close";
 
     /** A perpetual of the dex xyz: its source's five minutes, and no backup exchange. */
     private final Market xyzNvda = TestMarkets.perp("xyz_NVDA", "xyz:NVDA", Category.STOCKS, 10, 2, 5);
+    /** Coinbase with Kraken behind it. */
+    private final Market spotBtc = TestMarkets.coinbaseWithKraken("BTC", 0, 1);
 
     private final GameService gameService = mock(GameService.class);
     private final EngineRebuildService rebuildService = mock(EngineRebuildService.class);
@@ -209,6 +212,26 @@ class SourceReleaseAfterAPauseTest {
         });
         assertThat(progress.findNext(xyzNvda.id(), Interval.HOURLY)).as("the series goes on").contains(RoundClock.next(w0));
     }
+
+    @Test
+    void aNapGivesTheTwoMinutesOfTheVenueReleaseAgainToo() {
+        otherAlive.set(true);
+        decidedOn.put(spotBtc.id(), "coinbase");
+        RoundWindow w0 = hourly(spotBtc, S);
+        run(spotBtc, w0);
+        everySecond(w0.endMs() - 2 * MIN - 10 * SEC, w0.endMs() - 2 * MIN);
+        long wake = w0.endMs() + 20 * MIN;
+
+        everySecond(wake, wake + 2 * MIN - SEC); // the other exchange is alive, the round's own is not back
+        assertThat(cancellations).as("the two minutes of Р-77 count from the wake as well").isEmpty();
+        pass(wake + 2 * MIN);
+
+        assertThat(cancellations).singleElement().satisfies(c -> {
+            assertThat(c.reason()).isEqualTo(VENUE_REASON);
+            assertThat(c.atMs()).isEqualTo(wake + 2 * MIN);
+        });
+    }
+
 
     @Test
     void aRoundMoreThanAnHourBehindAtTheWakeIsRefundedAtOnceWithTheWordsOfTheHour() {

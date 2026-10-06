@@ -29,7 +29,8 @@
  * backup's ({@code spot_BTC~kraken}); polling, snapshot rows, seeding, pins, healing and staleness work per instrument.
  * Which venue a round runs on is decided once, at its open ({@code RoundVenues}), and it settles only from that venue's ring.
  * A round that cannot be priced there waits — and holds its series — until the scheduler lets it go: cancelled with a refund
- * {@code herd.prices.venue-release-after-ms} after its end when the market's other venue has a live tick fresh now
+ * {@code herd.prices.venue-release-after-ms} after its end (or after the start of the server, if that is later: a restart, or the
+ * wake of a host that slept) when the market's other venue has a live tick fresh now
  * ({@link crowdvsmarket.server.prices.MarketPrices#otherVenueLive}, Р-77), else when the minutes of its source are over
  * ({@code herd.prices.<feed>.release-after-ms}, {@link crowdvsmarket.server.prices.PricesConfig.ReleaseAfter}, Р-79 — on every
  * market, not only on one with a backup), and at the latest an hour after its end (Р-23).

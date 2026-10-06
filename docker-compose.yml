@@ -159,16 +159,17 @@ services:
       HERD_MARKETS_SPOT_BACKUP: "${HERD_MARKETS_SPOT_BACKUP:-BTC:kraken,ETH:kraken,SOL:kraken,XRP:kraken,DOGE:kraken,HYPE:coinbase}"
       HERD_PRICES_DISABLED_VENUES: "${HERD_PRICES_DISABLED_VENUES:-}"
       # A round whose exchange stopped sending prices holds its series (the rounds of a series are settled in order).
-      # HERD_PRICES_VENUE_RELEASE_AFTER_MS after the end of such a round of a crypto market, while the market's other
-      # exchange is alive, the round is cancelled with a refund and the series goes on; 0 turns that off — the round then
-      # waits for its exchange and is refunded an hour after its end (Р-77).
+      # HERD_PRICES_VENUE_RELEASE_AFTER_MS after the end of such a round of a crypto market — or after the start of the
+      # server, if that is later: a restart, or the wake of a host that slept, gives the round its minutes again — while the
+      # market's other exchange is alive, the round is cancelled with a refund and the series goes on; 0 turns that off —
+      # the round then waits for its exchange and is refunded an hour after its end (Р-77).
       HERD_PRICES_VENUE_RELEASE_AFTER_MS: "${HERD_PRICES_VENUE_RELEASE_AFTER_MS:-120000}"
       # On every market, not only on one with a backup: a round that cannot be priced is cancelled with a refund this many
-      # milliseconds after its end — or after the start of the server, if that is later: a restart gives the rounds that were
-      # running their minutes to heal from the candles — and its series goes on. One wait per price source: Hyperliquid's
-      # perpetuals (both dexes), Hyperliquid spot, Coinbase, Kraken, Polymarket, the synthetic walk. 0 turns it off for a
-      # source — its rounds then wait for the hour of Р-23, which stays the upper bound. A round nobody bet on that cannot be
-      # priced is skipped at once (Р-79).
+      # milliseconds after its end — or after the start of the server, if that is later: a restart, or the wake of a host that
+      # slept, gives the rounds that were running their minutes to heal from the candles — and its series goes on. One wait
+      # per price source: Hyperliquid's perpetuals (both dexes), Hyperliquid spot, Coinbase, Kraken, Polymarket, the synthetic
+      # walk. 0 turns it off for a source — its rounds then wait for the hour of Р-23, which stays the upper bound. A round
+      # nobody bet on that cannot be priced is skipped at once (Р-79).
       HERD_PRICES_HYPERLIQUID_RELEASE_AFTER_MS: "${HERD_PRICES_HYPERLIQUID_RELEASE_AFTER_MS:-300000}"
       HERD_PRICES_HYPERLIQUID_SPOT_RELEASE_AFTER_MS: "${HERD_PRICES_HYPERLIQUID_SPOT_RELEASE_AFTER_MS:-300000}"
       HERD_PRICES_COINBASE_RELEASE_AFTER_MS: "${HERD_PRICES_COINBASE_RELEASE_AFTER_MS:-300000}"

@@ -290,6 +290,31 @@ class VenueReleaseWithRealPricesTest {
         assertThat(prices.decidedVenue(btc, w0)).contains("coinbase");
     }
 
+    @Test
+    void aRestartGivesTheRoundItsTwoMinutesAgainEvenThoughTheOtherExchangeIsAliveFromTheFirstSecond() {
+        RoundWindow w0 = window(S);
+        long restart = END + 10 * 60 * SEC;
+        run(S - 10 * SEC, S + 100 * SEC, until(S + 100 * SEC), always()); // Coinbase stops 100 s into the round, and so does the server
+        scheduler.forgetFailedAttempts(); // the server restarts ten minutes after the end of the round: nothing is remembered ...
+        scheduler.startedAt(restart);     // ... and it has started just now
+
+        run(restart, restart + 120 * SEC - SEC, until(S + 100 * SEC), always()); // Kraken speaks from the first second, Coinbase is not back
+
+        assertThat(prices.decidedVenue(btc, w0)).as("the exchange the round was opened on").contains("coinbase");
+        assertThat(settled).isEmpty();
+        assertThat(cancellations).as("the other exchange is alive, but the two minutes count from the restart").isEmpty();
+        assertThat(progress.findNext(btc.id(), Interval.HOURLY)).contains(w0);
+
+        run(restart + 120 * SEC, restart + 125 * SEC, until(S + 100 * SEC), always());
+
+        assertThat(cancellations).singleElement().satisfies(c -> {
+            assertThat(c.roundId()).isEqualTo(w0.roundId());
+            assertThat(c.reason()).isEqualTo(RELEASE_REASON);
+            assertThat(c.atMs()).as("two minutes after the restart").isEqualTo(restart + 120 * SEC);
+        });
+        assertThat(progress.findNext(btc.id(), Interval.HOURLY)).as("the series goes on").contains(RoundClock.next(w0));
+    }
+
     // ------------------------------------------------------------------ both exchanges silent: the minutes of the exchange of the round (Р-79)
 
     @Test

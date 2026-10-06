@@ -51,9 +51,10 @@ import org.jboss.logging.Logger;
  * backup exchange, with an exchange decided for it, that cannot be settled for want of a price ({@link
  * PriceUnavailableException}) is therefore cancelled with a refund — reason {@link #VENUE_RELEASE_REASON}, its exchange
  * kept in the result — as soon as {@code herd.prices.venue-release-after-ms} (two minutes; 0 switches the rule off)
- * have passed since its end and the market's <i>other</i> exchange has a live tick fresh now ({@link
- * GameService#otherVenueLive}); the series goes on, and the next round opens on whichever exchange has a live tick at
- * its start. A round whose exchange comes back first is settled as always; with the other exchange silent too nothing
+ * have passed since its end <i>or since the start of the server, whichever is later</i> (a restart, or the wake of a host that
+ * slept, gives the round its two minutes again, as for Р-79 below) and the market's <i>other</i> exchange has a live tick fresh
+ * now ({@link GameService#otherVenueLive}); the series goes on, and the next round opens on whichever exchange has a live tick
+ * at its start. A round whose exchange comes back first is settled as always; with the other exchange silent too nothing
  * changes — the round waits, is healed from the candles for up to 30 minutes and is refunded an hour after its end
  * (Р-23) — and a market without a backup is not touched. The backoff of the failed attempts is cut at the release
  * instant ({@link SettlementBackoff}), so a round is let go when its two minutes are over, not up to a minute later.
@@ -368,7 +369,8 @@ public class RoundSchedulerService {
      * <ul>
      *   <li>a round nobody bet on is skipped at once (Р-79);
      *   <li>a round of a market with a backup exchange is cancelled with a refund as soon as {@code
-     *       herd.prices.venue-release-after-ms} have passed since its end and the market's other exchange is alive (Р-77);
+     *       herd.prices.venue-release-after-ms} have passed since its end or since the start of the server and the market's
+     *       other exchange is alive (Р-77);
      *   <li>any other round, as soon as the minutes of its source have passed since its end or since the start of the server
      *       (Р-79).
      * </ul>
@@ -438,15 +440,17 @@ public class RoundSchedulerService {
 
     /**
      * The instant from which the round of {@code market} that cannot be priced is let go, if the market's other exchange
-     * is alive: its end plus {@code herd.prices.venue-release-after-ms}. {@link Long#MAX_VALUE} — never — for a market
-     * without a backup exchange and while the rule is switched off (0).
+     * is alive: {@code herd.prices.venue-release-after-ms} after the later of its end and the start of the server — a restart
+     * or the wake of a host that slept ({@link #startAfterAPause}) gives the round its two minutes again, as it gives the minutes
+     * of its source (Р-79): the exchange that stopped may be only a feed that is reconnecting. {@link Long#MAX_VALUE} — never —
+     * for a market without a backup exchange and while the rule is switched off (0).
      */
     private long venueReleaseAt(Market market, RoundWindow window) {
         long afterMs = pricesConfig.venueReleaseAfterMs();
         if (afterMs <= 0 || !Instruments.hasBackup(market)) {
             return Long.MAX_VALUE;
         }
-        return plus(window.endMs(), afterMs);
+        return plus(Math.max(window.endMs(), startedAtMs), afterMs);
     }
 
     /**

@@ -39,15 +39,17 @@ import java.util.Set;
  *                          {@code kraken}, {@code polymarket}) that give no price at all — no stream, no REST, no
  *                          catalog request — so that a stand can be restarted with a primary exchange off to prove that
  *                          the backup answers; empty by default
- * @param venueReleaseAfterMs {@code herd.prices.venue-release-after-ms}: how long after its end a round of a market with
- *                          a backup exchange that its own exchange cannot price waits, while the market's other exchange
- *                          is alive, before it is cancelled with a refund so that the series goes on (the venue release,
- *                          see {@code RoundSchedulerService}); default 2 minutes; 0 switches the release off — the round
- *                          then waits for its exchange for the hour of Р-23
- * @param releaseAfter      {@code herd.prices.<feed>.release-after-ms}: how long after its end a round that its price source
- *                          cannot price waits, on any market, before it is cancelled with a refund so that the series goes on
- *                          (Р-79, {@link ReleaseAfter}); the minutes are the source's own, 0 for a source switches the release
- *                          off for it — its rounds then wait for the hour of Р-23
+ * @param venueReleaseAfterMs {@code herd.prices.venue-release-after-ms}: how long after its end — or after the start of
+ *                          the server, if that is later: a restart or the wake of a host that slept — a round of a market
+ *                          with a backup exchange that its own exchange cannot price waits, while the market's other
+ *                          exchange is alive, before it is cancelled with a refund so that the series goes on (the venue
+ *                          release, see {@code RoundSchedulerService}); default 2 minutes; 0 switches the release off — the
+ *                          round then waits for its exchange for the hour of Р-23
+ * @param releaseAfter      {@code herd.prices.<feed>.release-after-ms}: how long after its end — or after the start of the
+ *                          server, if that is later — a round that its price source cannot price waits, on any market, before
+ *                          it is cancelled with a refund so that the series goes on (Р-79, {@link ReleaseAfter}); the minutes
+ *                          are the source's own, 0 for a source switches the release off for it — its rounds then wait for the
+ *                          hour of Р-23
  */
 public record PricesConfig(
         boolean liveMode,

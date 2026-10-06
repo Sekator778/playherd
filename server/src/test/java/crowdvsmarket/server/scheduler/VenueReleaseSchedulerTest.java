@@ -35,10 +35,10 @@ import org.junit.jupiter.api.Test;
 /**
  * Letting a round go (Р-77) on the scheduler alone, with plain objects around it: the rounds of a series are settled in
  * order, so a round whose exchange stopped sending prices holds the series — and, when the market's other exchange is alive,
- * it is cancelled with a refund {@code herd.prices.venue-release-after-ms} (two minutes) after its end instead of an hour
- * after it (Р-23). What this class pins is the timing and the conditions; what the cancellation writes (the reason, the
- * exchange kept in the result, the refund) is {@code VenueReleaseTest}, over a database, and what "alive" means is
- * {@code LiveMarketPricesReleaseTest}.
+ * it is cancelled with a refund {@code herd.prices.venue-release-after-ms} (two minutes) after its end — or after the start of
+ * the server, if that is later: a restart gives the round its two minutes again — instead of an hour after it (Р-23). What this
+ * class pins is the timing and the conditions; what the cancellation writes (the reason, the exchange kept in the result, the
+ * refund) is {@code VenueReleaseTest}, over a database, and what "alive" means is {@code LiveMarketPricesReleaseTest}.
  *
  * <p>Time is the test's: {@code resolveOverdueRounds(market, interval, now)} is called with chosen instants, a tick a
  * second where the second matters. The market's exchange is silent while {@code silent} holds: a settlement of any round of it
@@ -196,7 +196,7 @@ class VenueReleaseSchedulerTest {
     @Test
     void aRoundNoOneTriedBeforeIsLetGoAtTheFirstAttemptWhenItsTwoMinutesAreOver() {
         RoundWindow w0 = hourly(S);
-        seedHourly(btc, w0); // a restart: the scheduler remembers nothing of the failures before it
+        seedHourly(btc, w0); // the scheduler remembers nothing of the failures before this attempt, and started long ago
 
         tick(btc, w0.endMs() + 10 * 60 * SEC);
 
@@ -219,6 +219,42 @@ class VenueReleaseSchedulerTest {
         tick(btc, w0.endMs() + 120 * SEC);
 
         assertThat(cancellations).extracting(Cancellation::atMs).containsExactly(w0.endMs() + 120 * SEC);
+    }
+
+    @Test
+    void aRestartInTheMiddleGivesTheTwoMinutesAgainEvenWithTheOtherExchangeAlive() {
+        RoundWindow w0 = hourly(S);
+        seedHourly(btc, w0);
+        long restart = w0.endMs() + 20 * 60 * SEC; // the round ended twenty minutes ago: its two minutes are long over
+        scheduler.startedAt(restart);
+
+        tick(btc, restart);
+
+        assertThat(cancellations).as("not at once: its exchange has two minutes to heal the hole that the restart left").isEmpty();
+        assertThat(progress.findNext(btc.id(), Interval.HOURLY)).contains(w0);
+
+        everySecond(btc, restart + SEC, restart + 120 * SEC - SEC);
+        assertThat(cancellations).isEmpty();
+        tick(btc, restart + 120 * SEC);
+
+        assertThat(cancellations).singleElement().satisfies(c -> {
+            assertThat(c.reason()).isEqualTo(RELEASE_REASON);
+            assertThat(c.atMs()).as("two minutes after the start of the server, at the second they are over").isEqualTo(restart + 120 * SEC);
+        });
+        assertThat(attemptOffsets(w0.roundId(), restart)).as("the attempts of the backoff, and one at the release")
+                .containsExactly(0L, 2L, 6L, 14L, 30L, 62L, 120L);
+    }
+
+    @Test
+    void aRestartBeforeTheEndOfTheRoundChangesNothingForTheTwoMinutes() {
+        RoundWindow w0 = hourly(S);
+        seedHourly(btc, w0);
+        scheduler.startedAt(w0.endMs() - 10 * 60 * SEC);
+
+        everySecond(btc, w0.endMs(), w0.endMs() + 120 * SEC);
+
+        assertThat(cancellations).extracting(Cancellation::atMs).as("from the end of the round, as without a restart")
+                .containsExactly(w0.endMs() + 120 * SEC);
     }
 
     // ------------------------------------------------------------------ what the release is not
