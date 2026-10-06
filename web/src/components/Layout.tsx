@@ -4,6 +4,7 @@ import { useApi, useSession } from "../api/ApiContext";
 import { useClock } from "../api/useClock";
 import { inPlayExcludingLiquidated, loadInPlay } from "../api/inPlay";
 import { useMyPositions } from "../api/useMyPositions";
+import { headerName } from "../api/nickname";
 import { formatPlayAmount } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 import { EngineBanner } from "./EngineBanner";
@@ -185,7 +186,7 @@ function ProfileMenu() {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {player.nickname || "Player"} ▾
+        {headerName(player)} ▾
       </button>
       {open && (
         <ul className="profile-menu__list" role="menu">

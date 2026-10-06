@@ -1,6 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiProvider, useSession } from "../api/ApiContext";
 import { fakeApi, serverInfoDto, TEST_PLAYER } from "../api/apiTestUtils";
@@ -37,12 +37,19 @@ function Opener() {
   );
 }
 
-async function openModal(api?: Api) {
+/** Where the router is, for the tests that ask whether a button moved the player. */
+function LocationProbe() {
+  const { pathname, search } = useLocation();
+  return <p data-testid="location">{pathname + search}</p>;
+}
+
+async function openModal(api?: Api, path = "/") {
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <ApiProvider api={api}>
         <Opener />
         <ConnectWalletModal />
+        <LocationProbe />
       </ApiProvider>
     </MemoryRouter>,
   );
@@ -188,8 +195,8 @@ function newPlayerApi(setNickname: Api["setNickname"]) {
   });
 }
 
-async function toNicknameStep(setNickname: Api["setNickname"]) {
-  const dialog = await openModal(newPlayerApi(setNickname));
+async function toNicknameStep(setNickname: Api["setNickname"], path = "/") {
+  const dialog = await openModal(newPlayerApi(setNickname), path);
   const user = userEvent.setup();
   await user.click(await within(dialog).findByRole("button", { name: "Continue with test wallet" }));
   const field = await within(dialog).findByLabelText("Nickname", {}, { timeout: 3000 });
@@ -252,5 +259,82 @@ describe("Connect-wallet modal — the nickname step (the server's rule, said be
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("The server is restarting — try again in a moment.");
     await user.click(within(dialog).getByRole("button", { name: "CONTINUE" }));
     expect(await within(dialog).findByText(/You've got 10,000 PLAY/)).toBeInTheDocument();
+  });
+});
+
+/** A server that signs a visitor in as a player it already knows (`isNewPlayer: false`) — one who has a nickname of their own, or none. */
+function returningPlayerApi(nickname: string, setNickname: Api["setNickname"] = vi.fn(async (n: string) => ({ ...TEST_PLAYER, nickname: n }))) {
+  const wallet = "txch1abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuv";
+  let player: typeof TEST_PLAYER | null = null;
+  return fakeApi({
+    currentPlayer: async () => player,
+    serverInfo: async () => serverInfoDto(),
+    authChallenge: async () => ({ nonce: "n", message: "sign me", expiresAtMs: 1 }),
+    authVerify: async () => {
+      player = { ...TEST_PLAYER, walletAddress: wallet, nickname };
+      return { player, isNewPlayer: false };
+    },
+    setNickname,
+  });
+}
+
+describe("Connect-wallet modal — the starter pack is told once, to the player who just got it (first tester pass, D1)", () => {
+  it("a returning player is signed in and the sheet goes away: no 'You've got 10,000 PLAY' over a balance that is not 10,000", async () => {
+    const dialog = await openModal(returningPlayerApi("Tester_One"));
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Continue with test wallet" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument(), { timeout: 3000 });
+    expect(screen.queryByText(/You've got/)).not.toBeInTheDocument();
+  });
+
+  it("a returning player stays on the screen they signed in from", async () => {
+    const dialog = await openModal(returningPlayerApi("Tester_One"), "/play/spot_ETH?side=down");
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Continue with test wallet" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument(), { timeout: 3000 });
+    expect(screen.getByTestId("location")).toHaveTextContent("/play/spot_ETH?side=down");
+  });
+
+  it("one who left their first sign-in at the nickname step (the server names them by their address) is asked for it once more — and told nothing about a pack", async () => {
+    const setNickname = vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname }));
+    const dialog = await openModal(returningPlayerApi("txch1a…stuv", setNickname));
+    const user = userEvent.setup();
+    await user.click(await within(dialog).findByRole("button", { name: "Continue with test wallet" }));
+    await user.type(await within(dialog).findByLabelText("Nickname", {}, { timeout: 3000 }), "moon Walker");
+    await user.click(within(dialog).getByRole("button", { name: "CONTINUE" }));
+    expect(setNickname).toHaveBeenCalledWith("moon Walker");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByText(/You've got/)).not.toBeInTheDocument();
+  });
+
+  it("a new player still gets the pack, after the nickname", async () => {
+    const { dialog, user, field } = await toNicknameStep(vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname })));
+    await user.type(field, "moon Walker");
+    await user.click(within(dialog).getByRole("button", { name: "CONTINUE" }));
+    expect(await within(dialog).findByRole("heading", { name: "You've got 10,000 PLAY" })).toBeInTheDocument();
+  });
+});
+
+describe("Connect-wallet modal — PLACE A BET on a first sign-in does not throw the screen away (first tester pass, D1)", () => {
+  const pressPlaceABet = async (path: string) => {
+    const { dialog, user, field } = await toNicknameStep(vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname })), path);
+    await user.type(field, "moon Walker");
+    await user.click(within(dialog).getByRole("button", { name: "CONTINUE" }));
+    await user.click(await within(dialog).findByRole("button", { name: "PLACE A BET" }));
+  };
+
+  it("from a room: the room stays, with its side", async () => {
+    await pressPlaceABet("/play/spot_ETH?side=down");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/play/spot_ETH?side=down");
+  });
+
+  it("from the lobby: the lobby stays, on its panel", async () => {
+    await pressPlaceABet("/?c=sports");
+    expect(screen.getByTestId("location")).toHaveTextContent("/?c=sports");
+  });
+
+  it.each(["/stats", "/how-it-works", "/wallet"])("from %s, where nothing can be bet: the lobby", async (path) => {
+    await pressPlaceABet(path);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
   });
 });

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useApi, useConnectModalState, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
 import { STARTER_PACK_PLAY } from "../api/contract";
-import { checkNickname, NICKNAME_HINT, NICKNAME_MAX } from "../api/nickname";
+import { checkNickname, hasPlaceholderNickname, NICKNAME_HINT, NICKNAME_MAX } from "../api/nickname";
 import { prefetchServerInfo, useServerInfo } from "../api/useServerInfo";
 import { formatPlayAmount, shortenAddress } from "../format";
 import { connectAndSignWithSage, getWalletConnectProjectId, rememberSageAddress } from "../wallet/walletConnect";
@@ -27,6 +27,7 @@ export function ConnectWalletModal() {
   const session = useSession();
   const api = useApi();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   // Bumped on every open/close transition so a stale connect-attempt resolution (from an attempt
@@ -43,6 +44,9 @@ export function ConnectWalletModal() {
   // The nickname step: the server's own refusal, shown beside the field — and whether a save is on its way.
   const [nicknameError, setNicknameError] = useState<string | null>(null);
   const [savingNickname, setSavingNickname] = useState(false);
+  // This sign-in made the player (`AuthSessionDto.isNewPlayer`), so the starter pack is theirs to be told about once the
+  // nickname is in. A returning player is never told again: their balance is in the header, whatever it has become.
+  const [startedAsNewPlayer, setStartedAsNewPlayer] = useState(false);
 
   // What the "connect" step offers (the test wallet, Sage) depends on `serverInfo()`: `ConnectStep` below reads it from
   // the shared store — unknown until the server answers, never assumed. The answer is asked for as soon as the app
@@ -64,6 +68,7 @@ export function ConnectWalletModal() {
       setErrorMessage("");
       setNicknameError(null);
       setSavingNickname(false);
+      setStartedAsNewPlayer(false);
     }
   }
 
@@ -130,7 +135,12 @@ export function ConnectWalletModal() {
     setAddress(session_.player.walletAddress);
     await session.refresh();
     if (attemptIdRef.current !== attemptId) return;
-    setStep(session_.isNewPlayer ? "nickname" : "starter-pack");
+    setStartedAsNewPlayer(session_.isNewPlayer);
+    // A new player picks a nickname and is then told about the starter pack. A returning one is signed in: the sheet
+    // goes away and leaves them where they were — unless they left the first sign-in at the nickname step, which the
+    // server remembers as no nickname at all (the wallet address stands in), so it is asked for once more.
+    if (session_.isNewPlayer || hasPlaceholderNickname(session_.player)) setStep("nickname");
+    else close();
   };
 
   const startConnect = async () => {
@@ -209,7 +219,8 @@ export function ConnectWalletModal() {
       await api.setNickname(nicknameCheck.value);
       await session.refresh();
       if (attemptIdRef.current !== attemptId) return; // the sheet was closed meanwhile
-      setStep("starter-pack");
+      if (startedAsNewPlayer) setStep("starter-pack");
+      else close();
     } catch (err) {
       if (attemptIdRef.current !== attemptId) return;
       setNicknameError(mutationErrorText(err, "Couldn't save the nickname — try again."));
@@ -341,7 +352,9 @@ export function ConnectWalletModal() {
                 className="btn btn--primary btn--block btn--lg"
                 onClick={() => {
                   handleClose();
-                  navigate("/");
+                  // Signed in from a room (or the lobby) the player is already where the bet is: the button must
+                  // not throw the room away. From any other screen the lobby is where a first bet starts.
+                  if (!isBettingScreen(pathname)) navigate("/");
                 }}
               >
                 PLACE A BET
@@ -355,6 +368,11 @@ export function ConnectWalletModal() {
       </div>
     </div>
   );
+}
+
+/** The screens a first bet is placed from: the lobby (its cards lead to a room) and a room itself. */
+function isBettingScreen(pathname: string): boolean {
+  return pathname === "/" || pathname.startsWith("/play/");
 }
 
 /**
