@@ -163,7 +163,14 @@ export function RoundPage() {
         ) : (
           // RUNNING: live unrealized P&L, the room left before liquidation (pulsing as it closes in); a
           // liquidated position (running or settled) reads as the whole stake gone (Р-7).
-          <OwnPositionCard position={ownPosition} referencePrice={referencePrice} market={market} format={priceFormat} hero />
+          <OwnPositionCard
+            position={ownPosition}
+            referencePrice={referencePrice}
+            market={market}
+            format={priceFormat}
+            hero
+            closePrice={round.phase === "SETTLED" ? round.closePrice : null}
+          />
         ))}
 
       <div className="two-col">

@@ -988,6 +988,12 @@ ol {
   font-size: 13px;
   margin-top: 2px;
 }
+/* Why a bet was liquidated (the liquidation price, and that the path of the round liquidates, not only its close). */
+.own-outcome__why {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
 
 /* Skeletons ------------------------------------------------------------------ */
 

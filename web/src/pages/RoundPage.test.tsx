@@ -132,6 +132,53 @@ describe("Round page — the player's own position", () => {
     expect(screen.getByText("You lost your whole stake.")).toBeInTheDocument();
   });
 
+  it("liquidated: says at which price, and that the price reached it DURING the round — the round may close well clear of it (first tester pass, D6)", async () => {
+    renderRound(
+      settled({
+        openPrice: "100.00",
+        closePrice: "99.20", // a close less than 1% down; x10 liquidates at 90.50, which the path of the round touched
+        positions: [publicPosition({ ...me, stake: "100.000", payout: "0.000", liquidated: true, entryPrice: "100.00", liquidationPrice: "90.50" })],
+      }),
+      true,
+    );
+    const card = (await screen.findByText(/-100 PLAY · liquidated/)).closest(".card") as HTMLElement;
+    expect(within(card).getByText("You lost your whole stake.")).toBeInTheDocument();
+    expect(within(card).getByText(/Entry \$100\.00 · Liquidation price \$90\.50/)).toBeInTheDocument();
+    expect(card).toHaveTextContent(
+      "The price reached $90.50 during the round, so the position was liquidated at that moment. Liquidation is checked all through the round, not only at its close (this round closed at $99.20).",
+    );
+  });
+
+  it("liquidated on an odds round: 'odds', in percent — the tester's BOLT, which closed near where it opened", async () => {
+    renderRound(
+      settled({
+        roundId: "PM900104-1h-0",
+        marketId: "PM900104",
+        asset: "GER",
+        kind: "ODDS",
+        priceDecimals: 6,
+        source: "polymarket",
+        openPrice: "0.745000",
+        closePrice: "0.735000",
+        positions: [publicPosition({ ...me, stake: "100.000", payout: "0.000", liquidated: true, entryPrice: "0.745000", liquidationPrice: "0.704000" })],
+      }),
+      true,
+    );
+    const card = (await screen.findByText(/-100 PLAY · liquidated/)).closest(".card") as HTMLElement;
+    expect(within(card).getByText(/Entry 74\.5% · Liquidation price 70\.4%/)).toBeInTheDocument();
+    expect(card).toHaveTextContent("The odds reached 70.4% during the round");
+    expect(card).toHaveTextContent("(this round closed at 73.5%)");
+  });
+
+  it("liquidated while the round still runs: the same two facts, and no close to compare with yet", async () => {
+    const own = publicPosition({ ...me, stake: "100.000", liquidated: true, entryPrice: "100.00", liquidationPrice: "90.50" });
+    renderRound(runningRoundOf("BTC", "BTC", { positions: [own], crowd: crowdPosition() }), true);
+    const card = (await screen.findByText(/-100 PLAY · liquidated/)).closest(".card") as HTMLElement;
+    expect(within(card).getByText(/Entry \$100\.00 · Liquidation price \$90\.50/)).toBeInTheDocument();
+    expect(card).toHaveTextContent("The price reached $90.50 during the round");
+    expect(card).not.toHaveTextContent("closed at");
+  });
+
   it("running: live P&L, the meter of room left before liquidation, entry and liquidation prices", async () => {
     const own = publicPosition({ ...me, size: "10.00000000", entryPrice: "100.00", liquidationPrice: "90.50", stake: "100.000" });
     renderRound(runningRoundOf("BTC", "BTC", { positions: [own], crowd: crowdPosition() }), true);

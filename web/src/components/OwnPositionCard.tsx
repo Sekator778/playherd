@@ -19,6 +19,7 @@ export function OwnPositionCard({
   market,
   format,
   hero = false,
+  closePrice = null,
 }: {
   position: PublicPositionDto;
   referencePrice: MarketReferenceDto | null;
@@ -27,20 +28,34 @@ export function OwnPositionCard({
   format?: PriceFormatMarket;
   /** `card--hero`: the round page's own-position card is the top of that screen. */
   hero?: boolean;
+  /** The price the round CLOSED at, once it has: a liquidated bet is explained against it ("this round closed at …"). */
+  closePrice?: string | null;
 }) {
   const heroClass = hero ? "card--hero" : "";
+  const priceText = (price: string) => formatPrice(price, market ?? format ?? FALLBACK);
   if (position.liquidated) {
+    // The page used to say only "liquidated, you lost your whole stake" under a round that closed a point away from where it
+    // opened (first tester pass, D6): no liquidation price, and not a word that it is the path of the price DURING the round
+    // that liquidates, not its close. Both are said now, in the market's own words ("odds" for an odds market).
+    const word = (market ?? format ?? FALLBACK).kind === "ODDS" ? "odds" : "price";
     return (
       <div className={`card ${heroClass} own-outcome own-outcome--liquidated`}>
         <div className="net-result">
           <span className="outcome-lost">{formatPlayAmount(-Number(positionStakeStr(position)), { sign: true })} PLAY · liquidated</span>
         </div>
         <p className="net-result__secondary">You lost your whole stake.</p>
+        <p className="mono muted live-prices">
+          Entry {priceText(position.entryPrice)} · Liquidation price {priceText(position.liquidationPrice)}
+        </p>
+        <p className="muted own-outcome__why">
+          The {word} reached {priceText(position.liquidationPrice)} during the round, so the position was liquidated at that moment.
+          Liquidation is checked all through the round, not only at its close
+          {closePrice ? ` (this round closed at ${priceText(closePrice)})` : ""}.
+        </p>
       </div>
     );
   }
   const read = referencePrice && market ? liveRead(position, referencePrice.price, market) : null;
-  const priceText = (price: string) => formatPrice(price, market ?? format ?? FALLBACK);
   return (
     <div className={`card ${heroClass} own-outcome ${read ? liquidationLiveCardClass(read.roomFraction) : ""}`}>
       <p className="faint">
