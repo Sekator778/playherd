@@ -25,10 +25,12 @@ import org.junit.jupiter.api.Test;
  * resolved nor refunded, ever: the stake stayed debited, was not even counted as "in play" (only the
  * cursor and the window after it are), and every later restart seeded the same way. Now no series is
  * seeded later than the earliest window that still holds a bet and has no result row, and the
- * scheduler resolves — or, without a price for an hour, refunds — it.
+ * scheduler resolves — or, without a price, refunds — it: five minutes after the restart, the minutes of
+ * the source of the market (Р-79).
  *
  * <p>Time is the test's: the scheduler is off, a "restart" is {@code rebuild(now)} with a chosen
- * {@code now}, and the windows are one minute long.
+ * {@code now} (and {@code startedAt(now)}, for the scheduler's own memory of it), and the windows are
+ * one minute long.
  */
 @QuarkusTest
 @TestProfile(LiveMarketsProfile.class)
@@ -36,6 +38,8 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
 
     private static final Interval HOURLY = Interval.HOURLY;
     private static final long STEP = 60_000L;
+    /** The wait of the synthetic feed that prices the markets listed here (Р-79). */
+    private static final long FIVE_MINUTES = 300_000L;
 
     private Rounds.RoundSettled settled(String roundId) {
         Rounds.RoundDto dto = roundResults.findRoundDto(roundId).orElseThrow();
@@ -104,7 +108,7 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
     }
 
     @Test
-    void withoutAPriceTheStrandedBetIsRefundedOneHourAfterItsWindowEnded() {
+    void withoutAPriceTheStrandedBetIsRefundedFiveMinutesAfterTheRestart() {
         Market market = list("T_STRANDNOPRICE", MarketKind.PERP, Category.CRYPTO, "SNP", 10, 0);
         prices.setPrice(market, "100.00");
         prices.failAllResolves(market, new PriceUnavailableException("source is down"));
@@ -114,15 +118,22 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
 
         long restartAt = w1.endMs() + 5_000L;
         rebuild.rebuild(restartAt);
+        scheduler.startedAt(restartAt); // the server has started just now: the minutes of a round without a price count from it (Р-79)
         scheduler.tick(restartAt);
 
         assertThat(roundResults.exists(w1.roundId())).as("no price yet: retried, not cancelled").isFalse();
         assertThat(gameService.account(p).inPlay()).isEqualTo("300.000");
 
-        scheduler.tick(w1.endMs() + 3_600_000L);
+        scheduler.tick(restartAt + FIVE_MINUTES - 1);
+        assertThat(roundResults.exists(w1.roundId())).as("five minutes after the restart are not over a millisecond before").isFalse();
+        assertThat(gameService.account(p).inPlay()).isEqualTo("300.000");
+
+        scheduler.tick(restartAt + FIVE_MINUTES);
 
         Rounds.RoundDto dto = roundResults.findRoundDto(w1.roundId()).orElseThrow();
         assertThat(dto).isInstanceOf(Rounds.RoundCancelled.class);
+        assertThat(((Rounds.RoundCancelled) dto).cancellation().reason()).isEqualTo("No price from the source; stakes returned");
+        assertThat(((Rounds.RoundCancelled) dto).cancellation().cancelledAtMs()).isEqualTo(restartAt + FIVE_MINUTES);
         assertThat(((Rounds.RoundCancelled) dto).cancellation().refundedBetCount()).isEqualTo(1);
         assertThat(gameService.account(p).balance()).isEqualTo("10000.000");
         assertThat(gameService.account(p).inPlay()).isEqualTo("0.000");

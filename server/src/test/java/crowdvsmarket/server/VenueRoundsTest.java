@@ -39,7 +39,7 @@ class VenueRoundsTest extends LiveGameTestBase {
 
     private static final Interval HOURLY = Interval.HOURLY;
     private static final Interval DAILY = Interval.DAILY;
-    private static final long HOUR = 3_600_000L;
+    private static final long MINUTE = 60_000L;
 
     @Inject
     RoundVenues venues;
@@ -234,23 +234,31 @@ class VenueRoundsTest extends LiveGameTestBase {
     }
 
     @Test
-    void aRoundThatCannotBePricedOnItsExchangeIsRefundedAnHourAfterItsEndAndKeepsTheExchange() {
+    void aRoundThatCannotBePricedOnItsExchangeIsRefundedAfterTheMinutesOfThatExchangeAndKeepsIt() {
         Market market = backupMarket("T_VN_REFUND", "VNR");
         RoundWindow running = roundProgress.next(market.id(), HOURLY);
         RoundWindow betting = roundProgress.bettingWindow(market.id(), HOURLY);
         String player = signUp("vnrefund");
         gameService.placeBet(player, bet(betting, Enums.Direction.UP, 2, "300.000"), betting.startMs() - 1);
         venues.decide(betting.roundId(), market.id(), betting.startMs(), "kraken", betting.startMs());
-        // Kraken cannot price it, and the round does not move to Coinbase: it waits, as any round without a price does (Р-23)
+        prices.setVenue(market, "kraken"); // what the pipeline answers for a round decided on Kraken: its exchange, and so its minutes
+        // Kraken cannot price it, and the round does not move to Coinbase: it waits for the five minutes of its exchange (Р-79; the
+        // other exchange is not alive here, so the two minutes of Р-77 do not apply) and is then cancelled with a refund
         prices.failAllResolves(market, new crowdvsmarket.server.prices.PriceUnavailableException("no price on kraken"));
         scheduler.tick(running.endMs());
         scheduler.tick(betting.endMs() + 1);
         assertThat(roundResults.exists(betting.roundId())).isFalse();
         assertThat(gameService.account(player).inPlay()).isEqualTo("300.000");
 
-        scheduler.tick(betting.endMs() + HOUR);
+        scheduler.tick(betting.endMs() + 5 * MINUTE - 1);
+        assertThat(roundResults.exists(betting.roundId())).as("five minutes are not over a millisecond before").isFalse();
+        assertThat(gameService.account(player).inPlay()).isEqualTo("300.000");
+        scheduler.tick(betting.endMs() + 5 * MINUTE);
 
         Rounds.RoundCancelled cancelled = (Rounds.RoundCancelled) roundResults.findRoundDto(betting.roundId()).orElseThrow();
+        assertThat(cancelled.cancellation().reason()).as("the words of the source's minutes, not of the hour")
+                .isEqualTo("No price from the source; stakes returned");
+        assertThat(cancelled.cancellation().cancelledAtMs()).isEqualTo(betting.endMs() + 5 * MINUTE);
         assertThat(cancelled.cancellation().refundedBetCount()).isEqualTo(1);
         assertThat(cancelled.source()).isEqualTo("kraken");
         assertThat(venueColumn(betting.roundId())).isEqualTo("kraken");

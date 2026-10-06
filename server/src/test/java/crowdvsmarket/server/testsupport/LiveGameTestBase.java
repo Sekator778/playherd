@@ -61,6 +61,7 @@ public abstract class LiveGameTestBase {
     protected void resetScriptAndMockChain() {
         prices.reset();
         scheduler.forgetFailedAttempts();   // what one test's clock left behind must not hold a window back in another
+        scheduler.startedAt(0L);            // no restart to remember: a test that simulates one (Р-79) must not leave it to another
         startBtcSeriesPastWhatIsSettled();
         org.mockito.Mockito.when(chainSvcClient.oracleRecords(org.mockito.ArgumentMatchers.anyList()))
                 .thenAnswer(inv -> {

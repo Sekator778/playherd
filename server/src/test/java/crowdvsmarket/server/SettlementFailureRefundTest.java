@@ -39,6 +39,10 @@ import org.mockito.Mockito;
  * is checked BEFORE the engine lock is taken and anything is written — an open or close that is not
  * positive, a path of more than 30 candles — and a violation is "no usable price": it used to reach the
  * settlement transaction, fail there and get the whole engine rebuilt from the log, once a second.
+ *
+ * <p>The hour is for the failures that are not "no price". A round without a usable price is let go after the
+ * minutes of its source, with the source's words (Р-79) — five for the synthetic feed of these markets — so the
+ * tests of "no usable price" below pin that: not a millisecond before the five minutes, the refund at them.
  */
 @QuarkusTest
 @TestProfile(LiveMarketsProfile.class)
@@ -46,8 +50,10 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
 
     private static final Interval HOURLY = Interval.HOURLY;
     private static final long HOUR = 3_600_000L;
-    private static final String NO_PRICE = "no oracle price available within 1 hour of round close";
+    /** The wait of the synthetic feed that prices the markets listed here (Р-79). */
+    private static final long FIVE_MINUTES = 300_000L;
     private static final String SETTLEMENT_FAILED = "settlement failed within 1 hour of round close";
+    private static final String NO_PRICE_FROM_THE_SOURCE = "No price from the source; stakes returned";
 
     @InjectSpy
     OracleRecordRepository oracleRecords;
@@ -77,10 +83,16 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
     }
 
     private void assertRefundedOnceAnHourAfterTheEnd(Fixture f, String reason) {
-        assertThat(roundResults.exists(f.betting().roundId())).as("not cancelled before the hour is over").isFalse();
+        assertRefundedExactlyAt(f, f.betting().endMs() + HOUR, reason);
+    }
+
+    /** Not cancelled a millisecond before {@code atMs}, the stake still in play; cancelled with {@code reason} and refunded at it. */
+    private void assertRefundedExactlyAt(Fixture f, long atMs, String reason) {
+        scheduler.tick(atMs - 1);
+        assertThat(roundResults.exists(f.betting().roundId())).as("not cancelled before the time is over").isFalse();
         assertThat(gameService.account(f.player()).inPlay()).isEqualTo("300.000");
 
-        scheduler.tick(f.betting().endMs() + HOUR);
+        scheduler.tick(atMs);
 
         Rounds.RoundDto dto = roundResults.findRoundDto(f.betting().roundId()).orElseThrow();
         assertThat(dto).isInstanceOf(Rounds.RoundCancelled.class);
@@ -103,8 +115,8 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
         assertThat(roundProgress.next(f.market().id(), HOURLY).startMs()).as("the series waits").isLessThanOrEqualTo(
                 f.betting().startMs());
 
-        scheduler.tick(f.betting().endMs() + HOUR - 1);   // one millisecond short of the hour
-        assertThat(roundResults.exists(f.betting().roundId())).isFalse();
+        scheduler.tick(f.betting().endMs() + FIVE_MINUTES);   // not "no price": the minutes of the source are not for it
+        assertThat(roundResults.exists(f.betting().roundId())).as("an hour, not five minutes").isFalse();
         assertRefundedOnceAnHourAfterTheEnd(f, SETTLEMENT_FAILED);
     }
 
@@ -137,7 +149,13 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
         return new Candle(window.startMs() + i, window.startMs() + i, p, p, p, p, BigDecimal.ZERO, 0);
     }
 
-    private void assertUnusableDataIsNoPrice(String id, String symbol, Function<RoundWindow, RoundPriceData> odd) {
+    /**
+     * Data of the source that cannot be used is "no price": nothing is written for the window and the engine is not rebuilt behind
+     * it, the round waits, and when the minutes of its source are over — to the millisecond — it is cancelled with the source's
+     * words and every stake is refunded (Р-79).
+     */
+    private void assertUnusableDataIsNoPriceAndLetGoAfterTheMinutes(String id, String symbol,
+                                                                    Function<RoundWindow, RoundPriceData> odd) {
         Fixture f = marketWithABet(id, symbol);
         scheduler.tick(f.running().endMs());
         prices.scriptData(f.market(), f.betting(), odd.apply(f.betting()));
@@ -154,24 +172,25 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
         assertThat(hub.ledger()).as("and the engine was not rebuilt behind a failed transaction")
                 .isSameAs(ledgerBefore);
         assertThat(gameService.hasPendingBets(f.betting())).isTrue();
-        assertRefundedOnceAnHourAfterTheEnd(f, NO_PRICE);   // it is "no price": the reason says so
+        // it is "no price": the minutes of its source with the source's words, not the hour
+        assertRefundedExactlyAt(f, f.betting().endMs() + FIVE_MINUTES, NO_PRICE_FROM_THE_SOURCE);
     }
 
     @Test
     void anOpenThatIsNotPositiveIsNoPrice() {
-        assertUnusableDataIsNoPrice("T_BADOPEN", "BOP", w -> new RoundPriceData(new BigDecimal("0.00"),
+        assertUnusableDataIsNoPriceAndLetGoAfterTheMinutes("T_BADOPEN", "BOP", w -> new RoundPriceData(new BigDecimal("0.00"),
                 new BigDecimal("101.00"), List.of(candle(w, 0, "101.00")), w.endMs() - 1));
     }
 
     @Test
     void aCloseThatRoundsToZeroAtTheEnginesScaleIsNoPrice() {
-        assertUnusableDataIsNoPrice("T_BADCLOSE", "BCL", w -> new RoundPriceData(new BigDecimal("100.00"),
+        assertUnusableDataIsNoPriceAndLetGoAfterTheMinutes("T_BADCLOSE", "BCL", w -> new RoundPriceData(new BigDecimal("100.00"),
                 new BigDecimal("0.004"), List.of(candle(w, 0, "100.00")), w.endMs() - 1));
     }
 
     @Test
     void aPathOfMoreThanThirtyCandlesIsNoPrice() {
-        assertUnusableDataIsNoPrice("T_LONGPATH", "LNG", w -> {
+        assertUnusableDataIsNoPriceAndLetGoAfterTheMinutes("T_LONGPATH", "LNG", w -> {
             List<Candle> path = new ArrayList<>();
             for (int i = 0; i < 31; i++) {
                 path.add(candle(w, i, "100.00"));
