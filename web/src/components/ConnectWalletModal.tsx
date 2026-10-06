@@ -13,6 +13,10 @@ import { SageSignInTips } from "./SageHints";
 
 type Step = "connect" | "sage-qr" | "waiting" | "nickname" | "starter-pack" | "error";
 
+/** How long "Opening a connection to Sage…" is allowed to spin before the sheet says Sage could not be reached (first tester
+ *  pass, D5: the relay's socket opened and closed within 3 s and the sheet spun for ever, with no word and no way on). */
+export const SAGE_CONNECT_WAIT_MS = 15_000;
+
 /**
  * The first-time sign-in flow (`ux_spec.md` §10), one modal shared by every "CONNECT WALLET"
  * entry point in the app (header, Home/Round/Profile/Wallet "not signed in" cards). Copy is
@@ -41,6 +45,11 @@ export function ConnectWalletModal() {
   const [pairingUri, setPairingUri] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [signInVia, setSignInVia] = useState<"test wallet" | "Sage">("test wallet");
+  // Sage's pairing link has not arrived within SAGE_CONNECT_WAIT_MS: it could not be reached, and the sheet says so.
+  const [sageStalled, setSageStalled] = useState(false);
+  const sageProjectIdRef = useRef("");
+  const { status: serverInfoStatus, info: serverInfo } = useServerInfo();
+  const testWalletOffered = serverInfoStatus === "unsupported" ? true : serverInfo?.testWallet !== false;
   // The nickname step: the server's own refusal, shown beside the field — and whether a save is on its way.
   const [nicknameError, setNicknameError] = useState<string | null>(null);
   const [savingNickname, setSavingNickname] = useState(false);
@@ -69,6 +78,7 @@ export function ConnectWalletModal() {
       setNicknameError(null);
       setSavingNickname(false);
       setStartedAsNewPlayer(false);
+      setSageStalled(false);
     }
   }
 
@@ -87,6 +97,14 @@ export function ConnectWalletModal() {
       previouslyFocused.current?.focus?.();
     };
   }, [isOpen]);
+
+  // "Opening a connection to Sage…" is a wait for the pairing link; past SAGE_CONNECT_WAIT_MS with none, Sage is not
+  // reachable (and a link that turns up later still shows its QR: the sheet does not stay wrong).
+  useEffect(() => {
+    if (step !== "sage-qr" || pairingUri) return;
+    const timer = window.setTimeout(() => setSageStalled(true), SAGE_CONNECT_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [step, pairingUri]);
 
   if (!isOpen) return null;
 
@@ -144,7 +162,9 @@ export function ConnectWalletModal() {
   };
 
   const startConnect = async () => {
-    const attemptId = attemptIdRef.current;
+    // A new attempt invalidates the one before it: a Sage connection abandoned for the test wallet must not wake up
+    // later, finish its sign-in and take the sheet over.
+    const attemptId = ++attemptIdRef.current;
     setSignInVia("test wallet");
     setStep("waiting");
     try {
@@ -178,8 +198,10 @@ export function ConnectWalletModal() {
    *  message text (`chia_signMessageByAddress`'s own param), not the nonce `authVerify` also
    *  needs. */
   const startSageConnect = async (wcProjectId: string) => {
-    const attemptId = attemptIdRef.current;
+    const attemptId = ++attemptIdRef.current;
+    sageProjectIdRef.current = wcProjectId;
     setSignInVia("Sage");
+    setSageStalled(false);
     setPairingUri("");
     setStep("sage-qr");
     let nonce = "";
@@ -264,6 +286,28 @@ export function ConnectWalletModal() {
                 <CopyButton value={pairingUri} label="Copy connection link" className="btn btn--secondary btn--block" />
                 <SageSignInTips />
               </>
+            ) : sageStalled ? (
+              <div className="stack" style={{ gap: 12, padding: "12px 0" }}>
+                <div role="alert">
+                  <p className="field-error">Couldn't reach Sage.</p>
+                  <p className="muted">
+                    The connection it needs did not open within {SAGE_CONNECT_WAIT_MS / 1000} seconds — it may be your network, or this site's
+                    address may not be allowed to use WalletConnect yet.
+                  </p>
+                </div>
+                {testWalletOffered && (
+                  <button type="button" className="btn btn--primary btn--block btn--lg" onClick={() => void startConnect()}>
+                    Continue with test wallet
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`btn ${testWalletOffered ? "btn--secondary" : "btn--primary btn--lg"} btn--block`}
+                  onClick={() => void startSageConnect(sageProjectIdRef.current)}
+                >
+                  Try Sage again
+                </button>
+              </div>
             ) : (
               <div style={{ padding: "24px 0" }}>
                 <div className="spinner" aria-hidden="true" />
@@ -290,7 +334,16 @@ export function ConnectWalletModal() {
             <h2 id="connect-modal-title">Couldn't connect</h2>
             <p className="field-error">{errorMessage}</p>
             <div className="modal-actions stack" style={{ gap: 10 }}>
-              <button type="button" className="btn btn--primary btn--block btn--lg" onClick={() => setStep("connect")}>
+              {signInVia === "Sage" && testWalletOffered && (
+                <button type="button" className="btn btn--primary btn--block btn--lg" onClick={() => void startConnect()}>
+                  Continue with test wallet
+                </button>
+              )}
+              <button
+                type="button"
+                className={`btn ${signInVia === "Sage" && testWalletOffered ? "btn--secondary" : "btn--primary btn--lg"} btn--block`}
+                onClick={() => setStep("connect")}
+              >
                 Try again
               </button>
               <button type="button" className="btn btn--secondary btn--block" onClick={handleClose}>

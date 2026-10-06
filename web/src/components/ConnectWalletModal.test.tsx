@@ -1,13 +1,15 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiProvider, useSession } from "../api/ApiContext";
 import { fakeApi, serverInfoDto, TEST_PLAYER } from "../api/apiTestUtils";
 import { ApiRequestError, type Api, type ServerInfoDto } from "../api/contract";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 
-const wc = vi.hoisted(() => ({ projectId: null as string | null }));
+// `pairing`: what Sage's side does — "uri": gives its pairing link; "never": the relay never answers (the link never comes);
+// "reject": the connection fails outright.
+const wc = vi.hoisted(() => ({ projectId: null as string | null, pairing: "uri" as "uri" | "never" | "reject" }));
 
 // The browser test wallet's WASM crypto is not what these tests are about — a stand-in that "signs" instantly.
 vi.mock("../wallet/testWallet", () => ({
@@ -22,7 +24,8 @@ vi.mock("../wallet/walletConnect", async (importOriginal) => {
     getWalletConnectProjectId: () => wc.projectId,
     // A pairing that shows its link and then waits for Sage forever: enough to see the QR step.
     connectAndSignWithSage: vi.fn((_id: string, _message: unknown, onUri: (uri: string) => void) => {
-      onUri("wc:0123456789abcdef@2?relay-protocol=irn&symKey=00");
+      if (wc.pairing === "reject") return Promise.reject(new Error("the relay refused the connection"));
+      if (wc.pairing === "uri") onUri("wc:0123456789abcdef@2?relay-protocol=irn&symKey=00");
       return new Promise(() => {});
     }),
   };
@@ -59,6 +62,7 @@ async function openModal(api?: Api, path = "/") {
 
 beforeEach(() => {
   wc.projectId = null;
+  wc.pairing = "uri";
 });
 
 describe("Connect-wallet modal — the test wallet leads (HANDOFF §6 п.10)", () => {
@@ -336,5 +340,88 @@ describe("Connect-wallet modal — PLACE A BET on a first sign-in does not throw
     await pressPlaceABet(path);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
+  });
+});
+
+describe("Connect-wallet modal — Sage that cannot be reached says so, and the test wallet is one tap away (first tester pass, D5)", () => {
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  afterEach(() => vi.useRealTimers());
+
+  const advance = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+
+  async function startSage(api?: Api) {
+    wc.projectId = "project-123";
+    wc.pairing = "never"; // the relay's socket opens and closes; the pairing link never comes
+    const dialog = await openModal(api);
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(await within(dialog).findByRole("button", { name: "Connect with Sage" }));
+    return dialog;
+  }
+
+  it("spins for 15 seconds — and no longer: then 'Couldn't reach Sage', with the test wallet as the way on", async () => {
+    const dialog = await startSage();
+    expect(within(dialog).getByText("Opening a connection to Sage…")).toBeInTheDocument();
+    await advance(14_900);
+    expect(within(dialog).getByText("Opening a connection to Sage…")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Couldn't reach Sage/)).not.toBeInTheDocument();
+
+    await advance(200);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Couldn't reach Sage.");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("did not open within 15 seconds");
+    expect(within(dialog).queryByText("Opening a connection to Sage…")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("img", { name: /QR/ })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Continue with test wallet" })).toHaveClass("btn--primary");
+    expect(within(dialog).getByRole("button", { name: "Try Sage again" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+  });
+
+  it("with a QR on screen (the link came) nothing is declared unreachable: the wait for the player to scan is theirs", async () => {
+    wc.projectId = "project-123";
+    const dialog = await openModal();
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(await within(dialog).findByRole("button", { name: "Connect with Sage" }));
+    expect(await within(dialog).findByRole("img", { name: /WalletConnect pairing QR code/ })).toBeInTheDocument();
+    await advance(60_000);
+    expect(within(dialog).queryByText(/Couldn't reach Sage/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("img", { name: /WalletConnect pairing QR code/ })).toBeInTheDocument();
+  });
+
+  it("'Continue with test wallet' signs in through the test wallet (the new attempt replaces the stalled one)", async () => {
+    const dialog = await startSage(newPlayerApi(vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname }))));
+    await advance(15_100);
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(within(dialog).getByRole("button", { name: "Continue with test wallet" }));
+    await advance(500);
+    expect(await within(dialog).findByLabelText("Nickname")).toBeInTheDocument();
+  });
+
+  it("'Try Sage again' starts the Sage connection over, with the same project", async () => {
+    const dialog = await startSage();
+    const { connectAndSignWithSage } = await import("../wallet/walletConnect");
+    expect(connectAndSignWithSage).toHaveBeenCalledTimes(1);
+    await advance(15_100);
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(within(dialog).getByRole("button", { name: "Try Sage again" }));
+    expect(connectAndSignWithSage).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(connectAndSignWithSage).mock.calls[1][0]).toBe("project-123");
+    expect(within(dialog).getByText("Opening a connection to Sage…")).toBeInTheDocument(); // spinning again, with a fresh 15 s
+    expect(within(dialog).queryByText(/Couldn't reach Sage/)).not.toBeInTheDocument();
+  });
+
+  it("on a server with no test wallet there is none to offer: Sage again is the way on", async () => {
+    const dialog = await startSage(serverApi({ testWallet: false }));
+    await advance(15_100);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Couldn't reach Sage.");
+    expect(within(dialog).queryByRole("button", { name: "Continue with test wallet" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Try Sage again" })).toHaveClass("btn--primary");
+  });
+
+  it("a connection that FAILS outright (not a hang) offers the test wallet next to 'Try again' too", async () => {
+    wc.projectId = "project-123";
+    wc.pairing = "reject";
+    const dialog = await openModal();
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(await within(dialog).findByRole("button", { name: "Connect with Sage" }));
+    expect(await within(dialog).findByRole("heading", { name: "Couldn't connect" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Continue with test wallet" })).toHaveClass("btn--primary");
+    expect(within(dialog).getByRole("button", { name: "Try again" })).toHaveClass("btn--secondary");
   });
 });
