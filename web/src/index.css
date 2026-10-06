@@ -1081,15 +1081,16 @@ ol {
   color: var(--text-muted) !important;
   font-size: 14px !important;
 }
+/* Four equal columns, always one row: with a 64 px minimum and wrapping, MAX dropped onto a row of its own at 320 px — a
+   full-width purple bar that looks like the main button (first tester pass, D7). A column of a 320 px phone is ~58 px. */
 .stake-chips {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-top: 10px;
-  flex-wrap: wrap;
 }
 .stake-chip {
-  flex: 1 1 0;
-  min-width: 64px;
+  min-width: 0;
   background: var(--bg-elevated-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-pill);

@@ -17,6 +17,7 @@ import {
   roundPriceInfo,
   sourceName,
   subtitleOf,
+  subtitleParts,
 } from "./marketModel";
 import { NOW, catalogue, market, seriesDto, spotCatalogue } from "./testFixtures";
 
@@ -179,6 +180,29 @@ describe("subtitleOf — a subtitle that repeats its title says only the outcome
     expect(sub("crypto", "Bitcoin", null)).toBeNull();
     expect(sub("sports", "X vs. Y", "   ")).toBeNull();
     expect(sub("sports", "X vs. Y", "Draw")).toBe("Draw");
+  });
+});
+
+describe("subtitleParts — what the percentage is OF, and the context a narrow card may cut (first tester pass, D7)", () => {
+  const parts = (category: "sports" | "politics", title: string, subtitle: string | null) => subtitleParts({ category, title, subtitle });
+
+  it("outcome first, context after: 'Spain to win' · 'UEFA Nations League'", () => {
+    expect(parts("sports", "Will Spain win on 2026-10-06?", "Spain to win · UEFA Nations League")).toEqual({ outcome: "Spain to win", context: "UEFA Nations League" });
+    expect(parts("sports", "Germany vs. Serbia", "Germany · UEFA Nations League")).toEqual({ outcome: "Germany", context: "UEFA Nations League" });
+  });
+
+  it("a subtitle that repeated its title is only the outcome ('Steelers to win'), with no context", () => {
+    expect(parts("sports", "Steelers vs. Browns", "Steelers · Steelers vs. Browns")).toEqual({ outcome: "Steelers to win", context: null });
+    expect(parts("politics", "Will the U.S. invade Iran before 2027?", "Yes · Will the U.S. invade Iran before 2027?")).toEqual({ outcome: "Yes", context: null });
+  });
+
+  it("splits at the first ' · ' only", () => {
+    expect(parts("sports", "A vs. B", "A to win · ATP · Tokyo")).toEqual({ outcome: "A to win", context: "ATP · Tokyo" });
+  });
+
+  it("no subtitle: nothing", () => {
+    expect(parts("sports", "X vs. Y", null)).toBeNull();
+    expect(parts("sports", "X vs. Y", "  ")).toBeNull();
   });
 });
 

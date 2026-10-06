@@ -142,6 +142,20 @@ export function subtitleOf(market: Pick<MarketDto, "title" | "subtitle" | "categ
   return market.category === "sports" && !SELF_EXPLAINING_OUTCOME.test(outcome) ? `${outcome} to win` : outcome;
 }
 
+/**
+ * {@link subtitleOf} in two parts: what the price is the probability OF ("Spain to win", "Yes") and the context that follows
+ * it ("UEFA Nations League"). A narrow card has room for the first and may cut the second — never the other way round: at 360
+ * and 320 px the line read "Jasmine Paolini to …" and "Taylah Presto…", and the percentage above it no longer said whose it
+ * was (first tester pass, D7). `null` when there is no subtitle.
+ */
+export function subtitleParts(market: Pick<MarketDto, "title" | "subtitle" | "category">): { outcome: string; context: string | null } | null {
+  const text = subtitleOf(market);
+  if (text === null) return null;
+  const at = text.indexOf(" · ");
+  if (at < 0) return { outcome: text, context: null };
+  return { outcome: text.slice(0, at).trim(), context: text.slice(at + 3).trim() };
+}
+
 // ---------------------------------------------------------------------------
 // Where a number comes from (Р-74, Р-76)
 // ---------------------------------------------------------------------------

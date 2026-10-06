@@ -7,7 +7,7 @@ import { Countdown, Skeleton } from "./Common";
 import { FlameIcon, LockIcon, StarIcon } from "./icons";
 import { MarketIcon } from "./MarketIcon";
 import { formatAgo, formatStartsIn, formatTimeLeft, trend, TREND_GLYPH } from "./marketFormat";
-import { backupPriceNote, backupPriceOf, crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, oddsMarketPhrase, subtitleOf } from "./marketModel";
+import { backupPriceNote, backupPriceOf, crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, oddsMarketPhrase, subtitleParts } from "./marketModel";
 import "./MarketCard.css";
 
 /** The live crowd split (Р-62) as a slim UP/DOWN bar with its percentages and the player count — the
@@ -83,6 +83,25 @@ export function HerdBadge({ market }: { market: MarketDto }) {
     >
       <span aria-hidden="true">{TREND_GLYPH[t]}</span> Herd <span className="mono">{text}</span>
     </Link>
+  );
+}
+
+/** The line under an odds card's ticker: what the percentage is the probability OF ("Spain to win"), then the context
+ *  ("· UEFA Nations League"). On a narrow card the context gives way first and the outcome wraps rather than being cut
+ *  (first tester pass, D7: "Jasmine Paolini to …" left the percentage with no owner). */
+function OddsSubline({ market }: { market: MarketDto }) {
+  const parts = subtitleParts(market);
+  if (!parts) return <p className="mk-card__title mk-card__title--odds">{market.title}</p>;
+  return (
+    <p className="mk-card__title mk-card__title--odds">
+      <span className="mk-card__outcome">{parts.outcome}</span>
+      {parts.context && (
+        <>
+          {" "}
+          <span className="mk-card__context">· {parts.context}</span>
+        </>
+      )}
+    </p>
   );
 }
 
@@ -172,7 +191,7 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
               </span>
             )}
           </div>
-          <p className="mk-card__title">{odds ? (subtitleOf(market) ?? market.title) : market.title}</p>
+          {!odds && <p className="mk-card__title">{market.title}</p>}
         </div>
         <div className="mk-card__price">
           {price ? (
@@ -208,7 +227,12 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
         </div>
       </div>
 
-      {odds && <p className="mk-card__question">{market.title}</p>}
+      {odds && (
+        <div className="mk-card__about">
+          <OddsSubline market={market} />
+          <p className="mk-card__question">{market.title}</p>
+        </div>
+      )}
 
       {open && series ? (
         <>

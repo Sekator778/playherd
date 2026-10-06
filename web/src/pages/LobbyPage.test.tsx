@@ -303,7 +303,9 @@ describe("Lobby — the card", () => {
     expect(runoff.getByText("ODDS")).toBeInTheDocument();
     expect(runoff.getByText("58.0%")).toBeInTheDocument();
     expect(runoff.getByText("Will Brazil's 2026 presidential election go to a runoff?")).toBeInTheDocument();
-    expect(runoff.getByText("Yes · Brazil election")).toBeInTheDocument();
+    // the outcome ("Yes", what the 58.0% is the probability of) and its context are two parts of one line
+    expect(runoff.getByText("Yes")).toHaveClass("mk-card__outcome");
+    expect(runoff.getByText("· Brazil election")).toHaveClass("mk-card__context");
     expect(runoff.getByTitle("If the market closes first, open bets are refunded")).toHaveTextContent(/Event ends in 5d/);
     // A sports game has no end date, only a kick-off: it says "Starts in", not "Event ends in".
     expect(within(cardOf("GER")).queryByText(/Event ends in/)).not.toBeInTheDocument();
