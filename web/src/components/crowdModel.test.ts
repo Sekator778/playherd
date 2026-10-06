@@ -206,8 +206,9 @@ describe("capitalAxis — round ticks whose labels differ (first tester pass, D8
   });
 
   // The axis used to spread every value into Math.min / Math.max, and a call takes only so many arguments: past about 40 000
-  // in V8 (22 000 in WebKit) it throws a RangeError, and with nothing to catch it the whole app unmounted. A stand with
-  // 3-minute rounds writes a crowd-capital point per settled round, three values each, so months of history get there.
+  // points in V8 (22 000 in WebKit, as the review measured it; the chart hands over three values per point) it throws a
+  // RangeError, and with nothing to catch it the whole app unmounted. A stand with 3-minute rounds writes a crowd-capital
+  // point per settled round, so months of history get there. (Here, in Node, 50 000 values still pass and 150 000 do not.)
   describe("with a very long history (the chart reads every point, three values each)", () => {
     const wave = (i: number) => 100_000 + ((i * 7919) % 2_003) * 0.37 - 300; // a few hundred dollars of drift, no two alike for long
     const many = (n: number) => Array.from({ length: n }, (_, i) => wave(i));

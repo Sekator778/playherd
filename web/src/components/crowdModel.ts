@@ -153,9 +153,9 @@ export interface CapitalAxis {
  * value to scale by: the chart's own default stands.
  */
 export function capitalAxis(values: readonly number[], targetTicks = 5): CapitalAxis | null {
-  // A loop, not `Math.min(...values)`: that puts every value on the stack as an argument, and past a limit of tens of thousands
-  // (about 40 000 in V8, 22 000 in WebKit) it throws a RangeError. The chart hands over three values per point of the crowd's
-  // history, which a stand with 3-minute rounds fills within weeks — and an error thrown while drawing unmounted the whole app.
+  // A loop, not `Math.min(...values)`: that puts every value on the stack as an argument, and past a limit it throws a RangeError
+  // (the review measured it at about 40 000 points of the crowd's history in V8 and 22 000 in WebKit — the chart hands over three
+  // values per point). A stand with 3-minute rounds fills that within weeks, and an error thrown while drawing unmounted the whole app.
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   for (const value of values) {

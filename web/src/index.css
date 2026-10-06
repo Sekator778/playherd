@@ -525,8 +525,9 @@ ol {
   }
   .app-header__logo,
   .app-header__right > :not(.profile-menu) {
-    /* The logo, the sound switch, the balance pill and CONNECT WALLET keep their size: squeezed, the pill lost its coin (the
-       icon's column has no minimum of its own) and the 40 px switch stopped being one. */
+    /* The logo, the sound switch, the balance pill and CONNECT WALLET keep their size. Squeezed (flex-shrink, once the header runs
+       out of room) the pill's coin shrinks — to 7.6 px of its 20 at 320 px, measured, and to nothing once the group above may shrink
+       too: the icon's grid column has no minimum of its own. */
     flex: none;
   }
   .app-header__right .btn {

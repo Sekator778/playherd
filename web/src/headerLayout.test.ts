@@ -36,7 +36,7 @@ describe("the header's phone CSS: the nickname gives way, the rest keeps its siz
     expect(declarations(phone, ".app-header__right")).toMatch(/min-width: 0;/);
   });
 
-  it("the logo, the sound switch, the balance pill and CONNECT WALLET do not shrink (squeezed, the pill lost its coin)", () => {
+  it("the logo, the sound switch, the balance pill and CONNECT WALLET do not shrink (squeezed, the pill's coin shrinks with it)", () => {
     expect(declarations(phone, ".app-header__logo,\n  .app-header__right > :not(.profile-menu)")).toMatch(/flex: none;/);
   });
 
