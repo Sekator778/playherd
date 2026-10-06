@@ -100,6 +100,6 @@ public class AuthService {
 
         GameService.PlayerTouchResult touch = gameService.registerOrTouchPlayer(req.address(), now);
         String sessionId = sessions.create(touch.player().playerId(), now);
-        return new VerifyResult(new Auth.AuthSessionDto(touch.player(), touch.isNewPlayer()), sessionId);
+        return new VerifyResult(new Auth.AuthSessionDto(touch.player(), touch.isNewPlayer(), touch.starterPackGranted()), sessionId);
     }
 }

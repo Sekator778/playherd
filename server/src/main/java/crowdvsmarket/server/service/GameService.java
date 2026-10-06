@@ -346,8 +346,19 @@ public class GameService implements MarketListener {
      * unaffected and safe without any change here — {@code EventApplier}'s {@code PlayerRegistered}
      * case has always just called {@code ensureSeasonPack}, which was already idempotent per season
      * (applying the same-season duplicate a second time is a no-op); see
-     * {@code PlayerRegistrationIdempotencyTest}. */
-    public record PlayerTouchResult(Identity.PlayerSummaryDto player, boolean isNewPlayer) {
+     * {@code PlayerRegistrationIdempotencyTest}.
+     *
+     * <p><b>{@code starterPackGranted}</b> (first tester pass, D1): whether THIS sign-in credited a {@code STARTER_PACK} — a
+     * brand-new player's, or a returning player's first sign-in of a new season (calendar month: the pack is credited on top of the
+     * balance they have). The web app tells the player about a pack when it was credited, so a returning player whose season rolled
+     * over is told, and one who signs in twice in a month is told once. It is asked of the ledger ({@link
+     * LedgerBook#seasonPackDue}, the one rule {@code ensureSeasonPack} itself follows) just BEFORE the event that credits the pack is
+     * applied — afterwards the season is touched and the question has no answer any more — and only when that event is appended
+     * at all; a sign-in that appends nothing credited nothing.
+     *
+     * @param isNewPlayer        this sign-in registered the player
+     * @param starterPackGranted this sign-in credited a starter pack to the player */
+    public record PlayerTouchResult(Identity.PlayerSummaryDto player, boolean isNewPlayer, boolean starterPackGranted) {
     }
 
     public PlayerTouchResult registerOrTouchPlayer(String walletAddress, long nowMs) {
@@ -356,6 +367,8 @@ public class GameService implements MarketListener {
             Optional<String> existing = players.playerIdForWallet(walletAddress);
             String playerId;
             boolean isNew = existing.isEmpty();
+            boolean packGranted = false;
+            Instant now = Instant.ofEpochMilli(nowMs);
             if (isNew) {
                 playerId = UUID.randomUUID().toString();
                 String finalPlayerId = playerId;
@@ -363,16 +376,18 @@ public class GameService implements MarketListener {
                 // The directory's cache gets the row only after the commit (PlayerDirectory's javadoc).
                 players.cache(db.tx(c -> players.insert(c, finalPlayerId, walletAddress, null, false, null,
                         playerIndex, nowMs)));
+                packGranted = hub.ledger().seasonPackDue(playerId, now); // a player nobody has seen: the first pack
                 appendPlayerRegistered(playerId, nowMs);
             } else {
                 playerId = existing.get();
-                Season season = Season.of(Instant.ofEpochMilli(nowMs));
+                Season season = Season.of(now);
                 boolean seasonAlreadyTouched = hub.ledger().seasonRecord(playerId, season).isPresent();
                 if (!seasonAlreadyTouched) {
+                    packGranted = hub.ledger().seasonPackDue(playerId, now);
                     appendPlayerRegistered(playerId, nowMs);
                 }
             }
-            return new PlayerTouchResult(summary(playerId), isNew);
+            return new PlayerTouchResult(summary(playerId), isNew, packGranted);
         } finally {
             engineLock.writeLock().unlock();
         }

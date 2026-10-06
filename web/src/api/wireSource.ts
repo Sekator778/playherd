@@ -17,7 +17,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** The fixtures the server writes. `rounds.hourly` is `rounds("HOURLY", <a market>)`; each `round.*` is `round(<id>)` of a
- *  round in that phase; the three `error.*` files carry the error envelope and its HTTP `status`. */
+ *  round in that phase; `authVerify` is the answer to a FIRST sign-in (a new player, a starter pack credited); the three
+ *  `error.*` files carry the error envelope and its HTTP `status`. */
 export const WIRE_NAMES = [
   "serverInfo",
   "markets",
@@ -42,6 +43,7 @@ export const WIRE_NAMES = [
   "previewLiquidation",
   "home",
   "currentPlayer",
+  "authVerify",
   "error.notSignedIn",
   "error.marketNotFound",
   "error.engineNotReady",
@@ -172,6 +174,7 @@ function defaultReply(method: string, args: unknown[]): WireReply {
     case "previewLiquidation":
     case "home":
     case "currentPlayer":
+    case "authVerify":
     case "unseenResults":
     case "cancellations":
       return { body: wire(method as WireName).response };

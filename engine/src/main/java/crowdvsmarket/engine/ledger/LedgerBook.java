@@ -124,21 +124,36 @@ public final class LedgerBook {
     public PlayerAccount ensureSeasonPack(String playerId, Instant now) {
         Season season = Season.of(now);
         PlayerAccount acc = accounts.get(playerId);
+        if (!packDue(acc, season)) {
+            return acc;
+        }
         if (acc == null) {
             accounts.put(playerId, new PlayerAccount(playerId, PlayAmount.ZERO, season,
                     new LinkedHashMap<>(Map.of(season, SeasonRecord.starting(season, PlayAmount.ZERO)))));
             credit(playerId, STARTER_PACK, LedgerEntryType.STARTER_PACK, null, now);
             return accounts.get(playerId);
         }
-        if (season.compareTo(acc.currentSeason()) > 0) {
-            PlayAmount baseline = acc.balance();
-            Map<Season, SeasonRecord> seasons = new LinkedHashMap<>(acc.seasons());
-            seasons.put(season, SeasonRecord.starting(season, baseline));
-            accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), season, seasons));
-            credit(playerId, STARTER_PACK, LedgerEntryType.STARTER_PACK, null, now);
-            return accounts.get(playerId);
-        }
-        return acc;
+        PlayAmount baseline = acc.balance();
+        Map<Season, SeasonRecord> seasons = new LinkedHashMap<>(acc.seasons());
+        seasons.put(season, SeasonRecord.starting(season, baseline));
+        accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), season, seasons));
+        credit(playerId, STARTER_PACK, LedgerEntryType.STARTER_PACK, null, now);
+        return accounts.get(playerId);
+    }
+
+    /**
+     * Whether {@link #ensureSeasonPack} would credit a starter pack to this player at {@code now}: the player has no account yet, or
+     * {@code now} lies in a later season than the one their account is in. For anyone else (the same season, an earlier one) it is a
+     * no-op, and so is asking: this is a pure read. It is the one place that says when a pack is due — {@code ensureSeasonPack}
+     * asks it too — so a caller that has to tell the player "a pack was credited" (the sign-in, {@code AuthSessionDto.starterPackGranted})
+     * asks it just BEFORE the call that credits, and cannot disagree with the credit.
+     */
+    public boolean seasonPackDue(String playerId, Instant now) {
+        return packDue(accounts.get(playerId), Season.of(now));
+    }
+
+    private static boolean packDue(PlayerAccount acc, Season season) {
+        return acc == null || season.compareTo(acc.currentSeason()) > 0;
     }
 
     // --- stakes (Р-8, Р-13) ---

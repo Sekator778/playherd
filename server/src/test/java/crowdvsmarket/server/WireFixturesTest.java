@@ -87,6 +87,7 @@ class WireFixturesTest extends LiveRpcTestBase {
     private static final String ALICE = "txch1alice0wire0player0000000000000000000000000000000000000q2k7ar";
     private static final String BOB = "txch1bob0wire0player000000000000000000000000000000000000000q5h3xm";
     private static final String VERA = "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn";
+    private static final String CAROL = "txch1carol0wire0player0000000000000000000000000000000000000q9m2ztu";
     private static final String CHAIN_LAUNCHER = "c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20";
 
     @Inject
@@ -283,6 +284,10 @@ class WireFixturesTest extends LiveRpcTestBase {
         capture("previewLiquidation", null, "previewLiquidation", preview);
         capture("home", alice, "home");
         capture("currentPlayer", alice, "currentPlayer");
+        // the sign-in itself, of a player the server has not seen: what a first sign-in answers — a new player, and the pack it
+        // credited (AuthSessionDto.starterPackGranted: the web app tells a player about a pack on it)
+        RpcClient.SignIn signIn = RpcClient.signInWithAnswer(chainSvcClient, CAROL);
+        keep(new Taken("authVerify", "authVerify", List.of(signIn.request()), 200, signIn.answer()));
 
         captureError("error.notSignedIn", null, 401, "NOT_SIGNED_IN", "myAccount");
         captureError("error.marketNotFound", null, 404, "MARKET_NOT_FOUND", "referencePrice", "NOPE");
@@ -439,6 +444,10 @@ class WireFixturesTest extends LiveRpcTestBase {
         assertThat(answers.get("home").path("hourly").path("running").path("positions")).as("Alice and Bob on BTC")
                 .hasSize(2);
         assertThat(answers.get("currentPlayer").path("nickname").asText()).isEqualTo("Alice_Wire");
+        JsonNode signedIn = answers.get("authVerify");
+        assertThat(signedIn.path("isNewPlayer").asBoolean()).as("a first sign-in registers the player").isTrue();
+        assertThat(signedIn.path("starterPackGranted").asBoolean()).as("…and credits the starter pack").isTrue();
+        assertThat(signedIn.path("player").path("playerId").asText()).isNotEmpty();
         assertThat(answers.get("error.engineNotReady").path("error").path("message").asText()).isNotEmpty();
     }
 }

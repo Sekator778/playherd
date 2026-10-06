@@ -11,6 +11,7 @@
  * Nothing in the app imports this file.
  */
 import type {
+  AuthSessionDto,
   BetDto,
   BetFeedDto,
   BetFeedEntryDto,
@@ -166,6 +167,8 @@ const kind = lit("PERP", "ODDS");
 const source = lit("hyperliquid", "coinbase", "kraken", "polymarket", "synthetic");
 
 export const playerSummary = obj<PlayerSummaryDto>({ playerId: nonEmptyStr, nickname: str, walletAddress: nonEmptyStr, displayName: nonEmptyStr, isBot: opt(bool) });
+/** `starterPackGranted` is optional in the contract (the mock and an older server leave it out), but a server of this repo sends it: `wireContract.test.ts` says so. */
+export const authSession = obj<AuthSessionDto>({ player: playerSummary, isNewPlayer: bool, starterPackGranted: opt(bool) });
 
 const bet = obj<BetDto>({ playerId: nonEmptyStr, roundId: nonEmptyStr, direction, leverage: int, stake: play });
 

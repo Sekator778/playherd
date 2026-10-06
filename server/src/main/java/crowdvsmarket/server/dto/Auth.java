@@ -14,6 +14,9 @@ public final class Auth {
     public record AuthVerifyRequest(String nonce, String address, String publicKey, String signature) {
     }
 
-    public record AuthSessionDto(Identity.PlayerSummaryDto player, boolean isNewPlayer) {
+    /** {@code starterPackGranted}: this sign-in credited a starter pack — a brand-new player's, or a returning player's first
+     *  sign-in of a new season (contract.ts {@code AuthSessionDto.starterPackGranted}, optional there: an older server does not
+     *  send it; this one always does). The web app tells the player about a pack on it. */
+    public record AuthSessionDto(Identity.PlayerSummaryDto player, boolean isNewPlayer, boolean starterPackGranted) {
     }
 }

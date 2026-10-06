@@ -8,7 +8,7 @@
  * If a listed file is missing the very first test fails and says which, who writes them and what to run.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, type Api, type Interval, type PageParams } from "./contract";
+import { ApiRequestError, type Api, type AuthSessionDto, type AuthVerifyRequest, type Interval, type PageParams } from "./contract";
 import { resetEngineStateForTests } from "./engineState";
 import { realApi } from "./realApi";
 import * as schema from "./wireSchema";
@@ -48,6 +48,7 @@ const CASES: Record<Exclude<WireName, `error.${string}`>, Case> = {
   previewLiquidation: { call: (api, a) => api.previewLiquidation(a[0] as Parameters<Api["previewLiquidation"]>[0]), check: schema.liquidationPreview },
   home: { call: (api) => api.home(), check: schema.home },
   currentPlayer: { call: (api) => api.currentPlayer(), check: schema.playerSummary },
+  authVerify: { call: (api, a) => api.authVerify(a[0] as AuthVerifyRequest), check: schema.authSession },
 };
 
 const DATA_NAMES = Object.keys(CASES) as Array<keyof typeof CASES>;
@@ -149,6 +150,15 @@ describe("the details that broke before", () => {
 
   it("serverInfo says whether the engine is ready", () => {
     expect(typeof wireResponse<{ engineReady?: boolean }>("serverInfo").engineReady).toBe("boolean");
+  });
+
+  it("a sign-in says whether IT credited a starter pack — a boolean, never left out (the web tells a player about a pack on it, first tester pass D1)", () => {
+    const session = wireResponse<AuthSessionDto>("authVerify");
+    expect(typeof session.isNewPlayer).toBe("boolean");
+    expect(typeof session.starterPackGranted).toBe("boolean");
+    // the first sign-in of a player the server has not seen credited the first pack
+    expect(session.isNewPlayer).toBe(true);
+    expect(session.starterPackGranted).toBe(true);
   });
 });
 

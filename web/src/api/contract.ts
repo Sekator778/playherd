@@ -213,6 +213,12 @@ export interface AuthSessionDto {
   /** True on a brand-new player — the UI must immediately continue into the nickname-pick step
    *  (Р-15) before anything else, per the first-time flow. */
   isNewPlayer: boolean;
+  /** True when THIS sign-in credited a starter pack (`STARTER_PACK` in the ledger): a brand-new player's, and a returning
+   *  player's first sign-in of a new season (calendar month) — the pack comes on top of the balance they have. The UI tells the
+   *  player about a pack when it was credited (first tester pass, D1: it used to tell a returning player "You've got 10,000 PLAY"
+   *  over a balance that was not 10,000 — and, once it stopped, said nothing to the one whose month had rolled over). Optional:
+   *  the mock and an older server do not send it, and `isNewPlayer` then stands for it. The real server always does. */
+  starterPackGranted?: boolean;
 }
 
 // ---------------------------------------------------------------------------

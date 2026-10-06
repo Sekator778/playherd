@@ -43,6 +43,57 @@ class LedgerBookSeasonTest {
         return ledger.seasonEndBalance(playerId, season).minus(ledger.seasonRecord(playerId, season).orElseThrow().baselineBalance());
     }
 
+    // --- seasonPackDue: the sign-in tells the player when a pack was credited, and asks this first ---
+
+    private static long starterPacksOf(LedgerBook ledger, String playerId) {
+        return ledger.entries().stream()
+                .filter(e -> e.playerId().equals(playerId) && e.type() == LedgerEntryType.STARTER_PACK)
+                .count();
+    }
+
+    @Test
+    void aPackIsDueToAPlayerWithNoAccountAndToOneWhoseSeasonHasRolledOverAndToNoOneElse() {
+        LedgerBook ledger = new LedgerBook();
+
+        assertThat(ledger.seasonPackDue("alice", APRIL)).as("no account: the first pack is due").isTrue();
+        ledger.ensureSeasonPack("alice", APRIL);
+        assertThat(ledger.seasonPackDue("alice", APRIL)).as("same season").isFalse();
+        assertThat(ledger.seasonPackDue("alice", APRIL_LAST_MS)).as("still the same season, to the last millisecond").isFalse();
+        assertThat(ledger.seasonPackDue("alice", MAY_FIRST)).as("the first sign-in of the next month").isTrue();
+        assertThat(ledger.seasonPackDue("alice", JUNE)).as("a month that was sat out does not matter: the season is later").isTrue();
+
+        ledger.ensureSeasonPack("alice", MAY);
+        assertThat(ledger.seasonPackDue("alice", MAY)).isFalse();
+        assertThat(ledger.seasonPackDue("alice", APRIL)).as("an earlier season is never due again").isFalse();
+        assertThat(ledger.seasonPackDue("bob", MAY)).as("each player is asked on their own").isTrue();
+    }
+
+    @Test
+    void askingChangesNothing() {
+        LedgerBook ledger = new LedgerBook();
+
+        assertThat(ledger.seasonPackDue("alice", APRIL)).isTrue();
+        assertThat(ledger.seasonPackDue("alice", APRIL)).isTrue();
+
+        assertThat(ledger.playerIds()).as("a question does not make an account").isEmpty();
+        assertThat(ledger.entries()).isEmpty();
+    }
+
+    @Test
+    void thePackIsCreditedExactlyWhenItWasDue() {
+        LedgerBook ledger = new LedgerBook();
+        for (Instant at : List.of(APRIL, APRIL, APRIL_LAST_MS, MAY_FIRST, MAY, JUNE, APRIL, JUNE, JUNE_FIRST)) {
+            boolean due = ledger.seasonPackDue("alice", at);
+            long before = starterPacksOf(ledger, "alice");
+            ledger.ensureSeasonPack("alice", at);
+            assertThat(starterPacksOf(ledger, "alice") - before)
+                    .as("at %s: a pack %s due, and %s", at, due ? "was" : "was not", due ? "one came" : "none came")
+                    .isEqualTo(due ? 1 : 0);
+        }
+        assertThat(starterPacksOf(ledger, "alice")).as("April, May, June").isEqualTo(3);
+        assertThat(ledger.balance("alice")).isEqualTo(play(30_000));
+    }
+
     // --- seasonEndBalance ---
 
     @Test
