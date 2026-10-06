@@ -405,6 +405,10 @@ describe("Connect-wallet modal — Sage that cannot be reached says so, and the 
     expect(vi.mocked(connectAndSignWithSage).mock.calls[1][0]).toBe("project-123");
     expect(within(dialog).getByText("Opening a connection to Sage…")).toBeInTheDocument(); // spinning again, with a fresh 15 s
     expect(within(dialog).queryByText(/Couldn't reach Sage/)).not.toBeInTheDocument();
+    await advance(14_900);
+    expect(within(dialog).queryByText(/Couldn't reach Sage/)).not.toBeInTheDocument();
+    await advance(200);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Couldn't reach Sage."); // and says so again, not spins for ever
   });
 
   it("on a server with no test wallet there is none to offer: Sage again is the way on", async () => {

@@ -47,6 +47,8 @@ export function ConnectWalletModal() {
   const [signInVia, setSignInVia] = useState<"test wallet" | "Sage">("test wallet");
   // Sage's pairing link has not arrived within SAGE_CONNECT_WAIT_MS: it could not be reached, and the sheet says so.
   const [sageStalled, setSageStalled] = useState(false);
+  // Counts the Sage attempts of this sheet, so that "Try Sage again" starts a fresh 15 s wait (the step and the link do not change).
+  const [sageAttempt, setSageAttempt] = useState(0);
   const sageProjectIdRef = useRef("");
   const { status: serverInfoStatus, info: serverInfo } = useServerInfo();
   const testWalletOffered = serverInfoStatus === "unsupported" ? true : serverInfo?.testWallet !== false;
@@ -104,7 +106,7 @@ export function ConnectWalletModal() {
     if (step !== "sage-qr" || pairingUri) return;
     const timer = window.setTimeout(() => setSageStalled(true), SAGE_CONNECT_WAIT_MS);
     return () => window.clearTimeout(timer);
-  }, [step, pairingUri]);
+  }, [step, pairingUri, sageAttempt]);
 
   if (!isOpen) return null;
 
@@ -202,6 +204,7 @@ export function ConnectWalletModal() {
     sageProjectIdRef.current = wcProjectId;
     setSignInVia("Sage");
     setSageStalled(false);
+    setSageAttempt((n) => n + 1);
     setPairingUri("");
     setStep("sage-qr");
     let nonce = "";
