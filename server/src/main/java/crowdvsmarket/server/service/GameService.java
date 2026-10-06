@@ -1695,6 +1695,11 @@ public class GameService implements MarketListener {
      * {@code V4__player_index.sql}). Gated by {@code herd.deposit.enabled} like the rest of the
      * real deposit path (the deposit poller only runs while it is on, so handing out an address
      * nothing will ever watch would be misleading).
+     *
+     * <p>Two first calls at once both find nothing cached and both ask chainsvc (they get the same
+     * address); the row is written with {@code INSERT … ON CONFLICT DO NOTHING} and read back, so both
+     * return the stored address and the second is not an error ({@link
+     * crowdvsmarket.server.persistence.PlayerDepositAddressRepository#insertOnce}).
      */
     public PlayChain.DepositAddressDto myDepositAddress(String playerId) {
         if (!config.depositEnabled()) {
@@ -1713,11 +1718,9 @@ public class GameService implements MarketListener {
             throw ApiException.chainServiceUnavailable();
         }
         long now = System.currentTimeMillis();
-        db.tx(c -> {
-            depositAddresses.insert(c, playerId, remote.address(), remote.innerPuzzleHash(), remote.catPuzzleHash(), now);
-            return null;
-        });
-        return new PlayChain.DepositAddressDto(remote.address());
+        crowdvsmarket.server.persistence.PlayerDepositAddressRepository.Row stored = depositAddresses.insertOnce(
+                playerId, remote.address(), remote.innerPuzzleHash(), remote.catPuzzleHash(), now);
+        return new PlayChain.DepositAddressDto(stored.address());
     }
 
     /**

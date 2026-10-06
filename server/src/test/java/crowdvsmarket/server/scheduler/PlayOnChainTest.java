@@ -9,6 +9,8 @@ import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Ledger;
 import crowdvsmarket.server.dto.PlayChain;
+import crowdvsmarket.server.persistence.Db;
+import crowdvsmarket.server.persistence.PlayerDepositAddressRepository;
 import crowdvsmarket.server.service.GameService;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
@@ -61,6 +63,10 @@ class PlayOnChainTest {
     EngineRebuildService engineRebuildService;
     @Inject
     ChainRequestIds chainRequestIds;
+    @Inject
+    Db db;
+    @Inject
+    PlayerDepositAddressRepository depositAddresses;
 
     private String signUpPlayer(String label) {
         long now = System.currentTimeMillis();
@@ -101,6 +107,62 @@ class PlayOnChainTest {
                 .thenReturn(null);
 
         org.junit.jupiter.api.Assertions.assertThrows(ApiException.class, () -> gameService.myDepositAddress(playerId));
+    }
+
+    /**
+     * The first call of {@code myDepositAddress} twice at once (HTTP 500 once on the live run of 2026-10-02): both
+     * callers find no cached address, both ask chainsvc — held here until both are inside, so the race is not left to
+     * luck — and both write. The second plain INSERT used to fail with a duplicate key. Now both get the address,
+     * exactly one row is written, and a later call is served from it without asking chainsvc again.
+     */
+    @Test
+    void twoFirstCallsOfMyDepositAddressAtOnceBothGetTheAddressAndWriteOneRow() throws Exception {
+        String playerId = signUpPlayer("addr-race");
+        int playerIndex = playerIndexOf(playerId);
+        CountDownLatch bothAsked = new CountDownLatch(2);
+        org.mockito.Mockito.when(chainSvcClient.playDepositAddress(playerIndex)).thenAnswer(invocation -> {
+            bothAsked.countDown();
+            assertThat(bothAsked.await(10, TimeUnit.SECONDS)).as("both callers reached chainsvc").isTrue();
+            return new ChainSvcClient.PlayDepositAddress("txch1race-addr", "0xinner-race", "0xcat-race");
+        });
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<PlayChain.DepositAddressDto> first =
+                    pool.submit(() -> gameService.myDepositAddress(playerId));
+            java.util.concurrent.Future<PlayChain.DepositAddressDto> second =
+                    pool.submit(() -> gameService.myDepositAddress(playerId));
+            assertThat(first.get(30, TimeUnit.SECONDS).address()).isEqualTo("txch1race-addr");
+            assertThat(second.get(30, TimeUnit.SECONDS).address()).isEqualTo("txch1race-addr");
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(depositAddressRows(playerId)).isEqualTo(1L);
+        assertThat(gameService.myDepositAddress(playerId).address()).isEqualTo("txch1race-addr");
+        org.mockito.Mockito.verify(chainSvcClient, org.mockito.Mockito.times(2)).playDepositAddress(playerIndex);
+    }
+
+    /** A player's address is never rotated: the row that is written first stays, whatever a later writer brings. */
+    @Test
+    void theFirstWrittenDepositAddressStaysAndIsWhatEveryLaterWriterGetsBack() {
+        String playerId = signUpPlayer("addr-first-wins");
+
+        PlayerDepositAddressRepository.Row first =
+                depositAddresses.insertOnce(playerId, "txch1first", "0xinner1", "0xcat1", 1_000L);
+        PlayerDepositAddressRepository.Row second =
+                depositAddresses.insertOnce(playerId, "txch1second", "0xinner2", "0xcat2", 2_000L);
+
+        assertThat(first.address()).isEqualTo("txch1first");
+        assertThat(first.createdAtMs()).isEqualTo(1_000L);
+        assertThat(second).as("the stored row, not the one that was offered").isEqualTo(first);
+        assertThat(depositAddresses.find(playerId)).contains(first);
+        assertThat(depositAddressRows(playerId)).isEqualTo(1L);
+    }
+
+    private long depositAddressRows(String playerId) {
+        return db.read(c -> db.queryOne(c, "SELECT COUNT(*) AS n FROM player_deposit_addresses WHERE player_id = ?",
+                rs -> rs.getLong("n"), playerId));
     }
 
     // --- deposit poller: exactly-once crediting per coinId ---
