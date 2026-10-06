@@ -31,6 +31,20 @@ export function formatPlayAmount(
   return `${sign}${formatted}`;
 }
 
+/**
+ * A PLAY amount that is COUNTING (`RollingDigits`) toward `target`. `formatPlayAmount`'s auto decimals look at the number in front
+ * of them, and a count-up passes through values like 9,957.6543: the header's pill flickered between "9,957.65" and "9,957.654"
+ * and back, three decimals mid-animation for a balance that has two (first tester pass, D12). While it rolls, the number shows
+ * the decimals of where it is going — never more than two; once it has arrived it is exactly what `formatPlayAmount` says
+ * (three decimals when the amount really has them).
+ */
+export function rollingPlayFormat(target: number, opts: { sign?: boolean; unit?: boolean } = {}): (n: number) => string {
+  const rolling = Math.min(2, autoPlayDecimals(target));
+  const suffix = opts.unit ? " PLAY" : "";
+  return (n) =>
+    (Math.abs(n - target) < 0.0005 ? formatPlayAmount(target, { sign: opts.sign }) : formatPlayAmount(n, { sign: opts.sign, decimals: rolling })) + suffix;
+}
+
 export function formatUsd(amount: string | number, opts: { decimals?: number; sign?: boolean } = {}): string {
   const n = typeof amount === "string" ? Number(amount) : amount;
   const decimals = opts.decimals ?? 2;

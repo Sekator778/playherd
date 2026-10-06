@@ -8,7 +8,7 @@ import { outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { usePoll } from "../api/usePoll";
 import { MIN_WITHDRAWAL_PLAY, type LedgerEntryDto, type LedgerEntryType, type PlayerAccountDto, type WithdrawalRequestDto } from "../api/contract";
 import { CopyButton, EmptyState, ErrorState, ServerInfoBanner, Skeleton } from "../components/Common";
-import { formatDateTime, formatPlayAmount, shortenAddress } from "../format";
+import { formatDateTime, formatPlayAmount, rollingPlayFormat, shortenAddress } from "../format";
 import { settlementNets } from "./walletModel";
 import { RollingDigits } from "../fx/RollingDigits";
 import { useFxSettings } from "../fx/fxSettings";
@@ -114,7 +114,7 @@ function BalanceCard({ balance }: { balance: string }) {
     <div className={`card ${flashClass}`}>
       <div className="stat-tile__label">Balance</div>
       <div className="stat-tile__value" style={{ fontSize: 32 }}>
-        <RollingDigits value={numeric} durationMs={500} format={(n) => `${formatPlayAmount(n)} PLAY`} />
+        <RollingDigits value={numeric} durationMs={500} format={rollingPlayFormat(numeric, { unit: true })} />
       </div>
     </div>
   );

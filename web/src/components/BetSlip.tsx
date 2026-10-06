@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
@@ -307,6 +307,37 @@ function StakeField({
   );
 }
 
+/**
+ * The heading of the liquidation preview card, with "What's this?" — which opens the explanation RIGHT THERE. It used to be a link
+ * to /how-it-works in a new tab, so as not to lose a half-made bet; in a phone's app a new tab is the system browser, which leaves
+ * the app (first tester pass, D12). The open state belongs to the slip, not to this heading: the card around it disappears while
+ * the stake is not a number, and the explanation must not close under the player's thumb when it does.
+ */
+function LiquidationPreviewHead({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const explainerId = useId();
+  return (
+    <>
+      <p style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <span className="section-title" style={{ marginBottom: 0 }}>
+          Liquidation preview
+        </span>
+        <button type="button" className="text-button" aria-expanded={open} aria-controls={explainerId} onClick={onToggle}>
+          What's this?
+        </button>
+      </p>
+      {open && (
+        <div id={explainerId} className="liquidation-explainer">
+          <p>
+            If the price reaches the liquidation price at any moment of the round — not only at its close — your bet is liquidated and the whole
+            stake is lost.
+          </p>
+          <p>The higher the leverage, the closer that price sits to the entry price.</p>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** One line that says what pressing the button will do — with eighteen markets and a leverage dial, a
  *  player should be able to read "which market, which side, how much, how hot" once more before betting. */
 function BetSummary({
@@ -374,6 +405,7 @@ function BetSlipPreview({
   const leverage = Math.min(leverageChoice ?? defaultLeverage(maxLeverage), maxLeverage);
   const [stake, setStake] = useState<string>(DEFAULT_STAKE_DISPLAY);
   const preview = useLiquidationPreview(round.marketId, direction, leverage, stake);
+  const [explainOpen, setExplainOpen] = useState(false);
 
   return (
     <div className="card bet-slip">
@@ -397,9 +429,7 @@ function BetSlipPreview({
 
       {preview && (
         <div className="card card--tight liquidation-preview">
-          <p className="section-title" style={{ marginBottom: 8 }}>
-            Liquidation preview
-          </p>
+          <LiquidationPreviewHead open={explainOpen} onToggle={() => setExplainOpen((v) => !v)} />
           <LiquidationBar
             entryPrice={preview.entryPriceUsed}
             liquidationPrice={preview.liquidationPrice}
@@ -483,6 +513,7 @@ function BetSlipForm({
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const preview = useLiquidationPreview(round.marketId, direction, leverage, stake);
+  const [explainOpen, setExplainOpen] = useState(false);
 
   // Reads the balance on every new round, after the player's own bet changes (placing or editing one moves it) and
   // when the server comes back from a restart; a failed read tries again in 3 s, until it works.
@@ -657,17 +688,7 @@ function BetSlipForm({
 
       {preview && (
         <div className="card card--tight liquidation-preview">
-          <p style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-            <span className="section-title" style={{ marginBottom: 0 }}>
-              Liquidation preview
-            </span>
-            {/* New tab: this link would otherwise unmount the form and lose the in-progress bet
-             *  (`ux_walkthrough.md` question 4 — leverage/liquidation is unfamiliar to a newcomer
-             *  and deserves an explanation in place, without adding a confirmation step). */}
-            <Link to="/how-it-works#liquidation" target="_blank" rel="noopener noreferrer">
-              What's this?
-            </Link>
-          </p>
+          <LiquidationPreviewHead open={explainOpen} onToggle={() => setExplainOpen((v) => !v)} />
           <LiquidationBar
             entryPrice={preview.entryPriceUsed}
             liquidationPrice={preview.liquidationPrice}

@@ -1,6 +1,6 @@
 import type { MarketDto, MarketReferenceDto, PublicPositionDto } from "../api/contract";
 import { outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
-import { formatPlayAmount, formatPrice, type PriceFormatMarket } from "../format";
+import { formatPlayAmount, formatPrice, rollingPlayFormat, type PriceFormatMarket } from "../format";
 import { RollingDigits } from "../fx/RollingDigits";
 import { DirectionGlyph } from "./icons";
 import { liquidationLiveCardClass } from "./heat";
@@ -65,7 +65,7 @@ export function OwnPositionCard({
       {read ? (
         <div className="net-result">
           <span className={outcomeClassName(outcomeFromNet(read.pnl))}>
-            <RollingDigits value={read.pnl} durationMs={400} format={(n) => `${formatPlayAmount(n, { sign: true })} PLAY`} />
+            <RollingDigits value={read.pnl} durationMs={400} format={rollingPlayFormat(read.pnl, { sign: true, unit: true })} />
           </span>{" "}
           <span className="net-result__secondary">unrealized</span>
         </div>

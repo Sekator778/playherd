@@ -5,7 +5,7 @@ import type { MarketDto, MyPositionDto } from "../api/contract";
 import { outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { useMarkets } from "../api/useMarkets";
 import { useMyPositions } from "../api/useMyPositions";
-import { formatCountdown, formatDuration, formatPlayAmount } from "../format";
+import { formatCountdown, formatDuration, formatPlayAmount, rollingPlayFormat } from "../format";
 import { RollingDigits } from "../fx/RollingDigits";
 import { ChevronIcon, CrackIcon, DirectionGlyph } from "./icons";
 import { liquidationLiveCardClass } from "./heat";
@@ -77,7 +77,7 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
       ) : read ? (
         <>
           <span className={`pos-card__pnl mono ${outcomeClassName(outcomeFromNet(read.pnl))}`}>
-            <RollingDigits value={read.pnl} durationMs={400} format={(n) => `${formatPlayAmount(n, { sign: true })} PLAY`} />
+            <RollingDigits value={read.pnl} durationMs={400} format={rollingPlayFormat(read.pnl, { sign: true, unit: true })} />
           </span>
           <LiveLiqBar roomFraction={read.roomFraction} pctToLiquidation={read.pctToLiquidation} thin />
         </>

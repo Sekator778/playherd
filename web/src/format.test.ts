@@ -12,6 +12,7 @@ import {
   formatUpdatedAt,
   market24hMove,
   oddsMove24hPoints,
+  rollingPlayFormat,
   setDisplayTimeZone,
   timeZoneLabel,
 } from "./format";
@@ -192,6 +193,36 @@ describe("an ODDS market's 24 h change is in percentage points (the contract's f
     expect(formatPoints(1.04, { sign: true })).toBe("+1.0 pt");
     expect(formatPoints(-12.36, { sign: true })).toBe("-12.4 pt");
     expect(formatPoints(2.5)).toBe("2.5 pt");
+  });
+});
+
+describe("rollingPlayFormat — a count-up does not flicker between decimals on its way (first tester pass, D12)", () => {
+  it("while it rolls toward a two-decimal balance, every frame has two decimals — never the third the maths passes through", () => {
+    const format = rollingPlayFormat(9559.45);
+    expect(format(9957.6543)).toBe("9,957.65");
+    expect(format(9801.1004)).toBe("9,801.10"); // not "9,801.1": the same decimals on every frame
+    expect(format(9612)).toBe("9,612.00");
+    expect(format(9559.45)).toBe("9,559.45"); // arrived
+  });
+
+  it("toward a whole balance it rolls in whole PLAY and lands on the whole number", () => {
+    const format = rollingPlayFormat(10_000);
+    expect(format(9_957.6543)).toBe("9,958");
+    expect(format(10_000)).toBe("10,000");
+    expect(format(10_000.0000001)).toBe("10,000"); // the interpolation's last step is a hair off the target
+  });
+
+  it("a balance that really has three decimals shows them once it has arrived, not before", () => {
+    const format = rollingPlayFormat(9559.455);
+    expect(format(9600.1234)).toBe("9,600.12");
+    expect(format(9559.455)).toBe("9,559.455");
+  });
+
+  it("a signed result and the unit: '-19.85 PLAY' on the way and on arrival", () => {
+    const format = rollingPlayFormat(-19.85, { sign: true, unit: true });
+    expect(format(-7.3333)).toBe("-7.33 PLAY");
+    expect(format(-19.85)).toBe("-19.85 PLAY");
+    expect(rollingPlayFormat(4.96, { sign: true, unit: true })(2.5)).toBe("+2.50 PLAY");
   });
 });
 

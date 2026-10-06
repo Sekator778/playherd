@@ -5,7 +5,7 @@ import { useClock } from "../api/useClock";
 import { inPlayExcludingLiquidated, loadInPlay } from "../api/inPlay";
 import { useMyPositions } from "../api/useMyPositions";
 import { headerName } from "../api/nickname";
-import { formatPlayAmount } from "../format";
+import { formatPlayAmount, rollingPlayFormat } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 import { EngineBanner } from "./EngineBanner";
 import { PositionsStrip } from "./PositionsStrip";
@@ -87,7 +87,7 @@ function BalancePill() {
        *  card, …) and moved to `aria-label` above so it's still announced, not just implied by a
        *  decorative icon. */}
       <span className="balance-pill__amount">
-        <RollingDigits value={Number(balance)} format={(n) => formatPlayAmount(n)} durationMs={500} />
+        <RollingDigits value={Number(balance)} format={rollingPlayFormat(Number(balance))} durationMs={500} />
       </span>
       {shownInPlay !== null && shownInPlay > 0 && (
         <span className="balance-pill__in-play">+{formatPlayAmount(shownInPlay)} in play</span>

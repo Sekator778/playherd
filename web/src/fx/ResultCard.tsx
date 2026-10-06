@@ -13,7 +13,7 @@ import type { DisplayItem } from "./resultQueue";
 import { outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { useMarkets } from "../api/useMarkets";
 import { backupRoundOf, type BackupRound } from "../components/marketModel";
-import { formatDuration, formatPlayAmount } from "../format";
+import { formatDuration, formatPlayAmount, rollingPlayFormat } from "../format";
 import { RollingDigits } from "./RollingDigits";
 import { usePrefersReducedMotion } from "./reducedMotion";
 import { burst, spawnCoinArc } from "./particles";
@@ -250,7 +250,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             <RollingDigits
               value={event.netPlay}
               durationMs={activeMs || 400}
-              format={(n) => `${formatPlayAmount(n, { sign: true })} PLAY`}
+              format={rollingPlayFormat(event.netPlay, { sign: true, unit: true })}
             />
           )}
         </div>
@@ -286,7 +286,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
 
         {!isLiquidation && (
           <p className="result-card__balance mono">
-            Balance: <RollingDigits value={balanceDisplay} durationMs={200} format={(n) => `${formatPlayAmount(n)} PLAY`} />
+            Balance: <RollingDigits value={balanceDisplay} durationMs={200} format={rollingPlayFormat(balanceDisplay, { unit: true })} />
           </p>
         )}
 

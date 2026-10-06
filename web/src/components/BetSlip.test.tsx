@@ -294,6 +294,66 @@ describe("the leverage dial's heat is relative to the market's cap", () => {
   });
 });
 
+describe("«What's this?» beside the liquidation preview opens in the app, in place (first tester pass, D12)", () => {
+  function renderSlip() {
+    return mockApi.rounds("HOURLY").then((pair) => {
+      if (pair.betting.phase !== "BETTING") throw new Error("expected an open betting round");
+      return render(
+        <MemoryRouter>
+          <ApiProvider>
+            <BetSlip round={pair.betting} nowMs={simNowMs()} onChanged={() => {}} />
+          </ApiProvider>
+        </MemoryRouter>,
+      );
+    });
+  }
+
+  it("is a button that opens the explanation right there — not a link to another page in a new tab", async () => {
+    await renderSlip();
+    const user = userEvent.setup();
+    const toggle = await screen.findByRole("button", { name: "What's this?" });
+    expect(screen.queryByRole("link", { name: "What's this?" })).not.toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/not only at its close/)).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/If the price reaches the liquidation price at any moment of the round — not only at its close/)).toBeInTheDocument();
+    expect(screen.getByText("The higher the leverage, the closer that price sits to the entry price.")).toBeInTheDocument();
+    // the half-made bet is still there
+    expect(screen.getByLabelText("Stake (PLAY)")).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.queryByText(/not only at its close/)).not.toBeInTheDocument();
+  });
+
+  it("stays open while the preview card blinks out and back (an empty stake field has no preview)", async () => {
+    await renderSlip();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "What's this?" }));
+    const stake = await screen.findByLabelText("Stake (PLAY)");
+    await user.clear(stake);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "What's this?" })).not.toBeInTheDocument());
+    await user.type(stake, "300");
+    expect(await screen.findByRole("button", { name: "What's this?" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/not only at its close/)).toBeInTheDocument();
+  });
+
+  it("the signed-out preview slip has it too", async () => {
+    await mockApi.signOut();
+    try {
+      await renderSlip();
+      expect(await screen.findByText("PREVIEW — not signed in")).toBeInTheDocument();
+      await userEvent.setup().click(await screen.findByRole("button", { name: "What's this?" }));
+      expect(screen.getByText(/not only at its close/)).toBeInTheDocument();
+    } finally {
+      const challenge = await mockApi.authChallenge({});
+      await mockApi.authVerify({ nonce: challenge.nonce, address: "txch1betsliptestaddress00000000000000000000000000000000q", publicKey: "pk", signature: "sig" });
+      await mockApi.setNickname("slipTester");
+    }
+  });
+});
+
 describe("a fresh slip does not open on the market's cap (first tester pass, D2)", () => {
   async function renderDial(marketId: string) {
     const pair = await mockApi.rounds("HOURLY", marketId);
