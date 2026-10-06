@@ -16,13 +16,12 @@ import crowdvsmarket.server.prices.PricesConfig;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.util.FailureLog;
 import crowdvsmarket.server.util.LogThrottle;
-import io.quarkus.runtime.StartupEvent;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.LongSupplier;
 import org.jboss.logging.Logger;
 
 /**
@@ -65,10 +64,13 @@ import org.jboss.logging.Logger;
  * #SOURCE_RELEASE_REASON} — as soon as the minutes of its source ({@link PricesConfig.ReleaseAfter}: five for an exchange and for the
  * synthetic walk, fifteen for Polymarket; 0 switches a source off) have passed since the end of the round <i>or since the start of this
  * server, whichever is later</i>: a restart gives every round that was in flight its minutes to heal from the candles before it is let
- * go. The source is the one of the exchange the round was decided on, else the market's own ({@link GameService#instrumentOf}). Р-77 comes
- * first — a market whose other exchange is alive lets the round go after two minutes — and the hour of Р-23 stays the upper bound: no
- * round waits longer than an hour after its end, and every failure that is not "no price" (the database, the oracle's gate) keeps the
- * hour. The backoff is cut at the earliest of the release instants that are still to come, as for Р-77.
+ * go. A pause of the whole process is a start as well — a host that slept wakes up in the same JVM, with the feeds reconnecting and every
+ * round that ended meanwhile overdue ({@link #startAfterAPause}: the scheduled pass that begins more than {@link #PAUSE_MS} after the
+ * previous one ended, or is the first, sets the start). The source is the one of the exchange the round was decided on, else the market's
+ * own ({@link GameService#instrumentOf}). Р-77 comes first — a market whose other exchange is alive lets the round go after two minutes —
+ * and the hour of Р-23 stays the upper bound: no round waits longer than an hour after its end, and every failure that is not "no price"
+ * (the database, the oracle's gate) keeps the hour. The backoff is cut at the earliest of the release instants that are still to come, as
+ * for Р-77.
  *
  * <p><b>A round nobody bet on</b> that cannot be priced is not worth a minute of its series' time (Р-79): it is stepped over at once, like
  * an overdue empty window — no result, no event, no oracle record, one log line. The bet of a bot is a bet: only a round with none at all
@@ -104,6 +106,14 @@ import org.jboss.logging.Logger;
 public class RoundSchedulerService {
 
     private static final Logger LOG = Logger.getLogger(RoundSchedulerService.class);
+    /** {@link #lastPassEndedAtMs} before the first scheduled pass. */
+    private static final long NEVER = Long.MIN_VALUE;
+    /**
+     * More than this between the end of one scheduled pass and the start of the next is a pause of the whole process, not a busy second
+     * (the passes are one second apart; a stop-the-world collection or a database that answers late is seconds, not this) — a start
+     * for the minutes that a round that cannot be priced is given (Р-79). Предложение: no measurement, a host's sleep is minutes.
+     */
+    static final long PAUSE_MS = 15_000L;
     /** Р-23: "если за 1 час цену получить не удалось — раунд отменяется целиком". The upper bound of every wait: Р-77 and Р-79 let a round go sooner. */
     private static final long PRICE_GRACE_MS = 3_600_000L;
     private static final String NO_PRICE_REASON = "no oracle price available within 1 hour of round close";
@@ -143,15 +153,15 @@ public class RoundSchedulerService {
     /** One line a minute per series: the question whether the other exchange is alive could not be answered. */
     private final LogThrottle venueLog = new LogThrottle(60_000L);
     /**
-     * When this server started — what a round that cannot be priced is given its minutes from, if that is later than its end (Р-79).
-     * 0, the beginning of time, until it is known: the minutes then count from the end of the round alone.
+     * When this server started or last woke from a pause — what a round that cannot be priced is given its minutes from, if that is
+     * later than its end (Р-79). Set by the scheduled pass ({@link #tick()}) that is the first of all or begins after a pause
+     * ({@link #PAUSE_MS}); 0, the beginning of time, until then: the minutes count from the end of the round alone.
      */
     volatile long startedAtMs;
-
-    /** The server has started (a restart included): what waits for a price is given its minutes from now at the earliest (Р-79). */
-    void onStart(@Observes StartupEvent event) {
-        startedAtMs = System.currentTimeMillis();
-    }
+    /** The wall clock the scheduled pass reads; tests give it their own. */
+    LongSupplier wallClock = System::currentTimeMillis;
+    /** When the previous scheduled pass ended, on {@link #wallClock}; {@link #NEVER} before the first one. */
+    private volatile long lastPassEndedAtMs = NEVER;
 
     /**
      * For tests that drive their own clock: pretends that the server started at {@code atMs}, as after a restart — the rounds that cannot be
@@ -161,9 +171,45 @@ public class RoundSchedulerService {
         startedAtMs = atMs;
     }
 
+    /**
+     * The scheduled pass, every second. Besides {@link #tick(long)} it knows when the server (re)starts: the first pass of all, and a
+     * pass that begins more than {@link #PAUSE_MS} after the previous one ended, are a start ({@link #startAfterAPause}).
+     */
     @Scheduled(every = "1s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void tick() {
-        tick(System.currentTimeMillis());
+        long now = wallClock.getAsLong();
+        startAfterAPause(now);
+        try {
+            tick(now);
+        } finally {
+            lastPassEndedAtMs = wallClock.getAsLong(); // a pass that failed has ended too: failing passes a second apart are no pause
+        }
+    }
+
+    /**
+     * The minutes that a round that cannot be priced is given (Р-79) count from the end of the round or from the start of the server,
+     * whichever is later: a start leaves a gap in the prices, which the candles close in the next minutes, and the rounds that were in
+     * flight must be given those minutes instead of being let go at their first failed attempt. A restart is a start — and so is the
+     * wake of a host that slept: the JVM and its containers survive the sleep (docs/HANDOFF.md §2), but the feeds reconnect and every
+     * round that ended meanwhile is overdue, just as after a restart. The process cannot tell a sleep from a stand-still, so the rule is
+     * the same for both: the scheduler remembers when its previous scheduled pass <i>ended</i>, and a pass that begins more than {@link
+     * #PAUSE_MS} later — or the first one, there being no previous — takes the start from its own instant. Measured from the end of the
+     * previous pass to the start of this one, so that a slow pass (a price source that answers slowly) is no pause: passes are a second
+     * apart whatever they take. A sleep inside a pass is not seen: the pass that follows it begins a second after that pass ended.
+     * Not in {@link #tick(long)}, which tests drive with a clock of their own.
+     */
+    private void startAfterAPause(long now) {
+        long endedAt = lastPassEndedAtMs;
+        if (endedAt != NEVER && now - endedAt <= PAUSE_MS) {
+            return;
+        }
+        startedAtMs = now;
+        if (endedAt == NEVER) {
+            LOG.infof("the first scheduled pass: a round that cannot be priced gets its minutes counted from now at the earliest (Р-79)");
+        } else {
+            LOG.infof("the previous scheduled pass ended %d s ago — the process was paused (a host that slept?): a round that cannot "
+                    + "be priced gets its minutes counted from now at the earliest (Р-79)", (now - endedAt) / 1000L);
+        }
     }
 
     /** One scheduler pass as of {@code now} — the {@link #tick()} body, with the clock as an
