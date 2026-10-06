@@ -172,7 +172,9 @@ cargo build --workspace             # binaries at target/debug/{c2,c2-svc}
 
 All dependency versions in each crate's `Cargo.toml` are pinned exactly
 (`=x.y.z`); `Cargo.lock` is committed. Toolchain: `rustc 1.98.1` (workspace
-edition `2024`). `c2-cli` additionally talks to the network at runtime
+edition `2024`), pinned in `rust-toolchain.toml` -- a machine without it gets it
+installed by rustup the first time `cargo` runs in this directory, a download.
+`c2-cli` additionally talks to the network at runtime
 (`chia-sdk-coinset` against `https://testnet11.api.coinset.org`, and
 `reqwest` against `https://api.hyperliquid.xyz`, both plain HTTPS, no
 certificates) — `cargo build`/`test` themselves stay offline beyond the

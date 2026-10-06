@@ -41,7 +41,9 @@
 # Toolchain pinned to the minor of the local `rustc` (1.98.1 on 2026-10-01; `rust:1.98-bookworm`
 # exists on Docker Hub) instead of the floating `rust:1-bookworm`, so a rebuild cannot change the
 # compiler under a fixed `Cargo.lock` unnoticed — bump it on purpose, together with a local
-# `cargo test --workspace`. The patch still floats for compiler bug-fix releases.
+# `cargo test --workspace`. The patch still floats for compiler bug-fix releases. Local builds and
+# CI pin the exact version in `chain/rust-toolchain.toml`, which this build does not read (the
+# COPY lines below take the manifests and the crates only): keep the minor of the two in step.
 FROM --platform=$BUILDPLATFORM rust:1.98-bookworm AS builder
 ARG TARGETARCH
 ARG BUILDARCH

@@ -1,0 +1,13 @@
+# The toolchain the chain/ workspace is built and tested with: rustc 1.98.1 (2026-09-01), the compiler `Cargo.lock`
+# was last resolved under and `cargo test --workspace` last ran on. `cargo` anywhere under chain/ -- `make check`,
+# `make build-chain`, CI -- picks it up from here, so a new stable release cannot change the compiler under a fixed
+# `Cargo.lock` unnoticed. Bump it on purpose, together with a local `cargo test --workspace --locked` and the
+# `rust:1.98-bookworm` of c2-svc/Dockerfile (the Docker build does not read this file: its context copies only the
+# manifests and the crates, and the image brings the compiler itself).
+#
+# A machine that does not have this toolchain gets it installed by rustup on first use (rustup's `auto-install`
+# setting is `enable` unless changed: `rustup set auto-install --help`, rustup 1.29.0, read 2026-10-06); `clippy` is what
+# `make lint-chain` runs, `rustfmt` is there for `cargo fmt`.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
