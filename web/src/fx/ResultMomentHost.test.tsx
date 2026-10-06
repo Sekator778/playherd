@@ -5,6 +5,7 @@
  * mount — never went away by itself: a full-screen overlay over the next bet until it was tapped.
  */
 import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setForcedReducedMotion } from "./reducedMotion";
@@ -267,5 +268,103 @@ describe("ResultMomentHost — the '+N more results' summary (first tester pass,
   it("…and a liquidated one says so", async () => {
     await toSummary([{ id: "c:p", roundId: "c", kind: "LIQUIDATION", symbol: "BOLT", leverage: 10, netPlay: -100 }]);
     expect(document.querySelector(".result-card--overflow")).toHaveTextContent("-100 PLAY liquidated · BOLT · x10");
+  });
+
+  describe("stays while it is being read — a pointer on it, the keyboard on its controls — and its clock starts again when that ends", () => {
+    // user-event needs time that moves by itself under fake timers (Testing Library's own waits would otherwise never end), so the
+    // checks below keep half a second to spare around each limit.
+    beforeEach(() => {
+      vi.useRealTimers();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+    const user = () => userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const summaryCard = () => document.querySelector(".result-card--overflow") as HTMLElement;
+    const overlayIsUp = () => document.querySelector(".result-overlay") !== null;
+    const wait = (ms: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+
+    it("a pointer on the card holds it for as long as it stays — past the 3 s it would have left after", async () => {
+      await toSummary();
+      const u = user();
+      await u.hover(summaryCard());
+      await wait(3_500);
+      expect(overlayIsUp()).toBe(true);
+      await wait(20_000);
+      expect(overlayIsUp()).toBe(true);
+    });
+
+    it("…and when the pointer leaves, the clock starts over: a whole hold from then, not what was left of it", async () => {
+      await toSummary();
+      const u = user();
+      await wait(2_000); // most of the 3 s has gone
+      await u.hover(summaryCard());
+      await wait(10_000);
+      await u.unhover(summaryCard());
+      await wait(2_000); // a whole 3 s is not over, though 12 s have passed since the card came
+      expect(overlayIsUp()).toBe(true);
+      await wait(1_500);
+      expect(overlayIsUp()).toBe(false);
+    });
+
+    it("a pointer on the opened list holds it too, and the open list keeps its longer hold once the pointer is gone", async () => {
+      await toSummary();
+      const u = user();
+      await u.click(screen.getByRole("button", { name: /\+2 more results/ })); // opens the list; the pointer is on the card
+      await wait(30_000);
+      expect(overlayIsUp()).toBe(true);
+      await u.unhover(summaryCard());
+      await wait(6_000);
+      expect(overlayIsUp()).toBe(true);
+      await wait(3_000);
+      expect(overlayIsUp()).toBe(false);
+    });
+
+    it("the keyboard on one of its controls holds it, and Tab to the next control of the card does not let go", async () => {
+      await toSummary();
+      const u = user();
+      await u.tab(); // the header of the summary
+      expect(screen.getByRole("button", { name: /\+2 more results/ })).toHaveFocus();
+      await wait(10_000);
+      expect(overlayIsUp()).toBe(true);
+      await u.tab(); // the Dismiss button: still inside the card
+      expect(screen.getByRole("button", { name: "Dismiss" })).toHaveFocus();
+      await wait(10_000);
+      expect(overlayIsUp()).toBe(true);
+    });
+
+    it("…and when focus leaves the card the clock starts over", async () => {
+      await toSummary();
+      const u = user();
+      await u.tab();
+      await wait(10_000);
+      expect(overlayIsUp()).toBe(true);
+      act(() => (document.activeElement as HTMLElement).blur()); // focus goes to the page
+      await wait(2_000);
+      expect(overlayIsUp()).toBe(true);
+      await wait(1_500);
+      expect(overlayIsUp()).toBe(false);
+    });
+
+    it("a click or a tap that happens to focus a button is not the keyboard: once the pointer is gone, it leaves on time", async () => {
+      await toSummary();
+      const u = user();
+      await u.click(screen.getByRole("button", { name: /\+2 more results/ }));
+      expect(screen.getByRole("button", { name: /\+2 more results/ })).toHaveFocus(); // the click focused it …
+      await u.unhover(summaryCard()); // … and the finger or the mouse left
+      await wait(6_000);
+      expect(overlayIsUp()).toBe(true);
+      await wait(3_000);
+      expect(overlayIsUp()).toBe(false); // the focus on the button did not hold it
+    });
+
+    it("Dismiss still dismisses at once while it is held", async () => {
+      await toSummary();
+      const u = user();
+      await u.hover(summaryCard());
+      await u.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(overlayIsUp()).toBe(false);
+    });
   });
 });

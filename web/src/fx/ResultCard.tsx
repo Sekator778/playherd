@@ -336,6 +336,16 @@ function ResultLine({ event }: { event: ResultEvent }) {
   );
 }
 
+/** Whether focus got where it is the way the keyboard (or a screen reader) brings it — `:focus-visible` — and not by a tap or a
+ *  click on a button, which focuses it too. A browser that cannot answer is taken to say yes: held, not cut short. */
+function focusCameByKeyboard(target: EventTarget): boolean {
+  try {
+    return (target as Element).matches(":focus-visible");
+  } catch {
+    return true;
+  }
+}
+
 function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss: () => void }) {
   const [expanded, setExpanded] = useState(false);
   // One dismissal, whoever asks first (the hold timer, the dimmed area, the button) — as on a single card.
@@ -345,15 +355,35 @@ function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss:
     dismissedRef.current = true;
     onDismiss();
   };
+  // A card that is being READ is not taken away: while a pointer rests on it, or the keyboard (a screen reader) is on one of its
+  // controls, its clock does not run, and when the pointer or the focus leaves it starts again — a full hold, not what was left of
+  // it. (A tap or a click that focuses a button does not count as the keyboard: the card would then wait for the next tap, which
+  // is how it used to behave, dimming and blurring the app until someone touched it.)
+  const [pointerInside, setPointerInside] = useState(false);
+  const [focusInside, setFocusInside] = useState(false);
+  const held = pointerInside || focusInside;
   useEffect(() => {
+    if (held) return;
     const timer = window.setTimeout(dismiss, expanded ? OVERFLOW_OPEN_HOLD_MS : OVERFLOW_HOLD_MS);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded]);
+  }, [expanded, held]);
   const sum = events.reduce((acc, e) => acc + e.netPlay, 0);
   return (
     <div className="result-overlay result-overlay--overflow" onClick={dismiss} role="status" aria-live="polite">
-      <div className="result-card result-card--overflow" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="result-card result-card--overflow"
+        onClick={(e) => e.stopPropagation()}
+        onPointerEnter={() => setPointerInside(true)}
+        onPointerLeave={() => setPointerInside(false)}
+        onFocus={(e) => {
+          if (focusCameByKeyboard(e.target)) setFocusInside(true);
+        }}
+        onBlur={(e) => {
+          // focus moving from one control of the card to another is not leaving it
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusInside(false);
+        }}
+      >
         {events.length === 1 ? (
           // A "summary" of one result is that result: named, not "+1 more results" behind a tap.
           <>
