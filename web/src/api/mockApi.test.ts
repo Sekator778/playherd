@@ -984,6 +984,16 @@ describe("the contract's round fields: every round carries its market's kind, pr
     for (const row of (await mockApi.cancellations({ limit: 50 })).items) expect(row.asset).toBeTruthy();
   });
 
+  it("the fixed cancelled BTC round says it was cancelled after five minutes without a price, as the server does (Р-79), not after an hour", async () => {
+    const btc = (await mockApi.cancellations({ limit: 50 })).items.find((c) => c.reason.startsWith("Automatic cancellation"))!;
+    expect(btc.reason).toContain("within 5 minutes of this round's close");
+    expect(btc.reason).not.toMatch(/1 hour/);
+    const round = await mockApi.round(btc.roundId);
+    if (round.phase !== "CANCELLED") throw new Error("expected CANCELLED");
+    expect(round.cancellation.reason).toBe(btc.reason);
+    expect(round.cancellation.cancelledAtMs - round.window.endMs).toBe(5 * 60_000);
+  });
+
   it("a settled bet's history row names its market's kind", async () => {
     const odds = await bettingRoundOf("PM900101");
     await mockApi.placeBet({ roundId: odds.roundId, direction: "UP", leverage: 3, stake: "200.000" });

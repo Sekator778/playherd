@@ -216,7 +216,9 @@ function MarketsSection() {
           </ul>
           <p className="faint status-fine">
             A price is stale when its source has sent nothing newer within its limit. Betting stays open meanwhile; if a reliable price can't be
-            read within an hour of a round closing, the round is cancelled and every bet refunded (see the log below).
+            read within five minutes of a round closing (fifteen for Polymarket's odds, two when the market's other exchange is still sending
+            prices), the round is cancelled and every bet refunded (see the log below), so that it never holds up the rounds after it. A round
+            nobody bet on, if its price can't be read, is skipped.
           </p>
           {hasBackups && (
             <p className="faint status-fine">

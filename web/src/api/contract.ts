@@ -316,8 +316,9 @@ export interface CrowdRoundResultDto {
 }
 
 /** Р-32/Р-23: an operator cancellation (bad oracle read) or an automatic one (no price could be
- *  read within 1 hour) — every cancellation is publicly visible with its reason on the round
- *  page, regardless of cause. */
+ *  read — after five minutes, fifteen for Polymarket, two when the market's other exchange still
+ *  sends prices: Р-79, Р-77; at the latest within 1 hour, as for any other fault: Р-23) — every
+ *  cancellation is publicly visible with its reason on the round page, regardless of cause. */
 export interface CancellationDto {
   roundId: RoundId;
   /** The round's market and its `symbol` — the cancellations log names the pair, not only the id. */

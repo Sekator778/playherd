@@ -169,6 +169,17 @@ describe("Status — every market, its source and how old its price is", () => {
     expect(screen.getByText(/Betting stays open meanwhile/)).toBeInTheDocument();
   });
 
+  it("says in plain words when a round without a price is cancelled: minutes, not an hour, and that an empty one is skipped (Р-77, Р-79)", async () => {
+    renderStatus({ markets: [priced("A")] });
+    const note = (await screen.findByText(/A price is stale when its source has sent nothing newer within its limit/)).textContent ?? "";
+    expect(note).toContain("within five minutes of a round closing");
+    expect(note).toContain("fifteen for Polymarket's odds, two when the market's other exchange is still sending prices");
+    expect(note).toContain("the round is cancelled and every bet refunded (see the log below)");
+    expect(note).toContain("so that it never holds up the rounds after it");
+    expect(note).toContain("A round nobody bet on, if its price can't be read, is skipped.");
+    expect(note).not.toContain("within an hour");
+  });
+
   it("states: loading, a market list that never came, nothing listed", async () => {
     renderStatus({ methods: { markets: vi.fn(() => new Promise<never>(() => {})) } });
     expect(section("Markets and their prices").querySelector(".skeleton")).not.toBeNull();

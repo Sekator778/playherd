@@ -39,9 +39,21 @@ describe("How it works — where the prices come from (Р-74, Р-76)", () => {
     expect(source).toHaveTextContent("shows the backup's price, marked with its name");
   });
 
-  it("keeps the rest of its promises: no decentralized oracle, an hour to a refund", () => {
+  it("keeps the rest of its promises: no decentralized oracle", () => {
     renderPage();
     expect(screen.getByText(/There is no decentralized price oracle here/)).toBeInTheDocument();
-    expect(screen.getByText(/If a reliable price can't be read within an hour of a round closing/)).toBeInTheDocument();
+  });
+
+  it("says in plain words how long a round waits for a price — minutes, not an hour — and what still gets the hour (Р-77, Р-79)", () => {
+    renderPage();
+    const source = screen.getByRole("heading", { name: "Where the price comes from" }).closest("section")!;
+    expect(source).toHaveTextContent("If a reliable price can't be read within five minutes of a round closing");
+    expect(source).toHaveTextContent("fifteen for Polymarket's odds, two when the market's other exchange is still sending prices");
+    expect(source).toHaveTextContent("the round is cancelled and every bet is refunded, including any that would have been liquidated");
+    expect(source).toHaveTextContent("one round without a price never holds up the rounds after it");
+    expect(source).toHaveTextContent("Any other fault that stops a round from being settled gets an hour at most");
+    expect(source).toHaveTextContent("A round nobody bet on, if its price can't be read, is simply skipped");
+    expect(source).toHaveTextContent("A cancelled round always shows its reason on the round's page");
+    expect(source).not.toHaveTextContent("within an hour of a round closing");
   });
 });

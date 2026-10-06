@@ -93,9 +93,15 @@ export function HowItWorksPage() {
           Prices come straight from the exchanges — Coinbase and Hyperliquid, with Kraken and Coinbase as backups — and
           odds from Polymarket (a test deployment can run on recorded or simulated prices instead — when it does, the Wallet
           screen and the Status page say so). There is no decentralized price oracle here — prices are read and
-          published on-chain by a key our team controls. If a reliable price can't be read within an hour of a round
-          closing, the round is cancelled and every bet is refunded, including any that would have been liquidated. A
-          cancelled round always shows its reason on the round's page.
+          published on-chain by a key our team controls.
+        </p>
+        <p>
+          <strong>No price, no round.</strong> If a reliable price can't be read within five minutes of a round closing
+          (fifteen for Polymarket's odds, two when the market's other exchange is still sending prices), the round is
+          cancelled and every bet is refunded, including any that would have been liquidated — so one round without a price
+          never holds up the rounds after it. Any other fault that stops a round from being settled gets an hour at most,
+          then the same refund. A round nobody bet on, if its price can't be read, is simply skipped. A cancelled round
+          always shows its reason on the round's page.
         </p>
         <p>
           <strong>A round runs on one exchange.</strong> A crypto market has a main exchange and a backup (Kraken for
