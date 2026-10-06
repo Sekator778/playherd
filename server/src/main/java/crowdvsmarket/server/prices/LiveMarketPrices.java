@@ -16,8 +16,8 @@ import org.jboss.logging.Logger;
 
 /**
  * The live {@link MarketPrices} (mode=live): boundary prices, round paths and the lobby quote, all
- * from {@link TickStore}'s ticks (docs/research/markets_architecture.md §3.2). It replaces the
- * fallback {@link NoMarketPrices}.
+ * from {@link TickStore}'s ticks (docs/research/markets_architecture.md §3.2). It is the only
+ * implementation of {@link MarketPrices}.
  *
  * <p><b>Boundary price {@code P(t)}</b> — the last tick with {@code at <= t} that is not older than
  * the feed's {@code staleMs} at {@code t}. {@code open = P(start)}, {@code close = P(end)}, hence the
