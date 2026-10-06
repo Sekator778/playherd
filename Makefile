@@ -48,7 +48,7 @@ SNAPSHOT_ARGS ?= --rev HEAD
 .PHONY: help check build test \
         test-java build-java test-chain lint-chain build-chain \
         web-deps test-web build-web apk \
-        test-tools stand-up stand-down stand-status stand-logs tunnel tunnel-up tunnel-url tunnel-down e2e verify-oracle \
+        test-tools stand-up stand-down stand-status stand-logs tunnel tunnel-up tunnel-url tunnel-down e2e e2e-markets verify-oracle \
         snapshot
 
 help: ## list targets
@@ -95,9 +95,11 @@ apk: web-deps ## Android debug APK (Capacitor); HERD_APP_URL=https://host points
 
 # --- local stand (docker compose project "herd", via tools/stand.sh) and e2e ---
 
-# Tests of the stand script that need neither docker nor a network (a fake `docker`). Not part of `check`: no CI job runs them.
-test-tools: ## tests of tools/stand.sh (its reachability check of the price venues); no docker, no network
+# Tests of the stand script and of the end-to-end runs that need neither docker nor a network: a fake `docker` for
+# tools/stand.sh, a fake stand on localhost with rounds of a fraction of a second for tools/e2e. Not part of `check`: no CI job runs them.
+test-tools: ## tests of tools/stand.sh and of the tools/e2e runs (a fake stand); no docker, no network
 	bash tools/test-stand.sh
+	node --test tools/e2e/*.test.mjs
 
 stand-up: ## start the local stand on :8480
 	tools/stand.sh up
@@ -136,6 +138,11 @@ tunnel-down: ## stop the detached tunnel
 
 e2e: web-deps ## 4-player end-to-end run against WEB_URL (default the local stand)
 	node --experimental-wasm-modules tools/e2e/run.mjs $(WEB_URL)
+
+# One market of each price source (spot crypto, an xyz market, an odds market), side by side in the same pass; a family with
+# no market that has a live price is skipped. Needs the stand to be up; see the header of tools/e2e/run-markets.mjs.
+e2e-markets: web-deps ## one market of each price source (spot crypto, xyz, odds) played in the same pass against WEB_URL
+	node --experimental-wasm-modules tools/e2e/run-markets.mjs $(WEB_URL)
 
 $(ORACLE_STAMP): tools/verify-oracle/requirements.txt
 	$(PYTHON) -m venv $(ORACLE_VENV)

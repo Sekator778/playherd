@@ -23,8 +23,12 @@
 // can never see a `launcherId`. CI mode skips only that one check (logged, not failed); every
 // other check, including the resultsHash integrity check, keeps its default (non-CI) behaviour
 // unchanged, since resultsHash is computed by the server independently of chainsvc.
-import { createHash } from "node:crypto";
+//
+// This run plays the bitcoin market only. Its sibling tools/e2e/run-markets.mjs (`make e2e-markets`) plays one market of
+// every price source — spot crypto, xyz, odds — in the same pass; what both need (the RPC client, the PASS/FAIL
+// collector, the hashing) is in lib.mjs.
 import { createTestWallet } from "./testWallet.mjs";
+import { Player, createChecks, parsePlay, sha256HexOfExactBytes, sleep } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const CI_MODE = args.includes("--ci") || process.env.HERD_E2E_CI === "1";
@@ -32,81 +36,10 @@ const BASE_URL = args.find((a) => !a.startsWith("--")) || process.env.HERD_E2E_B
 const HOURLY_DURATION_MS = 180_000; // Р-46 test mode
 const POLL_MS = 4_000;
 
-const results = []; // { ok: boolean, name: string, detail?: string }
-function check(name, ok, detail) {
-  results.push({ name, ok, detail });
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? " — " + detail : ""}`);
-}
-function fail(name, err) {
-  check(name, false, err instanceof Error ? err.message : String(err));
-}
+const { check, fail, summarize } = createChecks();
 
 function log(...args) {
   console.log(`[e2e ${new Date().toISOString()}]`, ...args);
-}
-
-// --- tiny RPC client with a per-player cookie jar (FIXED INTERFACE (1)) ---
-class Player {
-  constructor(label) {
-    this.wallet = createTestWallet(label);
-    this.cookie = null; // "herd_session=..."
-    this.playerId = null;
-    this.nickname = `E2E ${label.replace(/[^a-zA-Z0-9]+/g, " ").trim()}`;
-  }
-
-  async rpc(method, ...args) {
-    const headers = { "Content-Type": "application/json" };
-    if (this.cookie) headers.Cookie = this.cookie;
-    const res = await fetch(`${BASE_URL}/api/rpc/${method}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ args }),
-    });
-    const setCookies = res.headers.getSetCookie?.() ?? [];
-    for (const sc of setCookies) {
-      if (sc.startsWith("herd_session=")) {
-        const value = sc.split(";", 1)[0];
-        // Clearing (signOut) sets an empty value — treat that as "no session" rather than
-        // sending an empty Cookie header on every later call.
-        this.cookie = value.endsWith("=") ? null : value;
-      }
-    }
-    const text = await res.text();
-    const body = text ? JSON.parse(text) : {};
-    if (!res.ok) {
-      const err = body?.error ?? {};
-      throw new Error(`${method} -> HTTP ${res.status} ${err.code ?? ""} ${err.message ?? text}`.trim());
-    }
-    return body;
-  }
-
-  async signIn() {
-    const challenge = await this.rpc("authChallenge", { address: this.wallet.address });
-    const signature = this.wallet.sign(challenge.message);
-    const session = await this.rpc("authVerify", {
-      nonce: challenge.nonce,
-      address: this.wallet.address,
-      publicKey: this.wallet.publicKey,
-      signature,
-    });
-    this.playerId = session.player.playerId;
-    return session;
-  }
-}
-
-async function sleep(ms) {
-  await new Promise((r) => setTimeout(r, ms));
-}
-
-async function sha256HexOfExactBytes(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`GET ${url} -> HTTP ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  return { hex: `0x${createHash("sha256").update(buf).digest("hex")}`, bytes: buf };
-}
-
-function parsePlay(s) {
-  return Math.round(parseFloat(s) * 1000); // integer mojos, matches PlayAmount's 1000-scale
 }
 
 async function main() {
@@ -119,7 +52,7 @@ async function main() {
     { label: "herd e2e player 3", direction: "UP", leverage: 40, stake: "100.000" }, // the required 40x
     { label: "herd e2e player 4", direction: "DOWN", leverage: 3, stake: "1000.000" },
   ];
-  const players = plan.map((p) => new Player(p.label));
+  const players = plan.map((p) => new Player(p.label, { baseUrl: BASE_URL, createWallet: createTestWallet }));
 
   for (const player of players) {
     try {
@@ -389,20 +322,6 @@ async function main() {
   }
 
   return summarize();
-}
-
-function summarize() {
-  const failed = results.filter((r) => !r.ok);
-  console.log("\n--- summary ---");
-  console.log(`${results.length - failed.length}/${results.length} checks passed`);
-  if (failed.length > 0) {
-    console.log("FAILED checks:");
-    for (const f of failed) console.log(`  - ${f.name}${f.detail ? ": " + f.detail : ""}`);
-    console.log("\nE2E FAILED");
-    process.exitCode = 1;
-  } else {
-    console.log("\nE2E PASSED");
-  }
 }
 
 main().catch((e) => {
