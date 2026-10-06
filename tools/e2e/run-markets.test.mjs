@@ -13,9 +13,9 @@ const ODDS = { id: "PM1", kind: "ODDS", category: "politics", source: "polymarke
 
 const TIMING = { pollMs: 30, startMarginMs: 6_000, settleMarginMs: 6_000, minBettingMs: 120, resultsWaitMs: 3_000, oracleWaitMs: 3_000 };
 
-/** The run against a fake stand, and what it left: the printed lines, the exit codes it set, the stand's state. */
-async function run(markets, { faults = {}, roundMs = 600, ci = false, timing = {} } = {}) {
-  const stand = await startFakeStand({ roundMs, markets, faults });
+/** The run against a fake stand, and what it left: the printed lines, the exit codes it set, the stand's state. `clockOffsetMs`: the stand's clock against this machine's. */
+async function run(markets, { faults = {}, roundMs = 600, ci = false, timing = {}, clockOffsetMs = 0 } = {}) {
+  const stand = await startFakeStand({ roundMs, markets, faults, clockOffsetMs });
   const lines = [];
   const codes = [];
   try {
@@ -248,3 +248,45 @@ test("--ci leaves out the chain service's own state and nothing else", async () 
   const names = (r) => r.result.results.map((x) => x.name);
   assert.deepEqual(names(normal).filter((n) => !names(ci).includes(n)), ["chainsvc reachable via serverInfo (oracle block populated)"]);
 });
+
+// --- the stand's clock is not this machine's ---
+//
+// The windows the stand names are on its own clock. A run that takes them for this machine's time bets too late when the stand
+// is ahead and never finds a window when it is behind: `serverNow()` of run-markets.mjs is the offset between the two, read from
+// the lobby's `serverTimeMs`. The fake stand is put 60 s ahead of, and 60 s behind, this machine's clock (its rounds, windows,
+// round ids and the times it stamps on bets are all on that clock), and every bet must be taken with the window the run asked for
+// left on the stand's clock. A minute is a multiple of the round, so the stand's rounds start at the same moments of a second
+// as this machine's.
+
+/** Waits until this machine's clock is `phaseMs` into a period of `periodMs`. */
+async function waitForPhase(periodMs, phaseMs) {
+  const phase = Date.now() % periodMs;
+  await new Promise((resolve) => setTimeout(resolve, (phaseMs - phase + periodMs) % periodMs));
+}
+
+for (const [skewMs, where] of [[60_000, "ahead of"], [-60_000, "behind"]]) {
+  test(`a stand 60 s ${where} this machine's clock is bet on with the window the run asked for left, on the stand's clock`, async () => {
+    const roundMs = 1200;
+    const minBettingMs = 600;
+    // Begin when the window of the stand that is open has 400 ms left: not enough, the run has to wait for the next window.
+    // (Taken for this machine's time, the stand 60 s ahead looks like a window with 60 s left, and the bets are placed at once,
+    // with 300 ms of it to spare; the stand 60 s behind looks like no window at all.)
+    await waitForPhase(roundMs, 800);
+    const { result, stand } = await run([SPOT], { roundMs, clockOffsetMs: skewMs, timing: { minBettingMs, startMarginMs: 3_000, settleMarginMs: 3_000 } });
+
+    assert.deepEqual(failed(result), []);
+    assert.deepEqual(result.outcomes.map((o) => [o.market, o.outcome]), [["spot_BTC", "settled"]]);
+    const bets = stand.calls.filter((c) => c.method === "placeBet");
+    assert.equal(bets.length, 4, "all four bets were taken");
+    const startOf = (bet) => Number(bet.args[0].roundId.split("-").pop());
+    // the stand is on the clock it was given: the rounds it names are minute-skewed relative to this machine's time
+    assert.ok(Math.abs(startOf(bets[0]) - (Date.now() + skewMs)) < 10 * roundMs, `the round ${bets[0].args[0].roundId} is on the stand's clock`);
+    for (const bet of bets) {
+      const left = startOf(bet) - bet.atMs; // the stand's own clock, both
+      assert.ok(left > 0, `the bet was taken inside the window (${left} ms left)`);
+    }
+    // 50 ms of the time between the run's look at the clock and the bet reaching the stand
+    const left = startOf(bets[0]) - bets[0].atMs;
+    assert.ok(left >= minBettingMs - 50, `the first bet had ${left} ms of the window left, the run asked for ${minBettingMs} ms`);
+  });
+}

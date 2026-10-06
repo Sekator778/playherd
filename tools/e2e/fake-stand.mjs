@@ -11,10 +11,19 @@
 // `faults` (each a Set of market ids, or a boolean for everything) make the stand misbehave in the ways a run must catch
 // or survive: `corruptResultsHash` (the round names another hash than its document has), `noJournalRow` (the oracle
 // journal lacks the round's record), `wrongAsset` (the record carries another market's index), `cancelRounds` (every round
-// of the market is cancelled with a refund — the market left its band), `flatRounds` (the price does not move), `noOpenPrice`
-// (a running round has no opening price yet), `closeOnRounds`/`closeOnBet` (the market closes the moment its rounds, or a
-// bet on it, are asked for), `hashDelayMs`/`oracleQueueDelayMs` (how long until the hash is on the round, until the record
-// is handed to the chain service).
+// of the market is cancelled with a refund — by default because the market left its band, `market closed: …`; `cancelReason`
+// is another reason, a string for every market or an object by market id), `flatRounds` (the price does not move),
+// `noOpenPrice` (a running round has no opening price yet), `closeOnRounds`/`closeOnBet` (the market closes the moment its
+// rounds, or a bet on it, are asked for), `hashDelayMs`/`oracleQueueDelayMs` (how long until the hash is on the round, until
+// the record is handed to the chain service).
+//
+// `clockOffsetMs` puts the whole stand on a clock of its own: `serverTimeMs`, every window and round id, the phase of every
+// round, the times it stamps on bets and records are `Date.now() + clockOffsetMs`, as a real stand's are on a host whose clock
+// is not this machine's. A run that takes the stand's windows for this machine's time bets late, or never finds a window; a
+// stand put on a Saturday has a weekend, whatever day it is here.
+//
+// A market spec may also say `noSeries` (the lobby lists the market with no series at all) or `noBettingRound` (its series has
+// no round open for bets), and `price: null` or `price: { stale: true }` as before.
 import { createHash } from "node:crypto";
 import http from "node:http";
 
@@ -86,14 +95,22 @@ function completeMarket(spec, index) {
 /**
  * @param {object} config
  * @param {number} [config.roundMs]   length of a round, and of the betting window before it
- * @param {object[]} config.markets   `{ id, kind?, category?, source?, maxLeverage?, status?, price?: null | {stale}, endsAtMs?, … }`
+ * @param {object[]} config.markets   `{ id, kind?, category?, source?, maxLeverage?, status?, price?: null | {stale}, endsAtMs?, noSeries?, noBettingRound?, … }`
  * @param {object} [config.faults]
+ * @param {number} [config.clockOffsetMs]  how far the stand's clock is ahead of this machine's (behind when negative)
  * @returns {Promise<{ url: string, close: () => Promise<void>, calls: object[], state: object }>}
  */
-export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {}) {
+export async function startFakeStand({ roundMs = 800, markets, faults = {}, clockOffsetMs = 0 } = {}) {
   const fault = (name, marketId) => {
     const f = faults[name];
     return f === true || (f instanceof Set && f.has(marketId));
+  };
+  /** The stand's own time. */
+  const now = () => Date.now() + clockOffsetMs;
+  const cancelReasonOf = (marketId) => {
+    const given = faults.cancelReason;
+    const reason = typeof given === "string" ? given : given?.[marketId];
+    return reason ?? "market closed: the price left the 3%–97% range";
   };
   const queueDelayMs = faults.oracleQueueDelayMs ?? 250;
   const hashDelayMs = faults.hashDelayMs ?? 150;
@@ -125,7 +142,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
   /** The catalog closes a market: it leaves the lobby's active list, its series stop, it takes no bets. */
   function close(market, reason) {
     market.status = "CLOSED";
-    market.closedAtMs = Date.now();
+    market.closedAtMs = now();
     market.closeReason = reason;
   }
 
@@ -144,7 +161,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
     const roundId = roundIdOf(market.id, startMs);
     if (finished.has(roundId)) return finished.get(roundId);
     const taken = [...betsOf(roundId).values()];
-    const now = Date.now();
+    const madeAtMs = now();
     const cancelled = fault("cancelRounds", market.id);
     const open = rawPrice(market, startMs);
     const close = rawPrice(market, startMs + roundMs);
@@ -178,7 +195,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
     });
     const result = {
       roundId, market, startMs, cancelled, open, close, positions, document, hash: hashOf(document),
-      madeAtMs: now, seq: nextSeq++,
+      madeAtMs, seq: nextSeq++,
     };
     finished.set(roundId, result);
     if (!fault("noJournalRow", market.id)) {
@@ -187,17 +204,17 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
         roundId,
         marketId: market.id,
         asset: fault("wrongAsset", market.id) ? market.oracleIndex + 7 : market.oracleIndex,
-        ts: Math.floor(now / 1000),
+        ts: Math.floor(madeAtMs / 1000),
         priceCents: cancelled ? 0 : Number(centsOf(close)),
         resultsHash: result.hash,
-        madeAtMs: now,
+        madeAtMs,
         venue: market.backupSource ? market.source : null,
       });
     }
     return result;
   }
 
-  const journalState = (row) => (Date.now() - row.madeAtMs >= queueDelayMs ? "queued" : "unknown");
+  const journalState = (row) => (now() - row.madeAtMs >= queueDelayMs ? "queued" : "unknown");
   const journalView = (row) => ({ ...row, madeAtMs: undefined, state: journalState(row) });
 
   // --- DTOs ---
@@ -222,7 +239,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
     const market = ref && byId.get(ref.marketId);
     if (!market) throw new ApiError(404, "NOT_FOUND", `no round ${roundId}`);
     const { startMs } = ref;
-    const now = Date.now();
+    const at = now();
     const base = {
       roundId,
       window: { interval: "HOURLY", startMs, endMs: startMs + roundMs },
@@ -232,7 +249,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
       priceDecimals: market.priceDecimals,
       source: market.source,
     };
-    const phase = phaseOf(startMs, now);
+    const phase = phaseOf(startMs, at);
     if (phase === "BETTING") {
       const taken = [...betsOf(roundId).values()];
       const stakeOf = (dir) => taken.filter((b) => b.direction === dir).reduce((sum, b) => sum + b.stake, 0);
@@ -265,7 +282,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
         crowd: null,
       };
     }
-    const hashAttached = now - result.madeAtMs >= hashDelayMs;
+    const hashAttached = at - result.madeAtMs >= hashDelayMs;
     const shownHash = fault("corruptResultsHash", market.id) ? hashOf(`${result.document} (not this)`) : result.hash;
     const row = journal.find((r) => r.roundId === roundId);
     const anchor = row ? { seq: row.seq, state: journalState(row), height: null } : null;
@@ -274,7 +291,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
         ...base,
         phase: "CANCELLED",
         cancellation: {
-          roundId, marketId: market.id, asset: market.symbol, reason: "market closed: the price left the 3%–97% range",
+          roundId, marketId: market.id, asset: market.symbol, reason: cancelReasonOf(market.id),
           cancelledAtMs: result.madeAtMs, refundedBetCount: result.positions.length,
         },
         ...(hashAttached ? { resultsHash: shownHash } : {}),
@@ -296,21 +313,20 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
   const priceDto = (market) =>
     market.price === null
       ? null
-      : { price: rawPrice(market, Date.now()), asOfMs: Date.now(), change24h: 0.01, stale: Boolean(market.price.stale), venue: null };
+      : { price: rawPrice(market, now()), asOfMs: now(), change24h: 0.01, stale: Boolean(market.price.stale), venue: null };
 
   function marketDto(market) {
-    const now = Date.now();
-    const running = startOfRunning(now);
+    const running = startOfRunning(now());
     const active = market.status === "ACTIVE";
     return {
       id: market.id, kind: market.kind, category: market.category, symbol: market.symbol, title: market.title, subtitle: null, iconUrl: null,
       maxLeverage: market.maxLeverage, priceDecimals: market.priceDecimals, status: market.status, endsAtMs: market.endsAtMs,
       eventStartsAtMs: null, closedAtMs: market.closedAtMs, closeReason: market.closeReason, oracleIndex: market.oracleIndex,
       source: market.source, backupSource: market.backupSource, price: active ? priceDto(market) : null,
-      series: active
+      series: active && !market.noSeries
         ? [{
             interval: "HOURLY", durationSec: roundMs / 1000,
-            bettingRoundId: roundIdOf(market.id, running + roundMs), bettingClosesAtMs: running + roundMs,
+            bettingRoundId: market.noBettingRound ? null : roundIdOf(market.id, running + roundMs), bettingClosesAtMs: running + roundMs,
             runningRoundId: roundIdOf(market.id, running), runningEndsAtMs: running + roundMs,
             participantCount: 0, upStake: "0.000", downStake: "0.000", majorityDirection: null,
           }]
@@ -343,13 +359,13 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
       ctx.requirePlayer().nickname = name;
       return summary(ctx.playerId);
     },
-    markets: () => ({ serverTimeMs: Date.now(), categories: [], markets: marketList.map(marketDto) }),
+    markets: () => ({ serverTimeMs: now(), categories: [], markets: marketList.map(marketDto) }),
     rounds: ([interval, marketId], ctx) => {
       const market = byId.get(marketId);
       if (!market) throw new ApiError(404, "MARKET_NOT_FOUND", `no market ${marketId}`);
       if (fault("closeOnRounds", marketId)) close(market, "The source market ended");
       if (market.status !== "ACTIVE") throw new ApiError(409, "MARKET_CLOSED", `market ${marketId} is closed`);
-      const running = startOfRunning(Date.now());
+      const running = startOfRunning(now());
       return {
         interval,
         running: roundDto(roundIdOf(marketId, running), ctx.playerId),
@@ -364,14 +380,14 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
       if (!market) throw new ApiError(404, "NOT_FOUND", `no round ${bet.roundId}`);
       if (fault("closeOnBet", market.id)) close(market, "Price left the 3%–97% range");
       if (market.status !== "ACTIVE") throw new ApiError(409, "MARKET_CLOSED", `market ${market.id} is closed`);
-      if (phaseOf(ref.startMs, Date.now()) !== "BETTING") throw new ApiError(409, "ROUND_NOT_OPEN_FOR_BETTING", "betting is closed");
+      if (phaseOf(ref.startMs, now()) !== "BETTING") throw new ApiError(409, "ROUND_NOT_OPEN_FOR_BETTING", "betting is closed");
       if (!(bet.leverage >= 2 && bet.leverage <= market.maxLeverage)) throw new ApiError(400, "INVALID_LEVERAGE", `x${bet.leverage} is not allowed`);
       const stake = Math.round(parseFloat(bet.stake) * MOJOS);
       if (stake > player.balance) throw new ApiError(409, "INSUFFICIENT_BALANCE", "not enough PLAY");
       const previous = betsOf(bet.roundId).get(player.playerId);
       player.balance += previous ? previous.stake : 0;
       player.balance -= stake;
-      betsOf(bet.roundId).set(player.playerId, { playerId: player.playerId, direction: bet.direction, leverage: bet.leverage, stake, atMs: Date.now() });
+      betsOf(bet.roundId).set(player.playerId, { playerId: player.playerId, direction: bet.direction, leverage: bet.leverage, stake, atMs: now() });
       return { playerId: player.playerId, roundId: bet.roundId, direction: bet.direction, leverage: bet.leverage, stake: play(stake) };
     },
     myAccount: (_, ctx) => ({ playerId: ctx.playerId, balance: play(ctx.requirePlayer().balance) }),
@@ -407,7 +423,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
             return players.get(this.playerId);
           },
         };
-        calls.push({ method, atMs: Date.now(), args });
+        calls.push({ method, atMs: now(), args });
         const handler = rpc[method];
         if (!handler) throw new ApiError(404, "NOT_FOUND", `no method ${method}`);
         const result = handler(args, ctx);
@@ -444,7 +460,7 @@ export async function startFakeStand({ roundMs = 800, markets, faults = {} } = {
   const sweeper = setInterval(() => {
     for (const roundId of bets.keys()) {
       const ref = parseRoundId(roundId);
-      if (ref && phaseOf(ref.startMs, Date.now()) === "ENDED") finish(byId.get(ref.marketId), ref.startMs);
+      if (ref && phaseOf(ref.startMs, now()) === "ENDED") finish(byId.get(ref.marketId), ref.startMs);
     }
   }, 40);
   return {
