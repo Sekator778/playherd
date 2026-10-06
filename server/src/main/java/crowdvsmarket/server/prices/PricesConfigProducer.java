@@ -64,6 +64,18 @@ public class PricesConfigProducer {
                     defaultValue = PricesConfig.DEFAULT_HYPERLIQUID_MAX_HEAL_MS) long hyperliquidMaxHealMs,
             @ConfigProperty(name = "herd.prices.venue-release-after-ms",
                     defaultValue = PricesConfig.DEFAULT_VENUE_RELEASE_AFTER_MS) long venueReleaseAfterMs,
+            @ConfigProperty(name = "herd.prices.hyperliquid.release-after-ms",
+                    defaultValue = PricesConfig.DEFAULT_RELEASE_AFTER_MS) long hyperliquidReleaseAfterMs,
+            @ConfigProperty(name = "herd.prices.hyperliquid.spot-release-after-ms",
+                    defaultValue = PricesConfig.DEFAULT_RELEASE_AFTER_MS) long hyperliquidSpotReleaseAfterMs,
+            @ConfigProperty(name = "herd.prices.coinbase.release-after-ms",
+                    defaultValue = PricesConfig.DEFAULT_RELEASE_AFTER_MS) long coinbaseReleaseAfterMs,
+            @ConfigProperty(name = "herd.prices.kraken.release-after-ms",
+                    defaultValue = PricesConfig.DEFAULT_RELEASE_AFTER_MS) long krakenReleaseAfterMs,
+            @ConfigProperty(name = "herd.prices.polymarket.release-after-ms",
+                    defaultValue = PricesConfig.DEFAULT_POLYMARKET_RELEASE_AFTER_MS) long polymarketReleaseAfterMs,
+            @ConfigProperty(name = "herd.prices.synthetic.release-after-ms",
+                    defaultValue = PricesConfig.DEFAULT_RELEASE_AFTER_MS) long syntheticReleaseAfterMs,
             // Optional: SmallRye takes an empty value for none, and the default of this list is empty (no venue off)
             @ConfigProperty(name = "herd.prices.disabled-venues") Optional<String> disabledVenues) {
         return new PricesConfig(PricesConfig.isLiveMode(mode), PricesConfig.SourceKind.parse(source),
@@ -71,6 +83,8 @@ public class PricesConfigProducer {
                 hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs,
                 syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs,
                 quietCarryMaxMs, seedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
-                hyperliquidMaxHealMs, PricesConfig.parseVenues(disabledVenues.orElse("")), venueReleaseAfterMs);
+                hyperliquidMaxHealMs, PricesConfig.parseVenues(disabledVenues.orElse("")), venueReleaseAfterMs,
+                new PricesConfig.ReleaseAfter(hyperliquidReleaseAfterMs, hyperliquidSpotReleaseAfterMs,
+                        coinbaseReleaseAfterMs, krakenReleaseAfterMs, polymarketReleaseAfterMs, syntheticReleaseAfterMs));
     }
 }

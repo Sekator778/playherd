@@ -535,6 +535,19 @@ public class GameService implements MarketListener {
         return marketPrices.otherVenueLive(market, window, nowMs);
     }
 
+    /**
+     * The instrument the round of {@code market} is priced on (Р-76, Р-79): the exchange it was decided to run on — the market's
+     * shadow when that is its backup, the market itself for its own exchange — and the market itself for a round that has no
+     * decision (and for a market without a backup, and in replay mode, which has no exchanges). What the scheduler reads the wait
+     * of a round that cannot be priced from ({@code PricesConfig#releaseAfterMs}). Memory only: the decisions are loaded at start.
+     */
+    public Market instrumentOf(Market market, RoundWindow window) {
+        if (config.mode() != GameMode.LIVE || !Instruments.hasBackup(market)) {
+            return market;
+        }
+        return Instruments.runningOn(market, marketPrices.decidedVenue(market, window));
+    }
+
     /** Gives {@code market} its engines and, when its rounds are played, a series per interval
      *  seeded at the window containing "now" (§4 п.2) — never at the calendar's first window, which
      *  would make the scheduler walk every window since the origin, and never behind a window that

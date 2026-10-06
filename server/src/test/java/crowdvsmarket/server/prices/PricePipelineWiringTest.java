@@ -67,6 +67,13 @@ class PricePipelineWiringTest {
         assertThat(prices.connectTimeoutMs()).isEqualTo(3_000);
         assertThat(prices.readTimeoutMs()).isEqualTo(5_000);
         assertThat(prices.venueReleaseAfterMs()).as("herd.prices.venue-release-after-ms: two minutes").isEqualTo(120_000L);
+        PricesConfig.ReleaseAfter waits = prices.releaseAfter();
+        assertThat(waits.hyperliquidMs()).as("herd.prices.hyperliquid.release-after-ms: five minutes").isEqualTo(300_000L);
+        assertThat(waits.hyperliquidSpotMs()).as("herd.prices.hyperliquid.spot-release-after-ms").isEqualTo(300_000L);
+        assertThat(waits.coinbaseMs()).as("herd.prices.coinbase.release-after-ms").isEqualTo(300_000L);
+        assertThat(waits.krakenMs()).as("herd.prices.kraken.release-after-ms").isEqualTo(300_000L);
+        assertThat(waits.polymarketMs()).as("herd.prices.polymarket.release-after-ms: a quarter of an hour").isEqualTo(900_000L);
+        assertThat(waits.syntheticMs()).as("herd.prices.synthetic.release-after-ms").isEqualTo(300_000L);
         assertThat(prices.pipelineActive()).isFalse();
         assertThat(prices.liveSources()).isFalse();
         assertThat(prices.syntheticSource()).isFalse();

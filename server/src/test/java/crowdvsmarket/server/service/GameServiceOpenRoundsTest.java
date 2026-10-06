@@ -188,6 +188,34 @@ class GameServiceOpenRoundsTest {
         verifyNoInteractions(marketPrices);
     }
 
+    // ------------------------------------------------------------------ the instrument a round is priced on (Р-79)
+
+    @Test
+    void aRoundIsPricedOnTheExchangeItWasDecidedOnAndOnTheMarketItselfWhenNothingSaysOtherwise() {
+        Market spot = market("spot_BTC", BACKUP);
+        Market plain = market("BTC", null);
+        when(marketPrices.decidedVenue(spot, hourly(spot, STEP))).thenReturn(Optional.of("kraken"));
+        when(marketPrices.decidedVenue(spot, hourly(spot, 2 * STEP))).thenReturn(Optional.of("coinbase"));
+        when(marketPrices.decidedVenue(spot, hourly(spot, 3 * STEP))).thenReturn(Optional.empty());
+
+        assertThat(service.instrumentOf(spot, hourly(spot, STEP)).id()).as("the backup's shadow").isEqualTo("spot_BTC~kraken");
+        assertThat(service.instrumentOf(spot, hourly(spot, STEP)).source()).isEqualTo("kraken");
+        assertThat(service.instrumentOf(spot, hourly(spot, 2 * STEP))).as("its own exchange").isEqualTo(spot);
+        assertThat(service.instrumentOf(spot, hourly(spot, 3 * STEP))).as("not decided yet").isEqualTo(spot);
+        assertThat(service.instrumentOf(plain, hourly(plain, STEP))).as("a market with one exchange").isEqualTo(plain);
+        verify(marketPrices, never()).decidedVenue(eq(plain), any());
+    }
+
+    @Test
+    void inReplayModeEveryRoundIsPricedOnTheMarketItself() {
+        when(config.mode()).thenReturn(GameMode.REPLAY);
+        Market spot = market("spot_BTC", BACKUP);
+
+        assertThat(service.instrumentOf(spot, hourly(spot, STEP))).isEqualTo(spot);
+
+        verifyNoInteractions(marketPrices);
+    }
+
     @Test
     void theAnswerIsNotNeededByTheCaller() {
         Market spot = market("spot_BTC", BACKUP);

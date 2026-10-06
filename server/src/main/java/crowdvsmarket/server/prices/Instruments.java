@@ -90,4 +90,43 @@ public final class Instruments {
         Optional<Market> shadow = shadowOf(market);
         return shadow.isPresent() ? List.of(market, shadow.get()) : List.of(market);
     }
+
+    /**
+     * The instrument a round that was decided on {@code venue} runs on (Р-76): the shadow when that is the market's backup
+     * exchange, the market itself for its own exchange, for a round with no decision and for a market without a backup.
+     */
+    public static Market runningOn(Market market, Optional<String> venue) {
+        return shadowOf(market).filter(shadow -> venue.filter(shadow.source()::equals).isPresent()).orElse(market);
+    }
+
+    /**
+     * The feed that prices an instrument — a market, or the shadow of one — by what its {@code source} and {@code sourceRef} say,
+     * whether or not that source is switched on: the ids the sources give their feeds ({@link PriceSource.Feed#id}), by the rules of
+     * their own {@link PriceSource.Feed#handles}. Hyperliquid has three — a spot pair ({@code @107}) is {@code hyperliquid:spot}, a
+     * perpetual of the dex {@code xyz} is {@code hyperliquid:xyz}, any other perpetual is {@code hyperliquid} — and every other
+     * source has one. Empty for a source that has no feed, and for a Hyperliquid coin of a dex that nothing polls. With
+     * {@code herd.prices.source=synthetic} the walk prices every market whatever its source says; that is for the caller to know
+     * ({@link PricesConfig#releaseAfterMs}).
+     */
+    public static Optional<String> feedOf(Market instrument) {
+        return switch (instrument.source()) {
+            case HyperliquidPriceSource.NAME -> hyperliquidFeedOf(instrument.sourceRef());
+            case CoinbasePriceSource.NAME -> Optional.of(CoinbasePriceSource.FEED);
+            case KrakenPriceSource.NAME -> Optional.of(KrakenPriceSource.FEED);
+            case PolymarketPriceSource.NAME -> Optional.of(PolymarketPriceSource.FEED);
+            case SyntheticPriceSource.NAME -> Optional.of(SyntheticPriceSource.FEED);
+            default -> Optional.empty();
+        };
+    }
+
+    private static Optional<String> hyperliquidFeedOf(String sourceRef) {
+        if (HyperliquidPriceSource.isSpotRef(sourceRef)) {
+            return Optional.of(HyperliquidSpotPriceSource.FEED);
+        }
+        String dex = HyperliquidPriceSource.dexOf(sourceRef);
+        if (!HyperliquidPriceSource.DEXES.contains(dex)) {
+            return Optional.empty();
+        }
+        return Optional.of(dex.isEmpty() ? HyperliquidPriceSource.FEED_MAIN : HyperliquidPriceSource.FEED_XYZ);
+    }
 }

@@ -1,6 +1,7 @@
 package crowdvsmarket.server.prices;
 
 import crowdvsmarket.server.config.GameMode;
+import crowdvsmarket.server.markets.Market;
 import java.util.Set;
 
 /**
@@ -43,6 +44,10 @@ import java.util.Set;
  *                          is alive, before it is cancelled with a refund so that the series goes on (the venue release,
  *                          see {@code RoundSchedulerService}); default 2 minutes; 0 switches the release off — the round
  *                          then waits for its exchange for the hour of Р-23
+ * @param releaseAfter      {@code herd.prices.<feed>.release-after-ms}: how long after its end a round that its price source
+ *                          cannot price waits, on any market, before it is cancelled with a refund so that the series goes on
+ *                          (Р-79, {@link ReleaseAfter}); the minutes are the source's own, 0 for a source switches the release
+ *                          off for it — its rounds then wait for the hour of Р-23
  */
 public record PricesConfig(
         boolean liveMode,
@@ -68,7 +73,8 @@ public record PricesConfig(
         double hyperliquidMaxBasis,
         long hyperliquidMaxHealMs,
         Set<String> disabledVenues,
-        long venueReleaseAfterMs) {
+        long venueReleaseAfterMs,
+        ReleaseAfter releaseAfter) {
 
     /** The venues that {@code herd.prices.disabled-venues} may name: the sources of real prices. */
     public static final Set<String> VENUES = Set.of("hyperliquid", "coinbase", "kraken", "polymarket");
@@ -144,6 +150,22 @@ public record PricesConfig(
                 hyperliquidMaxHealMs, disabledVenues, Long.parseLong(DEFAULT_VENUE_RELEASE_AFTER_MS));
     }
 
+    /** The settings of before the release of a round whose source gives no price (24 components), with its defaults. */
+    public PricesConfig(boolean liveMode, SourceKind source, long dailyRoundMs, String hyperliquidUrl,
+                        String polymarketClobUrl, String polymarketGammaUrl, String polymarketDataUrl,
+                        long hyperliquidStaleMs, long hyperliquidXyzStaleMs, long hyperliquidMaxGapMs,
+                        long polymarketStaleMs, long polymarketMaxGapMs, long syntheticStaleMs, long syntheticMaxGapMs,
+                        long backfillCooldownMs, int connectTimeoutMs, int readTimeoutMs, long quietCarryMaxMs,
+                        int hyperliquidSeedBudgetPerMinute, boolean requireMinuteAlignedRounds,
+                        double hyperliquidMaxBasis, long hyperliquidMaxHealMs, Set<String> disabledVenues,
+                        long venueReleaseAfterMs) {
+        this(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl, polymarketDataUrl,
+                hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs,
+                syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs,
+                quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
+                hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs, ReleaseAfter.defaults());
+    }
+
     public PricesConfig {
         for (String venue : disabledVenues) {
             if (!VENUES.contains(venue)) {
@@ -163,6 +185,65 @@ public record PricesConfig(
         if (venueReleaseAfterMs < 0) {
             throw new IllegalArgumentException("herd.prices.venue-release-after-ms must be at least 0 (0 switches the "
                     + "release of a round from a silent exchange off), got " + venueReleaseAfterMs);
+        }
+    }
+
+    /**
+     * How long after its end a round that its price source cannot price waits, on any market, before it is cancelled with a refund so
+     * that its series goes on (Р-79; the rounds of a series are settled in order, so a round without a price holds the series). One
+     * wait per source, in milliseconds. {@code 0} switches the release off for a source: its rounds then wait for the hour of Р-23,
+     * as before.
+     *
+     * @param hyperliquidMs     {@code herd.prices.hyperliquid.release-after-ms}: the perpetuals of both dexes, the feeds
+     *                          {@code hyperliquid} and {@code hyperliquid:xyz}
+     * @param hyperliquidSpotMs {@code herd.prices.hyperliquid.spot-release-after-ms}: the feed {@code hyperliquid:spot}
+     * @param coinbaseMs        {@code herd.prices.coinbase.release-after-ms}
+     * @param krakenMs          {@code herd.prices.kraken.release-after-ms}
+     * @param polymarketMs      {@code herd.prices.polymarket.release-after-ms}
+     * @param syntheticMs       {@code herd.prices.synthetic.release-after-ms}
+     */
+    public record ReleaseAfter(long hyperliquidMs, long hyperliquidSpotMs, long coinbaseMs, long krakenMs,
+                               long polymarketMs, long syntheticMs) {
+
+        public ReleaseAfter {
+            require("herd.prices.hyperliquid.release-after-ms", hyperliquidMs);
+            require("herd.prices.hyperliquid.spot-release-after-ms", hyperliquidSpotMs);
+            require("herd.prices.coinbase.release-after-ms", coinbaseMs);
+            require("herd.prices.kraken.release-after-ms", krakenMs);
+            require("herd.prices.polymarket.release-after-ms", polymarketMs);
+            require("herd.prices.synthetic.release-after-ms", syntheticMs);
+        }
+
+        private static void require(String key, long ms) {
+            if (ms < 0) {
+                throw new IllegalArgumentException(key + " must be at least 0 (0 switches the release of a round whose "
+                        + "source gives no price off for that source), got " + ms);
+            }
+        }
+
+        /** The defaults of {@link PricesConfig}: five minutes, fifteen for Polymarket. */
+        public static ReleaseAfter defaults() {
+            long fiveMinutes = Long.parseLong(DEFAULT_RELEASE_AFTER_MS);
+            return new ReleaseAfter(fiveMinutes, fiveMinutes, fiveMinutes, fiveMinutes,
+                    Long.parseLong(DEFAULT_POLYMARKET_RELEASE_AFTER_MS), fiveMinutes);
+        }
+
+        /** No source is let go from: every round that cannot be priced waits for the hour of Р-23. */
+        public static ReleaseAfter off() {
+            return new ReleaseAfter(0, 0, 0, 0, 0, 0);
+        }
+
+        /** The wait of the feed whose id the sources give ({@link PriceSource.Feed#id}); 0 — none — for a feed that is not known. */
+        public long forFeed(String feedId) {
+            return switch (feedId) {
+                case HyperliquidPriceSource.FEED_MAIN, HyperliquidPriceSource.FEED_XYZ -> hyperliquidMs;
+                case HyperliquidSpotPriceSource.FEED -> hyperliquidSpotMs;
+                case CoinbasePriceSource.FEED -> coinbaseMs;
+                case KrakenPriceSource.FEED -> krakenMs;
+                case PolymarketPriceSource.FEED -> polymarketMs;
+                case SyntheticPriceSource.FEED -> syntheticMs;
+                default -> 0L;
+            };
         }
     }
 
@@ -210,6 +291,18 @@ public record PricesConfig(
      * a series does not stand for the hour that Р-23 gives a round without a price.
      */
     public static final String DEFAULT_VENUE_RELEASE_AFTER_MS = "120000";
+    /**
+     * Five minutes — "about 5 minutes for the candle sources" of the analysis behind Р-79 (docs/product/decisions.md; variant A of
+     * docs/research/series_blocking.md §3, a proposal and no measurement): longer than the first retries and one backfill of the
+     * candles need to heal a short gap (a minute apart, {@link #DEFAULT_BACKFILL_COOLDOWN_MS}), far shorter than the hour of Р-23.
+     * The wait of Hyperliquid, Coinbase, Kraken and the synthetic walk.
+     */
+    public static final String DEFAULT_RELEASE_AFTER_MS = "300000";
+    /**
+     * A quarter of an hour for Polymarket — "longer for Polymarket" of the same analysis, a proposal: its midpoint changes only with
+     * the book, so its limits are the loosest of the feeds (30 s and 90 s).
+     */
+    public static final String DEFAULT_POLYMARKET_RELEASE_AFTER_MS = "900000";
 
     /** The tick buffer keeps 10 minutes more than two DAILY rounds (§3.2 rule 2). */
     public static final long RETENTION_EXTRA_MS = 600_000L;
@@ -234,7 +327,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
-                hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs);
+                hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs, releaseAfter);
     }
 
     /** The same settings with other base URLs and timeouts — for a client talking to a local test server. */
@@ -243,7 +336,7 @@ public record PricesConfig(
                 hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs, polymarketMaxGapMs, syntheticStaleMs,
                 syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs, readTimeoutMs, quietCarryMaxMs,
                 hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis, hyperliquidMaxHealMs,
-                disabledVenues, venueReleaseAfterMs);
+                disabledVenues, venueReleaseAfterMs, releaseAfter);
     }
 
     /** The same settings with another longest quiet carry. */
@@ -252,7 +345,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, maxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
-                hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs);
+                hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs, releaseAfter);
     }
 
     /** The same settings with another seed budget. */
@@ -261,7 +354,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, weightPerMinute, requireMinuteAlignedRounds, hyperliquidMaxBasis,
-                hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs);
+                hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs, releaseAfter);
     }
 
     /** The same settings with another daily round — for the budget arithmetic of a seed. */
@@ -270,7 +363,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
-                hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs);
+                hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs, releaseAfter);
     }
 
     /** The same settings with another tolerance between a live mark and the candle of its minute. */
@@ -279,7 +372,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds, maxBasis,
-                hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs);
+                hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs, releaseAfter);
     }
 
     /** The same settings with another longest gap that candles bridge (0: none). */
@@ -288,7 +381,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
-                hyperliquidMaxBasis, maxMs, disabledVenues, venueReleaseAfterMs);
+                hyperliquidMaxBasis, maxMs, disabledVenues, venueReleaseAfterMs, releaseAfter);
     }
 
     /** The same settings with these venues switched off ({@code herd.prices.disabled-venues}). */
@@ -297,7 +390,7 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
-                hyperliquidMaxBasis, hyperliquidMaxHealMs, venues, venueReleaseAfterMs);
+                hyperliquidMaxBasis, hyperliquidMaxHealMs, venues, venueReleaseAfterMs, releaseAfter);
     }
 
     /** The same settings with another wait before a round is let go from a silent exchange (0: never). */
@@ -306,7 +399,33 @@ public record PricesConfig(
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
                 polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
                 readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
-                hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues, afterMs);
+                hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues, afterMs, releaseAfter);
+    }
+
+    /** The same settings with other waits before a round that its source cannot price is let go (Р-79). */
+    public PricesConfig withReleaseAfter(ReleaseAfter waits) {
+        return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
+                polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
+                polymarketMaxGapMs, syntheticStaleMs, syntheticMaxGapMs, backfillCooldownMs, connectTimeoutMs,
+                readTimeoutMs, quietCarryMaxMs, hyperliquidSeedBudgetPerMinute, requireMinuteAlignedRounds,
+                hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues, venueReleaseAfterMs, waits);
+    }
+
+    /**
+     * How long after its end a round priced on {@code instrument} — a market, or the shadow of one ({@link Instruments}) — waits when
+     * it cannot be priced, before it is cancelled with a refund (Р-79): the wait of the feed that prices the instrument
+     * ({@link ReleaseAfter}), or of the synthetic walk when that prices everything ({@code herd.prices.source=synthetic}). 0 — never,
+     * the hour of Р-23 — when the rule is off for the source, when no feed prices the instrument, and in replay mode, which has no
+     * exchange to wait for.
+     */
+    public long releaseAfterMs(Market instrument) {
+        if (!liveMode) {
+            return 0L;
+        }
+        if (source == SourceKind.SYNTHETIC) {
+            return releaseAfter.forFeed(SyntheticPriceSource.FEED);
+        }
+        return Instruments.feedOf(instrument).map(releaseAfter::forFeed).orElse(0L);
     }
 
     /** Whether the venue is in {@code herd.prices.disabled-venues}: it gives no price, over no channel. */

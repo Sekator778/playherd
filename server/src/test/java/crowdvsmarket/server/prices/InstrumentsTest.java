@@ -4,7 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import crowdvsmarket.engine.market.MarketSpec;
+import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
+import crowdvsmarket.server.markets.MarketKind;
+import crowdvsmarket.server.markets.MarketStatus;
 import crowdvsmarket.server.markets.catalog.FakeMarketRegistry;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -336,5 +339,55 @@ class InstrumentsTest {
         assertThat(PriceSources.venueOf(HyperliquidSpotPriceSource.class)).isEqualTo("hyperliquid");
         assertThat(PriceSources.venueOf(PolymarketPriceSource.class)).isEqualTo("polymarket");
         assertThat(PriceSources.venueOf(SyntheticPriceSource.class)).isEmpty();
+    }
+
+    // ---------------------------------------------------------------------- the instrument a round runs on, and its feed (Р-79)
+
+    @Test
+    void aRoundRunsOnTheShadowOnlyWhenItWasDecidedOnTheBackupExchange() {
+        Market shadow = Instruments.shadowOf(btc).orElseThrow();
+        Market plain = TestMarkets.coinbase("ETH", 0, 2);
+
+        assertThat(Instruments.runningOn(btc, Optional.of("kraken"))).isEqualTo(shadow);
+        assertThat(Instruments.runningOn(btc, Optional.of("coinbase"))).isEqualTo(btc);
+        assertThat(Instruments.runningOn(btc, Optional.empty())).as("not decided: the market's own exchange").isEqualTo(btc);
+        assertThat(Instruments.runningOn(btc, Optional.of("binance"))).as("a decision this market cannot read").isEqualTo(btc);
+        assertThat(Instruments.runningOn(plain, Optional.of("kraken"))).as("no backup: itself").isEqualTo(plain);
+        assertThat(Instruments.runningOn(hype, Optional.of("coinbase")).sourceRef()).isEqualTo("HYPE-USD");
+        assertThat(Instruments.runningOn(hype, Optional.of("hyperliquid"))).as("its own exchange: the spot pair").isEqualTo(hype);
+    }
+
+    @Test
+    void theFeedOfAnInstrumentIsTheOneTheSourcesOwnRulesPick() {
+        FakeWebSocketTransport transport = new FakeWebSocketTransport();
+        PriceSources real = new PriceSources(List.of(PipelineTestSupport.hyperliquid(null, () -> 0L),
+                PipelineTestSupport.hyperliquidSpot(null, transport, () -> 0L),
+                PipelineTestSupport.coinbase(null, transport, () -> 0L), PipelineTestSupport.kraken(null, transport, () -> 0L),
+                PipelineTestSupport.polymarket(null, null, new PolymarketLiveState(), () -> 0L)));
+        List<Market> markets = List.of(TestMarkets.hl("BTC", "BTC", 0),
+                TestMarkets.perp("xyz_NVDA", "xyz:NVDA", Category.STOCKS, 10, 2, 5),
+                TestMarkets.hlSpot("HYPE", "@107", 2, 2), TestMarkets.hlSpot("PURR", "PURR/USDC", 4, 3),
+                TestMarkets.coinbase("BTC", 0, 1), TestMarkets.kraken("BTC", 0, 1), btc, hype,
+                Instruments.shadowOf(btc).orElseThrow(), Instruments.shadowOf(hype).orElseThrow(),
+                TestMarkets.odds("PM1", "123"));
+
+        for (Market market : markets) {
+            assertThat(Instruments.feedOf(market)).as(market.id() + " (" + market.source() + ", " + market.sourceRef() + ")")
+                    .isEqualTo(real.bindingFor(market).map(binding -> binding.feed().id()));
+        }
+        assertThat(markets.stream().map(m -> Instruments.feedOf(m).orElseThrow()).distinct().toList())
+                .containsExactlyInAnyOrder("hyperliquid", "hyperliquid:xyz", "hyperliquid:spot", "coinbase", "kraken", "polymarket");
+    }
+
+    @Test
+    void theFeedIsFoundWhetherOrNotItsSourceIsSwitchedOnAndThereIsNoneForASourceNobodyKnows() {
+        assertThat(new PriceSources(List.of(), Set.of("coinbase")).bindingFor(btc)).as("no source of it runs").isEmpty();
+        assertThat(Instruments.feedOf(btc)).as("but its feed is known").contains("coinbase");
+        assertThat(Instruments.feedOf(TestMarkets.synthetic("S1", MarketKind.PERP, "SYN", 0, null))).contains("synthetic");
+        assertThat(Instruments.feedOf(TestMarkets.perp("flx_GOLD", "flx:GOLD", Category.COMMODITIES, 10, 2, 6)))
+                .as("a dex that nothing polls").isEmpty();
+        Market binance = new Market("M1", MarketKind.PERP, Category.CRYPTO, "M", "M", null, null, "binance", "M-USD", null, 10,
+                0, 9, MarketStatus.ACTIVE, 0L, null, null, null);
+        assertThat(Instruments.feedOf(binance)).isEmpty();
     }
 }
