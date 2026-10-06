@@ -163,6 +163,7 @@ fn world(options: Options) -> Result<World> {
                 .with_fallback_fee_rate(options.fallback_rate),
         ),
         queue_cache: Default::default(),
+        retain_confirmed: std::time::Duration::from_secs(86_400),
     };
     Ok(World { _tmp: tmp, publisher, master_sk, manager, launcher_id, eve_coin })
 }

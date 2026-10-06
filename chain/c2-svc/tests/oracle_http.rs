@@ -48,6 +48,7 @@ fn router(data_dir: &std::path::Path) -> axum::Router {
         tick_failure_threshold: 3,
         fee_allocator: fee_allocator.clone(),
         queue_cache: Default::default(),
+        retain_confirmed: std::time::Duration::from_secs(86_400),
     });
     let withdrawals = Arc::new(WithdrawalPublisher {
         data_dir: data_dir.to_path_buf(),
@@ -185,12 +186,12 @@ async fn the_http_answer_for_a_held_record_carries_its_content_as_in_the_contrac
     let mut queue = QueueFile::default();
     queue.confirmed.insert(
         205,
-        ConfirmedRecordInfo { height: Some(4_737_632), coin_id: coin_id.clone(), record: Some(held) },
+        ConfirmedRecordInfo { height: Some(4_737_632), coin_id: coin_id.clone(), record: Some(held), confirmed_at_unix: None },
     );
     // Confirmed before the content was kept: the second fixture, every content field `null` and present.
     queue.confirmed.insert(
         105,
-        ConfirmedRecordInfo { height: Some(4_737_632), coin_id: coin_id.clone(), record: None },
+        ConfirmedRecordInfo { height: Some(4_737_632), coin_id: coin_id.clone(), record: None, confirmed_at_unix: None },
     );
     queue.save_atomic(tmp.path(), "operator")?;
 
@@ -224,5 +225,39 @@ async fn the_http_answer_for_a_held_record_carries_its_content_as_in_the_contrac
         json!({"seq": 999, "state": "unknown", "height": null, "coinId": null,
                "resultsHash": null, "priceCents": null, "asset": null, "ts": null})
     );
+    Ok(())
+}
+
+/// A seq whose confirmed entry the retention dropped (`QueueFile::pruned`): `GET` answers `confirmed` with `null`
+/// for the height, the coin and the content -- the keys of the committed fixtures, the same shape as the answer for
+/// an entry that never had its content, and for `unknown` -- and a `POST` of its record is the silent no-op it was:
+/// 202, nothing accepted, nothing reported, nothing queued. The seq next to the range is as new as any.
+#[tokio::test]
+async fn the_http_answer_for_a_seq_the_retention_dropped_is_confirmed_with_nothing_else() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let router = router(tmp.path());
+    let mut queue = QueueFile::default();
+    queue.pruned.insert(100, 205);
+    queue.last_confirmed_seq = Some(205);
+    queue.save_atomic(tmp.path(), "operator")?;
+
+    let (status, body) = get_record(&router, 205).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({"seq": 205, "state": "confirmed", "height": null, "coinId": null,
+               "resultsHash": null, "priceCents": null, "asset": null, "ts": null})
+    );
+    let keys = |value: &Value| value.as_object().expect("an object").keys().cloned().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(keys(&body), keys(&fixture("OracleRecordStatusResponse_without_content")), "the same keys as the fixtures");
+
+    let (status, body) = post_records(&router, json!({"records": [fixture_record(), with_field(&fixture_record(), "priceCents", json!(1))]})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body, json!({"queued": 0, "acceptedSeqs": [], "conflictSeqs": []}), "{body}");
+    assert!(QueueFile::load(tmp.path(), "operator")?.pending.is_empty());
+
+    let (status, body) = post_records(&router, json!({"records": [with_seq(&fixture_record(), 206)]})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body, json!({"queued": 1, "acceptedSeqs": [206], "conflictSeqs": []}));
     Ok(())
 }

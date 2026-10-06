@@ -111,6 +111,7 @@ fn set_up() -> Result<Fixture> {
         tick_failure_threshold: 3,
         fee_allocator: std::sync::Arc::clone(&fee_allocator),
         queue_cache: Default::default(),
+        retain_confirmed: std::time::Duration::from_secs(86_400),
     };
 
     let withdrawal = WithdrawalPublisher {
@@ -311,6 +312,7 @@ fn oracle_with(
         tick_failure_threshold: 3,
         fee_allocator: allocator,
         queue_cache: Default::default(),
+        retain_confirmed: std::time::Duration::from_secs(86_400),
     }
 }
 

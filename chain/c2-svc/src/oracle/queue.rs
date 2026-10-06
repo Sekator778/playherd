@@ -8,10 +8,16 @@
 //! process restart can replay `push_tx` on the exact same bytes instead of
 //! re-deriving anything (no dependency on the operator's live UTXO set
 //! being unchanged across the restart).
+//!
+//! `confirmed` holds an entry per confirmed record, but not for ever: once an entry has been there
+//! for `C2_ORACLE_RETAIN_CONFIRMED_SECS` `apply_retention` drops it and notes its seq in `pruned`, a
+//! set of ranges, so the file stays about a retention long instead of growing by 4 MB a day. A
+//! dropped seq still answers `confirmed` and is never accepted again. `QueueCache` keeps the parsed
+//! file between calls, so that a tick, a `POST` or a `GET` that finds it unchanged does not parse it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::Result;
@@ -49,6 +55,14 @@ pub struct ConfirmedRecordInfo {
     /// the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record: Option<OracleRecord>,
+    /// When this service put the entry here, unix seconds -- the time the retention counts from
+    /// (`QueueFile::apply_retention`: an entry is dropped once it has been here for
+    /// `C2_ORACLE_RETAIN_CONFIRMED_SECS`). `None` for an entry of a file written before the time was
+    /// kept: the first retention pass gives it the time of that pass, so an old entry is kept for a
+    /// whole retention from the upgrade and never for less than it was promised. Written out only
+    /// when there is one, like `record`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed_at_unix: Option<i64>,
 }
 
 /// `GET /v1/oracle/records/{seq}`'s `state` (FIXED INTERFACE (b)), derived
@@ -58,7 +72,10 @@ pub struct ConfirmedRecordInfo {
 /// seq already accounted for".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordState {
-    Confirmed { height: Option<u32>, coin_id: String },
+    /// On chain, identical to what this service holds. `height` and `coin_id` of the confirming
+    /// spend are `None` for a seq whose entry was dropped by the retention (`QueueFile::pruned`):
+    /// the service still knows it is confirmed, no longer by which spend.
+    Confirmed { height: Option<u32>, coin_id: Option<String> },
     /// Task fix, `docs/research/chain_service.md` §11: the chain-lineage
     /// walk found this `seq` already confirmed on chain with DIFFERENT
     /// content than what this service holds locally -- never silently
@@ -229,6 +246,17 @@ pub struct QueueFile {
     /// existing `<name>.oracle_queue.json` predates this field.
     #[serde(default)]
     pub confirmed: BTreeMap<u64, ConfirmedRecordInfo>,
+    /// The `seq`s whose `confirmed` entry the retention has dropped (`apply_retention`), as inclusive
+    /// ranges `first -> last`, disjoint and never adjacent (a range that touches another is one
+    /// range): `seq`s are issued as one ordered stream, so a service that has confirmed a million
+    /// records holds a handful of ranges. What a dropped entry knew -- the spend that confirmed it, the
+    /// record -- is gone; what stays is that the seq is confirmed, and that is what the server needs
+    /// for as long as it may ask: its reconciliation asks `GET /v1/oracle/records/{seq}` about every
+    /// row it has not seen confirmed, however old, and answers `unknown` with a re-POST, which
+    /// `enqueue` would take for a late record and publish again. Written out only when there is a
+    /// range, so a file that never pruned reads and writes back the same.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pruned: BTreeMap<u64, u64>,
     /// Records whose chain-confirmed content disagrees with what's locally
     /// queued/in-flight for the same `seq` -- task fix, `docs/research/
     /// chain_service.md` §11. `#[serde(default)]`: no queue file predating
@@ -340,6 +368,26 @@ impl ReconcileOutcome {
     }
 }
 
+/// What `QueueFile::apply_retention` did to the confirmed entries.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RetentionOutcome {
+    /// Entries that had no confirmation time (a file written before it was kept) and were given one.
+    pub stamped: usize,
+    /// Entries dropped from `confirmed`; their seqs are in `QueueFile::pruned` now.
+    pub pruned: usize,
+    /// The lowest and the highest seq among them.
+    pub pruned_seqs: Option<(u64, u64)>,
+    /// Entries `confirmed` holds afterwards.
+    pub kept: usize,
+}
+
+impl RetentionOutcome {
+    /// Whether anything here actually needs persisting.
+    pub fn changed(&self) -> bool {
+        self.stamped > 0 || self.pruned > 0
+    }
+}
+
 impl QueueFile {
     pub fn path(data_dir: &Path, name: &str) -> PathBuf {
         data_dir.join(format!("{name}.oracle_queue.json"))
@@ -368,9 +416,17 @@ impl QueueFile {
     /// truly isn't anywhere is simply `Unknown` -- indistinguishable from a
     /// genuinely new one -- and `enqueue` accepts it either way (FIXED
     /// INTERFACE (b): "every seq exactly once", late/backfill included).
+    ///
+    /// A seq whose confirmed entry the retention dropped (`pruned`) is not "truly nowhere": it is
+    /// `Confirmed` without the spend that confirmed it. Were it `Unknown`, the one who asks about it
+    /// after the retention -- the server's reconciliation, for a row it never saw confirmed -- would be
+    /// told "lost" and send the record again, and `enqueue` would publish it a second time.
     pub fn record_state(&self, seq: u64) -> RecordState {
         if let Some(info) = self.confirmed.get(&seq) {
-            return RecordState::Confirmed { height: info.height, coin_id: info.coin_id.clone() };
+            return RecordState::Confirmed { height: info.height, coin_id: Some(info.coin_id.clone()) };
+        }
+        if self.is_pruned(seq) {
+            return RecordState::Confirmed { height: None, coin_id: None };
         }
         if let Some(conflict) = self.conflicts.get(&seq) {
             return RecordState::Conflict {
@@ -394,10 +450,14 @@ impl QueueFile {
     /// (`docs/research/chain_service.md` §18.2). Same precedence as `record_state`: confirmed, then
     /// conflicting -- the record the CHAIN has, which is what `height`/`coinId` of that state describe
     /// too --, then in flight, then pending. `None` when the seq is unknown, and when it is confirmed
-    /// without content: an entry from before the content was kept (`ConfirmedRecordInfo::record`).
+    /// without content: an entry from before the content was kept (`ConfirmedRecordInfo::record`), or
+    /// one the retention has dropped (`pruned`).
     pub fn held_record(&self, seq: u64) -> Option<OracleRecord> {
         if let Some(info) = self.confirmed.get(&seq) {
             return info.record;
+        }
+        if self.is_pruned(seq) {
+            return None;
         }
         if let Some(conflict) = self.conflicts.get(&seq) {
             return Some(conflict.chain);
@@ -468,17 +528,20 @@ impl QueueFile {
 
     /// The highest `seq` this queue knows of in any state: the accepted
     /// watermark, the confirmed high-water mark, every key of `confirmed` and
-    /// `conflicts`, and every pending and in-flight record -- 0 for an empty
-    /// queue (`GET /v1/oracle/status`'s `maxKnownSeq`, record v2). Each source
-    /// is needed: after a reconciliation against the chain `confirmed` can hold
-    /// seqs above `last_accepted_seq`, and pending/in-flight records can be above
-    /// `last_confirmed_seq`; a hand-edited or partially restored file can
-    /// disagree with itself, so no one field is trusted to be the maximum.
+    /// `conflicts`, the end of the last `pruned` range, and every pending and
+    /// in-flight record -- 0 for an empty queue (`GET /v1/oracle/status`'s
+    /// `maxKnownSeq`, record v2). Each source is needed: after a reconciliation
+    /// against the chain `confirmed` can hold seqs above `last_accepted_seq`,
+    /// and pending/in-flight records can be above `last_confirmed_seq`; a
+    /// hand-edited or partially restored file can disagree with itself, so no
+    /// one field is trusted to be the maximum. The retention never lowers it:
+    /// what it drops from `confirmed` it keeps in `pruned`.
     pub fn max_known_seq(&self) -> u64 {
         [
             self.last_accepted_seq,
             self.last_confirmed_seq,
             self.confirmed.keys().next_back().copied(),
+            self.pruned.values().next_back().copied(),
             self.conflicts.keys().next_back().copied(),
             self.pending.iter().map(|r| r.seq).max(),
             self.in_flight.as_ref().and_then(|f| f.records.iter().map(|r| r.seq).max()),
@@ -487,6 +550,78 @@ impl QueueFile {
         .flatten()
         .max()
         .unwrap_or(0)
+    }
+
+    /// Whether `seq`'s confirmed entry was dropped by the retention (`pruned`).
+    pub fn is_pruned(&self, seq: u64) -> bool {
+        self.pruned.range(..=seq).next_back().is_some_and(|(_, last)| *last >= seq)
+    }
+
+    /// Notes that `seq` is confirmed and no longer has an entry (`pruned`), merging it into the range
+    /// it extends or joins -- whatever order the seqs come in, the ranges stay disjoint and never
+    /// adjacent.
+    fn add_pruned(&mut self, seq: u64) {
+        if let Some((&first, &last)) = self.pruned.range(..=seq).next_back() {
+            if last >= seq {
+                return;
+            }
+            if last + 1 == seq {
+                self.pruned.insert(first, seq);
+                self.join_pruned_range_with_the_next(first);
+                return;
+            }
+        }
+        self.pruned.insert(seq, seq);
+        self.join_pruned_range_with_the_next(seq);
+    }
+
+    /// The range that starts at `first` has just grown to a new end: if the next range starts right
+    /// after it, they are one.
+    fn join_pruned_range_with_the_next(&mut self, first: u64) {
+        let last = self.pruned[&first];
+        if let Some(next_first) = last.checked_add(1)
+            && let Some(next_last) = self.pruned.remove(&next_first)
+        {
+            self.pruned.insert(first, next_last);
+        }
+    }
+
+    /// The retention (`C2_ORACLE_RETAIN_CONFIRMED_SECS`): drops from `confirmed` every entry that has
+    /// been there for `retain_secs` or longer as of `now_unix` -- at `now_unix - confirmed_at_unix >=
+    /// retain_secs` -- and notes its seq in `pruned`, so that the seq stays confirmed for everyone who
+    /// asks and is never accepted a second time (`record_state`). Only `confirmed` entries are ever
+    /// dropped: a record that is pending, in flight or in `conflicts` is not confirmed and stays for
+    /// as long as it is what it is, whatever the clock says. The watermarks (`last_accepted_seq`,
+    /// `last_confirmed_seq`, `last_confirmed_height`) are not touched, so `maxKnownSeq` does not move.
+    ///
+    /// An entry without a confirmation time (a file from before it was kept) is given `now_unix` first,
+    /// and so is kept for a whole retention from now. A clock that has gone backwards (`now_unix` before
+    /// the time of an entry) drops nothing of it. `retain_secs == 0` turns the retention off: nothing
+    /// is stamped, nothing dropped.
+    pub fn apply_retention(&mut self, now_unix: i64, retain_secs: u64) -> RetentionOutcome {
+        let mut outcome = RetentionOutcome { kept: self.confirmed.len(), ..RetentionOutcome::default() };
+        if retain_secs == 0 {
+            return outcome;
+        }
+        let retain = i64::try_from(retain_secs).unwrap_or(i64::MAX);
+        for info in self.confirmed.values_mut().filter(|info| info.confirmed_at_unix.is_none()) {
+            info.confirmed_at_unix = Some(now_unix);
+            outcome.stamped += 1;
+        }
+        let expired: Vec<u64> = self
+            .confirmed
+            .iter()
+            .filter(|(_, info)| info.confirmed_at_unix.is_some_and(|at| now_unix.saturating_sub(at) >= retain))
+            .map(|(seq, _)| *seq)
+            .collect();
+        for seq in &expired {
+            self.confirmed.remove(seq);
+            self.add_pruned(*seq);
+        }
+        outcome.pruned = expired.len();
+        outcome.pruned_seqs = expired.first().copied().zip(expired.last().copied());
+        outcome.kept = self.confirmed.len();
+        outcome
     }
 
     /// Applies a chain-lineage walk's findings (`oracle/lineage.rs::
@@ -513,7 +648,10 @@ impl QueueFile {
     /// `conflicts` but the in-flight spend itself is left alone --
     /// unwinding an already-broadcast spend is `advance_in_flight`'s job via
     /// its own existing chain checks, not this reconciliation pass's.
-    pub fn reconcile_with_chain(&mut self, walk: &LineageWalkOutcome) -> ReconcileOutcome {
+    ///
+    /// Every entry this puts into `confirmed` is stamped `now_unix`, the time the retention counts from
+    /// (`ConfirmedRecordInfo::confirmed_at_unix`, `apply_retention`).
+    pub fn reconcile_with_chain(&mut self, walk: &LineageWalkOutcome, now_unix: i64) -> ReconcileOutcome {
         let mut outcome = ReconcileOutcome {
             generations_advanced: walk.generations_advanced,
             decode_warnings: walk.decode_warnings.clone(),
@@ -535,6 +673,7 @@ impl QueueFile {
                             height: chain_record.height,
                             coin_id: chain_record.coin_id.clone(),
                             record: Some(record),
+                            confirmed_at_unix: Some(now_unix),
                         },
                     );
                     outcome.dropped_confirmed.push(record.seq);
@@ -564,13 +703,13 @@ impl QueueFile {
         if let Some(in_flight) = self.in_flight.clone() {
             match walk.generation_spending(&in_flight.spent_coin) {
                 Some(generation) => match &generation.announced {
-                    Some(announced) => {
+                    Some(_) => {
                         let resolved = self.resolve_consumed_in_flight(
                             &in_flight,
                             generation,
-                            announced,
                             &queued_before,
                             walk,
+                            now_unix,
                             &mut outcome,
                         );
                         outcome.resolved_in_flight = Some(resolved);
@@ -580,7 +719,7 @@ impl QueueFile {
                         outcome.in_flight_unreadable = true;
                     }
                 },
-                None => self.reconcile_unconsumed_in_flight(&in_flight, walk, &mut outcome),
+                None => self.reconcile_unconsumed_in_flight(&in_flight, walk, now_unix, &mut outcome),
             }
         }
 
@@ -603,18 +742,19 @@ impl QueueFile {
         outcome
     }
 
-    /// The in-flight spend's singleton coin was consumed by `generation`, which announced
-    /// `announced`: account for every in-flight record from the chain (see `ResolvedInFlight`) and
-    /// clear the in-flight spend. Called only with a generation the walk read completely.
+    /// The in-flight spend's singleton coin was consumed by `generation`, which announced what its
+    /// `announced` lists: account for every in-flight record from the chain (see `ResolvedInFlight`)
+    /// and clear the in-flight spend. Called only with a generation the walk read completely.
     fn resolve_consumed_in_flight(
         &mut self,
         in_flight: &InFlightSpend,
         generation: &WalkedGeneration,
-        announced: &[u64],
         queued_before: &BTreeMap<u64, OracleRecord>,
         walk: &LineageWalkOutcome,
+        now_unix: i64,
         outcome: &mut ReconcileOutcome,
     ) -> ResolvedInFlight {
+        let announced = generation.announced.as_deref().expect("a generation the walk read completely");
         // "Ours": the spend announced something, and everything it announced is a record this queue
         // holds -- in the bundle, or pending (a replacement that was refused and put its merged
         // records back) -- identical to what the chain has.
@@ -641,6 +781,7 @@ impl QueueFile {
                             height: chain_record.height,
                             coin_id: chain_record.coin_id.clone(),
                             record: Some(*record),
+                            confirmed_at_unix: Some(now_unix),
                         },
                     );
                     confirmed.push(record.seq);
@@ -691,6 +832,7 @@ impl QueueFile {
         &mut self,
         in_flight: &InFlightSpend,
         walk: &LineageWalkOutcome,
+        now_unix: i64,
         outcome: &mut ReconcileOutcome,
     ) {
         let mismatched: Vec<u64> = in_flight
@@ -711,6 +853,7 @@ impl QueueFile {
                         height: chain_record.height,
                         coin_id: chain_record.coin_id.clone(),
                         record: Some(*record),
+                        confirmed_at_unix: Some(now_unix),
                     },
                 );
                 outcome.dropped_confirmed.push(record.seq);
@@ -739,10 +882,10 @@ impl QueueFile {
 /// the file as it was left does not read and parse it again (`Publisher::load_queue`).
 ///
 /// The file holds a confirmed entry of about 410 bytes (measured, `docs/research/chain_service.md`
-/// §18.2) for every record the service has confirmed: some 10 000 records a day on the stand, 4 MB a
-/// day -- read in full and parsed at least twice per tick (every 10 s), on every
-/// `GET /v1/oracle/records/{seq}` the server's reconciliation asks for, on every status and health
-/// read, and on every `POST`.
+/// §18.2) for every record confirmed within the retention (`C2_ORACLE_RETAIN_CONFIRMED_SECS`, a day
+/// by default): some 10 000 records a day on the stand, 4 MB -- read in full and parsed at least twice
+/// per tick (every 10 s), on every `GET /v1/oracle/records/{seq}` the server's reconciliation asks
+/// for, on every status and health read, and on every `POST`.
 ///
 /// What is kept is the content of the file plus its [`FileStamp`] from before the read. A load that
 /// finds the same stamp hands out the same `Arc`; any other stamp -- the file written by something
@@ -755,10 +898,15 @@ impl QueueFile {
 ///
 /// Holds no lock across the read, the parse or the write: two loads that miss at the same moment both
 /// read the file, and both are right.
+///
+/// It also remembers when the retention (`QueueFile::apply_retention`) last ran in this process, so
+/// that the pass -- a write of the whole file -- is made every few minutes and not on every tick.
 #[derive(Default)]
 pub struct QueueCache {
     entry: Mutex<Option<CacheEntry>>,
     reads: AtomicU64,
+    /// Unix seconds of the last retention pass this process started; 0 before the first.
+    retention_ran_at: AtomicI64,
 }
 
 struct CacheEntry {
@@ -813,6 +961,17 @@ impl QueueCache {
     pub fn reads(&self) -> u64 {
         self.reads.load(Ordering::Relaxed)
     }
+
+    /// Whether it is time for a retention pass -- at least `every_secs` since the last one this
+    /// process started, or none yet -- and if it is, notes that this one has started (a pass that then
+    /// fails is not repeated before the next turn: the failure is reported by the tick that made it).
+    pub fn claim_retention_pass(&self, now_unix: i64, every_secs: i64) -> bool {
+        if now_unix.saturating_sub(self.retention_ran_at.load(Ordering::Relaxed)) < every_secs {
+            return false;
+        }
+        self.retention_ran_at.store(now_unix, Ordering::Relaxed);
+        true
+    }
 }
 
 #[cfg(test)]
@@ -820,6 +979,10 @@ mod tests {
     use super::*;
     use crate::oracle::lineage::ChainRecord;
     use crate::oracle::types::Source;
+
+    /// The clock of the tests that stamp or age entries, and the retention they use (a day).
+    const NOW: i64 = 1_790_001_000;
+    const DAY: u64 = 86_400;
 
     fn record(seq: u64) -> OracleRecord {
         OracleRecord {
@@ -865,7 +1028,7 @@ mod tests {
     }
 
     fn confirmed_with(record: Option<OracleRecord>) -> ConfirmedRecordInfo {
-        ConfirmedRecordInfo { height: Some(4_765_102), coin_id: "0x01".into(), record }
+        ConfirmedRecordInfo { height: Some(4_765_102), coin_id: "0x01".into(), record, confirmed_at_unix: None }
     }
 
     /// A record held in `pending`: the same record again is the silent no-op of a resend; a record that differs
@@ -988,17 +1151,18 @@ mod tests {
         }
     }
 
-    /// Every way the chain reconciliation confirms a record writes the record down with its entry: a stale
-    /// pending record the chain already has, the records of an in-flight spend whose singleton coin the chain
-    /// consumed, and the records of an in-flight spend that the chain has all of identically.
+    /// Every way the chain reconciliation confirms a record writes the record down with its entry, and the time it
+    /// was confirmed (the retention counts from it): a stale pending record the chain already has, the records of
+    /// an in-flight spend whose singleton coin the chain consumed, and the records of an in-flight spend that the
+    /// chain has all of identically.
     #[test]
     fn reconciliation_keeps_the_content_of_every_record_it_confirms() {
         // a pending record the chain already has
         let mut queue = QueueFile { pending: vec![record(1)], ..QueueFile::default() };
-        queue.reconcile_with_chain(&walk_over(&[(record(1), 100)], vec![]));
+        queue.reconcile_with_chain(&walk_over(&[(record(1), 100)], vec![]), NOW);
         assert_eq!(
             queue.confirmed[&1],
-            ConfirmedRecordInfo { height: Some(100), coin_id: "0x01".into(), record: Some(record(1)) }
+            ConfirmedRecordInfo { height: Some(100), coin_id: "0x01".into(), record: Some(record(1)), confirmed_at_unix: Some(NOW) }
         );
         assert!(queue.pending.is_empty());
 
@@ -1011,18 +1175,20 @@ mod tests {
             announced: Some(vec![2, 3]),
         };
         let mut queue = QueueFile { in_flight: Some(in_flight), ..QueueFile::default() };
-        queue.reconcile_with_chain(&walk_over(&[(record(2), 101), (record(3), 101)], vec![consumed]));
+        queue.reconcile_with_chain(&walk_over(&[(record(2), 101), (record(3), 101)], vec![consumed]), NOW);
         assert!(queue.in_flight.is_none());
         for seq in [2, 3] {
             assert_eq!(queue.confirmed[&seq].record, Some(record(seq)), "seq {seq}");
+            assert_eq!(queue.confirmed[&seq].confirmed_at_unix, Some(NOW), "seq {seq}: stamped with the time of the pass");
         }
 
         // an in-flight spend whose coin the walk did not see consumed, but whose records the chain all has
         let mut queue = QueueFile { in_flight: Some(in_flight_of(&[record(4), record(5)])), ..QueueFile::default() };
-        queue.reconcile_with_chain(&walk_over(&[(record(4), 102), (record(5), 102)], vec![]));
+        queue.reconcile_with_chain(&walk_over(&[(record(4), 102), (record(5), 102)], vec![]), NOW);
         assert!(queue.in_flight.is_none());
         for seq in [4, 5] {
             assert_eq!(queue.confirmed[&seq].record, Some(record(seq)), "seq {seq}");
+            assert_eq!(queue.confirmed[&seq].confirmed_at_unix, Some(NOW), "seq {seq}: stamped with the time of the pass");
         }
     }
 
@@ -1033,7 +1199,7 @@ mod tests {
     fn a_confirmed_entry_from_before_the_content_was_kept_loads_and_is_written_back_unchanged() {
         let old: ConfirmedRecordInfo =
             serde_json::from_str(r#"{"height":4765102,"coin_id":"0xabc"}"#).expect("an entry of an old queue file");
-        assert_eq!(old, ConfirmedRecordInfo { height: Some(4_765_102), coin_id: "0xabc".into(), record: None });
+        assert_eq!(old, ConfirmedRecordInfo { height: Some(4_765_102), coin_id: "0xabc".into(), record: None, confirmed_at_unix: None });
         let written = serde_json::to_value(&old).unwrap();
         assert_eq!(written, serde_json::json!({"height": 4765102, "coin_id": "0xabc"}), "no `record: null` noise");
 
@@ -1149,5 +1315,241 @@ mod tests {
 
         assert_eq!(cache.load(dir.path(), "operator").unwrap().pending.len(), 2, "the file is as it was");
         assert_eq!(cache.reads(), 2, "read again: nothing was kept across the failed write");
+    }
+
+    /// The retention pass runs every `every` seconds by the clock, and the first time at once.
+    #[test]
+    fn the_retention_pass_is_claimed_at_once_and_then_every_so_often() {
+        let cache = QueueCache::default();
+        assert!(cache.claim_retention_pass(NOW, 600), "the first pass of a process is due");
+        assert!(!cache.claim_retention_pass(NOW, 600), "not twice in the same second");
+        assert!(!cache.claim_retention_pass(NOW + 599, 600));
+        assert!(cache.claim_retention_pass(NOW + 600, 600));
+        assert!(!cache.claim_retention_pass(NOW + 1_199, 600), "counted from the last one that started");
+        assert!(!cache.claim_retention_pass(NOW - 10_000, 600), "a clock that went back waits for itself");
+    }
+
+    // --- the retention of confirmed entries ---------------------------------------------------------------------
+
+    /// A confirmed entry as the stand's file holds them, confirmed at `at` (`None`: before the time was kept).
+    fn confirmed_at(seq: u64, at: Option<i64>) -> (u64, ConfirmedRecordInfo) {
+        (
+            seq,
+            ConfirmedRecordInfo {
+                height: Some(4_000_000 + seq as u32),
+                coin_id: format!("0x{seq:064x}"),
+                record: Some(record(seq)),
+                confirmed_at_unix: at,
+            },
+        )
+    }
+
+    fn queue_confirmed(entries: impl IntoIterator<Item = (u64, ConfirmedRecordInfo)>) -> QueueFile {
+        QueueFile { confirmed: entries.into_iter().collect(), ..QueueFile::default() }
+    }
+
+    /// An entry is dropped once it has been there for the retention -- exactly the retention counts --, the younger
+    /// ones stay; the entries that are dropped are noted in `pruned`; and a second pass at the same time has nothing
+    /// left to do.
+    #[test]
+    fn retention_drops_what_has_been_confirmed_for_the_retention_and_keeps_the_younger() {
+        let day = DAY as i64;
+        let mut queue = queue_confirmed([
+            confirmed_at(1, Some(NOW - day - 5)),
+            confirmed_at(2, Some(NOW - day)),
+            confirmed_at(3, Some(NOW - day + 1)),
+            confirmed_at(4, Some(NOW)),
+            confirmed_at(5, Some(NOW + 100)), // the clock of whoever stamped it was ahead
+        ]);
+
+        let outcome = queue.apply_retention(NOW, DAY);
+        assert_eq!(outcome, RetentionOutcome { stamped: 0, pruned: 2, pruned_seqs: Some((1, 2)), kept: 3 });
+        assert!(outcome.changed());
+        assert_eq!(queue.confirmed.keys().copied().collect::<Vec<_>>(), vec![3, 4, 5]);
+        assert_eq!(queue.pruned, BTreeMap::from([(1, 2)]));
+        assert!(queue.is_pruned(1) && queue.is_pruned(2) && !queue.is_pruned(3) && !queue.is_pruned(0));
+
+        let again = queue.apply_retention(NOW, DAY);
+        assert_eq!(again, RetentionOutcome { stamped: 0, pruned: 0, pruned_seqs: None, kept: 3 });
+        assert!(!again.changed(), "nothing to write");
+
+        // a day later the next ones are due, and the range grows
+        let later = queue.apply_retention(NOW + day, DAY);
+        assert_eq!((later.pruned, later.pruned_seqs, later.kept), (2, Some((3, 4)), 1));
+        assert_eq!(queue.pruned, BTreeMap::from([(1, 4)]), "adjacent ranges are one");
+    }
+
+    /// The entries of a file written before the time was kept have none: the first pass gives them its own, so
+    /// they stay for a whole retention from the upgrade -- never for less than the retention promised -- and go
+    /// then.
+    #[test]
+    fn an_entry_without_a_confirmation_time_gets_the_time_of_the_first_pass_and_goes_a_retention_later() {
+        let mut queue = queue_confirmed([confirmed_at(1, None), confirmed_at(2, None), confirmed_at(3, Some(NOW - 10))]);
+
+        let first = queue.apply_retention(NOW, DAY);
+        assert_eq!(first, RetentionOutcome { stamped: 2, pruned: 0, pruned_seqs: None, kept: 3 });
+        assert!(first.changed(), "the stamps have to be written");
+        assert_eq!(
+            queue.confirmed.values().map(|info| info.confirmed_at_unix).collect::<Vec<_>>(),
+            vec![Some(NOW), Some(NOW), Some(NOW - 10)],
+            "the one that had a time keeps it"
+        );
+
+        assert!(!queue.apply_retention(NOW + DAY as i64 - 11, DAY).changed());
+        let due = queue.apply_retention(NOW + DAY as i64 - 10, DAY);
+        assert_eq!((due.stamped, due.pruned, due.pruned_seqs), (0, 1, Some((3, 3))), "seq 3 was stamped earlier");
+        let due = queue.apply_retention(NOW + DAY as i64, DAY);
+        assert_eq!((due.pruned, due.pruned_seqs, due.kept), (2, Some((1, 2)), 0));
+        assert_eq!(queue.pruned, BTreeMap::from([(1, 3)]));
+    }
+
+    /// 0 is a setting, not "unset": no retention, nothing stamped, nothing dropped.
+    #[test]
+    fn a_retention_of_zero_keeps_everything_and_stamps_nothing() {
+        let mut queue = queue_confirmed([confirmed_at(1, None), confirmed_at(2, Some(1))]);
+        let outcome = queue.apply_retention(NOW + 1_000 * DAY as i64, 0);
+        assert_eq!(outcome, RetentionOutcome { stamped: 0, pruned: 0, pruned_seqs: None, kept: 2 });
+        assert!(!outcome.changed());
+        assert_eq!(queue.confirmed[&1].confirmed_at_unix, None);
+        assert!(queue.pruned.is_empty());
+    }
+
+    /// A clock that went backwards does not make anything old: an entry stamped in what is now the future is kept.
+    #[test]
+    fn a_clock_that_went_backwards_drops_nothing() {
+        let mut queue = queue_confirmed([confirmed_at(1, Some(NOW + 10 * DAY as i64))]);
+        assert!(!queue.apply_retention(NOW, DAY).changed());
+        assert_eq!(queue.confirmed.len(), 1);
+        // the extremes do not wrap or panic
+        assert!(!queue.apply_retention(i64::MIN, u64::MAX).changed());
+        assert!(!queue.apply_retention(i64::MAX, u64::MAX).changed());
+    }
+
+    /// The retention drops confirmed entries and nothing else: whatever is pending, in flight or in conflict stays
+    /// however old the clock says everything is, and so do the watermarks -- `maxKnownSeq` does not move.
+    #[test]
+    fn retention_never_drops_what_is_not_confirmed_and_never_lowers_the_max_known_seq() {
+        let mut queue = queue_confirmed([confirmed_at(1, Some(1)), confirmed_at(2, Some(1))]);
+        queue.pending = vec![record(5)];
+        queue.in_flight = Some(in_flight_of(&[record(3), record(4)]));
+        queue.conflicts.insert(
+            6,
+            ConflictInfo { local: record(6), chain: OracleRecord { ts: 1, ..record(6) }, chain_height: Some(9), chain_coin_id: "0x06".into() },
+        );
+        queue.last_accepted_seq = Some(6);
+        queue.last_confirmed_seq = Some(2);
+        queue.last_confirmed_height = Some(4_000_002);
+        let before = (queue.pending.clone(), queue.in_flight.as_ref().map(|f| f.records.clone()), queue.conflicts.clone());
+
+        let outcome = queue.apply_retention(NOW + 1_000 * DAY as i64, DAY);
+        assert_eq!((outcome.pruned, outcome.kept), (2, 0));
+        assert_eq!(
+            (queue.pending.clone(), queue.in_flight.as_ref().map(|f| f.records.clone()), queue.conflicts.clone()),
+            before
+        );
+        assert_eq!(queue.record_state(5), RecordState::Queued);
+        assert_eq!(queue.record_state(3), RecordState::InFlight);
+        assert!(matches!(queue.record_state(6), RecordState::Conflict { .. }));
+        assert_eq!((queue.last_accepted_seq, queue.last_confirmed_seq, queue.last_confirmed_height), (Some(6), Some(2), Some(4_000_002)));
+        assert_eq!(queue.max_known_seq(), 6);
+
+        // a queue that has only what the retention left of a long life: the pruned range alone says how far it got
+        let mut only_ranges = queue_confirmed((1..=50).map(|seq| confirmed_at(seq, Some(1))));
+        only_ranges.apply_retention(NOW, DAY);
+        assert!(only_ranges.confirmed.is_empty());
+        assert_eq!(only_ranges.max_known_seq(), 50, "no watermark, no entry, one range: 50");
+    }
+
+    /// What the retention drops, the queue still knows is confirmed: `record_state` says so (without the spend that
+    /// confirmed it), `held_record` has no content, and a record sent for the seq -- the server's reconciliation does
+    /// that for a row it never saw confirmed -- is the silent no-op it was, never a late record to publish again and
+    /// never a collision to report (there is nothing to compare it with). A seq above the range is as new as ever.
+    #[test]
+    fn a_pruned_seq_is_confirmed_without_detail_and_is_never_accepted_again() {
+        let mut queue = queue_confirmed((1..=3).map(|seq| confirmed_at(seq, Some(NOW - 2 * DAY as i64))));
+        assert_eq!(queue.record_state(2), RecordState::Confirmed { height: Some(4_000_002), coin_id: Some(format!("0x{:064x}", 2)) });
+        queue.apply_retention(NOW, DAY);
+        assert!(queue.confirmed.is_empty());
+
+        for seq in 1..=3 {
+            assert_eq!(queue.record_state(seq), RecordState::Confirmed { height: None, coin_id: None }, "seq {seq}");
+            assert_eq!(queue.held_record(seq), None, "no content: nothing to compare with");
+        }
+        let outcome = queue.enqueue(vec![record(2), OracleRecord { asset: 7, price_cents: 1, ..record(2) }, record(3)]);
+        assert_eq!(outcome, EnqueueOutcome::default(), "neither accepted again nor reported");
+        assert!(queue.pending.is_empty());
+
+        assert_eq!(queue.record_state(4), RecordState::Unknown);
+        assert_eq!(queue.record_state(0), RecordState::Unknown);
+        assert_eq!(queue.enqueue(vec![record(4)]), EnqueueOutcome { accepted: vec![4], conflicts: vec![] });
+    }
+
+    /// `pruned` is a set of seqs kept as ranges: in whatever order the seqs are dropped the ranges end up disjoint and
+    /// merged, and `is_pruned` agrees with a plain set for every number around them.
+    #[test]
+    fn pruned_ranges_stay_merged_whatever_the_order_the_seqs_are_dropped_in() {
+        // a fixed pseudo-random order (xorshift), several different sets
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for round in 0..40u64 {
+            let universe = 5 + round * 3;
+            let mut seqs: Vec<u64> = (1..=universe).filter(|_| next() % 3 != 0).collect();
+            // shuffle
+            for i in (1..seqs.len()).rev() {
+                let j = (next() % (i as u64 + 1)) as usize;
+                seqs.swap(i, j);
+            }
+            let mut queue = QueueFile::default();
+            for seq in &seqs {
+                queue.add_pruned(*seq);
+                queue.add_pruned(*seq); // twice: the same
+            }
+            let model: std::collections::BTreeSet<u64> = seqs.iter().copied().collect();
+            for seq in 0..=universe + 1 {
+                assert_eq!(queue.is_pruned(seq), model.contains(&seq), "round {round}: seq {seq}");
+            }
+            // maximal runs of the model, as the ranges must be
+            let mut expected: BTreeMap<u64, u64> = BTreeMap::new();
+            for seq in &model {
+                match expected.iter_mut().next_back() {
+                    Some((_, last)) if *last + 1 == *seq => *last = *seq,
+                    _ => {
+                        expected.insert(*seq, *seq);
+                    }
+                }
+            }
+            assert_eq!(queue.pruned, expected, "round {round}: ranges disjoint and never adjacent");
+        }
+        // the end of the number line does not wrap
+        let mut queue = QueueFile::default();
+        queue.add_pruned(u64::MAX);
+        queue.add_pruned(u64::MAX - 1);
+        assert_eq!(queue.pruned, BTreeMap::from([(u64::MAX - 1, u64::MAX)]));
+        assert!(queue.is_pruned(u64::MAX) && !queue.is_pruned(u64::MAX - 2));
+    }
+
+    /// The file: one that never pruned and never had a time reads and writes back exactly as before (no new keys); one
+    /// that has ranges and times round-trips.
+    #[test]
+    fn the_new_fields_are_written_only_when_they_have_something_to_say() {
+        let plain = queue_confirmed([confirmed_at(1, None)]);
+        let json = serde_json::to_value(&plain).unwrap();
+        assert!(json.get("pruned").is_none(), "{json}");
+        assert!(json["confirmed"]["1"].get("confirmed_at_unix").is_none(), "{json}");
+        let read: QueueFile = serde_json::from_value(json).unwrap();
+        assert_eq!(read.confirmed, plain.confirmed);
+
+        let mut queue = queue_confirmed([confirmed_at(1, Some(NOW - 2 * DAY as i64)), confirmed_at(2, Some(NOW))]);
+        queue.apply_retention(NOW, DAY);
+        let json = serde_json::to_value(&queue).unwrap();
+        assert_eq!(json["pruned"], serde_json::json!({"1": 1}));
+        assert_eq!(json["confirmed"]["2"]["confirmed_at_unix"], serde_json::json!(NOW));
+        let read: QueueFile = serde_json::from_value(json).unwrap();
+        assert_eq!((read.pruned, read.confirmed), (queue.pruned, queue.confirmed));
     }
 }

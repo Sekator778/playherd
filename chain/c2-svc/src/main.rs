@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
         max_fee_mojos = config.max_fee_mojos,
         fallback_fee_rate_millimojos_per_cost = config.fallback_fee_rate_millimojos_per_cost,
         mempool_replace_after_secs = config.mempool_replace_after.as_secs(),
+        oracle_retain_confirmed_secs = config.oracle_retain_confirmed.as_secs(),
         "starting c2-svc"
     );
 
@@ -96,6 +97,7 @@ async fn main() -> Result<()> {
         tick_failure_threshold: config.tick_failure_threshold,
         fee_allocator: Arc::clone(&fee_allocator),
         queue_cache: QueueCache::default(),
+        retain_confirmed: config.oracle_retain_confirmed,
     });
 
     // PLAY withdraw/deposit (Р-6, decision Р-53 2026-09-26): a separate

@@ -146,6 +146,16 @@ see `docs/research/chain_service.md` §1. Write-ups:
     `resultsHash`, `priceCents`, `asset` and `ts` -- `null` for a record confirmed
     before the content was kept. Contract fixtures: `tests/contract/OracleRecordsResponse.json`,
     `OracleRecordStatusResponse.json`, `OracleRecordStatusResponse_without_content.json`.
+  - The oracle queue file stays bounded (`src/oracle/queue.rs`): a confirmed record's entry
+    (height, coin, content; about 410 bytes) is dropped once it has been confirmed for
+    `C2_ORACLE_RETAIN_CONFIRMED_SECS` (default 86 400, 0 = keep for good) -- a pass every ten minutes, and
+    a restarted service catches up at once. The seq stays known as a range in `pruned`: `GET
+    /v1/oracle/records/{seq}` still says `confirmed` (`height`, `coinId` and the content `null`, no new
+    field), `POST` never takes its record for a late one to publish again, `maxKnownSeq` and
+    `lastConfirmedSeq` do not move. A record that is pending, in flight or in conflict is never
+    dropped. The file is read and parsed once and again only when it changed on disk (`QueueCache`:
+    the stamp of the file -- length, modification time, inode -- decides), not on every tick, `POST`
+    and `GET`; what this process writes it keeps.
   - `Dockerfile` — multi-stage release build, build context `chain/` (needs
     the `c2-cli` path dependency + the shared `Cargo.lock` in scope).
   - `--dry-run` / `C2_PUSH=0` — builds and signs spends, never broadcasts or

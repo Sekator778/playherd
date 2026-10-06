@@ -83,7 +83,7 @@ use super::chain_client::ChainClient;
 use super::lineage::{genesis_coin, tip_lineage_proof, walk_lineage};
 use super::queue::{
     ConfirmedRecordInfo, EnqueueOutcome, InFlightSpend, QueueCache, QueueFile, ReconcileOutcome, RecordState,
-    ResolvedInFlight,
+    ResolvedInFlight, RetentionOutcome,
 };
 use super::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
 use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusResponse, RECORD_FORMAT};
@@ -154,6 +154,12 @@ fn now_unix() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
+
+/// How often `tick` runs the retention of confirmed records (`Publisher::retain_confirmed`): a pass
+/// that drops anything is a write of the whole queue file, and records confirm every few seconds, so
+/// the pass is made every ten minutes, not every tick -- the file then holds the last
+/// `C2_ORACLE_RETAIN_CONFIRMED_SECS` plus at most these ten minutes. **предложение**.
+const RETENTION_EVERY_SECS: i64 = 600;
 
 /// A replacement bundle `replace_in_mempool` is ready to make durable and push.
 struct ReplacementBundle {
@@ -312,6 +318,12 @@ pub struct Publisher<C: ChainClient> {
     /// the cache holds, and every write through `save_queue`, which keeps what it wrote -- so a tick,
     /// a `POST` or a `GET` that finds the file as the last write left it does not parse it again.
     pub queue_cache: QueueCache,
+    /// How long a confirmed record stays in the queue file after its confirmation
+    /// (`C2_ORACLE_RETAIN_CONFIRMED_SECS`, `Config::oracle_retain_confirmed`): then `tick` drops its
+    /// entry (`QueueFile::apply_retention`) and the seq is answered as confirmed without the detail
+    /// (`QueueFile::pruned`). Records that are not confirmed -- pending, in flight, in conflict -- are
+    /// never dropped. Zero keeps every entry for good.
+    pub retain_confirmed: Duration,
 }
 
 impl<C: ChainClient> Publisher<C> {
@@ -369,8 +381,10 @@ impl<C: ChainClient> Publisher<C> {
         // `docs/research/chain_service.md` §18.2) wherever the queue still has it.
         let held = queue.held_record(seq);
         Ok(match queue.record_state(seq) {
+            // `height`, `coinId` and the content are all `null` for a seq whose entry the retention has
+            // dropped: confirmed, and no longer known by which spend.
             RecordState::Confirmed { height, coin_id } => {
-                OracleRecordStatusResponse::new(seq, "confirmed", height, Some(coin_id)).with_record(held)
+                OracleRecordStatusResponse::new(seq, "confirmed", height, coin_id).with_record(held)
             }
             // Task fix (`docs/research/chain_service.md` §11): surfaced here
             // (per-record detail) as well as in `GET /v1/oracle/status`'s
@@ -383,6 +397,47 @@ impl<C: ChainClient> Publisher<C> {
             RecordState::Queued => OracleRecordStatusResponse::new(seq, "queued", None, None).with_record(held),
             RecordState::Unknown => OracleRecordStatusResponse::new(seq, "unknown", None, None),
         })
+    }
+
+    /// The retention of confirmed records on `queue`, the working copy of a caller that holds
+    /// `queue_lock` (`QueueFile::apply_retention` with `retain_confirmed`): what it changed -- entries
+    /// dropped, or old entries given the time of this pass -- is written out at once, and the log says
+    /// how many went and which seqs. Nothing happens while the retention is off.
+    fn retain_confirmed_records(&self, queue: &mut QueueFile, now: i64) -> Result<RetentionOutcome> {
+        let outcome = queue.apply_retention(now, self.retain_confirmed.as_secs());
+        if !outcome.changed() {
+            return Ok(outcome);
+        }
+        self.save_queue(queue).context("persisting the queue after its retention pass")?;
+        if outcome.stamped > 0 {
+            tracing::info!(
+                stamped = outcome.stamped,
+                retain_secs = self.retain_confirmed.as_secs(),
+                "oracle queue retention: confirmed entries written before their confirmation time was kept have \
+                 the time of this pass now and are kept for a whole retention from it"
+            );
+        }
+        if let Some((first, last)) = outcome.pruned_seqs {
+            tracing::info!(
+                pruned = outcome.pruned,
+                first_seq = first,
+                last_seq = last,
+                kept = outcome.kept,
+                retain_secs = self.retain_confirmed.as_secs(),
+                "oracle queue retention: dropped confirmed entries that are older than the retention -- their \
+                 seqs still answer `confirmed`, without height, coin and content (`QueueFile::pruned`)"
+            );
+        }
+        Ok(outcome)
+    }
+
+    /// One retention pass as of `now_unix`, on its own: what `tick` does by the clock every few
+    /// minutes, for a caller that names the time -- a test that does not wait a day, or an operator
+    /// tool. Takes the queue lock like every writer. Does nothing while the retention is off.
+    pub async fn apply_retention_at(&self, now_unix: i64) -> Result<RetentionOutcome> {
+        let _guard = self.queue_lock.lock().await;
+        let mut queue = (*self.load_queue()?).clone();
+        self.retain_confirmed_records(&mut queue, now_unix)
     }
 
     /// `GET /v1/oracle/status`'s handler. Must never await a network call:
@@ -605,7 +660,7 @@ impl<C: ChainClient> Publisher<C> {
             .await
             .context("walking oracle singleton lineage for chain reconciliation")?;
         let in_flight_before = queue.in_flight.clone();
-        let mut outcome = queue.reconcile_with_chain(&walk);
+        let mut outcome = queue.reconcile_with_chain(&walk, now_unix());
 
         for warning in &outcome.decode_warnings {
             tracing::warn!(%warning, "oracle lineage walk");
@@ -841,6 +896,15 @@ impl<C: ChainClient> Publisher<C> {
             self.save_queue(&queue).context("persisting chain-reconciled queue")?;
         }
 
+        // Retention of confirmed records, every `RETENTION_EVERY_SECS`: housekeeping, like the fee-coin
+        // reserve in `tick` -- a pass that fails is logged and left to the next turn, the tick goes on.
+        let now = now_unix();
+        if self.queue_cache.claim_retention_pass(now, RETENTION_EVERY_SECS)
+            && let Err(e) = self.retain_confirmed_records(&mut queue, now)
+        {
+            tracing::warn!("oracle queue retention pass failed (the next one is due in {RETENTION_EVERY_SECS} s): {e:#}");
+        }
+
         if let Some(in_flight) = queue.in_flight.clone() {
             return self.advance_in_flight(&mut queue, in_flight).await;
         }
@@ -1069,6 +1133,7 @@ impl<C: ChainClient> Publisher<C> {
         // on it would both be the wrong question for per-seq tracking, only the right one for the
         // *overall* high-water mark below.
         let confirmed_coin_id = format!("{}", in_flight.next_coin.coin_id());
+        let confirmed_at = now_unix();
         for record in &in_flight.records {
             queue.confirmed.insert(
                 record.seq,
@@ -1076,6 +1141,7 @@ impl<C: ChainClient> Publisher<C> {
                     height: confirmed_height,
                     coin_id: confirmed_coin_id.clone(),
                     record: Some(*record),
+                    confirmed_at_unix: Some(confirmed_at),
                 },
             );
         }

@@ -32,7 +32,7 @@ use c2_svc::fee_allocator::{FeeCoinAllocator, fee_coin_of};
 use c2_svc::oracle::chain_client::{ChainClient, CoinRecordInfo, PushOutcome};
 use c2_svc::oracle::lineage::walk_lineage;
 use c2_svc::oracle::publisher::{Publisher, TickFailureState, TickOutcome};
-use c2_svc::oracle::queue::{EnqueueOutcome, QueueFile, ReconcileOutcome};
+use c2_svc::oracle::queue::{ConfirmedRecordInfo, EnqueueOutcome, QueueFile, ReconcileOutcome};
 use c2_svc::oracle::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
 use c2_svc::oracle::types::{OracleRecord, OracleRecordStatusResponse, Source};
 use c2_svc::state_file::save_oracle_state_atomic;
@@ -383,6 +383,7 @@ fn set_up(retry_backoff: Duration) -> Result<Fixture> {
         tick_failure_threshold: 3,
         fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
         queue_cache: Default::default(),
+        retain_confirmed: std::time::Duration::from_secs(86_400),
     };
 
     Ok(Fixture {
@@ -897,6 +898,7 @@ async fn restart_recovers_when_the_in_flight_fee_coin_was_spent_while_down() -> 
         tick_failure_threshold: 3,
         fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
         queue_cache: Default::default(),
+        retain_confirmed: std::time::Duration::from_secs(86_400),
     };
 
     // `main.rs`'s own startup sequence: seed the allocator from whatever
@@ -1159,7 +1161,12 @@ async fn status_reports_the_highest_seq_known_in_any_state_and_record_format_2()
         q.last_confirmed_seq = Some(2);
         q.confirmed.insert(
             1,
-            c2_svc::oracle::queue::ConfirmedRecordInfo { height: Some(1), coin_id: "0x01".into(), record: None },
+            c2_svc::oracle::queue::ConfirmedRecordInfo {
+                height: Some(1),
+                coin_id: "0x01".into(),
+                record: None,
+                confirmed_at_unix: None,
+            },
         );
         q.pending = vec![record(2)];
     };
@@ -1171,7 +1178,12 @@ async fn status_reports_the_highest_seq_known_in_any_state_and_record_format_2()
             Box::new(|q| {
                 q.confirmed.insert(
                     102,
-                    c2_svc::oracle::queue::ConfirmedRecordInfo { height: None, coin_id: "0x66".into(), record: None },
+                    c2_svc::oracle::queue::ConfirmedRecordInfo {
+                        height: None,
+                        coin_id: "0x66".into(),
+                        record: None,
+                        confirmed_at_unix: None,
+                    },
                 );
             }),
         ),
@@ -1266,6 +1278,7 @@ async fn restart_resumes_a_pending_in_flight_spend() -> Result<()> {
         tick_failure_threshold: 3,
         fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
         queue_cache: Default::default(),
+        retain_confirmed: std::time::Duration::from_secs(86_400),
     };
 
     restarted.chain.set_confirmed(next_coin.coin_id(), 4_900_000);
@@ -2397,7 +2410,8 @@ async fn a_conflicting_seq_answers_with_the_record_the_chain_has() -> Result<()>
 /// A queue file written before the content was kept -- confirmed entries with a height and a coin and nothing else, as
 /// the stand's file is. It loads; its entries answer exactly as they did, with the four content fields `null`; a record
 /// sent for one of them is the silent no-op it was, whatever it contains (there is nothing to compare it with); and the
-/// file is written back with those entries unchanged -- while the records confirmed after the upgrade keep their content.
+/// file is written back with those entries as they were -- the first retention pass gives each of them the time it ran
+/// (`confirmed_at_unix`) and nothing else changes -- while the records confirmed after the upgrade keep their content.
 #[tokio::test]
 async fn a_queue_file_written_before_the_content_was_kept_still_loads_and_answers_as_before() -> Result<()> {
     let fx = set_up(Duration::from_secs(0))?;
@@ -2443,7 +2457,10 @@ async fn a_queue_file_written_before_the_content_was_kept_still_loads_and_answer
     assert_holds_nothing(&fx.publisher.record_status(1)?);
     let written: serde_json::Value = serde_json::from_slice(&std::fs::read(QueueFile::path(&fx.publisher.data_dir, "operator"))?)?;
     for seq in ["1", "2", "3"] {
-        assert_eq!(written["confirmed"][seq], old_confirmed[seq], "the old entry {seq} was written back unchanged");
+        let mut entry = written["confirmed"][seq].clone();
+        assert!(entry["confirmed_at_unix"].is_i64(), "the old entry {seq} got the time of the first retention pass");
+        entry.as_object_mut().expect("an entry is an object").remove("confirmed_at_unix");
+        assert_eq!(entry, old_confirmed[seq], "the old entry {seq} was written back as it was");
     }
     assert!(written["confirmed"]["4"]["record"].is_object());
     Ok(())
@@ -2501,5 +2518,296 @@ async fn the_queue_file_is_not_read_again_while_it_is_as_this_process_left_it() 
     changed.save_atomic(&publisher.data_dir, "operator")?;
     assert_eq!(publisher.status().await?.pending_records, 2);
     assert_eq!(publisher.queue_cache.reads(), 2);
+    Ok(())
+}
+
+// --- the retention of confirmed records (`C2_ORACLE_RETAIN_CONFIRMED_SECS`) ----------------------------------------
+
+const RETENTION_SECS: u64 = 3_600;
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("the clock is after 1970").as_secs() as i64
+}
+
+/// A fixture whose publisher keeps confirmed records for `RETENTION_SECS`.
+fn set_up_retaining() -> Result<Fixture> {
+    let mut fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.retain_confirmed = Duration::from_secs(RETENTION_SECS);
+    Ok(fx)
+}
+
+/// `records` queued, broadcast, and confirmed by the chain at `height`, the way every healthy batch is settled.
+async fn confirm_batch(fx: &Fixture, records: Vec<OracleRecord>, height: u32) -> Result<()> {
+    let n = records.len();
+    assert_eq!(fx.publisher.enqueue(records).await?.len(), n);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: n, accepted: true });
+    let in_flight = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    confirm_in_flight(&fx.publisher.chain, &in_flight, height);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: n });
+    Ok(())
+}
+
+fn queue_file_len(fx: &Fixture) -> Result<u64> {
+    Ok(std::fs::metadata(QueueFile::path(&fx.publisher.data_dir, "operator"))?.len())
+}
+
+/// The whole life of the retention through the publisher. A confirmed record is kept, with its height, its coin and
+/// its content, until it has been confirmed for the retention -- not a second less --; then its entry is dropped from
+/// the queue file and the file is smaller. The seq still answers `confirmed`, with `null` for the height, the coin and
+/// the content (the same JSON shape as ever, `height` and `coinId` were already optional); the status is as it was
+/// (`lastConfirmedSeq`, `maxKnownSeq`); and a record sent for the seq is not accepted again -- not queued, not
+/// published a second time, not reported as a collision.
+#[tokio::test]
+async fn a_confirmed_record_is_dropped_a_retention_after_its_confirmation_and_the_seq_stays_confirmed() -> Result<()> {
+    let fx = set_up_retaining()?;
+    confirm_batch(&fx, vec![record(1), record(2), record(3)], 4_800_000).await?;
+    let confirmed_at = unix_now();
+    let status = fx.publisher.record_status(2)?;
+    assert_eq!((status.state, status.height), ("confirmed", Some(4_800_000)));
+    assert_holds(&status, &record(2));
+    let len_before = queue_file_len(&fx)?;
+    let pushes = fx.publisher.chain.push_call_count();
+
+    // not yet: the retention counts from the confirmation, and a second short of it is a second too early
+    let outcome = fx.publisher.apply_retention_at(confirmed_at + RETENTION_SECS as i64 - 5).await?;
+    assert_eq!((outcome.pruned, outcome.stamped, outcome.kept), (0, 0, 3));
+    assert_eq!(queue_file_len(&fx)?, len_before, "nothing dropped, nothing written");
+
+    // due
+    let outcome = fx.publisher.apply_retention_at(confirmed_at + RETENTION_SECS as i64 + 5).await?;
+    assert_eq!((outcome.pruned, outcome.pruned_seqs, outcome.kept), (3, Some((1, 3)), 0));
+    assert!(queue_file_len(&fx)? < len_before, "the file is smaller: {} -> {}", len_before, queue_file_len(&fx)?);
+    let on_disk = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(on_disk.confirmed.is_empty());
+    assert_eq!(on_disk.pruned.iter().map(|(a, b)| (*a, *b)).collect::<Vec<_>>(), vec![(1, 3)]);
+
+    // what is asked of the service afterwards
+    for seq in [1, 2, 3] {
+        let status = fx.publisher.record_status(seq)?;
+        assert_eq!(
+            serde_json::to_value(&status)?,
+            serde_json::json!({"seq": seq, "state": "confirmed", "height": null, "coinId": null,
+                               "resultsHash": null, "priceCents": null, "asset": null, "ts": null}),
+            "seq {seq}"
+        );
+    }
+    assert_eq!(fx.publisher.record_status(4)?.state, "unknown", "a seq that was never here is still unknown");
+    let status = fx.publisher.status().await?;
+    assert_eq!((status.last_confirmed_seq, status.last_confirmed_height, status.pending_records), (Some(3), Some(4_800_000), 0));
+    assert_eq!(status.max_known_seq, 3, "the retention does not lower the floor the server raises its counter to");
+
+    // the server sends them again (its reconciliation does, for a row it never saw confirmed): not accepted again,
+    // not reported, nothing written, nothing published
+    assert_eq!(submit_changing_nothing(&fx, vec![record(1), record(2), record(3)]).await?, EnqueueOutcome::default());
+    let other = OracleRecord { asset: 5, price_cents: 1, ..record(2) };
+    assert_eq!(submit_changing_nothing(&fx, vec![other]).await?, EnqueueOutcome::default(), "no content to compare with");
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Idle);
+    assert_eq!(fx.publisher.chain.push_call_count(), pushes, "nothing was published a second time");
+
+    // and the service goes on: the next record is queued, published and confirmed as ever
+    confirm_batch(&fx, vec![record(4)], 4_800_050).await?;
+    assert_eq!(fx.publisher.record_status(4)?.state, "confirmed");
+    assert_eq!(fx.publisher.status().await?.max_known_seq, 4);
+    Ok(())
+}
+
+/// Only confirmed records go. A record that is pending or in flight when the retention runs is not confirmed, however
+/// much time has passed -- it stays, queued and in flight, and is published and confirmed as if nothing had run; so
+/// does a conflict.
+#[tokio::test]
+async fn the_retention_never_drops_a_record_that_is_not_confirmed() -> Result<()> {
+    let fx = set_up_retaining()?;
+    confirm_batch(&fx, vec![record(1)], 4_800_000).await?;
+    fx.publisher.enqueue(vec![record(2), record(3)]).await?;
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 2, accepted: true });
+    fx.publisher.enqueue(vec![record(4)]).await?;
+
+    let outcome = fx.publisher.apply_retention_at(unix_now() + 100 * 365 * 86_400).await?;
+    assert_eq!((outcome.pruned, outcome.kept), (1, 0), "only the confirmed one went");
+    assert_eq!(fx.publisher.record_status(1)?.state, "confirmed");
+    assert_eq!(fx.publisher.record_status(2)?.state, "in_flight");
+    assert_eq!(fx.publisher.record_status(3)?.state, "in_flight");
+    assert_eq!(fx.publisher.record_status(4)?.state, "queued");
+    assert_holds(&fx.publisher.record_status(4)?, &record(4));
+    let status = fx.publisher.status().await?;
+    assert_eq!((status.pending_records, status.max_known_seq), (3, 4));
+
+    // they go on as before: the batch in flight is confirmed -- and the queued record goes out in the same tick
+    let in_flight = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("still in flight");
+    confirm_in_flight(&fx.publisher.chain, &in_flight, 4_800_100);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 1, accepted: true });
+    assert_eq!(fx.publisher.record_status(2)?.height, Some(4_800_100));
+    let in_flight = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    confirm_in_flight(&fx.publisher.chain, &in_flight, 4_800_200);
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: 1 });
+    for seq in 1..=4 {
+        assert_eq!(fx.publisher.record_status(seq)?.state, "confirmed", "seq {seq}");
+    }
+    Ok(())
+}
+
+/// A conflict (a seq the chain has with other content than the service had queued) is information the operator needs
+/// -- `GET /v1/oracle/status` lists it -- and is not "confirmed": the retention leaves it alone, for good.
+#[tokio::test]
+async fn the_retention_leaves_a_conflict_alone() -> Result<()> {
+    let fx = set_up_retaining()?;
+    let (gen1_coin, gen1_proof) = publish_lineage_generation(
+        &fx.publisher.chain,
+        fx.launcher_id,
+        &fx.manager,
+        fx.eve_coin,
+        fx.eve_proof,
+        1_000_000,
+        &[record(1)],
+    )?;
+    fx.publisher.chain.set_confirmed(gen1_coin.coin_id(), 1_000_000);
+    save_oracle_state_atomic(
+        &fx.publisher.data_dir,
+        "operator",
+        &OracleState {
+            launcher_id: fx.launcher_id,
+            manager_synthetic_pk: fx.manager.synthetic_pk,
+            current_coin: gen1_coin,
+            current_proof_dto: gen1_proof.into(),
+            next_sequence: 2,
+        },
+    )?;
+    let mut queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    queue.pending = vec![OracleRecord { price_cents: record(1).price_cents + 1, ..record(1) }];
+    queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+    fx.publisher.bootstrap_from_chain().await?;
+    assert_eq!(fx.publisher.status().await?.conflicts, vec![1]);
+
+    let outcome = fx.publisher.apply_retention_at(unix_now() + 100 * 365 * 86_400).await?;
+    assert_eq!((outcome.pruned, outcome.kept), (0, 0));
+    let status = fx.publisher.record_status(1)?;
+    assert_eq!((status.state, status.height), ("conflict", Some(1_000_000)));
+    assert_eq!(fx.publisher.status().await?.conflicts, vec![1]);
+    Ok(())
+}
+
+/// A restart reads what the retention wrote: the new process answers for the dropped seqs as the old one did, and
+/// does not take their records for new ones.
+#[tokio::test]
+async fn a_restarted_service_still_knows_the_seqs_the_retention_dropped() -> Result<()> {
+    let fx = set_up_retaining()?;
+    confirm_batch(&fx, vec![record(1), record(2)], 4_800_000).await?;
+    fx.publisher.apply_retention_at(unix_now() + RETENTION_SECS as i64 + 5).await?;
+
+    let restarted = Publisher {
+        data_dir: fx.publisher.data_dir.clone(),
+        operator_name: fx.publisher.operator_name.clone(),
+        push_enabled: true,
+        chain: FakeChainClient::new(),
+        retry_backoff: Duration::from_secs(300),
+        max_retry_attempts: 3,
+        max_fee_mojos: 50_000_000,
+        fee_target_time_secs: 60,
+        mempool_replace_after: Duration::from_secs(180),
+        balance_snapshot: tokio::sync::RwLock::new(None),
+        queue_lock: tokio::sync::Mutex::new(()),
+        tick_failures: tokio::sync::RwLock::new(TickFailureState::default()),
+        tick_failure_threshold: 3,
+        fee_allocator: std::sync::Arc::new(FeeCoinAllocator::new()),
+        queue_cache: Default::default(),
+        retain_confirmed: Duration::from_secs(RETENTION_SECS),
+    };
+    for seq in [1, 2] {
+        let status = restarted.record_status(seq)?;
+        assert_eq!((status.state, status.height, status.coin_id), ("confirmed", None, None), "seq {seq}");
+    }
+    assert_eq!(restarted.submit(vec![record(1), record(2)]).await?, EnqueueOutcome::default());
+    assert_eq!(restarted.status().await?.max_known_seq, 2);
+    assert_eq!(restarted.tick().await?, TickOutcome::Idle);
+    assert_eq!(restarted.chain.push_call_count(), 0);
+    Ok(())
+}
+
+/// The upgrade of a queue file that has no confirmation times -- the stand's, since it has never had them: the first
+/// retention pass gives every entry the time of the pass and writes the file, so the oldest entry lives a whole
+/// retention from the upgrade and not a second less; then they go like any other.
+#[tokio::test]
+async fn the_entries_of_a_file_written_before_the_times_were_kept_live_a_retention_from_the_upgrade() -> Result<()> {
+    let fx = set_up_retaining()?;
+    let old_file = r#"{
+  "pending": [], "in_flight": null, "last_accepted_seq": 3, "last_confirmed_seq": 3, "last_confirmed_height": 4765102,
+  "confirmed": {
+    "1": {"height": 4765100, "coin_id": "0x1111111111111111111111111111111111111111111111111111111111111111"},
+    "2": {"height": 4765101, "coin_id": "0x2222222222222222222222222222222222222222222222222222222222222222"},
+    "3": {"height": 4765102, "coin_id": "0x3333333333333333333333333333333333333333333333333333333333333333"}
+  },
+  "conflicts": {}, "chain_scan_checkpoint": null
+}"#;
+    std::fs::write(QueueFile::path(&fx.publisher.data_dir, "operator"), old_file)?;
+
+    // the first tick of the process runs the first pass
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Idle);
+    let upgraded = unix_now();
+    let on_disk = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(on_disk.confirmed.len(), 3, "nothing is dropped by the pass that stamps");
+    for info in on_disk.confirmed.values() {
+        let at = info.confirmed_at_unix.expect("stamped");
+        assert!((at - upgraded).abs() <= 5, "the time of the pass: {at} vs {upgraded}");
+    }
+    assert_eq!(fx.publisher.record_status(2)?.height, Some(4_765_101), "the entry answers as it did");
+
+    assert!(!fx.publisher.apply_retention_at(upgraded + RETENTION_SECS as i64 - 20).await?.changed());
+    let outcome = fx.publisher.apply_retention_at(upgraded + RETENTION_SECS as i64 + 20).await?;
+    assert_eq!((outcome.pruned, outcome.pruned_seqs), (3, Some((1, 3))));
+    assert_eq!(fx.publisher.record_status(2)?.state, "confirmed");
+    assert_eq!(fx.publisher.record_status(2)?.height, None);
+    assert_eq!(fx.publisher.status().await?.max_known_seq, 3);
+    Ok(())
+}
+
+/// What `tick` does by the clock: the first tick of a process runs the retention (a restarted service catches up at
+/// once), and then it runs it every ten minutes, not on every tick -- a pass that drops anything writes the whole file.
+#[tokio::test]
+async fn a_tick_runs_the_retention_once_and_not_again_before_its_turn() -> Result<()> {
+    let mut fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.retain_confirmed = Duration::from_secs(1);
+    // confirmed entries that were confirmed long ago
+    let long_ago = |seq: u64| ConfirmedRecordInfo {
+        height: Some(10),
+        coin_id: format!("0x{seq:064x}"),
+        record: Some(record(seq)),
+        confirmed_at_unix: Some(1_000_000_000),
+    };
+    let mut queue = QueueFile::default();
+    queue.confirmed.insert(1, long_ago(1));
+    queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Idle);
+    let on_disk = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(on_disk.confirmed.is_empty() && on_disk.is_pruned(1), "the first tick ran the retention: {on_disk:?}");
+
+    // another old entry appears; the next ticks do not touch it
+    let mut queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    queue.confirmed.insert(2, long_ago(2));
+    queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+    for _ in 0..3 {
+        assert_eq!(fx.publisher.tick().await?, TickOutcome::Idle);
+    }
+    assert!(QueueFile::load(&fx.publisher.data_dir, "operator")?.confirmed.contains_key(&2), "not on every tick");
+    // its turn comes by the clock; here it is called for directly
+    assert_eq!(fx.publisher.apply_retention_at(unix_now()).await?.pruned, 1);
+    assert!(QueueFile::load(&fx.publisher.data_dir, "operator")?.is_pruned(2));
+    Ok(())
+}
+
+/// 0 turns the retention off: nothing is stamped, nothing is dropped, by a tick or by a direct pass -- the queue file
+/// is as it was before there was a retention.
+#[tokio::test]
+async fn a_retention_of_zero_leaves_the_queue_file_as_it_was() -> Result<()> {
+    let mut fx = set_up(Duration::from_secs(300))?;
+    fx.publisher.retain_confirmed = Duration::ZERO;
+    confirm_batch(&fx, vec![record(1), record(2)], 4_800_000).await?;
+    let path = QueueFile::path(&fx.publisher.data_dir, "operator");
+    let before = std::fs::read(&path)?;
+
+    assert!(!fx.publisher.apply_retention_at(unix_now() + 100 * 365 * 86_400).await?.changed());
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Idle);
+    assert_eq!(std::fs::read(&path)?, before);
+    assert_eq!(fx.publisher.record_status(1)?.height, Some(4_800_000));
     Ok(())
 }
