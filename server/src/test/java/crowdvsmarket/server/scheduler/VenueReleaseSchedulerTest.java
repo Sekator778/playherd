@@ -42,7 +42,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Time is the test's: {@code resolveOverdueRounds(market, interval, now)} is called with chosen instants, a tick a
  * second where the second matters. The market's exchange is silent while {@code silent} holds: a settlement of any round of it
- * throws {@link PriceUnavailableException}.
+ * throws {@link PriceUnavailableException}. The release after the minutes of the source (Р-79) is switched off here, so that
+ * what is pinned is this one rule alone — {@code SourceReleaseSchedulerTest} has the other, and how the two meet.
  */
 class VenueReleaseSchedulerTest {
 
@@ -92,10 +93,12 @@ class VenueReleaseSchedulerTest {
         scheduler.roundResults = roundResults;
         scheduler.oracleSeqGate = gate;
         scheduler.config = config;
-        scheduler.pricesConfig = PricesConfig.defaults();
+        scheduler.pricesConfig = venueReleaseOnly();
         when(config.roundDurations()).thenReturn(new RoundDurations(HOUR, DAY));
         when(gate.open()).thenReturn(true);
         when(gameService.firstWindowToResolve(any(), anyLong())).thenAnswer(inv -> inv.getArgument(0));
+        when(gameService.hasPendingBets(any())).thenReturn(true); // a round with a bet: one nobody bet on is skipped at once (Р-79)
+        when(gameService.instrumentOf(any(), any())).thenAnswer(inv -> inv.getArgument(0));
         when(gameService.resolveRound(any(), anyLong())).thenAnswer(inv -> {
             RoundWindow window = inv.getArgument(0);
             long now = inv.getArgument(1);
@@ -116,6 +119,11 @@ class VenueReleaseSchedulerTest {
             cancellations.add(new Cancellation(window.roundId(), reason, now));
             return new Rounds.CancellationDto(window.roundId(), window.market(), "BTC", reason, now, 0);
         });
+    }
+
+    /** The defaults, with the release after the minutes of the source (Р-79) switched off for every source. */
+    private static PricesConfig venueReleaseOnly() {
+        return PricesConfig.defaults().withReleaseAfter(PricesConfig.ReleaseAfter.off());
     }
 
     private RoundWindow hourly(long start) {
@@ -318,7 +326,7 @@ class VenueReleaseSchedulerTest {
 
     @Test
     void withTheSettingAtZeroTheRuleIsOffAndTheBackoffIsTheOldOne() {
-        scheduler.pricesConfig = PricesConfig.defaults().withVenueReleaseAfterMs(0);
+        scheduler.pricesConfig = venueReleaseOnly().withVenueReleaseAfterMs(0);
         RoundWindow w0 = hourly(S);
         seedHourly(btc, w0);
 
@@ -336,7 +344,7 @@ class VenueReleaseSchedulerTest {
 
     @Test
     void aDifferentWaitIsHonoured() {
-        scheduler.pricesConfig = PricesConfig.defaults().withVenueReleaseAfterMs(30 * SEC);
+        scheduler.pricesConfig = venueReleaseOnly().withVenueReleaseAfterMs(30 * SEC);
         RoundWindow w0 = hourly(S);
         seedHourly(btc, w0);
 

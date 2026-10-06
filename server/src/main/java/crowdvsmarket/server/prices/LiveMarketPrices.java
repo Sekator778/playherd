@@ -38,7 +38,7 @@ import org.jboss.logging.Logger;
  * that can price the start later — from history ({@link #healStart}), the primary first — is taken. The choice is written
  * once ({@link RoundVenues}) and never revisited: the round is settled — open,
  * close, path — from its venue's ring alone ({@link #resolve}, {@link #soFar}), and a venue that cannot price it leaves the
- * round to wait, and to be refunded an hour after its end, as any round without a price (Р-23); it is never moved to the
+ * round to wait, and to be refunded as any round without a price (Р-23, Р-77, Р-79); it is never moved to the
  * other venue. The next round starts at the price of whichever venue it opens on, which may differ from the close of
  * this one by the basis between the two venues (Р-40 holds within a venue). For the lobby, {@link #latest(Market)} shows
  * the primary's live tick while it is fresh and the backup's when it is not, saying which.
@@ -62,8 +62,8 @@ import org.jboss.logging.Logger;
  * ({@link PriceSource#historyOf}), merges what it returns into the hole — never over a tick that is
  * already there, and never at or before {@code start} when {@code P(start)} is already known — and
  * looks again; a hole that is still there is a {@link PriceUnavailableException}, which the
- * scheduler retries and, an hour after the round's end, answers by cancelling the round with a
- * refund (Р-23). History is only fetched for a market once per
+ * scheduler retries and, when the minutes of the source are over (Р-79; an hour after the round's end at the latest,
+ * Р-23), answers by cancelling the round with a refund. History is only fetched for a market once per
  * {@link PricesConfig#backfillCooldownMs() cooldown}: the scheduler retries every second and a
  * source that is down must not be asked every second.
  *
@@ -101,8 +101,8 @@ import org.jboss.logging.Logger;
  * the longer it is, the less they say about the middle. A redeploy of the server — a minute or a few without
  * polls — therefore no longer voids the rounds that were running: when such a round ends, the gap in its ticks is
  * bridged by the candles (one {@code candleSnapshot}), it settles, and a gap across a round boundary does not
- * hurt the round after it. The round stays a hole — it is retried, and an hour after its end cancelled with a
- * refund (Р-23), as before — when the gap is longer than the cap, when a minute of it had no trades (the asset is
+ * hurt the round after it. The round stays a hole — it is retried, and cancelled with a refund when the minutes of
+ * its source are over (Р-79; an hour after its end at the latest, Р-23) — when the gap is longer than the cap, when a minute of it had no trades (the asset is
  * not liquid: BTC, ETH, SOL and HYPE had none missing in 24 hours, TSLA only 60% of the 20-minute stretches were
  * fully traded, §13.5), when a live price is outside the range of its minute by more than the basis, or when the
  * candle of the live tick on the right is not closed yet (it is asked again after the cooldown).

@@ -30,7 +30,9 @@
  * Which venue a round runs on is decided once, at its open ({@code RoundVenues}), and it settles only from that venue's ring.
  * A round that cannot be priced there waits — and holds its series — until the scheduler lets it go: cancelled with a refund
  * {@code herd.prices.venue-release-after-ms} after its end when the market's other venue has a live tick fresh now
- * ({@link crowdvsmarket.server.prices.MarketPrices#otherVenueLive}, Р-77), else an hour after its end (Р-23).
+ * ({@link crowdvsmarket.server.prices.MarketPrices#otherVenueLive}, Р-77), else when the minutes of its source are over
+ * ({@code herd.prices.<feed>.release-after-ms}, {@link crowdvsmarket.server.prices.PricesConfig.ReleaseAfter}, Р-79 — on every
+ * market, not only on one with a backup), and at the latest an hour after its end (Р-23).
  *
  * <p>The fixed contract is {@link crowdvsmarket.server.prices.MarketPrices} and its four records;
  * everything else here is replaceable. Nothing in this package runs with {@code herd.mode=replay}.
@@ -40,8 +42,8 @@
  * (Hyperliquid's candles against its marks, Coinbase's, Kraken's and Hyperliquid spot's against their mids) {@code GapBridge}
  * bridges the gap with the lows, highs and closes of the candles — all or nothing, when every minute of it traded, the
  * live ticks around it lie inside their own minute's range (within the feed's own tolerance, {@code max-basis}), and it
- * is not longer than {@code herd.prices.hyperliquid.max-heal-ms}; otherwise the round waits and is refunded an hour
- * after its end, as it always was.
+ * is not longer than {@code herd.prices.hyperliquid.max-heal-ms}; otherwise the round waits and is refunded as above
+ * (the minutes of its source, an hour at the latest).
  *
  * <p>Only a poll makes a quote: history, a quiet asset's carried price and the boundary pin of a settled round
  * live in the ring (a price is looked up there) but are never what {@code latest()} answers, and a pin is not

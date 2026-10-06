@@ -45,7 +45,8 @@ import org.junit.jupiter.api.Test;
  * pipeline; only the engine behind them (what a settlement and a cancellation write) is a stand-in that records. The exchanges'
  * sources are scripted: the ticks the test feeds, and a history that answers or fails when the test says.
  *
- * <p>The round is the stand's "hourly" one, three minutes, so the two minutes of the release are inside it, as on the stand.
+ * <p>The round is the stand's "hourly" one, three minutes, so the two minutes of the release are inside it, as on the stand. The release
+ * after the minutes of the source (Р-79) is off in the scenarios of Р-77 and on in those of both exchanges silent.
  */
 class VenueReleaseWithRealPricesTest {
 
@@ -55,6 +56,7 @@ class VenueReleaseWithRealPricesTest {
     private static final long STEP = 180_000L;
     private static final long END = S + STEP;
     private static final String RELEASE_REASON = "The exchange of this round stopped sending prices; stakes returned";
+    private static final String SOURCE_REASON = "No price from the source; stakes returned";
 
     private final Market btc = TestMarkets.coinbaseWithKraken("BTC", 0, 1);
     private final AtomicLong clock = new AtomicLong(S);
@@ -135,6 +137,12 @@ class VenueReleaseWithRealPricesTest {
         });
         when(gameService.otherVenueLive(any(), any(), anyLong()))
                 .thenAnswer(inv -> prices.otherVenueLive(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        when(gameService.hasPendingBets(any())).thenReturn(true); // a round with a bet: one nobody bet on is skipped at once (Р-79)
+        // what GameService#instrumentOf does: the exchange the round was decided on, from the real pipeline
+        when(gameService.instrumentOf(any(), any())).thenAnswer(inv -> {
+            Market market = inv.getArgument(0);
+            return Instruments.runningOn(market, prices.decidedVenue(market, inv.getArgument(1)));
+        });
         when(gameService.cancelRound(any(), any(), anyLong())).thenAnswer(inv -> {
             RoundWindow window = inv.getArgument(0);
             cancellations.add(new Cancellation(window.roundId(), inv.getArgument(1), inv.getArgument(2)));
@@ -147,7 +155,7 @@ class VenueReleaseWithRealPricesTest {
         scheduler.roundResults = mock(RoundResultRepository.class);
         scheduler.oracleSeqGate = gate;
         scheduler.config = config;
-        scheduler.pricesConfig = pricesConfig;
+        scheduler.pricesConfig = pricesConfig.withReleaseAfter(PricesConfig.ReleaseAfter.off()); // Р-79's release has its own scenarios below
         progress.seed(btc.id(), Interval.HOURLY, window(S));
     }
 
@@ -282,6 +290,71 @@ class VenueReleaseWithRealPricesTest {
         assertThat(prices.decidedVenue(btc, w0)).contains("coinbase");
     }
 
+    // ------------------------------------------------------------------ both exchanges silent: the minutes of the exchange of the round (Р-79)
+
+    @Test
+    void withBothExchangesSilentTheRoundIsLetGoAtTheFiveMinutesOfItsExchangeWithTheWordsOfThePriceSource() {
+        scheduler.pricesConfig = pricesConfig; // Р-79's release is on, as it is by default
+        RoundWindow w0 = window(S);
+
+        run(S - 10 * SEC, END + 5 * 60 * SEC - SEC, until(S + 100 * SEC), until(S + 100 * SEC)); // both stop 100 s into the round
+
+        assertThat(prices.decidedVenue(btc, w0)).contains("coinbase");
+        assertThat(cancellations).as("the two minutes of Р-77 do not apply: the other exchange is silent too").isEmpty();
+        assertThat(progress.findNext(btc.id(), Interval.HOURLY)).contains(w0);
+
+        run(END + 5 * 60 * SEC, END + 5 * 60 * SEC + 5 * SEC, until(S + 100 * SEC), until(S + 100 * SEC));
+
+        assertThat(cancellations).singleElement().satisfies(c -> {
+            assertThat(c.roundId()).isEqualTo(w0.roundId());
+            assertThat(c.reason()).isEqualTo(SOURCE_REASON);
+            assertThat(c.atMs()).isEqualTo(END + 5 * 60 * SEC);
+        });
+        assertThat(prices.decidedVenue(btc, w0)).as("the round keeps its exchange").contains("coinbase");
+        assertThat(progress.findNext(btc.id(), Interval.HOURLY)).as("the series goes on").contains(RoundClock.next(w0));
+    }
+
+    @Test
+    void aRoundThatRanOnTheBackupIsLetGoAtTheMinutesOfTheBackupNotOfThePrimary() {
+        scheduler.pricesConfig = pricesConfig
+                .withReleaseAfter(new PricesConfig.ReleaseAfter(5 * 60 * SEC, 5 * 60 * SEC, 3 * 60 * SEC, 4 * 60 * SEC, 5 * 60 * SEC,
+                        5 * 60 * SEC)); // Coinbase's three minutes, Kraken's four
+        RoundWindow w0 = window(S);
+        LongPredicate coinbaseSpeaks = until(S - 20 * SEC); // out at the start and for good: Kraken is the exchange of the round
+        LongPredicate krakenSpeaks = until(S + 100 * SEC);
+
+        run(S - 30 * SEC, END + 4 * 60 * SEC - SEC, coinbaseSpeaks, krakenSpeaks);
+
+        assertThat(prices.decidedVenue(btc, w0)).as("opened on the backup").contains("kraken");
+        assertThat(cancellations).as("not at Coinbase's three minutes").isEmpty();
+
+        run(END + 4 * 60 * SEC, END + 4 * 60 * SEC + 5 * SEC, coinbaseSpeaks, krakenSpeaks);
+
+        assertThat(cancellations).singleElement().satisfies(c -> {
+            assertThat(c.reason()).isEqualTo(SOURCE_REASON);
+            assertThat(c.atMs()).as("at Kraken's four").isEqualTo(END + 4 * 60 * SEC);
+        });
+    }
+
+    @Test
+    void aRoundThatTheCandlesHealBeforeTheMinutesOfItsExchangeAreOverIsSettledAsAlways() {
+        scheduler.pricesConfig = pricesConfig;
+        RoundWindow w0 = window(S);
+        coinbase.historyDown = true;
+
+        run(S - 10 * SEC, END + 3 * 60 * SEC, until(S + 100 * SEC), until(S + 100 * SEC));
+        assertThat(settled).isEmpty();
+        assertThat(cancellations).isEmpty();
+
+        coinbase.historyDown = false; // the candles can be had after a while: the next request after the cooldown fills the hole
+        coinbase.historyAnswers = true;
+        run(END + 3 * 60 * SEC + SEC, END + 4 * 60 * SEC + 30 * SEC, until(S + 100 * SEC), until(S + 100 * SEC));
+
+        assertThat(settled).containsExactly(w0.roundId());
+        assertThat(cancellations).as("healed first").isEmpty();
+        assertThat(progress.findNext(btc.id(), Interval.HOURLY)).contains(RoundClock.next(w0));
+    }
+
     // ------------------------------------------------------------------ what is not let go
 
     @Test
@@ -314,7 +387,7 @@ class VenueReleaseWithRealPricesTest {
 
     @Test
     void withTheSettingAtZeroTheRoundWaitsForItsExchangeHoweverAliveTheOtherOneIs() {
-        scheduler.pricesConfig = pricesConfig.withVenueReleaseAfterMs(0);
+        scheduler.pricesConfig = scheduler.pricesConfig.withVenueReleaseAfterMs(0);
 
         run(S - 10 * SEC, END + 30 * 60 * SEC, until(S + 100 * SEC), always());
 

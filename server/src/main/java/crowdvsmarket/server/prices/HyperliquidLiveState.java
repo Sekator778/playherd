@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@link PolymarketLiveState}. Every successful poll of a dex answers, for free, whether each of its
  * polled assets {@code isDelisted}; the poll reports it here, and the catalog closes the market
  * (a delisted asset's {@code markPx} is frozen, so its market would only go stale, and its rounds
- * would wait for an hour to be refunded).
+ * would wait to be refunded).
  *
  * <p><b>Closing needs fresh evidence.</b> A market is closed for good, so one answer is not enough, and
  * neither is an answer followed by silence: the state counts the <i>consecutive successful answers</i> that

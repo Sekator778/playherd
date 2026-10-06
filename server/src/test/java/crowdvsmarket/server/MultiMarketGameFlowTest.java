@@ -607,7 +607,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
     }
 
     @Test
-    void noPriceMeansRetryAndOneHourAfterTheWindowEndsACancellationWithRefund() {
+    void noPriceMeansTheEmptyRoundIsSkippedAtOnceAndFiveMinutesAfterTheWindowEndsTheRoundWithABetIsCancelledWithRefund() {
         Market noPrice = list("T_NOPRICE", MarketKind.PERP, Category.CRYPTO, "NP", 10, 0);
         Market healthy = registry.require("BTC");
         prices.setPrice(noPrice, "100.00");
@@ -620,29 +620,28 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         gameService.placeBet(p, bet(betting, Enums.Direction.UP, 2, "100.000"), betting.startMs() - 1);
         long btcBefore = roundProgress.next("BTC", HOURLY).startMs();
 
-        // the running window ends, its price cannot be read: not resolved, the cursor waits — and
-        // another market (BTC) is not held up by it
+        // the running window ends, its price cannot be read, and nobody bet on it (Р-79): it is skipped at once, with no
+        // result — and another market (BTC) is not held up by it
         scheduler.tick(running.endMs() + 1);
         assertThat(roundResults.exists(running.roundId())).isFalse();
-        assertThat(roundProgress.next(noPrice.id(), HOURLY)).isEqualTo(running);
+        assertThat(roundProgress.next(noPrice.id(), HOURLY)).as("the series goes on at once").isEqualTo(betting);
         assertThat(roundProgress.next("BTC", HOURLY).startMs()).isGreaterThan(btcBefore);
 
-        // 1 h after the end of the window with the bet its price is still missing: cancelled, refunded
-        scheduler.tick(running.endMs() + 3_600_000L);   // running is empty and overdue by more than a step: skipped
-        assertThat(roundProgress.next(noPrice.id(), HOURLY)).isEqualTo(betting);
-        assertThat(roundResults.exists(betting.roundId())).as("1 h not over yet").isFalse();
+        // five minutes after the end of the window with the bet its price is still missing: cancelled, refunded
+        scheduler.tick(betting.endMs() + 5 * 60_000L - 1);
+        assertThat(roundResults.exists(betting.roundId())).as("five minutes not over yet").isFalse();
         assertThat(gameService.account(p).inPlay()).isEqualTo("100.000");
-        scheduler.tick(betting.endMs() + 3_600_000L);
+        assertThat(roundProgress.next(noPrice.id(), HOURLY)).isEqualTo(betting);
+        scheduler.tick(betting.endMs() + 5 * 60_000L);
 
         Rounds.RoundDto dto = roundResults.findRoundDto(betting.roundId()).orElseThrow();
         assertThat(dto).isInstanceOf(Rounds.RoundCancelled.class);
-        assertThat(((Rounds.RoundCancelled) dto).cancellation().reason())
-                .isEqualTo("no oracle price available within 1 hour of round close");
+        assertThat(((Rounds.RoundCancelled) dto).cancellation().reason()).isEqualTo("No price from the source; stakes returned");
         assertThat(((Rounds.RoundCancelled) dto).cancellation().refundedBetCount()).isEqualTo(1);
         assertThat(gameService.account(p).balance()).isEqualTo("10000.000");
         assertThat(gameService.account(p).inPlay()).isEqualTo("0.000");
         assertThat(roundProgress.next(noPrice.id(), HOURLY).startMs()).isGreaterThanOrEqualTo(betting.endMs());
-        assertThat(roundResults.exists(running.roundId())).as("the empty overdue window was skipped").isFalse();
+        assertThat(roundResults.exists(running.roundId())).as("the empty window was skipped").isFalse();
     }
 
     @Test

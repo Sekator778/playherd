@@ -33,7 +33,8 @@ import org.junit.jupiter.api.Test;
  * {@code LiveMarketPricesReleaseTest}; here the prices are scripted ({@code ScriptedMarketPrices}: the exchange of the round
  * gives no price, the other one is alive or not) and the rounds are real. The test profile's rounds are a minute long, so
  * the round that is let go carries a bet — an empty overdue window is jumped over by the catch-up rule before two minutes
- * are up, as it always was.
+ * are up, as it always was. Where the other exchange is silent too, and for a market with one exchange only, the two minutes
+ * do not apply: the five minutes of the source do (Р-79, {@code SourceReleaseTest}).
  */
 @QuarkusTest
 @TestProfile(LiveMarketsProfile.class)
@@ -41,10 +42,11 @@ class VenueReleaseTest extends LiveGameTestBase {
 
     private static final Interval HOURLY = Interval.HOURLY;
     private static final Interval DAILY = Interval.DAILY;
-    private static final long HOUR = 3_600_000L;
     private static final long TWO_MINUTES = 120_000L;
+    private static final long FIVE_MINUTES = 300_000L;
     private static final String REASON = "The exchange of this round stopped sending prices; stakes returned";
-    private static final String NO_PRICE = "no oracle price available within 1 hour of round close";
+    /** Р-79: where no exchange is alive to blame, or there is only one exchange: the minutes of the source. */
+    private static final String SOURCE_REASON = "No price from the source; stakes returned";
 
     @Inject
     RoundVenues venues;
@@ -287,24 +289,24 @@ class VenueReleaseTest extends LiveGameTestBase {
     // ------------------------------------------------------------------ what it is not
 
     @Test
-    void withTheOtherExchangeSilentTooNothingChangesTheRoundWaitsAndIsRefundedAnHourAfterItsEnd() {
+    void withTheOtherExchangeSilentTooTheTwoMinutesDoNotApplyTheRoundWaitsAndIsLetGoAtTheFiveMinutesOfItsSource() {
         Fixture f = marketWithAStuckRound(listBackupMarket("T_VR_BOTHSILENT", "VRS"), "coinbase", "vrsilent");
         long end = f.stuck().endMs();
 
         scheduler.tick(end);
         scheduler.tick(end + TWO_MINUTES);
-        scheduler.tick(end + 10 * 60_000L);
-        scheduler.tick(end + HOUR - 1);
+        scheduler.tick(end + FIVE_MINUTES - 1);
 
         assertThat(roundResults.exists(f.stuck().roundId())).isFalse();
         assertThat(roundProgress.next(f.market().id(), HOURLY)).as("the series stands still").isEqualTo(f.stuck());
         assertThat(gameService.account(f.player()).inPlay()).isEqualTo("300.000");
         assertThat(prices.otherVenueLiveAsked()).as("it was asked, and said no").contains(f.stuck().roundId());
 
-        scheduler.tick(end + HOUR);
+        scheduler.tick(end + FIVE_MINUTES); // Р-79: the minutes of the source apply whatever the other exchange does
 
         Rounds.RoundCancelled round = cancelled(f.stuck().roundId());
-        assertThat(round.cancellation().reason()).isEqualTo(NO_PRICE);
+        assertThat(round.cancellation().reason()).as("not the words of the exchange: the other one is silent too")
+                .isEqualTo(SOURCE_REASON);
         assertThat(round.source()).as("it keeps its exchange all the same").isEqualTo("coinbase");
         assertThat(gameService.account(f.player()).balance()).isEqualTo("10000.000");
         assertThat(roundProgress.next(f.market().id(), HOURLY).startMs()).isGreaterThanOrEqualTo(f.stuck().endMs());
@@ -314,14 +316,14 @@ class VenueReleaseTest extends LiveGameTestBase {
     void theOtherExchangeComingAliveLaterLetsTheWaitingRoundGoAtTheNextAttempt() {
         Fixture f = marketWithAStuckRound(listBackupMarket("T_VR_LATER", "VRT"), "coinbase", "vrlater");
         long end = f.stuck().endMs();
-        for (long at = end; at < end + 10 * 60_000L; at += 10_000L) {
-            scheduler.tick(at); // both exchanges silent for ten minutes
+        for (long at = end; at < end + 4 * 60_000L; at += 10_000L) {
+            scheduler.tick(at); // both exchanges silent for four minutes: short of the five of Р-79
         }
         assertThat(roundResults.exists(f.stuck().roundId())).isFalse();
         assertThat(roundProgress.next(f.market().id(), HOURLY)).isEqualTo(f.stuck());
 
         prices.setOtherVenueLive(f.market(), true);
-        long alive = end + 10 * 60_000L;
+        long alive = end + 4 * 60_000L;
         for (long at = alive; at <= alive + 60_000L && !roundResults.exists(f.stuck().roundId()); at += 1_000L) {
             scheduler.tick(at);
         }
@@ -352,7 +354,7 @@ class VenueReleaseTest extends LiveGameTestBase {
     }
 
     @Test
-    void aMarketWithoutABackupIsNotTouchedWhateverTheScriptSaysOfAnotherExchange() {
+    void aMarketWithoutABackupIsNotTouchedByTheTwoMinutesWhateverTheScriptSaysOfAnotherExchange() {
         Market plain = list("T_VR_PLAIN", MarketKind.PERP, Category.CRYPTO, "VRP", 10, 0);
         listed.add(plain);
         prices.setPrice(plain, "100.00");
@@ -362,17 +364,17 @@ class VenueReleaseTest extends LiveGameTestBase {
 
         scheduler.tick(end);
         scheduler.tick(end + TWO_MINUTES);
-        scheduler.tick(end + 10 * 60_000L);
-        scheduler.tick(end + HOUR - 1);
+        scheduler.tick(end + FIVE_MINUTES - 1);
 
         assertThat(roundResults.exists(f.stuck().roundId())).isFalse();
         assertThat(prices.otherVenueLiveAsked()).as("a market with one exchange has no other one to ask about").isEmpty();
         assertThat(gameService.account(f.player()).inPlay()).isEqualTo("300.000");
 
-        scheduler.tick(end + HOUR);
+        scheduler.tick(end + FIVE_MINUTES); // its own five minutes (Р-79), as on every market
 
-        assertThat(cancelled(f.stuck().roundId()).cancellation().reason()).isEqualTo(NO_PRICE);
+        assertThat(cancelled(f.stuck().roundId()).cancellation().reason()).isEqualTo(SOURCE_REASON);
         assertThat(venueColumn(f.stuck().roundId())).isNull();
+        assertThat(prices.otherVenueLiveAsked()).isEmpty();
         assertThat(gameService.account(f.player()).balance()).isEqualTo("10000.000");
     }
 
@@ -384,14 +386,15 @@ class VenueReleaseTest extends LiveGameTestBase {
         scheduler.tick(end);
 
         assertThatCode(() -> scheduler.tick(end + TWO_MINUTES)).doesNotThrowAnyException();
-        assertThatCode(() -> scheduler.tick(end + 10 * 60_000L)).doesNotThrowAnyException();
+        assertThatCode(() -> scheduler.tick(end + FIVE_MINUTES - 1)).doesNotThrowAnyException();
 
         assertThat(prices.otherVenueLiveAsked()).contains(f.stuck().roundId());
         assertThat(roundResults.exists(f.stuck().roundId())).isFalse();
         assertThat(roundProgress.next(f.market().id(), HOURLY)).isEqualTo(f.stuck());
 
-        scheduler.tick(end + HOUR);
+        scheduler.tick(end + FIVE_MINUTES);
 
-        assertThat(cancelled(f.stuck().roundId()).cancellation().reason()).as("the hour does not depend on it").isEqualTo(NO_PRICE);
+        assertThat(cancelled(f.stuck().roundId()).cancellation().reason()).as("the minutes of the source do not depend on it")
+                .isEqualTo(SOURCE_REASON);
     }
 }

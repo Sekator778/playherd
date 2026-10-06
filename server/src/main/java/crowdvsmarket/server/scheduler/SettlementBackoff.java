@@ -23,8 +23,9 @@ import java.util.Map;
  * tick} from two. A clock that went backwards past a failure counts as "long ago" (like {@code LogThrottle}):
  * a step back must not hold a window until the clock catches up.
  *
- * <p>The backoff never waits past the instant a round of a market with a backup exchange is let go from a silent
- * exchange ({@code RoundSchedulerService}, Р-77): the attempt after a failure is made at that instant at the latest.
+ * <p>The backoff never waits past an instant from which a round that cannot be priced is let go ({@code
+ * RoundSchedulerService}: Р-77, a round of a market with a backup exchange from a silent exchange; Р-79, any round from a
+ * source that gives no price): the attempt after a failure is made at the first of them still to come at the latest.
  */
 final class SettlementBackoff {
 
@@ -67,8 +68,8 @@ final class SettlementBackoff {
 
     /**
      * {@link #failed(RoundProgress.SeriesKey, RoundWindow, long, boolean)} for a window that has an instant of its own
-     * to be tried at ({@code notLaterThanMs}: the venue release, Р-77, from which a round that its exchange cannot price
-     * is let go): the next attempt is made at that instant, not after it, even when the backoff would have waited past it
+     * to be tried at ({@code notLaterThanMs}: a release, Р-77 or Р-79, from which a round that cannot be priced is let
+     * go): the next attempt is made at that instant, not after it, even when the backoff would have waited past it
      * — a round that is to be released two minutes after its end is released then, not up to a minute later. An instant that
      * is not in the future ({@code <= nowMs}) holds nothing back.
      */

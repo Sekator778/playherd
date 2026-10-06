@@ -23,8 +23,8 @@ import java.util.function.Predicate;
  * made by the previous fix, the close of the bar before the boundary ({@code extra}: the points the source already
  * priced at the boundaries).
  *
- * <p><b>The conditions</b>, each a reason to leave the gap a hole (the round is retried, and refunded an hour after its
- * end, as without a bridge):
+ * <p><b>The conditions</b>, each a reason to leave the gap a hole (the round is retried, and refunded when the minutes of
+ * its source are over, an hour after its end at the latest, as without a bridge):
  * <ol>
  *   <li><b>Both neighbours are live ticks</b> (the caller's business: a gap with no live tick on one side has nothing
  *       to check the trade prices against).</li>
