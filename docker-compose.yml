@@ -163,6 +163,18 @@ services:
       # exchange is alive, the round is cancelled with a refund and the series goes on; 0 turns that off — the round then
       # waits for its exchange and is refunded an hour after its end (Р-77).
       HERD_PRICES_VENUE_RELEASE_AFTER_MS: "${HERD_PRICES_VENUE_RELEASE_AFTER_MS:-120000}"
+      # On every market, not only on one with a backup: a round that cannot be priced is cancelled with a refund this many
+      # milliseconds after its end — or after the start of the server, if that is later: a restart gives the rounds that were
+      # running their minutes to heal from the candles — and its series goes on. One wait per price source: Hyperliquid's
+      # perpetuals (both dexes), Hyperliquid spot, Coinbase, Kraken, Polymarket, the synthetic walk. 0 turns it off for a
+      # source — its rounds then wait for the hour of Р-23, which stays the upper bound. A round nobody bet on that cannot be
+      # priced is skipped at once (Р-79).
+      HERD_PRICES_HYPERLIQUID_RELEASE_AFTER_MS: "${HERD_PRICES_HYPERLIQUID_RELEASE_AFTER_MS:-300000}"
+      HERD_PRICES_HYPERLIQUID_SPOT_RELEASE_AFTER_MS: "${HERD_PRICES_HYPERLIQUID_SPOT_RELEASE_AFTER_MS:-300000}"
+      HERD_PRICES_COINBASE_RELEASE_AFTER_MS: "${HERD_PRICES_COINBASE_RELEASE_AFTER_MS:-300000}"
+      HERD_PRICES_KRAKEN_RELEASE_AFTER_MS: "${HERD_PRICES_KRAKEN_RELEASE_AFTER_MS:-300000}"
+      HERD_PRICES_POLYMARKET_RELEASE_AFTER_MS: "${HERD_PRICES_POLYMARKET_RELEASE_AFTER_MS:-900000}"
+      HERD_PRICES_SYNTHETIC_RELEASE_AFTER_MS: "${HERD_PRICES_SYNTHETIC_RELEASE_AFTER_MS:-300000}"
       HERD_MARKETS_STOCKS: "${HERD_MARKETS_STOCKS:-xyz:NVDA,xyz:TSLA}"
       HERD_MARKETS_INDICES: "${HERD_MARKETS_INDICES:-xyz:SP500,xyz:XYZ100}"
       HERD_MARKETS_COMMODITIES: "${HERD_MARKETS_COMMODITIES:-xyz:GOLD,xyz:BRENTOIL}"
