@@ -4,7 +4,8 @@
 #   backup.sh nightly           what /etc/cron.d/herd-backup runs at 03:17 UTC (bootstrap.sh writes that file)
 #   backup.sh pre-deploy        the same, taken by remote.sh before a deploy replaces the running stand
 #   backup.sh list              what there is
-#   backup.sh restore FILE --yes   put a database dump back (rewinds the game: see README, "Откат")
+#   backup.sh restore FILE --yes   put a database dump back: the schema is dropped and recreated from the dump, in one
+#                                  transaction (rewinds the game: see README, "Откат")
 #
 # Each run writes two files into ~/backups (mode 600) and keeps the newest HERD_BACKUP_KEEP (7) of each kind:
 #   pg/herd-<kind>-<UTC time>.sql.gz   pg_dump of the stand's database, taken inside the db container; --clean --if-exists
@@ -63,7 +64,7 @@ backup_pg() { # backup_pg KIND TS
     log "pg_dump failed"
     return 1
   fi
-  if ! gzip -t "${tmp}" || ! gzip -dc "${tmp}" | tail -n 5 | grep -q 'PostgreSQL database dump complete'; then
+  if ! gzip -t "${tmp}" || ! gzip -dc "${tmp}" | tail -n 12 | grep -q 'PostgreSQL database dump complete'; then
     rm -f "${tmp}"
     log "the dump did not pass the check (gzip -t / closing line): deleted"
     return 1
@@ -129,8 +130,11 @@ cmd_restore() {
   log "stopping the server (nothing writes to the database while it is replaced)"
   docker compose -p "${PROJECT}" -f "${APP_DIR}/docker-compose.yml" stop server
   log "restoring ${file}"
-  # One transaction (-1) and stop at the first error: a dump that does not apply leaves the old database as it was.
-  if ! gzip -dc "${file}" | docker exec -i "${cid}" psql -q -v ON_ERROR_STOP=1 -1 -U herd -d herd >/dev/null; then
+  # The dump was taken with --clean --if-exists, which drops only what the dump itself creates: a table that a newer version of the server
+  # added after the dump would stay behind, and deploying that version again would fail on its migration. So the schema is dropped and made
+  # again first. All of it is one transaction (-1) that stops at the first error: a dump that does not apply leaves the old database as it was.
+  if ! { printf 'DROP SCHEMA IF EXISTS public CASCADE;\nCREATE SCHEMA public;\n'; gzip -dc "${file}"; } \
+    | docker exec -i "${cid}" psql -q -v ON_ERROR_STOP=1 -1 -U herd -d herd >/dev/null; then
     log "restore FAILED -- the database is as before; starting the server again"
     docker compose -p "${PROJECT}" -f "${APP_DIR}/docker-compose.yml" start server
     return 1

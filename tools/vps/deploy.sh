@@ -421,7 +421,7 @@ do_bootstrap() {
 # `cap sync`), so an APK built for another address is useless here; the address is looked up inside the file.
 do_apk() {
   vps_finalize_config 1
-  local f="${APK_FILE}" size sha url code
+  local f="${APK_FILE}" size sha url code listing
   if ((DRY_RUN)) && [[ ! -f "${f}" ]]; then
     log "dry run: ${f} does not exist here; would check it is an APK built for https://${VPS_DOMAIN}, upload it to ${SSH_TARGET}:edge/download/herd.apk with its sha256"
     remote "mv -f edge/download/.herd.apk.new edge/download/herd.apk"
@@ -432,7 +432,9 @@ do_apk() {
   ((size > 100000 && size < 300000000)) || die "${f}: ${size} bytes is not a believable APK"
   [[ "$(head -c 4 "${f}" | od -An -tx1 | tr -d ' \n')" == 504b0304 ]] || die "${f} is not a zip file (an APK is)"
   if command -v unzip >/dev/null 2>&1; then
-    unzip -l "${f}" 2>/dev/null | grep -q 'AndroidManifest.xml' || die "${f} has no AndroidManifest.xml: not an APK"
+    # (the listing is read whole first: grep -q leaves a pipe early, and with pipefail unzip's SIGPIPE would fail the test)
+    listing="$(unzip -l "${f}" 2>/dev/null || true)"
+    grep -q 'AndroidManifest.xml' <<<"${listing}" || die "${f} has no AndroidManifest.xml: not an APK"
     url="$(unzip -p "${f}" assets/capacitor.config.json 2>/dev/null | jq -r '.server.url // empty' 2>/dev/null || true)"
     if [[ -z "${url}" ]]; then
       warn "cannot read the address built into ${f} (assets/capacitor.config.json); make sure it was built with: make apk HERD_APP_URL=https://${VPS_DOMAIN}"

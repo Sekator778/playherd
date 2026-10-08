@@ -209,7 +209,7 @@ ensure_swap() {
     log "RAM is $((mem_kb / 1024)) MiB (4 GiB or more): no swap added"
     return 0
   fi
-  if [[ -z "${HERD_BOOTSTRAP_MEM_KB:-}" ]] && swapon --show --noheadings 2>/dev/null | grep -q .; then
+  if [[ -z "${HERD_BOOTSTRAP_MEM_KB:-}" && -n "$(swapon --show --noheadings 2>/dev/null || true)" ]]; then
     log "RAM is $((mem_kb / 1024)) MiB and there is swap already: left as it is"
     return 0
   fi
@@ -257,7 +257,7 @@ install_docker() {
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   fi
   chmod a+r /etc/apt/keyrings/docker.asc
-  if ! gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc 2>/dev/null | awk -F: '$1 == "fpr" {print $10}' | grep -qx "${DOCKER_KEY_FINGERPRINT}"; then
+  if ! gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc 2>/dev/null | awk -F: '$1 == "fpr" {print $10}' | grep -x "${DOCKER_KEY_FINGERPRINT}" >/dev/null; then
     rm -f /etc/apt/keyrings/docker.asc
     die "the key downloaded from download.docker.com does not have the fingerprint ${DOCKER_KEY_FINGERPRINT}; refusing to trust it"
   fi
@@ -313,7 +313,7 @@ setup_deploy_user() {
     log "user created"
   fi
   # usermod rewrites /etc/group even when the user is in the group already; the second run of this script changes nothing.
-  if ! id -nG "${DEPLOY_USER}" | tr ' ' '\n' | grep -qx docker; then
+  if ! id -nG "${DEPLOY_USER}" | tr ' ' '\n' | grep -x docker >/dev/null; then
     usermod -aG docker "${DEPLOY_USER}"
     log "${DEPLOY_USER} added to the docker group"
   fi
