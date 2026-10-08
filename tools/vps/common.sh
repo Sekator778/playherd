@@ -321,6 +321,10 @@ render_caddyfile() {
 
 # --- the tree that goes to the VPS
 
+# The flags of the rsync that sends the tree. Only options that this machine's rsync and a stock rsync 3.x both know (macOS ships openrsync).
+# --max-delete: a tree far smaller than the one on the VPS (a wrong directory, a failed checkout) stops rsync instead of emptying it.
+RSYNC_FLAGS=(-az --delete --stats --max-delete=3000)
+
 # Paths that never leave this machine: the version control directory, dependency and build output, the secrets of the
 # repository's .gitignore, and local-only notes. Used for rsync and, by tools/vps/test.sh, to check the list.
 RSYNC_EXCLUDES=(

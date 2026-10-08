@@ -257,6 +257,8 @@ step_data() {
     remote_copy "${C2_DIR}/${FILES[i]}" ".c2/.incoming/${FILES[i]}"
     manifest="${manifest} ${HASHES[i]}=${FILES[i]}"
   done
+  # A dry run prints the command it would send; the checksums of the files of the operator's key are kept out of that text.
+  ((!DRY_RUN)) || manifest="$(printf '%s' "${manifest}" | sed -E 's/[0-9a-f]{64}/<sha256>/g')"
   remote_script "${VPS_DIR}/data-install.sh" "${install_args}${manifest}"
   finish_data
 }

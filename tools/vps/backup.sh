@@ -119,10 +119,16 @@ cmd_list() {
 }
 
 cmd_restore() {
-  local file="${1:-}" yes="${2:-}" cid
-  [[ -n "${file}" ]] || die "usage: backup.sh restore FILE.sql.gz --yes"
-  [[ -f "${file}" ]] || file="${BACKUP_DIR}/pg/${file}"
-  [[ -f "${file}" ]] || die "no such dump: ${1}"
+  local file="${1:-}" yes="${2:-}" cid candidate found=""
+  [[ -n "${file}" ]] || die "usage: backup.sh restore FILE.sql.gz --yes   (a path, or a name from 'backup.sh list')"
+  for candidate in "${file}" "${BACKUP_DIR}/${file}" "${BACKUP_DIR}/pg/${file}"; do
+    if [[ -f "${candidate}" ]]; then
+      found="${candidate}"
+      break
+    fi
+  done
+  [[ -n "${found}" ]] || die "no such dump: ${1}"
+  file="${found}"
   [[ "${yes}" == "--yes" ]] || die "restore replaces the database of the running stand with the one in ${file}: everything played since is gone. Repeat with --yes."
   gzip -t "${file}" || die "${file} is not a valid gzip file"
   cid="$(stand_container db)"

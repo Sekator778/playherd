@@ -8,7 +8,8 @@
 #   --pubkey-file FILE / --pubkey-stdin / $HERD_DEPLOY_PUBKEY
 #                       the public key that may log in as the deploy user (one line: ~/.ssh/herd_vps.pub on the operator's machine)
 #   --deploy-user NAME  the account that owns the stand (default: deploy; no sudo; it is in the docker group)
-#   --ssh-port N        the port sshd listens on, opened in ufw before ufw is switched on (default: 22)
+#   --ssh-port N        the port sshd listens on, opened in ufw before ufw is switched on (default: 22); the ports sshd is
+#                       configured with and the one of the session this runs in are opened as well
 #   --swap-size SIZE    size of the swap file made when RAM is below 4 GiB (default: 4G)
 #   --stand-subnet CIDR / --stand-gateway IP
 #                       the stand's docker network (docker-compose.yml, networks.default.ipam); ufw lets the server container
@@ -340,11 +341,26 @@ setup_deploy_user() {
   done
 }
 
+# The ports ssh can be reached on: the one asked for, those sshd is configured with, and the one this very session came in on. Opening
+# all of them before ufw is switched on keeps a provider's non-standard ssh port from locking the operator out.
+ssh_ports() {
+  local p ports="${SSH_PORT}"
+  if [[ -x /usr/sbin/sshd ]]; then
+    for p in $(/usr/sbin/sshd -T 2>/dev/null | awk '$1 == "port" {print $2}'); do ports="${ports} ${p}"; done
+  fi
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then ports="${ports} ${SSH_CONNECTION##* }"; fi
+  # shellcheck disable=SC2086 # word splitting is the point
+  printf '%s\n' ${ports} | grep -E '^[0-9]+$' | sort -un
+}
+
 setup_ufw() {
   step "firewall (ufw)"
+  local p
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
-  ufw allow "${SSH_PORT}/tcp" comment 'ssh' >/dev/null
+  for p in $(ssh_ports); do
+    ufw allow "${p}/tcp" comment 'ssh' >/dev/null
+  done
   ufw allow 80/tcp comment 'http: certificate checks and the redirect to https' >/dev/null
   ufw allow 443 comment 'https and http/3' >/dev/null
   # The stand's server container talks to the chain service, which runs in the host's network namespace and listens on

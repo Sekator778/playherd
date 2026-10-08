@@ -141,24 +141,29 @@ new_scratch() { [[ -n "${SCRATCH}" ]] || SCRATCH="$(mktemp -d)"; }
 
 # --- rsync --------------------------------------------------------------------------------------------------------------------
 
-# What would go to the VPS, as a list of paths (rsync --list-only on this machine; nothing is sent). Used for the check below.
+# What would go to the VPS: "<size in bytes> <path>" per file (rsync --list-only on this machine; nothing is sent). Used for the check below.
 outgoing_list() { # outgoing_list SRC/
-  rsync -r --list-only "${RSYNC_EXCLUDES[@]}" "$1" | awk '{ name = $5; for (i = 6; i <= NF; i++) name = name " " $i; if ($1 !~ /^d/) print name }'
+  rsync -r --list-only "${RSYNC_EXCLUDES[@]}" "$1" | awk '{ size = $2; gsub(",", "", size); name = $5; for (i = 6; i <= NF; i++) name = name " " $i; if ($1 !~ /^d/) print size " " name }'
 }
 
 # The list of files that go must hold nothing that is a secret or a build product, whatever the exclude list says (a typo in it, or
 # a rsync that reads a pattern differently, would otherwise show only on the VPS).
-scan_outgoing() { # scan_outgoing SRC/
-  local list bad count
+scan_outgoing() { # scan_outgoing SRC/ ; sets OUTGOING_COUNT and OUTGOING_MB
+  local list names bad count
   list="$(outgoing_list "$1")"
+  names="$(printf '%s\n' "${list}" | cut -d' ' -f2-)"
   count="$(printf '%s\n' "${list}" | grep -c . || true)"
-  bad="$(printf '%s\n' "${list}" | grep -E '(^|/)(\.git|\.local|\.claude|node_modules|target|\.gradle)(/|$)|(^|/)\.env(\.|$)|\.(pem|key|jks|keystore|apk|aab)$|(^|/)id_(rsa|ed25519|ecdsa)' || true)"
+  OUTGOING_MB="$(printf '%s\n' "${list}" | awk '{ total += $1 } END { printf "%d", total / 1048576 }')"
+  bad="$(printf '%s\n' "${names}" | grep -E '(^|/)(\.git|\.local|\.claude|node_modules|target|\.gradle)(/|$)|(^|/)\.env(\.|$)|\.(pem|key|jks|keystore|apk|aab)$|(^|/)id_(rsa|ed25519|ecdsa)' || true)"
   if [[ -n "${bad}" ]]; then
     die "the file list for the VPS contains paths that must stay here:
 $(printf '%s\n' "${bad}" | head -n 20)"
   fi
   [[ "${count}" -gt 0 ]] || die "nothing to send from $1"
   OUTGOING_COUNT="${count}"
+  if ((OUTGOING_MB > 200)); then
+    warn "the tree is ${OUTGOING_MB} MB: more than a source tree should be. Something that should be excluded is in it (a build directory, a data dump?): rsync --list-only shows what"
+  fi
 }
 
 sync_tree() {
@@ -174,10 +179,10 @@ sync_tree() {
     log "tree: the working tree of ${REPO_ROOT} (${description})"
   fi
   scan_outgoing "${src}"
-  log "tree: ${OUTGOING_COUNT} files go to ${SSH_TARGET}:${REMOTE_APP_DIR}/ (nothing from .git, node_modules, target, .env*, .local, keys; --delete removes what is gone here, but not the VPS's .env)"
+  log "tree: ${OUTGOING_COUNT} files, ${OUTGOING_MB} MB go to ${SSH_TARGET}:${REMOTE_APP_DIR}/ (nothing from .git, node_modules, target, .env*, .local, keys; --delete removes what is gone here, but not the VPS's .env)"
   case "${VPS_KEY}${HOME}" in *[[:space:]]*) die "the ssh key path or HOME contains a space: rsync's -e cannot carry that" ;; esac
   local ssh_cmd="ssh ${SSH_OPTS[*]}"
-  local_run rsync -az --delete --stats "${RSYNC_EXCLUDES[@]}" -e "${ssh_cmd}" "${src}" "${SSH_TARGET}:${REMOTE_APP_DIR}/"
+  local_run rsync "${RSYNC_FLAGS[@]}" "${RSYNC_EXCLUDES[@]}" -e "${ssh_cmd}" "${src}" "${SSH_TARGET}:${REMOTE_APP_DIR}/"
   remote "printf 'deployed=%s\nfrom=%s\nby=%s@%s\n' '$(date -u +%Y-%m-%dT%H:%M:%SZ)' '${description}' '$(id -un)' '$(hostname -s)' > ${REMOTE_APP_DIR}/.deploy-info"
 }
 
@@ -417,6 +422,18 @@ do_bootstrap() {
   log "bootstrap done; ${SSH_TARGET} works. Next: tools/vps/secrets.sh --env-only"
 }
 
+# The address built into an APK (Capacitor writes web/capacitor.config.ts's server.url into assets/capacitor.config.json); nothing when it cannot be read.
+apk_address() { # apk_address FILE
+  local cfg
+  cfg="$(unzip -p "$1" assets/capacitor.config.json 2>/dev/null || true)"
+  [[ -n "${cfg}" ]] || return 0
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "${cfg}" | jq -r '.server.url // empty' 2>/dev/null || true
+  else
+    printf '%s' "${cfg}" | tr -d '\n' | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+  fi
+}
+
 # The APK that testers install. It is a WebView around https://DOMAIN (web/capacitor.config.ts: server.url, read from HERD_APP_URL by
 # `cap sync`), so an APK built for another address is useless here; the address is looked up inside the file.
 do_apk() {
@@ -435,7 +452,7 @@ do_apk() {
     # (the listing is read whole first: grep -q leaves a pipe early, and with pipefail unzip's SIGPIPE would fail the test)
     listing="$(unzip -l "${f}" 2>/dev/null || true)"
     grep -q 'AndroidManifest.xml' <<<"${listing}" || die "${f} has no AndroidManifest.xml: not an APK"
-    url="$(unzip -p "${f}" assets/capacitor.config.json 2>/dev/null | jq -r '.server.url // empty' 2>/dev/null || true)"
+    url="$(apk_address "${f}")"
     if [[ -z "${url}" ]]; then
       warn "cannot read the address built into ${f} (assets/capacitor.config.json); make sure it was built with: make apk HERD_APP_URL=https://${VPS_DOMAIN}"
     elif [[ "${url}" != "https://${VPS_DOMAIN}" && "${url}" != "https://${VPS_DOMAIN}/" ]]; then

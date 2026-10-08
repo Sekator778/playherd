@@ -72,7 +72,7 @@ job_status_word() { # job_status_word NAME -> running | ok | failed:N | killed |
 # The wrapper of a job: writes its own pid (setsid may fork, so $! could name a process that is gone at once) and, when the
 # command ends, the command's exit status. Arguments: the job directory, the directory to run in, the command.
 # shellcheck disable=SC2016 # single quotes on purpose: the text is for the wrapper shell, not for this one
-JOB_WRAPPER='dir="$1"; wd="$2"; shift 2; echo $$ >"${dir}/pid"; cd "${wd}" || exit 1; "$@"; rc=$?; echo "${rc}" >"${dir}/status"; exit "${rc}"'
+JOB_WRAPPER='dir="$1"; wd="$2"; shift 2; echo $$ >"${dir}/pid"; cd "${wd}" || { echo "no ${wd}" >&2; echo 1 >"${dir}/status"; exit 1; }; "$@"; rc=$?; echo "${rc}" >"${dir}/status"; exit "${rc}"'
 
 job_start() {
   local name="$1"
@@ -198,11 +198,22 @@ require_app() {
   [[ -s "${APP_DIR}/.env" ]] || die "no ${APP_DIR}/.env: run tools/vps/secrets.sh (--env-only) first"
 }
 
+# One image at a time, the Rust one first: compose builds the three together otherwise, and a Rust, a Maven and an npm build at once want
+# more memory than a 4 GB VPS has. The services that have a build section are the three below (tools/vps/test.sh checks the list against
+# docker-compose.yml); the layers are cached, so a build that has been done once costs seconds when `up` asks for it again.
+build_images() {
+  local svc
+  for svc in chainsvc server web; do
+    log "building the image of ${svc}"
+    compose build "${svc}"
+  done
+}
+
 cmd_build() {
   require_app
   cd "${APP_DIR}"
   log "building the images of the stand (nothing is started)"
-  compose build
+  build_images
 }
 
 cmd_up() {
@@ -215,6 +226,7 @@ cmd_up() {
   if [[ -x "${APP_DIR}/tools/vps/backup.sh" ]]; then
     "${APP_DIR}/tools/vps/backup.sh" pre-deploy || log "the backup before the deploy failed -- going on"
   fi
+  (cd "${APP_DIR}" && build_images)
   (
     cd "${APP_DIR}"
     # tools/stand.sh only defines its functions when sourced. Its `up` does the work (the checks for foreign herd-*
@@ -304,14 +316,18 @@ check_edge() {
 }
 
 check_binds() {
-  local addrs
-  addrs="$(listening_on "${WEB_PORT}" | tr '\n' ' ')"
-  if [[ -z "${addrs// /}" ]]; then
-    fail "web: nothing listens on port ${WEB_PORT}"
-  elif only_these_addrs "${WEB_PORT}" "${WEB_BIND}" "[::1]"; then
-    ok "web: port ${WEB_PORT} is on the loopback only (${addrs})"
+  local addrs published
+  # What Docker says about the published port is the authority (with the userland proxy there is a listener to see, with plain NAT
+  # there is none); a listener on the port that is not on the loopback is a failure in either case.
+  published="$(compose port web 80 2>/dev/null | head -n 1 || true)"
+  if [[ "${published}" == "${WEB_BIND}:${WEB_PORT}" ]]; then
+    ok "web: Docker publishes it as ${published}"
   else
-    fail "web: port ${WEB_PORT} is open on ${addrs}-- Docker publishes past ufw; it must be ${WEB_BIND} only"
+    fail "web: Docker publishes it as '${published:-nothing}', not ${WEB_BIND}:${WEB_PORT} -- Docker publishes past ufw; it must be the loopback only"
+  fi
+  addrs="$(listening_on "${WEB_PORT}" | tr '\n' ' ')"
+  if [[ -n "${addrs// /}" ]] && ! only_these_addrs "${WEB_PORT}" "${WEB_BIND}" "[::1]"; then
+    fail "web: port ${WEB_PORT} is open on ${addrs}-- it must be ${WEB_BIND} only"
   fi
   addrs="$(listening_on 8090 | tr '\n' ' ')"
   if [[ -z "${addrs// /}" ]]; then
