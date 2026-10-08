@@ -1,0 +1,37 @@
+# Caddy in front of the Herd stand on the VPS (tools/vps). A compose project of its own ("edge"), apart from the
+# stand's ("herd"): `tools/stand.sh down` or a rebuild of the stand does not touch the certificate or the proxy.
+#
+# network_mode: host: Caddy listens on the VPS's own :80/:443 (ufw allows them, bootstrap.sh), sees the visitor's real
+# address (no NAT or userland proxy in between, IPv6 included) and reaches the stand's web container on
+# 127.0.0.1:8480. The container is NOT called herd-*: tools/stand.sh refuses to start while a container named
+# herd-* exists that it did not create.
+#
+# The image is the one deploy/compose.prod.yml pins (tag and digest); tools/vps/test.sh checks that the two agree.
+name: edge
+
+services:
+  caddy:
+    image: caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    container_name: edge-caddy
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      # The directory, not the file: deploy.sh replaces the Caddyfile by rename, and a bind-mounted single file
+      # would keep showing the old inode.
+      - ./conf:/etc/caddy:ro
+      - ./download:/srv/download:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  # The certificates and the ACME account live here: keep it across redeploys (a lost volume means a new
+  # certificate, and Let's Encrypt limits those per domain and week).
+  caddy_data:
+    name: edge_caddy_data
+  caddy_config:
+    name: edge_caddy_config

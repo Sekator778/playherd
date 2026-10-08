@@ -1,0 +1,47 @@
+# Herd VPS edge (tools/vps). Rendered by tools/vps/deploy.sh from edge/Caddyfile.tmpl; the copy on the VPS is
+# overwritten by the next deploy, so change the template, not the copy.
+#
+# Caddy runs in a container with network_mode: host (edge/compose.yml): it owns :80 and :443 and gets its
+# certificate from Let's Encrypt on its own (the domain's A record must point at this VPS before it starts).
+# The Herd stand (compose project "herd", docker-compose.yml) publishes its web container on 127.0.0.1:@@WEB_PORT@@
+# only, so this proxy is the one way in.
+#
+# The visitor's address. web/nginx.conf keys the rate limit on the address a request really came from. It takes
+# that address from the CF-Connecting-IP header, and only when the connection reaches nginx from the compose
+# network's gateway (172.28.77.1), which is how a connection that Caddy opens to the published port looks to
+# nginx. So the header is set here, to the address of the connection Caddy itself accepted ({remote_host}).
+# header_up replaces whatever the visitor sent under that name, so the value cannot be forged from outside.
+# This holds only while Caddy is the first hop: behind a CDN or a proxying DNS record every visitor would arrive
+# from the proxy's address (keep the A record "DNS only").
+@@DOMAIN@@ {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# The Android build (and its checksum): files in ~/edge/download on the VPS, put there by
+	# `tools/vps/deploy.sh apk FILE`.
+	redir /download /download/ permanent
+	handle_path /download/* {
+		root * /srv/download
+		@apk path *.apk
+		header @apk Content-Type "application/vnd.android.package-archive"
+		header @apk Content-Disposition "attachment"
+		header Cache-Control "no-cache"
+		file_server browse
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:@@WEB_PORT@@ {
+			header_up CF-Connecting-IP {remote_host}
+		}
+	}
+
+	log {
+		output stdout
+	}
+}
