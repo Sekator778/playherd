@@ -189,6 +189,8 @@ services:
       HERD_ORACLE_REQUIRE_SEQ_FLOOR: ${HERD_ORACLE_REQUIRE_SEQ_FLOOR:-true}
       # The domain in the text a player signs at sign-in (was hard-coded herd.local).
       HERD_PUBLIC_DOMAIN: ${HERD_PUBLIC_DOMAIN:-herd.local}
+      # The session cookie carries the Secure flag behind HTTPS (the VPS kit sets it in .env; the Mac stand is plain http).
+      HERD_COOKIE_SECURE: ${HERD_COOKIE_SECURE:-false}
       # What serverInfo tells the web: whether the sign-in sheet offers the browser test wallet
       # (Р-45), and the PLAY asset id of this deployment (empty → the server's default, the
       # testnet11 issuance).
