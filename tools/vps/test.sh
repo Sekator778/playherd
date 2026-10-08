@@ -1,0 +1,1827 @@
+#!/usr/bin/env bash
+# tools/vps/test.sh -- tests of the VPS kit that need no VPS, no network and, by default, no docker.
+#
+#   tools/vps/test.sh                  everything except the parts that need docker
+#   tools/vps/test.sh --docker         also: the Caddyfile through the pinned caddy image (validate, fmt, adapt), the same
+#                                      Caddyfile served by that Caddy version's release binary in a throwaway ubuntu:24.04
+#                                      container (the headers, the download path, a forged address; needs github.com),
+#                                      backup.sh against a real PostgreSQL 16 (dump, restore, a failed restore), and
+#                                      bootstrap.sh in a throwaway container -- all named herd-vps-dryrun-*
+#   tools/vps/test.sh --only A,B       only these sections: static, common, deploy, env, secrets, jobs, backup, verify,
+#                                      stand, flow (and, with --docker: caddy, caddylive, pgrestore, bootstrap)
+#
+# What is real here: the scripts, the repository files they depend on (docker-compose.yml, tools/stand.sh, web/nginx.conf,
+# the Rust and Java sources whose names and log lines they use), this machine's rsync, shellcheck, openssl. What is
+# faked: ssh and scp (run the "remote" command in a directory that stands for the VPS's home), docker, dig and ss
+# (shell functions or scripts that answer from variables). Nothing here contacts a host, and no docker command runs without --docker.
+# With --docker the only containers are the caddy image's one-shot `validate`/`fmt`/`adapt` and one ubuntu container.
+#
+# Like tools/test-stand.sh it prints one line per check and exits non-zero if one failed.
+
+# A test script: it greps for literal ${...} text (single quotes on purpose), reads $? after [[ ]] tests, sets scratch variables in
+# subshells, and sources files from paths it computes.
+# shellcheck disable=SC2016,SC2030,SC2031,SC2181,SC2319,SC1091,SC2012,SC2251
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "${HERE}/../.." && pwd)"
+SANDBOX="$(mktemp -d)"
+DOCKER_TESTS=0
+ONLY=""
+FAILS=0
+TOTAL=0
+SKIPPED=0
+KEEP_CONTAINER=0
+CONTAINER=""
+
+cleanup() {
+  if [[ -n "${CONTAINER}" ]] && ((!KEEP_CONTAINER)); then
+    docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+  fi
+  rm -rf "${SANDBOX}"
+}
+trap cleanup EXIT
+
+while (($# > 0)); do
+  case "$1" in
+    --docker)
+      DOCKER_TESTS=1
+      shift
+      ;;
+    --only)
+      ONLY="${2:?--only needs a list}"
+      shift 2
+      ;;
+    --keep-container)
+      KEEP_CONTAINER=1
+      shift
+      ;;
+    -h | --help)
+      sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "unknown argument $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+want() { [[ -z "${ONLY}" || ",${ONLY}," == *",$1,"* ]]; }
+ok() { # description, status (0 = holds)
+  TOTAL=$((TOTAL + 1))
+  if [[ "$2" == "0" ]]; then
+    echo "ok   - $1"
+  else
+    echo "FAIL - $1"
+    FAILS=$((FAILS + 1))
+  fi
+}
+skip() {
+  SKIPPED=$((SKIPPED + 1))
+  echo "skip - $1"
+}
+section() { printf '\n== %s\n' "$1"; }
+has() { grep -qF -- "$2" <<<"$1"; }                  # has "$text" "needle"
+has_re() { grep -qE -- "$2" <<<"$1"; }               # has_re "$text" "regex"
+lacks() { ! grep -qF -- "$2" <<<"$1"; }              # lacks "$text" "needle"
+file_has() { grep -qF -- "$2" "$1" 2>/dev/null; }    # file_has FILE "needle"
+file_has_re() { grep -qE -- "$2" "$1" 2>/dev/null; } # file_has_re FILE "regex"
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+sha256_of_file() { shasum -a 256 "$1" | cut -d' ' -f1; }
+
+# --- fakes -----------------------------------------------------------------------------------------------------------------------
+
+MACBIN="${SANDBOX}/macbin"   # what the operator's machine has first on its PATH
+VPSBIN="${SANDBOX}/vpsbin"   # the same for the "remote" side
+VPSHOME="${SANDBOX}/vpshome" # the deploy user's home on the pretend VPS
+SSHLOG="${SANDBOX}/ssh.log"
+mkdir -p "${MACBIN}" "${VPSBIN}" "${VPSHOME}"
+: >"${SSHLOG}"
+
+# ssh: skip the options, take the target, run the rest as a command line in VPSHOME (stdin is passed through, as the real one does)
+cat >"${MACBIN}/ssh" <<'EOF'
+#!/usr/bin/env bash
+while (($# > 0)); do
+  case "$1" in
+    -i | -p | -o | -l | -F | -J) shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+target="$1"
+shift
+printf '%s\t%s\n' "${target}" "$*" >>"${FAKE_SSH_LOG}"
+[[ "${FAKE_SSH_FAIL:-0}" != 1 ]] || exit 255
+cd "${FAKE_VPS_HOME}" || exit 255
+HOME="${FAKE_VPS_HOME}" PATH="${FAKE_VPS_BIN}:${PATH}" exec /bin/bash -c "$*"
+EOF
+cat >"${MACBIN}/scp" <<'EOF'
+#!/usr/bin/env bash
+while (($# > 0)); do
+  case "$1" in
+    -i | -P | -o) shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+src="$1"
+dst="$2"
+printf 'scp\t%s\t%s\n' "${src}" "${dst}" >>"${FAKE_SSH_LOG}"
+path="${dst#*:}"
+[[ "${path}" == /* ]] || path="${FAKE_VPS_HOME}/${path}"
+mkdir -p "$(dirname "${path}")"
+cp "${src}" "${path}"
+EOF
+# docker on the operator's machine: only `info` and `ps -q` (is a chainsvc of the local stand running?)
+cat >"${MACBIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  info) exit 0 ;;
+  ps) [[ "${FAKE_LOCAL_CHAINSVC:-0}" != 1 ]] || echo "0123456789ab" ;;
+  *) echo "fake docker (operator side): unexpected $*" >&2; exit 99 ;;
+esac
+EOF
+# docker on the VPS side, for data-install.sh and backup.sh
+cat >"${VPSBIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG:-/dev/null}"
+case "$1" in
+  info) exit 0 ;;
+  ps)
+    case "$*" in
+      *service=chainsvc*) [[ "${FAKE_VPS_CHAINSVC:-0}" != 1 ]] || echo "chainsvc0001" ;;
+      *service=db*) [[ "${FAKE_VPS_DB:-1}" != 1 ]] || echo "db0001" ;;
+    esac
+    ;;
+  exec)
+    case "$*" in
+      *pg_dump*)
+        [[ "${FAKE_PGDUMP_FAIL:-0}" != 1 ]] || exit 1
+        echo "-- PostgreSQL database dump"
+        echo "DROP TABLE IF EXISTS public.rounds;"
+        [[ "${FAKE_PGDUMP_TRUNCATED:-0}" == 1 ]] || echo "-- PostgreSQL database dump complete"
+        ;;
+      *psql*)
+        wc -c >>"${FAKE_PSQL_BYTES:-/dev/null}"
+        [[ "${FAKE_PSQL_FAIL:-0}" != 1 ]] || exit 3
+        ;;
+    esac
+    ;;
+  compose) : ;;
+  *) echo "fake docker (vps side): unexpected $*" >&2; exit 99 ;;
+esac
+EOF
+chmod +x "${MACBIN}"/* "${VPSBIN}"/*
+export FAKE_SSH_LOG="${SSHLOG}" FAKE_VPS_HOME="${VPSHOME}" FAKE_VPS_BIN="${VPSBIN}"
+
+# --- static facts ------------------------------------------------------------------------------------------------------------------
+
+test_static() {
+  section "static: syntax, shellcheck, and the files of the repository that the kit depends on"
+  local f
+  for f in "${HERE}"/*.sh; do
+    /bin/bash -n "${f}" 2>/dev/null
+    ok "bash -n $(basename "${f}")" "$?"
+  done
+  if command -v shellcheck >/dev/null 2>&1; then
+    shellcheck -x -s bash "${HERE}"/*.sh >/dev/null 2>&1
+    ok "shellcheck: all scripts of tools/vps clean" "$?"
+  else
+    skip "shellcheck is not installed"
+  fi
+  local compose="${REPO}/docker-compose.yml" nginx="${REPO}/web/nginx.conf" standsh="${REPO}/tools/stand.sh"
+  file_has_re "${compose}" '^name: herd$'
+  ok "docker-compose.yml: project name herd (common.sh STAND_PROJECT, the label filters of the one-publisher checks)" "$?"
+  file_has "${compose}" '"${HERD_WEB_PORT:-8480}:80"'
+  ok "docker-compose.yml: web published as \"\${HERD_WEB_PORT:-8480}:80\" (remote.sh sets the loopback address through it)" "$?"
+  file_has "${compose}" 'gateway: 172.28.77.1'
+  ok "docker-compose.yml: network gateway 172.28.77.1" "$?"
+  file_has "${compose}" 'subnet: 172.28.77.0/24'
+  ok "docker-compose.yml: network subnet 172.28.77.0/24" "$?"
+  file_has "${compose}" 'C2_BIND_ADDR: "127.0.0.1,172.28.77.1"'
+  ok "docker-compose.yml: chainsvc listens on 127.0.0.1 and the gateway only" "$?"
+  file_has "${compose}" '${HOME}/.c2/testnet11:/data'
+  ok "docker-compose.yml: chainsvc data is \${HOME}/.c2/testnet11 (REMOTE_C2_DIR)" "$?"
+  file_has "${compose}" 'C2_OPERATOR_NAME: operator'
+  ok "docker-compose.yml: operator profile name is operator" "$?"
+  file_has "${compose}" 'HERD_ORACLE_REQUIRE_SEQ_FLOOR: ${HERD_ORACLE_REQUIRE_SEQ_FLOOR:-true}'
+  ok "docker-compose.yml: the oracle seq floor is required by default (README says so)" "$?"
+  file_has "${compose}" 'VITE_WALLETCONNECT_PROJECT_ID: ${VITE_WALLETCONNECT_PROJECT_ID:-}'
+  ok "docker-compose.yml: the web image takes VITE_WALLETCONNECT_PROJECT_ID from .env" "$?"
+  file_has "${compose}" 'HERD_PUBLIC_DOMAIN: ${HERD_PUBLIC_DOMAIN:-herd.local}'
+  ok "docker-compose.yml: HERD_PUBLIC_DOMAIN comes from .env" "$?"
+  file_has "${nginx}" '172.28.77.1 1;'
+  ok "web/nginx.conf: trusts CF-Connecting-IP from 172.28.77.1" "$?"
+  file_has "${nginx}" '$http_cf_connecting_ip'
+  ok "web/nginx.conf: reads the CF-Connecting-IP header" "$?"
+  file_has "${HERE}/common.sh" 'CHAINSVC_GATEWAY=172.28.77.1'
+  ok "common.sh: gateway 172.28.77.1" "$?"
+  file_has_re "${HERE}/bootstrap.sh" '^STAND_SUBNET=172\.28\.77\.0/24$' && file_has_re "${HERE}/bootstrap.sh" '^STAND_GATEWAY=172\.28\.77\.1$'
+  ok "bootstrap.sh: ufw rule defaults match the compose network" "$?"
+  file_has "${HERE}/edge/Caddyfile.tmpl" 'header_up CF-Connecting-IP {remote_host}'
+  ok "Caddyfile.tmpl: the visitor's address goes to nginx in CF-Connecting-IP" "$?"
+  local pin_edge pin_prod
+  pin_edge="$(awk '$1 == "image:" {print $2; exit}' "${HERE}/edge/compose.yml")"
+  pin_prod="$(awk '$1 == "image:" && $2 ~ /^caddy:/ {print $2; exit}' "${REPO}/deploy/compose.prod.yml")"
+  [[ -n "${pin_edge}" && "${pin_edge}" == "${pin_prod}" ]]
+  ok "edge/compose.yml pins the same caddy image as deploy/compose.prod.yml (${pin_edge:-none})" "$?"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    source "${standsh}" >/dev/null 2>&1
+    declare -F pick_web_port >/dev/null && declare -F cmd_up >/dev/null && declare -F print_urls >/dev/null && declare -F ensure_env_file >/dev/null
+  )
+  ok "tools/stand.sh: pick_web_port, cmd_up, print_urls and ensure_env_file exist (remote.sh overrides the first and last)" "$?"
+  file_has "${standsh}" 'if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then'
+  ok "tools/stand.sh: does nothing when sourced (remote.sh sources it)" "$?"
+  local name
+  for name in HERD_OPERATOR_TOKEN HERD_DB_PASSWORD C2_SVC_TOKEN HERD_CHAINSVC_TOKEN; do
+    file_has "${standsh}" "${name}" && file_has "${HERE}/env-init.sh" "${name}"
+    ok "the secret ${name} is generated by tools/stand.sh and by env-init.sh" "$?"
+  done
+  local pat
+  for pat in '{name}.json' '{name}.oracle.json' '{name}.play.json' '{name}.oracle_queue.json' '{name}.play_withdrawal_queue.json' '{name}.play_deposit_registry.json'; do
+    grep -rqF "\"${pat}\"" "${REPO}/chain/c2-svc/src"
+    ok "chain/c2-svc/src builds the file name ${pat} (secrets.sh copies it)" "$?"
+  done
+  file_has "${REPO}/server/src/main/java/crowdvsmarket/server/api/RpcResource.java" 'Set.of("authChallenge", "authVerify", "placeBet", "cancelBet")'
+  ok "RpcResource: cancelBet is rate limited (the checks of the rate limit call it)" "$?"
+  file_has "${REPO}/server/src/main/resources/application.properties" 'herd.ratelimit.capacity=${HERD_RATELIMIT_CAPACITY:30}'
+  ok "application.properties: rate-limit capacity 30 by default" "$?"
+  file_has "${REPO}/server/src/main/java/crowdvsmarket/server/chain/ChainOracleSeqGate.java" 'oracle seq floor obtained'
+  ok "ChainOracleSeqGate logs 'oracle seq floor obtained' (remote.sh verify waits for it)" "$?"
+  file_has "${REPO}/chain/c2-svc/src/oracle/queue.rs" 'pub fn max_known_seq(&self) -> u64'
+  ok "chainsvc: maxKnownSeq is computed from the queue file (README: why the queue is copied)" "$?"
+  file_has "${REPO}/chain/c2-svc/src/main.rs" 'bootstrap_from_chain'
+  ok "chainsvc: walks the oracle's lineage before it opens its port (README: the start without a queue)" "$?"
+  file_has "${REPO}/web/capacitor.config.ts" 'HERD_APP_URL'
+  ok "web/capacitor.config.ts: the APK's address is HERD_APP_URL (deploy.sh apk reads it back)" "$?"
+  if ! file_has "${compose}" 'HERD_COOKIE_SECURE'; then
+    echo "note - docker-compose.yml does not pass HERD_COOKIE_SECURE to the server: the VPS's session cookie is not marked Secure (README, open items)"
+  fi
+}
+
+# --- common.sh ------------------------------------------------------------------------------------------------------------------------
+
+test_common() {
+  section "common.sh: validators, the Caddyfile, DNS, defaults file"
+  (
+    set +e
+    # shellcheck source=tools/vps/common.sh
+    source "${HERE}/common.sh"
+    f=0
+    chk() { # chk "description" command...
+      local d="$1"
+      shift
+      if "$@" >/dev/null 2>&1; then echo "ok   - ${d}"; else echo "FAIL - ${d}"; f=1; fi
+    }
+    nchk() { # nchk "description" command...  (must fail)
+      local d="$1"
+      shift
+      if "$@" >/dev/null 2>&1; then echo "FAIL - ${d}"; f=1; else echo "ok   - ${d}"; fi
+    }
+    chk "valid_domain: herd.example.org" valid_domain herd.example.org
+    chk "valid_domain: a.b-c.example.co.uk" valid_domain a.b-c.example.co.uk
+    nchk "valid_domain rejects an IP address" valid_domain 203.0.113.10
+    nchk "valid_domain rejects a name without a dot" valid_domain localhost
+    nchk "valid_domain rejects capitals" valid_domain Herd.Example.org
+    nchk "valid_domain rejects a space or a brace" valid_domain 'a.example.org {'
+    nchk "valid_domain rejects a leading hyphen" valid_domain -a.example.org
+    chk "valid_host: an IPv4 address" valid_host 203.0.113.10
+    chk "valid_host: a host name" valid_host vps1.example.org
+    nchk "valid_host rejects a command" valid_host 'a;rm -rf /'
+    nchk "valid_host rejects an IPv6 address (scp and rsync would need brackets)" valid_host 2001:db8::1
+    chk "valid_email" valid_email ops@example.org
+    nchk "valid_email rejects a space" valid_email 'a b@example.org'
+    chk "valid_port 22" valid_port 22
+    nchk "valid_port rejects 0022" valid_port 0022
+    nchk "valid_port rejects 65536" valid_port 65536
+    chk "valid_wc_id: 32 hex digits" valid_wc_id 0123456789abcdef0123456789abcdef
+    nchk "valid_wc_id rejects 31 digits" valid_wc_id 0123456789abcdef0123456789abcde
+    nchk "valid_wc_id rejects capitals" valid_wc_id 0123456789ABCDEF0123456789abcdef
+    chk "valid_env_value: a market list" valid_env_value 'BTC:kraken,ETH:kraken'
+    nchk "valid_env_value rejects a quote" valid_env_value "a'b"
+    nchk "valid_env_value rejects a space" valid_env_value 'a b'
+    nchk "valid_env_value rejects a dollar sign" valid_env_value '$HOME'
+
+    out="$(render_caddyfile herd.example.org 8480 '' 0)"
+    chk "Caddyfile: the domain is the site address" grep -qx 'herd.example.org {' <<<"${out}"
+    chk "Caddyfile: reverse proxy to the web on the loopback port" grep -qF 'reverse_proxy 127.0.0.1:8480 {' <<<"${out}"
+    chk "Caddyfile: the visitor's address in CF-Connecting-IP" grep -qF 'header_up CF-Connecting-IP {remote_host}' <<<"${out}"
+    chk "Caddyfile: HSTS" grep -qF 'Strict-Transport-Security "max-age=31536000"' <<<"${out}"
+    chk "Caddyfile: /download/ is served from /srv/download" grep -qF 'handle_path /download/*' <<<"${out}"
+    chk "Caddyfile: the APK gets the Android package type" grep -qF 'application/vnd.android.package-archive' <<<"${out}"
+    nchk "Caddyfile: no placeholder is left" grep -q '@@' <<<"${out}"
+    nchk "Caddyfile: no global block without e-mail and staging" grep -qx '{' <<<"${out}"
+    out="$(render_caddyfile herd.example.org 8480 ops@example.org 1)"
+    chk "Caddyfile: e-mail in the global block" grep -qF 'email ops@example.org' <<<"${out}"
+    chk "Caddyfile: staging CA when asked" grep -qF 'acme_ca https://acme-staging-v02.api.letsencrypt.org/directory' <<<"${out}"
+    nchk "render_caddyfile refuses a domain with a brace" bash -c "source '${HERE}/common.sh'; render_caddyfile 'x.example.org { evil' 8480"
+    nchk "render_caddyfile refuses a bad e-mail" bash -c "source '${HERE}/common.sh'; render_caddyfile herd.example.org 8480 'a b@c.org'"
+
+    # the defaults file: no shell is run, only the named keys are read, the environment wins
+    d="$(mktemp -d)"
+    printf '%s\n' '# comment' 'HERD_VPS_HOST=198.51.100.7' 'HERD_VPS_DOMAIN="herd.example.org"' 'HERD_VPS_USER=ops' 'EVIL=$(touch '"${d}"'/pwned)' 'HERD_VPS_KEY=$(touch '"${d}"'/pwned2)' >"${d}/vps.env"
+    out="$(unset HERD_VPS_HOST HERD_VPS_DOMAIN; HERD_VPS_USER=fromenv HERD_VPS_ENV_FILE="${d}/vps.env" bash -c "source '${HERE}/common.sh'; vps_load_config; echo \"\${VPS_HOST} \${VPS_DOMAIN} \${VPS_USER}\"")"
+    [[ "${out}" == "198.51.100.7 herd.example.org fromenv" ]]
+    ok_status=$?
+    if ((ok_status == 0)); then echo "ok   - defaults file: values read, quotes stripped, environment wins"; else echo "FAIL - defaults file (got '${out}')"; f=1; fi
+    if [[ ! -e "${d}/pwned" && ! -e "${d}/pwned2" ]]; then echo "ok   - defaults file: nothing in it is executed"; else echo "FAIL - defaults file executed something"; f=1; fi
+    rm -rf "${d}"
+
+    # DNS: a dig that answers from variables
+    fb="$(mktemp -d)"
+    cat >"${fb}/dig" <<'DIGEOF'
+#!/usr/bin/env bash
+# fake dig: dig +short +time=3 +tries=1 A|AAAA NAME [@resolver]
+type=""; name=""
+for a in "$@"; do case "$a" in A|AAAA) type="$a" ;; +*|@*) ;; *) name="$a" ;; esac; done
+if [[ "${type}" == A ]]; then echo "${FAKE_DNS_A:-}"; else echo "${FAKE_DNS_AAAA:-}"; fi
+DIGEOF
+    chmod +x "${fb}/dig"
+    ( export PATH="${fb}:${PATH}" FAKE_DNS_A=203.0.113.10; source "${HERE}/common.sh"; dns_check herd.example.org 203.0.113.10 ) >/dev/null 2>&1
+    if (($? == 0)); then echo "ok   - dns_check passes when the A record is the VPS's address"; else echo "FAIL - dns_check pass"; f=1; fi
+    ( export PATH="${fb}:${PATH}" FAKE_DNS_A=198.51.100.9; source "${HERE}/common.sh"; dns_check herd.example.org 203.0.113.10 ) >/dev/null 2>&1
+    if (($? != 0)); then echo "ok   - dns_check dies when the A record points elsewhere"; else echo "FAIL - dns_check fail"; f=1; fi
+    ( export PATH="${fb}:${PATH}" FAKE_DNS_A=""; source "${HERE}/common.sh"; dns_check herd.example.org 203.0.113.10 ) >/dev/null 2>&1
+    if (($? != 0)); then echo "ok   - dns_check dies when there is no A record"; else echo "FAIL - dns_check empty"; f=1; fi
+    out="$( export PATH="${fb}:${PATH}" FAKE_DNS_A=203.0.113.10 FAKE_DNS_AAAA=2001:db8::1; source "${HERE}/common.sh"; dns_check herd.example.org 203.0.113.10 2>&1 )"
+    if grep -q 'AAAA' <<<"${out}"; then echo "ok   - dns_check warns about an AAAA record"; else echo "FAIL - dns_check AAAA warning"; f=1; fi
+    rm -rf "${fb}"
+
+    # the one-publisher check on the operator's machine (fake docker)
+    ( export PATH="${MACBIN}:${PATH}" FAKE_LOCAL_CHAINSVC=0; source "${HERE}/common.sh"; ! local_chainsvc_running )
+    if (($? == 0)); then echo "ok   - local_chainsvc_running: no container, no"; else echo "FAIL - local_chainsvc_running (stopped)"; f=1; fi
+    ( export PATH="${MACBIN}:${PATH}" FAKE_LOCAL_CHAINSVC=1; source "${HERE}/common.sh"; local_chainsvc_running )
+    if (($? == 0)); then echo "ok   - local_chainsvc_running: a container of the stand's chainsvc, yes"; else echo "FAIL - local_chainsvc_running (running)"; f=1; fi
+    ( export PATH="${MACBIN}:${PATH}" FAKE_LOCAL_CHAINSVC=1; source "${HERE}/common.sh"; require_local_chainsvc_stopped 0 "a test" ) >/dev/null 2>&1
+    if (($? != 0)); then echo "ok   - require_local_chainsvc_stopped dies while it runs"; else echo "FAIL - require_local_chainsvc_stopped"; f=1; fi
+    ( export PATH="${MACBIN}:${PATH}" FAKE_LOCAL_CHAINSVC=1; source "${HERE}/common.sh"; require_local_chainsvc_stopped 1 "a test" ) >/dev/null 2>&1
+    if (($? == 0)); then echo "ok   - ... unless --allow-local-stand"; else echo "FAIL - allow-local-stand"; f=1; fi
+    exit "${f}"
+  ) | tee "${SANDBOX}/common.out"
+  local rc=${PIPESTATUS[0]}
+  # the lines were printed by the subshell; count them into the totals
+  TOTAL=$((TOTAL + $(grep -cE '^(ok  |FAIL) ' "${SANDBOX}/common.out")))
+  FAILS=$((FAILS + $(grep -c '^FAIL ' "${SANDBOX}/common.out")))
+  : "${rc}"
+}
+
+# --- deploy.sh: dry runs, the list of files that would go --------------------------------------------------------------------------
+
+make_synthetic_repo() { # a repository tree with files that must go and files that must not
+  local r="$1"
+  rm -rf "${r}"
+  mkdir -p "${r}/tools" "${r}/server/src" "${r}/web/src" "${r}/chain/c2-svc" "${r}/sub/build"
+  cp -R "${HERE}" "${r}/tools/vps"
+  rm -f "${r}/tools/vps/test.sh.bak"
+  : >"${r}/docker-compose.yml"
+  echo 'class A {}' >"${r}/server/src/A.java"
+  echo 'x' >"${r}/sub/build/ok.txt"
+  mkdir -p "${r}/.git" "${r}/node_modules/x" "${r}/chain/target" "${r}/server/target" "${r}/.local" "${r}/web/dist" "${r}/.claude/agents" "${r}/build"
+  echo SECRET >"${r}/.env"
+  echo SECRET >"${r}/.env.production"
+  echo SECRET >"${r}/.local/the bench box.md"
+  echo SECRET >"${r}/deploy.key"
+  echo SECRET >"${r}/wallet.pem"
+  echo SECRET >"${r}/release.jks"
+  echo x >"${r}/.git/HEAD"
+  echo x >"${r}/node_modules/x/index.js"
+  echo x >"${r}/chain/target/c2-svc"
+  echo x >"${r}/server/target/app.jar"
+  echo x >"${r}/web/dist/index.html"
+  echo x >"${r}/build/out"
+  echo x >"${r}/rx.log"
+  echo x >"${r}/app-debug.apk"
+}
+
+test_deploy() {
+  section "deploy.sh: dry runs, what would be sent, refusals"
+  local repo="${SANDBOX}/repo" out rc
+  make_synthetic_repo "${repo}"
+  local deploy="${repo}/tools/vps/deploy.sh"
+  # a clean environment for the script: no HERD_VPS_* from the caller, no defaults file
+  : >"${SANDBOX}/empty.env"
+  deploy_run() { (cd "${SANDBOX}" && env -u HERD_VPS_HOST -u HERD_VPS_DOMAIN -u HERD_VPS_USER -u HERD_VPS_KEY -u HERD_VPS_SSH_PORT -u HERD_VPS_EMAIL HOME="${SANDBOX}/machome" HERD_VPS_ENV_FILE="${SANDBOX}/empty.env" PATH="${MACBIN}:${PATH}" "$@" 2>&1); }
+  mkdir -p "${SANDBOX}/machome"
+
+  out="$(deploy_run "${deploy}" --dry-run --host 203.0.113.10 --domain herd.example.org)"
+  rc=$?
+  ok "up --dry-run: exit status 0" "${rc}"
+  has "${out}" "rsync -az --delete --stats"
+  ok "up --dry-run: prints the rsync command (-az --delete)" "$?"
+  has_re "${out}" "deploy@203.0.113.10:herd/"
+  ok "up --dry-run: the target is the deploy user's herd/ on the host" "$?"
+  has "${out}" "--exclude .git"
+  ok "up --dry-run: .git is excluded" "$?"
+  has "${out}" "--exclude node_modules" && has "${out}" "--exclude target" && has "${out}" "--exclude .env" && has "${out}" "--exclude .local"
+  ok "up --dry-run: node_modules, target, .env and .local are excluded" "$?"
+  has "${out}" "-i ${SANDBOX}/machome/.ssh/herd_vps"
+  ok "up --dry-run: the key defaults to ~/.ssh/herd_vps" "$?"
+  has_re "${out}" "tree: [0-9]+ files go to"
+  ok "up --dry-run: says how many files would go" "$?"
+  has "${out}" "herd/tools/vps/remote.sh edge"
+  ok "up --dry-run: the Caddy step is run through remote.sh edge" "$?"
+  has "${out}" "reverse_proxy 127.0.0.1:8480"
+  ok "up --dry-run: prints the Caddyfile it would send" "$?"
+  has "${out}" "remote.sh job start stand -- tools/vps/remote.sh up"
+  ok "up --dry-run: the stand is started as a detached job running remote.sh up" "$?"
+  has "${out}" "remote.sh verify herd.example.org"
+  ok "up --dry-run: ends with the checks on the VPS" "$?"
+  has "${out}" "would check that this machine's own stand"
+  ok "up --dry-run: says it would look for a local chainsvc (one publisher)" "$?"
+  has "${out}" "would check that herd.example.org resolves to 203.0.113.10"
+  ok "up --dry-run: says it would check the DNS record" "$?"
+  has "${out}" "allowed domains of the Reown project"
+  ok "up --dry-run: reminds of the Reown allowlist" "$?"
+  lacks "${out}" "SECRET"
+  ok "up --dry-run: no secret value appears in the output" "$?"
+
+  out="$(deploy_run "${deploy}" --dry-run --build-only --host 203.0.113.10 --domain herd.example.org)"
+  has "${out}" "remote.sh job start stand -- tools/vps/remote.sh build" && lacks "${out}" "remote.sh up" && lacks "${out}" "remote.sh verify"
+  ok "--build-only: builds the images, starts nothing, runs no checks" "$?"
+  lacks "${out}" "would check that this machine's own stand"
+  ok "--build-only: needs no local-chainsvc check (nothing is started)" "$?"
+
+  out="$(deploy_run "${deploy}" --dry-run --tls-staging --email ops@example.org --host 203.0.113.10 --domain herd.example.org)"
+  has "${out}" "acme_ca https://acme-staging-v02.api.letsencrypt.org/directory" && has "${out}" "email ops@example.org"
+  ok "--tls-staging --email: in the Caddyfile" "$?"
+
+  out="$(deploy_run "${deploy}" --dry-run --no-ratelimit-check --host 203.0.113.10 --domain herd.example.org)"
+  has "${out}" "remote.sh verify herd.example.org --no-ratelimit"
+  ok "--no-ratelimit-check is passed on to the checks on the VPS" "$?"
+
+  out="$(deploy_run "${deploy}" --dry-run --skip-dns-check --allow-local-stand --host 203.0.113.10 --domain herd.example.org)"
+  lacks "${out}" "would check that herd.example.org resolves" && lacks "${out}" "would check that this machine's own stand"
+  ok "--skip-dns-check and --allow-local-stand drop those two checks" "$?"
+
+  out="$(deploy_run "${deploy}" bootstrap --dry-run --host 203.0.113.10)"
+  has "${out}" "scp ${repo}/tools/vps/bootstrap.sh -> root@203.0.113.10:herd-bootstrap.sh" && has "${out}" "--deploy-user deploy --ssh-port 22 --pubkey-stdin"
+  ok "bootstrap --dry-run: copies bootstrap.sh and runs it as root with the public key on stdin" "$?"
+
+  out="$(deploy_run "${deploy}" stop --dry-run --host 203.0.113.10)"
+  has "${out}" "herd/tools/vps/remote.sh stop"
+  ok "stop --dry-run: remote.sh stop" "$?"
+
+  out="$(deploy_run "${deploy}" check --dry-run --host 203.0.113.10 --domain herd.example.org)"
+  has "${out}" "remote.sh verify herd.example.org"
+  ok "check --dry-run: the checks only" "$?"
+
+  out="$(deploy_run "${deploy}" apk "${SANDBOX}/no-such.apk" --dry-run --host 203.0.113.10 --domain herd.example.org)"
+  has "${out}" "edge/download/herd.apk"
+  ok "apk --dry-run: the file goes to edge/download/herd.apk" "$?"
+
+  deploy_run "${deploy}" --dry-run --host 203.0.113.10 --domain 'Not A Domain' >/dev/null
+  [[ $? -ne 0 ]]
+  ok "a bad domain is refused" "$?"
+  deploy_run "${deploy}" --dry-run --host 'a;b' --domain herd.example.org >/dev/null
+  [[ $? -ne 0 ]]
+  ok "a bad host is refused" "$?"
+  deploy_run "${deploy}" --host 203.0.113.10 --domain herd.example.org --key "${SANDBOX}/nokey" >/dev/null
+  [[ $? -ne 0 ]]
+  ok "a missing ssh key is refused outside a dry run" "$?"
+  deploy_run "${deploy}" --nonsense >/dev/null
+  [[ $? -ne 0 ]]
+  ok "an unknown option is refused" "$?"
+
+  # the scan of the list of files: sabotage the exclude list in the copy, the script must catch it
+  sed -i.bak "s|  --exclude '.env' --exclude '.env.\*' --exclude '.local' --exclude '.claude'|  --exclude '.claude'|" "${repo}/tools/vps/common.sh"
+  out="$(deploy_run "${deploy}" --dry-run --host 203.0.113.10 --domain herd.example.org)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "must stay here" && has "${out}" ".env"
+  ok "if .env were not excluded, the scan of the file list stops the deploy" "$?"
+  mv "${repo}/tools/vps/common.sh.bak" "${repo}/tools/vps/common.sh"
+
+  # --rev: a clean export of a commit (uses the real repository, read only)
+  out="$(cd "${SANDBOX}" && env HOME="${SANDBOX}/machome" HERD_VPS_ENV_FILE="${SANDBOX}/empty.env" PATH="${MACBIN}:${PATH}" "${HERE}/deploy.sh" --dry-run --rev HEAD --host 203.0.113.10 --domain herd.example.org 2>&1)"
+  has "${out}" "tree: the tracked files at HEAD" && has_re "${out}" "files go to deploy@203.0.113.10:herd/"
+  ok "--rev HEAD --dry-run: deploys the tracked files of a commit" "$?"
+  out="$(cd "${SANDBOX}" && env HOME="${SANDBOX}/machome" HERD_VPS_ENV_FILE="${SANDBOX}/empty.env" PATH="${MACBIN}:${PATH}" "${HERE}/deploy.sh" --dry-run --rev no-such-rev-xyz --host 203.0.113.10 --domain herd.example.org 2>&1)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "unknown revision"
+  ok "--rev with a name that is not a commit is refused" "$?"
+
+  # the real rsync, local to local: the list of exclusions with this machine's rsync (macOS ships openrsync)
+  local src="${SANDBOX}/rs-src" dst="${SANDBOX}/rs-dst"
+  rm -rf "${src}" "${dst}"
+  cp -R "${repo}" "${src}"
+  mkdir -p "${dst}/node_modules" "${dst}/chain/target"
+  echo "vps-secret" >"${dst}/.env"
+  echo "info" >"${dst}/.deploy-info"
+  echo "stale" >"${dst}/old.txt"
+  echo "left" >"${dst}/node_modules/leftover"
+  echo "left" >"${dst}/chain/target/leftover"
+  (
+    set +e
+    # shellcheck source=tools/vps/common.sh
+    source "${repo}/tools/vps/common.sh"
+    rsync -az --delete --stats "${RSYNC_EXCLUDES[@]}" "${src}/" "${dst}/" >/dev/null 2>&1
+  )
+  ok "rsync with the exclude list runs (this machine's rsync: $(rsync --version 2>&1 | head -n 1))" "$?"
+  [[ "$(cat "${dst}/.env" 2>/dev/null)" == "vps-secret" ]]
+  ok "rsync --delete: the VPS's own .env survives" "$?"
+  [[ -f "${dst}/.deploy-info" && -f "${dst}/node_modules/leftover" && -f "${dst}/chain/target/leftover" ]]
+  ok "rsync --delete: .deploy-info and excluded directories on the VPS are left alone" "$?"
+  [[ ! -e "${dst}/old.txt" ]]
+  ok "rsync --delete: a file that is gone here is gone there" "$?"
+  [[ ! -e "${dst}/.git" && ! -e "${dst}/.local" && ! -e "${dst}/deploy.key" && ! -e "${dst}/wallet.pem" && ! -e "${dst}/release.jks" && ! -e "${dst}/.env.production" && ! -e "${dst}/app-debug.apk" && ! -e "${dst}/web/dist" && ! -e "${dst}/rx.log" && ! -e "${dst}/.claude" && ! -e "${dst}/build" ]]
+  ok "rsync: .git, .local, keys, .env.*, apk, build output, logs, .claude do not travel" "$?"
+  [[ -f "${dst}/server/src/A.java" && -f "${dst}/sub/build/ok.txt" && -x "${dst}/tools/vps/deploy.sh" ]]
+  ok "rsync: sources travel, a directory called build below the root too, the scripts stay executable" "$?"
+}
+
+# --- env-init.sh -----------------------------------------------------------------------------------------------------------------
+
+test_env() {
+  section "env-init.sh: the stand's .env on the VPS"
+  local app="${SANDBOX}/env-app" out first f="${SANDBOX}/env-app/.env" wc=0123456789abcdef0123456789abcdef
+  local run="${HERE}/env-init.sh"
+  mkdir -p "${SANDBOX}/decoy"
+  echo 'HERD_OPERATOR_TOKEN=decoy-from-the-macs-env-DECOY' >"${SANDBOX}/decoy/.env"
+  out="$(HERD_APP_DIR="${app}" "${run}" --domain herd.example.org --walletconnect-id "${wc}" 2>&1)"
+  ok "first run succeeds" "$?"
+  has "${out}" ".env: created"
+  ok "it says it created the file" "$?"
+  [[ "$(mode_of "${f}")" == 600 ]]
+  ok ".env has mode 600" "$?"
+  local name
+  for name in HERD_OPERATOR_TOKEN HERD_DB_PASSWORD C2_SVC_TOKEN HERD_CHAINSVC_TOKEN; do
+    grep -qE "^${name}=[0-9a-f]{48,64}$" "${f}"
+    ok "${name} is there, random hex" "$?"
+  done
+  [[ "$(grep '^C2_SVC_TOKEN=' "${f}" | cut -d= -f2)" == "$(grep '^HERD_CHAINSVC_TOKEN=' "${f}" | cut -d= -f2)" ]]
+  ok "chainsvc and server share one token (C2_SVC_TOKEN == HERD_CHAINSVC_TOKEN)" "$?"
+  [[ "$(grep -c -E '^(HERD_OPERATOR_TOKEN|C2_SVC_TOKEN|HERD_DB_PASSWORD)=' "${f}" | tr -d ' ')" == 3 ]]
+  ok "exactly one line per secret" "$?"
+  local vals
+  vals="$(grep -E '^(HERD_OPERATOR_TOKEN|HERD_DB_PASSWORD|C2_SVC_TOKEN)=' "${f}" | cut -d= -f2 | sort | uniq -d)"
+  [[ -z "${vals}" ]]
+  ok "the three secrets differ from each other" "$?"
+  file_has "${f}" "HERD_PUBLIC_DOMAIN=herd.example.org" && file_has "${f}" "VITE_WALLETCONNECT_PROJECT_ID=${wc}" && file_has "${f}" "HERD_COOKIE_SECURE=true"
+  ok "domain, Reown project id and the cookie flag are set" "$?"
+  local secret
+  for name in HERD_OPERATOR_TOKEN HERD_DB_PASSWORD C2_SVC_TOKEN; do
+    secret="$(grep "^${name}=" "${f}" | cut -d= -f2)"
+    lacks "${out}" "${secret}"
+    ok "the output does not show ${name}" "$?"
+  done
+  ! grep -q DECOY "${f}"
+  ok "nothing is taken from another .env (the decoy's token is not in it)" "$?"
+  first="$(cat "${f}")"
+
+  out="$(HERD_APP_DIR="${app}" "${run}" --domain herd.example.org --walletconnect-id "${wc}" 2>&1)"
+  has "${out}" ".env: unchanged"
+  ok "second run with the same arguments changes nothing" "$?"
+  [[ "$(cat "${f}")" == "${first}" ]]
+  ok "... and the file is byte for byte the same" "$?"
+
+  out="$(HERD_APP_DIR="${app}" "${run}" --domain other.example.org --walletconnect-id "${wc}" --set HERD_BOTS_COUNT=0 --set HERD_ROUND_HOURLY_SEC=3600 2>&1)"
+  ok "a run with a new domain and settings succeeds" "$?"
+  file_has "${f}" "HERD_PUBLIC_DOMAIN=other.example.org" && file_has "${f}" "HERD_BOTS_COUNT=0" && file_has "${f}" "HERD_ROUND_HOURLY_SEC=3600"
+  ok "the domain is updated in place and the settings added" "$?"
+  [[ "$(grep -c '^HERD_PUBLIC_DOMAIN=' "${f}")" == 1 ]]
+  ok "... without a second HERD_PUBLIC_DOMAIN line" "$?"
+  [[ "$(grep '^HERD_OPERATOR_TOKEN=' "${f}")" == "$(grep '^HERD_OPERATOR_TOKEN=' <<<"${first}")" && "$(grep '^HERD_DB_PASSWORD=' "${f}")" == "$(grep '^HERD_DB_PASSWORD=' <<<"${first}")" ]]
+  ok "the secrets are the same as before (the database password must not change)" "$?"
+  [[ "$(mode_of "${f}")" == 600 ]]
+  ok "the mode is still 600" "$?"
+
+  HERD_APP_DIR="${app}" "${run}" --domain herd.example.org --set HERD_OPERATOR_TOKEN=abc >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "--set of a secret is refused" "$?"
+  HERD_APP_DIR="${app}" "${run}" --domain herd.example.org --set 'X=a b' >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "--set with a space in the value is refused" "$?"
+  HERD_APP_DIR="${app}" "${run}" --domain 'bad domain' >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "a bad domain is refused" "$?"
+  HERD_APP_DIR="${app}" "${run}" --domain herd.example.org --walletconnect-id xyz >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "a bad Reown project id is refused" "$?"
+
+  # a second VPS: fresh tokens
+  HERD_APP_DIR="${SANDBOX}/env-app2" "${run}" --domain herd.example.org >/dev/null 2>&1
+  [[ "$(grep '^HERD_OPERATOR_TOKEN=' "${SANDBOX}/env-app2/.env")" != "$(grep '^HERD_OPERATOR_TOKEN=' "${f}")" ]]
+  ok "another run elsewhere makes other secrets" "$?"
+
+  # a file with only some of the secrets, and one that disagrees with itself
+  mkdir -p "${SANDBOX}/env-app3"
+  printf 'HERD_DB_PASSWORD=keepme\nC2_SVC_TOKEN=tok1\n' >"${SANDBOX}/env-app3/.env"
+  HERD_APP_DIR="${SANDBOX}/env-app3" "${run}" --domain herd.example.org >/dev/null 2>&1
+  ok "a partial .env is completed" "$?"
+  file_has "${SANDBOX}/env-app3/.env" "HERD_DB_PASSWORD=keepme" && file_has "${SANDBOX}/env-app3/.env" "HERD_CHAINSVC_TOKEN=tok1" && grep -qE '^HERD_OPERATOR_TOKEN=[0-9a-f]{64}$' "${SANDBOX}/env-app3/.env"
+  ok "... keeping what was there, filling the rest (the missing chainsvc name gets the other's value)" "$?"
+  printf 'C2_SVC_TOKEN=aaa\nHERD_CHAINSVC_TOKEN=bbb\n' >"${SANDBOX}/env-app3/.env"
+  HERD_APP_DIR="${SANDBOX}/env-app3" "${run}" --domain herd.example.org >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "two different chainsvc tokens are refused, not silently fixed" "$?"
+}
+
+# --- data-install.sh and secrets.sh -------------------------------------------------------------------------------------------------------
+
+make_c2_dir() { # make_c2_dir DIR : the six files of the operator profile with recognisable content
+  local d="$1" n
+  mkdir -p "${d}"
+  chmod 700 "${d}"
+  for n in operator.json operator.oracle.json operator.oracle_queue.json operator.play.json operator.play_withdrawal_queue.json operator.play_deposit_registry.json; do
+    printf '{"file":"%s","marker":"TESTMARKER-%s-%s"}\n' "${n}" "${n}" "$$" >"${d}/${n}"
+    chmod 600 "${d}/${n}"
+  done
+  echo '{"mnemonic":"NEVER-COPIED-counterparty"}' >"${d}/counterparty.json"
+}
+
+test_secrets() {
+  section "secrets.sh with data-install.sh and env-init.sh (ssh and scp are fakes that run in a pretend VPS home)"
+  local c2="${SANDBOX}/mac-c2/testnet11" out rc secrets="${HERE}/secrets.sh" wc=0123456789abcdef0123456789abcdef
+  make_c2_dir "${c2}"
+  : >"${SSHLOG}"
+  rm -rf "${VPSHOME}" && mkdir -p "${VPSHOME}"
+  : >"${SANDBOX}/empty.env"
+  mkdir -p "${SANDBOX}/machome"
+  sec() { (cd "${SANDBOX}" && env -u HERD_VPS_HOST -u HERD_VPS_DOMAIN -u HERD_VPS_USER -u HERD_VPS_KEY -u VITE_WALLETCONNECT_PROJECT_ID HOME="${SANDBOX}/machome" HERD_VPS_ENV_FILE="${SANDBOX}/empty.env" PATH="${MACBIN}:${PATH}" "${secrets}" --host 203.0.113.10 --key "${SANDBOX}/fakekey" "$@" 2>&1); }
+  : >"${SANDBOX}/fakekey"
+
+  out="$(sec --data-only --dry-run --c2-dir "${c2}")"
+  rc=$?
+  ok "data --dry-run: exit 0" "${rc}"
+  has "${out}" "operator.json" && has "${out}" "operator.oracle_queue.json" && has "${out}" "install"
+  ok "data --dry-run: names the files and the install step" "$?"
+  lacks "${out}" "TESTMARKER" && lacks "${out}" "NEVER-COPIED"
+  ok "data --dry-run: no file content in the output" "$?"
+  [[ ! -e "${VPSHOME}/.c2" ]]
+  ok "data --dry-run: nothing was created on the VPS" "$?"
+
+  out="$(sec --data-only --c2-dir "${c2}")"
+  rc=$?
+  ok "data: first copy succeeds" "${rc}"
+  local d="${VPSHOME}/.c2/testnet11" n
+  for n in operator.json operator.oracle.json operator.oracle_queue.json operator.play.json operator.play_withdrawal_queue.json operator.play_deposit_registry.json; do
+    cmp -s "${c2}/${n}" "${d}/${n}" && [[ "$(mode_of "${d}/${n}")" == 600 ]]
+    ok "data: ${n} arrived identical, mode 600" "$?"
+  done
+  [[ "$(mode_of "${d}")" == 700 && "$(mode_of "${VPSHOME}/.c2")" == 700 ]]
+  ok "data: directories ~/.c2 and ~/.c2/testnet11 are 700" "$?"
+  [[ ! -e "${d}/counterparty.json" ]]
+  ok "data: the other wallet's key (counterparty.json) is not copied" "$?"
+  [[ ! -e "${VPSHOME}/.c2/.incoming" ]]
+  ok "data: the staging directory is gone" "$?"
+  lacks "${out}" "TESTMARKER" && lacks "${out}" "NEVER-COPIED"
+  ok "data: the output shows no content of the files" "$?"
+  ! grep -q 'TESTMARKER' "${SSHLOG}"
+  ok "data: the ssh/scp log holds no content either (names and checksums only)" "$?"
+  has "${out}" "stale from now on"
+  ok "data: it says the local copy is stale" "$?"
+
+  echo '{"state":"advanced on the VPS"}' >"${d}/operator.oracle.json"
+  out="$(sec --data-only --c2-dir "${c2}")"
+  rc=$?
+  ok "data: a second run succeeds" "${rc}"
+  has "${out}" "already on the VPS" && has "${out}" "NOT touched"
+  ok "data: ... says the key is there and the VPS's state is not touched" "$?"
+  grep -q 'advanced on the VPS' "${d}/operator.oracle.json"
+  ok "data: the VPS's newer state file survived the second run" "$?"
+
+  echo '{"file":"a different key"}' >"${SANDBOX}/mac-c2/testnet11/operator.json"
+  out="$(sec --data-only --c2-dir "${c2}")"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "different one"
+  ok "data: a different operator key than the VPS's is refused" "$?"
+  grep -q 'advanced on the VPS' "${d}/operator.oracle.json"
+  ok "data: ... and nothing was changed" "$?"
+  out="$(sec --data-only --c2-dir "${c2}" --force-data)"
+  rc=$?
+  ok "data: --force-data goes ahead" "${rc}"
+  ls -d "${VPSHOME}/.c2/testnet11.bak-"* >/dev/null 2>&1
+  ok "data: ... and the old directory is kept as testnet11.bak-<time>" "$?"
+  cmp -s "${c2}/operator.json" "${d}/operator.json"
+  ok "data: ... the new key is in place" "$?"
+
+  out="$(FAKE_LOCAL_CHAINSVC=1 sec --data-only --c2-dir "${c2}" --force-data)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "chain service of the stand on this machine is running"
+  ok "one publisher: a chainsvc running on this machine stops the data step" "$?"
+  out="$(FAKE_LOCAL_CHAINSVC=1 sec --data-only --c2-dir "${c2}" --force-data --allow-local-stand)"
+  rc=$?
+  ok "one publisher: --allow-local-stand overrides that" "${rc}"
+  rm -rf "${VPSHOME}/.c2"
+  out="$(FAKE_VPS_CHAINSVC=1 sec --data-only --c2-dir "${c2}")"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "running on the VPS"
+  ok "one publisher: a chainsvc running on the VPS stops the data step" "$?"
+  [[ ! -e "${VPSHOME}/.c2/testnet11" ]]
+  ok "... and nothing was installed" "$?"
+
+  rm -f "${c2}/operator.oracle_queue.json"
+  out="$(sec --data-only --c2-dir "${c2}")"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "operator.oracle_queue.json is missing"
+  ok "data: a missing queue file is refused, with the reason" "$?"
+  make_c2_dir "${c2}"
+  rm -f "${c2}/operator.play_withdrawal_queue.json"
+  rm -rf "${VPSHOME}/.c2"
+  out="$(sec --data-only --c2-dir "${c2}")"
+  rc=$?
+  ok "data: a missing optional file is not an error" "${rc}"
+  has "${out}" "not there, not copied"
+  ok "... it is said" "$?"
+  [[ ! -e "${VPSHOME}/.c2/testnet11/operator.play_withdrawal_queue.json" ]]
+  ok "... and not invented on the VPS" "$?"
+
+  # --retire-local
+  make_c2_dir "${c2}"
+  rm -rf "${VPSHOME}/.c2"
+  out="$(sec --data-only --c2-dir "${c2}" --retire-local)"
+  rc=$?
+  ok "data: --retire-local succeeds" "${rc}"
+  [[ ! -e "${c2}" ]] && ls -d "${c2}.moved-to-vps-"* >/dev/null 2>&1
+  ok "data: ... the local directory is renamed, not deleted" "$?"
+
+  # the .env half
+  rm -rf "${VPSHOME}"
+  mkdir -p "${VPSHOME}"
+  out="$(sec --env-only --domain herd.example.org --walletconnect-id "${wc}")"
+  rc=$?
+  ok "env: runs through the fake ssh" "${rc}"
+  [[ -s "${VPSHOME}/herd/.env" && "$(mode_of "${VPSHOME}/herd/.env")" == 600 ]]
+  ok "env: ~/herd/.env exists on the VPS with mode 600" "$?"
+  file_has "${VPSHOME}/herd/.env" "HERD_PUBLIC_DOMAIN=herd.example.org"
+  ok "env: the domain is in it" "$?"
+  local tok
+  tok="$(grep '^HERD_OPERATOR_TOKEN=' "${VPSHOME}/herd/.env" | cut -d= -f2)"
+  lacks "${out}" "${tok}" && ! grep -qF "${tok}" "${SSHLOG}"
+  ok "env: the token is neither printed nor in the ssh log" "$?"
+  out="$(sec --env-only --domain herd.example.org)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "Reown project id"
+  ok "env: no Reown project id and no --no-walletconnect-id is refused" "$?"
+  out="$(sec --env-only --domain herd.example.org --no-walletconnect-id --set HERD_BOTS_COUNT=0)"
+  rc=$?
+  ok "env: --no-walletconnect-id and --set work" "${rc}"
+  file_has "${VPSHOME}/herd/.env" "HERD_BOTS_COUNT=0"
+  ok "env: --set reached the file" "$?"
+  out="$(cd "${SANDBOX}" && env -u HERD_VPS_HOST -u HERD_VPS_DOMAIN HOME="${SANDBOX}/machome" HERD_VPS_ENV_FILE="${SANDBOX}/empty.env" PATH="${MACBIN}:${PATH}" VITE_WALLETCONNECT_PROJECT_ID="${wc}" "${secrets}" --host 203.0.113.10 --key "${SANDBOX}/fakekey" --env-only --domain herd.example.org 2>&1)"
+  rc=$?
+  ok "env: the project id can come from VITE_WALLETCONNECT_PROJECT_ID" "${rc}"
+  out="$(sec --env-only --domain herd.example.org --walletconnect-id nothex)"
+  rc=$?
+  [[ ${rc} -ne 0 ]]
+  ok "env: a malformed project id is refused" "$?"
+  out="$(sec --env-only --domain herd.example.org --no-walletconnect-id --set HERD_DB_PASSWORD=x)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "generated on the VPS"
+  ok "env: setting a secret from outside is refused" "$?"
+  out="$(FAKE_SSH_FAIL=1 sec --env-only --domain herd.example.org --no-walletconnect-id)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "cannot log in"
+  ok "an unreachable VPS gives a clear message" "$?"
+}
+
+# --- remote.sh: the job runner ---------------------------------------------------------------------------------------------------------
+
+test_jobs() {
+  section "remote.sh job: detached jobs that outlive their ssh session"
+  local remote="${HERE}/remote.sh" jobs="${SANDBOX}/jobs" app="${SANDBOX}/jobs-app" out rc
+  mkdir -p "${app}"
+  r() { HERD_JOBS_DIR="${jobs}" HERD_APP_DIR="${app}" "${remote}" "$@"; }
+  [[ "$(r job status nothing)" == none ]]
+  ok "status of an unknown job: none" "$?"
+  r job start t1 -- /bin/bash -c 'echo first line; sleep 1; echo second line; exit 3' >/dev/null
+  ok "job start returns at once" "$?"
+  [[ "$(r job status t1)" == running ]]
+  ok "status while it runs: running" "$?"
+  out="$(r job follow t1)"
+  rc=$?
+  has "${out}" "first line" && has "${out}" "second line"
+  ok "follow prints the whole log" "$?"
+  [[ ${rc} -eq 3 ]]
+  ok "follow ends with the job's exit status (3)" "$?"
+  [[ "$(r job status t1)" == "failed:3" ]]
+  ok "status after: failed:3" "$?"
+  r job start t2 -- /bin/bash -c 'pwd; exit 0' >/dev/null
+  out="$(r job follow t2)"
+  rc=$?
+  [[ ${rc} -eq 0 && "$(r job status t2)" == ok ]]
+  ok "a successful job: status 0 / ok" "$?"
+  has "${out}" "jobs-app"
+  ok "the job runs in the app directory" "$?"
+  r job start t3 -- /bin/bash -c 'sleep 3; echo late' >/dev/null
+  out="$(r job start t3 -- /bin/bash -c 'echo SHOULD-NOT-RUN')"
+  has "${out}" "already running"
+  ok "starting a running job again does not start it twice" "$?"
+  out="$(r job wait t3)"
+  has "${out}" "late" && lacks "${out}" "SHOULD-NOT-RUN"
+  ok "wait follows a running job to its end" "$?"
+  out="$(r job wait t3; echo "wait-returned")"
+  has "${out}" "wait-returned" && lacks "${out}" "late"
+  ok "wait on a finished job returns at once and prints nothing" "$?"
+  r job start t1 -- /bin/bash -c 'echo restarted' >/dev/null
+  r job follow t1 >/dev/null
+  [[ -f "${jobs}/t1/log.1" ]] && grep -q 'first line' "${jobs}/t1/log.1"
+  ok "the previous log is kept as log.1" "$?"
+  r job start t4 -- /bin/bash -c 'sleep 2; echo survived' >/dev/null
+  kill -0 "$(cat "${jobs}/t4/pid")" 2>/dev/null
+  ok "the job has a pid file of its own, and the process is alive" "$?"
+  # a job that is killed leaves no status
+  r job start t5 -- /bin/bash -c 'sleep 31' >/dev/null
+  kill -9 "$(cat "${jobs}/t5/pid")" 2>/dev/null
+  pkill -f 'sleep 31' 2>/dev/null
+  sleep 0.5
+  [[ "$(r job status t5)" == killed ]]
+  ok "a killed job reads as killed" "$?"
+  out="$(r job follow t5 2>&1)"
+  rc=$?
+  [[ ${rc} -eq 137 ]]
+  ok "follow of a killed job ends with 137" "$?"
+  r job follow nosuchjob >/dev/null 2>&1
+  [[ $? -eq 3 ]]
+  ok "follow of an unknown job: status 3" "$?"
+  r job wait t4 >/dev/null
+}
+
+# --- backup.sh ------------------------------------------------------------------------------------------------------------------------
+
+test_backup() {
+  section "backup.sh (docker is a fake that answers pg_dump and psql)"
+  local home="${SANDBOX}/bk-home" bk run="${HERE}/backup.sh" out rc
+  rm -rf "${home}"
+  mkdir -p "${home}/.c2" "${home}/herd"
+  make_c2_dir "${home}/.c2/testnet11"
+  bk="${home}/backups"
+  b() { HOME="${home}" HERD_BACKUP_DIR="${bk}" HERD_C2_PARENT="${home}/.c2" HERD_APP_DIR="${home}/herd" FAKE_DOCKER_LOG="${SANDBOX}/docker.log" PATH="${VPSBIN}:${PATH}" "${run}" "$@"; }
+  : >"${SANDBOX}/docker.log"
+  out="$(b nightly 2>&1)"
+  rc=$?
+  ok "nightly runs" "${rc}"
+  local pg c2
+  pg="$(ls "${bk}"/pg/herd-nightly-*.sql.gz 2>/dev/null | head -n 1)"
+  c2="$(ls "${bk}"/c2/c2-nightly-*.tar.gz 2>/dev/null | head -n 1)"
+  [[ -n "${pg}" && -n "${c2}" ]]
+  ok "nightly writes a database dump and a chain-data archive" "$?"
+  gzip -t "${pg}" && gzip -dc "${pg}" | tail -n 1 | grep -q 'dump complete'
+  ok "the dump is valid gzip and complete" "$?"
+  tar -tzf "${c2}" | grep -q 'testnet11/operator.json'
+  ok "the archive holds testnet11/operator.json" "$?"
+  [[ "$(mode_of "${pg}")" == 600 && "$(mode_of "${c2}")" == 600 ]]
+  ok "both files are mode 600 (the archive holds the operator key)" "$?"
+  grep -q 'pg_dump -U herd -d herd --clean --if-exists' "${SANDBOX}/docker.log"
+  ok "pg_dump runs with --clean --if-exists (a restore replaces what is there)" "$?"
+
+  # retention: 9 old nightlies, 3 old pre-deploy ones
+  local i
+  for i in 1 2 3 4 5 6 7 8 9; do
+    touch -t "20200101000${i}" "${bk}/pg/herd-nightly-2020010100000${i}Z.sql.gz" "${bk}/c2/c2-nightly-2020010100000${i}Z.tar.gz" 2>/dev/null
+  done
+  for i in 1 2 3; do
+    touch -t "20200101000${i}" "${bk}/pg/herd-predeploy-2020010100000${i}Z.sql.gz"
+  done
+  b nightly >/dev/null 2>&1
+  [[ "$(ls "${bk}"/pg/herd-nightly-*.sql.gz | wc -l | tr -d ' ')" == 7 && "$(ls "${bk}"/c2/c2-nightly-*.tar.gz | wc -l | tr -d ' ')" == 7 ]]
+  ok "retention: the newest 7 of each kind are kept" "$?"
+  [[ "$(ls "${bk}"/pg/herd-predeploy-*.sql.gz | wc -l | tr -d ' ')" == 3 ]]
+  ok "retention: pre-deploy dumps are pruned separately (the 3 are untouched)" "$?"
+  [[ ! -e "${bk}/pg/herd-nightly-20200101000001Z.sql.gz" ]] && ls "${bk}"/pg/herd-nightly-20[2-9]*T*Z.sql.gz >/dev/null 2>&1
+  ok "retention: the oldest went, the new one stayed" "$?"
+  out="$(b pre-deploy 2>&1)"
+  ls "${bk}"/pg/herd-predeploy-20[2-9]*T*.sql.gz >/dev/null 2>&1
+  ok "pre-deploy writes files of its own kind" "$?"
+
+  rm -f "${bk}"/pg/*.gz "${bk}"/c2/*.gz
+  FAKE_PGDUMP_FAIL=1 b nightly >/dev/null 2>&1
+  rc=$?
+  [[ ${rc} -ne 0 && -z "$(ls "${bk}"/pg 2>/dev/null)" ]]
+  ok "a failing pg_dump: non-zero exit, no file left behind" "$?"
+  FAKE_PGDUMP_TRUNCATED=1 b nightly >/dev/null 2>&1
+  rc=$?
+  [[ ${rc} -ne 0 && -z "$(ls "${bk}"/pg 2>/dev/null)" ]]
+  ok "a dump without pg_dump's closing line is deleted" "$?"
+  FAKE_VPS_DB=0 b nightly >/dev/null 2>&1
+  rc=$?
+  ok "no db container: not an error" "${rc}"
+  [[ -z "$(ls "${bk}"/pg 2>/dev/null)" && -n "$(ls "${bk}"/c2 2>/dev/null)" ]]
+  ok "... no dump, the chain data are still archived" "$?"
+
+  b list >/dev/null 2>&1
+  ok "list runs" "$?"
+
+  # restore
+  b nightly >/dev/null 2>&1
+  pg="$(ls "${bk}"/pg/herd-nightly-*.sql.gz | head -n 1)"
+  b restore "${pg}" >/dev/null 2>&1
+  rc=$?
+  [[ ${rc} -ne 0 ]]
+  ok "restore without --yes is refused" "$?"
+  : >"${SANDBOX}/docker.log"
+  : >"${SANDBOX}/psql.bytes"
+  FAKE_PSQL_BYTES="${SANDBOX}/psql.bytes" b restore "${pg}" --yes >/dev/null 2>&1
+  rc=$?
+  ok "restore --yes runs" "${rc}"
+  grep -n 'stop server\|psql -q -v ON_ERROR_STOP=1 -1 -U herd -d herd\|start server' "${SANDBOX}/docker.log" | cut -d: -f1 | tr '\n' ' ' | grep -qE '^[0-9]+ [0-9]+ [0-9]+ $'
+  ok "restore: server stopped, psql run in one transaction, server started again, in that order" "$?"
+  [[ "$(tr -d ' \n' <"${SANDBOX}/psql.bytes")" -gt 20 ]]
+  ok "restore: the dump reached psql" "$?"
+  : >"${SANDBOX}/docker.log"
+  FAKE_PSQL_FAIL=1 b restore "${pg}" --yes >/dev/null 2>&1
+  rc=$?
+  [[ ${rc} -ne 0 ]] && [[ "$(grep -c 'start server' "${SANDBOX}/docker.log")" == 1 ]]
+  ok "a failing restore: non-zero exit, the server is started again" "$?"
+}
+
+# --- remote.sh verify helpers ----------------------------------------------------------------------------------------------------------------
+
+test_verify() {
+  section "remote.sh verify: the parts that read the host (fake ss and docker)"
+  local ss="${SANDBOX}/ssbin"
+  mkdir -p "${ss}"
+  cat >"${ss}/ss" <<'EOF'
+#!/usr/bin/env bash
+# fake `ss -ltnH "sport = :PORT"`: FAKE_SS_8480 / FAKE_SS_8090 hold the local addresses, space separated
+for a in "$@"; do case "$a" in "sport = :"*) port="${a#sport = :}" ;; esac; done
+var="FAKE_SS_${port}"
+for addr in ${!var:-}; do printf 'LISTEN 0 4096 %s 0.0.0.0:*\n' "${addr}"; done
+EOF
+  chmod +x "${ss}/ss"
+  run_verify_fn() { # run_verify_fn FUNCTION... : source remote.sh and run functions with the fakes in PATH
+    (
+      export PATH="${ss}:${VPSBIN}:${PATH}"
+      # shellcheck source=tools/vps/remote.sh
+      source "${HERE}/remote.sh"
+      set +e
+      "$@"
+    )
+  }
+  local out
+  out="$(FAKE_SS_8480="127.0.0.1:8480 [::1]:8480" FAKE_SS_8090="127.0.0.1:8090 172.28.77.1:8090" run_verify_fn check_binds)"
+  has "${out}" "ok    web: port 8480 is on the loopback only" && has "${out}" "ok    chainsvc: port 8090 is on 127.0.0.1 and 172.28.77.1 only"
+  ok "check_binds: web on the loopback and chainsvc on loopback+gateway pass" "$?"
+  out="$(FAKE_SS_8480="0.0.0.0:8480" FAKE_SS_8090="127.0.0.1:8090" run_verify_fn check_binds)"
+  has "${out}" "FAIL  web: port 8480 is open on 0.0.0.0:8480"
+  ok "check_binds: a web published on 0.0.0.0 fails" "$?"
+  out="$(FAKE_SS_8480="[::]:8480" FAKE_SS_8090="127.0.0.1:8090" run_verify_fn check_binds)"
+  has "${out}" "FAIL  web"
+  ok "check_binds: a web published on [::] fails" "$?"
+  out="$(FAKE_SS_8480="127.0.0.1:8480" FAKE_SS_8090="0.0.0.0:8090" run_verify_fn check_binds)"
+  has "${out}" "FAIL  chainsvc: port 8090 is open on 0.0.0.0:8090"
+  ok "check_binds: chainsvc on 0.0.0.0 fails" "$?"
+  out="$(FAKE_SS_8480="" FAKE_SS_8090="127.0.0.1:8090" run_verify_fn check_binds)"
+  has "${out}" "FAIL  web: nothing listens on port 8480"
+  ok "check_binds: a web that is not published fails" "$?"
+}
+
+# --- the stand's own script, driven the way remote.sh drives it ---------------------------------------------------------------------------
+
+test_stand() {
+  section "remote.sh up against the real tools/stand.sh and docker-compose.yml (docker is a fake that records)"
+  local home="${SANDBOX}/st-home" app out rc dlog="${SANDBOX}/st-docker.log"
+  app="${home}/herd"
+  rm -rf "${home}"
+  mkdir -p "${app}/tools/vps" "${home}/.c2/testnet11"
+  cp "${REPO}/docker-compose.yml" "${app}/"
+  cp "${REPO}/tools/stand.sh" "${app}/tools/"
+  cp "${HERE}/remote.sh" "${HERE}/backup.sh" "${app}/tools/vps/"
+  printf 'HERD_OPERATOR_TOKEN=a\nHERD_DB_PASSWORD=b\nC2_SVC_TOKEN=c\nHERD_CHAINSVC_TOKEN=c\n' >"${app}/.env"
+  chmod 600 "${app}/.env"
+  mkdir -p "${SANDBOX}/stbin"
+  cat >"${SANDBOX}/stbin/docker" <<'EOF'
+#!/usr/bin/env bash
+# fake docker for tools/stand.sh: records the web port the compose project was given, answers like a healthy stand
+printf '%s\n' "$*" >>"${FAKE_ST_LOG}"
+case "$*" in
+  "info") exit 0 ;;
+  "ps -a --format {{.Names}}") exit 0 ;;
+  "volume inspect "*) exit 1 ;;
+  *" port web 80") exit 1 ;;
+  *" up -d --build") echo "UP HERD_WEB_PORT=${HERD_WEB_PORT:-<unset>}" >>"${FAKE_ST_LOG}" ;;
+  *" ps --format "*) printf 'db healthy\nchainsvc healthy\nserver healthy\nweb healthy\n' ;;
+  *" exec -T server curl "*) printf '200' ;;
+  ps*) exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+  chmod +x "${SANDBOX}/stbin/docker"
+  up() { (cd "${app}" && HOME="${home}" HERD_JOBS_DIR="${home}/.jobs" FAKE_ST_LOG="${dlog}" PATH="${SANDBOX}/stbin:${PATH}" "$@" tools/vps/remote.sh up 2>&1); }
+
+  : >"${dlog}"
+  out="$(up env)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "no operator key/state"
+  ok "up without the chain data on the VPS stops, saying what to do" "$?"
+  for n in operator.json operator.oracle.json; do echo '{}' >"${home}/.c2/testnet11/${n}"; done
+  : >"${dlog}"
+  out="$(up env)"
+  rc=$?
+  ok "up with the chain data: tools/stand.sh's cmd_up runs to the end" "${rc}"
+  has "${out}" "using host port 127.0.0.1:8480 for web"
+  ok "stand.sh is told the web goes on 127.0.0.1:8480" "$?"
+  grep -qx 'UP HERD_WEB_PORT=127.0.0.1:8480' "${dlog}"
+  ok "docker compose up gets HERD_WEB_PORT=127.0.0.1:8480 (so the published port is \"127.0.0.1:8480:80\")" "$?"
+  has "${out}" "all services healthy" && has "${out}" "stand is up: web on 127.0.0.1:8480"
+  ok "stand.sh waited for healthy; the message of print_urls is the replaced one" "$?"
+  : >"${dlog}"
+  out="$(up env HERD_WEB_PORT=9999)"
+  grep -qx 'UP HERD_WEB_PORT=127.0.0.1:8480' "${dlog}"
+  ok "a HERD_WEB_PORT in the caller's environment does not move the web off the loopback" "$?"
+  grep -q 'pg_dump' "${dlog}" && : || true
+  : >"${dlog}"
+  cp "${app}/tools/stand.sh" "${SANDBOX}/stand.sh.orig"
+  sed -i.bak 's/^pick_web_port() {/pick_web_port_RENAMED() {/' "${app}/tools/stand.sh"
+  out="$(up env)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "has no pick_web_port"
+  ok "if tools/stand.sh loses pick_web_port, remote.sh up refuses instead of publishing on 0.0.0.0" "$?"
+  ! grep -q 'UP HERD_WEB_PORT' "${dlog}"
+  ok "... and compose up was not called" "$?"
+  cp "${SANDBOX}/stand.sh.orig" "${app}/tools/stand.sh"
+}
+
+
+# --- the whole flow with fakes at the edges -----------------------------------------------------------------------------------------------
+
+# deploy.sh up/check/apk/stop and secrets.sh as they really run -- the rsync of this repository goes through this machine's rsync into a
+# directory that stands for the VPS's home -- with fakes only where the world begins: ssh and scp (run the command there), docker, curl, ss, dig.
+# It finds the mistakes of the glue (quoting of remote commands, the order of steps, what happens when a step fails) that the dry runs cannot.
+test_flow() {
+  section "the whole flow: secrets.sh, deploy.sh up/check/apk/stop with the real rsync, the real remote.sh and stand.sh, fake docker/curl/ss/dig"
+  local flow="${SANDBOX}/flow" fmac fvps state out rc
+  fmac="${flow}/mac"
+  fvps="${flow}/vps"
+  state="${flow}/state"
+  rm -rf "${flow}" "${VPSHOME}"
+  mkdir -p "${fmac}" "${fvps}" "${state}" "${VPSHOME}" "${SANDBOX}/machome"
+  : >"${SANDBOX}/empty.env"
+  : >"${SANDBOX}/fakekey"
+  : >"${SSHLOG}"
+
+  # --- the operator's machine
+  cat >"${fmac}/dig" <<'EOF'
+#!/usr/bin/env bash
+type=""
+for a in "$@"; do case "$a" in A | AAAA) type="$a" ;; esac; done
+[[ "${type}" == A ]] && echo "${FAKE_DNS_A:-203.0.113.10}"
+exit 0
+EOF
+  cat >"${fmac}/curl" <<'EOF'
+#!/usr/bin/env bash
+# fake curl of the operator's machine: answers for herd.example.org / 203.0.113.10 the way a healthy VPS would
+args=("$@")
+url="${args[$((${#args[@]} - 1))]}"
+head=0 out="" wfmt="" method=GET
+for ((i = 0; i < ${#args[@]}; i++)); do
+  a="${args[i]}"
+  case "${a}" in
+    -X) method="${args[i + 1]}" ;;
+    -o) out="${args[i + 1]}" ;;
+    -w) wfmt="${args[i + 1]}" ;;
+    --*) ;;
+    -*I*) head=1 ;;
+  esac
+done
+state="${FAKE_FLOW_STATE}"
+code=200 ctype=text/html body=""
+case "${url}" in
+  http://203.0.113.10:8480/ | http://203.0.113.10:8090/) exit 7 ;;
+  http://herd.example.org/)
+    printf 'HTTP/1.1 308 Permanent Redirect\r\nLocation: https://herd.example.org/\r\n\r\n'
+    exit 0
+    ;;
+  https://herd.example.org/)
+    if ((head)); then
+      printf 'HTTP/2 200 \r\nstrict-transport-security: max-age=31536000\r\ncontent-type: text/html\r\n\r\n'
+      exit 0
+    fi
+    ;;
+  https://herd.example.org/api/rpc/serverInfo)
+    body='{"mode":"live","priceSource":"live","markets":18,"testWallet":true,"engineReady":true,"oracle":{"network":"testnet11","lastConfirmedSeq":10804,"firstSeq":10805}}'
+    ctype=application/json
+    ;;
+  https://herd.example.org/api/rpc/cancelBet)
+    n=$(($(cat "${state}/mac-cancelbet" 2>/dev/null || echo 0) + 1))
+    echo "${n}" >"${state}/mac-cancelbet"
+    if ((n > 30)); then code=429; else code=401; fi
+    ;;
+  https://herd.example.org/download/) code=404 ;;
+  https://herd.example.org/download/herd.apk)
+    if [[ -f "${FAKE_VPS_HOME}/edge/download/herd.apk" ]]; then
+      [[ -z "${out}" ]] || cp "${FAKE_VPS_HOME}/edge/download/herd.apk" "${out}"
+      ctype=application/vnd.android.package-archive
+    else
+      code=404
+    fi
+    ;;
+  *) code=000 ;;
+esac
+[[ -z "${out}" || "${out}" == /dev/null ]] || [[ -f "${out}" ]] || : >"${out}"
+if [[ -n "${wfmt}" ]]; then
+  fmt="${wfmt//%\{http_code\}/${code}}"
+  fmt="${fmt//%\{content_type\}/${ctype}}"
+  printf '%s' "${fmt}"
+elif [[ -n "${body}" ]]; then
+  printf '%s' "${body}"
+fi
+[[ "${code}" != 000 ]]
+EOF
+  cat >"${fmac}/docker" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  info) exit 0 ;;
+  ps) [[ "${FAKE_LOCAL_CHAINSVC:-0}" != 1 ]] || echo "0123456789ab" ;;
+  *) exit 99 ;;
+esac
+EOF
+
+  # --- the VPS
+  cat >"${fvps}/ss" <<'EOF'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in "sport = :"*) port="${a#sport = :}" ;; esac; done
+case "${port}" in
+  8480) addrs="${FAKE_SS_8480:-127.0.0.1:8480}" ;;
+  8090) addrs="${FAKE_SS_8090:-127.0.0.1:8090 172.28.77.1:8090}" ;;
+esac
+for addr in ${addrs:-}; do printf 'LISTEN 0 4096 %s 0.0.0.0:*\n' "${addr}"; done
+EOF
+  cat >"${fvps}/curl" <<'EOF'
+#!/usr/bin/env bash
+# fake curl of the VPS: loopback endpoints of the stand, and Caddy as seen from the host itself
+args=("$@")
+url="${args[$((${#args[@]} - 1))]}"
+out="" wfmt="" ip=""
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[i]}" in
+    -o) out="${args[i + 1]}" ;;
+    -w) wfmt="${args[i + 1]}" ;;
+    -H) case "${args[i + 1]}" in CF-Connecting-IP:*) ip="${args[i + 1]#CF-Connecting-IP: }" ;; esac ;;
+  esac
+done
+state="${FAKE_FLOW_STATE}"
+code=200
+case "${url}" in
+  http://127.0.0.1:8090/health) ;;
+  http://172.28.77.1:8090/health) ;;
+  https://herd.example.org/\?probe*)
+    q="${url#*\?}"
+    printf '%s' "${q%%=*}" >"${state}/probe"
+    ;;
+  http://127.0.0.1:8480/api/rpc/cancelBet)
+    f="${state}/vps-rl-${ip//[^0-9.]/_}"
+    n=$(($(cat "${f}" 2>/dev/null || echo 0) + 1))
+    echo "${n}" >"${f}"
+    if ((n > 30)); then code=429; else code=401; fi
+    ;;
+  *) code=000 ;;
+esac
+if [[ -n "${wfmt}" ]]; then
+  printf '%s' "${wfmt//%\{http_code\}/${code}}"
+fi
+[[ "${code}" != 000 ]]
+EOF
+  cat >"${fvps}/docker" <<'EOF'
+#!/usr/bin/env bash
+# fake docker of the VPS, enough for remote.sh, backup.sh and tools/stand.sh in a successful deploy
+state="${FAKE_FLOW_STATE}"
+printf 'docker %s\n' "$*" >>"${state}/docker.log"
+case "$1" in
+  info) exit 0 ;;
+  run) exit 0 ;; # caddy validate
+  volume) exit 1 ;;
+  restart) exit 0 ;;
+  inspect)
+    case "$*" in
+      *State.Running*edge-caddy*) [[ -f "${state}/edge-up" ]] && echo true || echo false ;;
+      *State.Status*edge-caddy*) [[ -f "${state}/edge-up" ]] && echo running ;;
+      *State.StartedAt*) echo "2026-10-08T20:00:00.000000000Z" ;;
+    esac
+    ;;
+  ps)
+    case "$*" in
+      "ps -a --format {{.Names}}") ;;
+      *service=chainsvc*) [[ "${FAKE_VPS_CHAINSVC:-0}" != 1 ]] || echo chainsvc0001 ;;
+      *) ;;
+    esac
+    ;;
+  exec) exit 0 ;;
+  logs)
+    case "$*" in
+      *server0001*) echo "2026-10-08 20:01:02 INFO  [crowdvsmarket.server.chain.ChainOracleSeqGate] oracle seq floor obtained: chainsvc maxKnownSeq=10804, the counter is at 10804 — settlement may issue seq 10805 and on" ;;
+      *web0001*) echo "${FAKE_WEB_PEER:-172.28.77.1} - - [08/Oct/2026:20:02:00 +0000] \"GET /?$(cat "${state}/probe" 2>/dev/null)=1 HTTP/1.1\" 200 612 \"-\" \"curl/8\"" ;;
+    esac
+    ;;
+  compose)
+    shift
+    project=""
+    while [[ "$1" == -p || "$1" == -f ]]; do
+      [[ "$1" == -p ]] && project="$2"
+      shift 2
+    done
+    case "$1" in
+      version) echo "Docker Compose version v5.6.0" ;;
+      build) echo "build of the images: ok" ;;
+      stop) echo "stopped" ;;
+      up)
+        if [[ "${project}" == edge ]]; then
+          touch "${state}/edge-up"
+        else
+          if [[ "${FAKE_COMPOSE_UP_FAIL:-0}" == 1 ]]; then
+            echo "failed to solve: the build of the server image failed" >&2
+            exit 1
+          fi
+          echo "UP HERD_WEB_PORT=${HERD_WEB_PORT:-<unset>}" >>"${state}/stand-up"
+          echo "compose up -d --build: ok (web published as ${HERD_WEB_PORT:-<unset>})"
+        fi
+        ;;
+      ps)
+        case "$*" in
+          *"-q server"*) echo server0001 ;;
+          *"-q web"*) echo web0001 ;;
+          *.State*) printf 'db running healthy\nchainsvc running healthy\nserver running healthy\nweb running healthy\n' ;;
+          *) printf 'db healthy\nchainsvc healthy\nserver healthy\nweb healthy\n' ;;
+        esac
+        ;;
+      exec) printf '200' ;;
+      port) exit 1 ;;
+    esac
+    ;;
+esac
+exit 0
+EOF
+  chmod +x "${fmac}"/* "${fvps}"/*
+
+  local common_env=(FAKE_FLOW_STATE="${state}" FAKE_VPS_BIN="${fvps}" HOME="${SANDBOX}/machome" HERD_VPS_ENV_FILE="${SANDBOX}/empty.env" PATH="${fmac}:${MACBIN}:${PATH}")
+  fl() { # fl SCRIPT ARGS... : run a script of the kit through the fakes; output in FL_OUT, status in FL_RC
+    FL_OUT="$(cd "${SANDBOX}" && env -u HERD_VPS_HOST -u HERD_VPS_DOMAIN -u HERD_VPS_USER -u VITE_WALLETCONNECT_PROJECT_ID "${common_env[@]}" "$@" 2>&1)"
+    FL_RC=$?
+    [[ -z "${HERD_VPS_TEST_DEBUG:-}" ]] || printf '%s\n' "${FL_OUT}" | sed 's/^/      | /' >&2
+  }
+  local wc=0123456789abcdef0123456789abcdef c2="${SANDBOX}/flow-c2/testnet11"
+  rm -rf "${SANDBOX}/flow-c2"
+  make_c2_dir "${c2}"
+  local base=(--host 203.0.113.10 --domain herd.example.org --key "${SANDBOX}/fakekey")
+
+  fl "${HERE}/secrets.sh" "${base[@]}" --env-only --walletconnect-id "${wc}"
+  ok "secrets.sh --env-only (the first step, the Mac stand still running)" "${FL_RC}"
+
+  # --build-only first: the long step while the stand on the other machine still serves
+  fl "${HERE}/deploy.sh" "${base[@]}" --build-only
+  ok "deploy.sh --build-only: exit 0" "${FL_RC}"
+  has "${FL_OUT}" "build of the images: ok" && has "${FL_OUT}" "images built, nothing started"
+  ok "--build-only: the images are built, nothing is started" "$?"
+  [[ ! -e "${state}/stand-up" ]]
+  ok "--build-only: compose up was not called" "$?"
+  [[ -x "${VPSHOME}/herd/tools/stand.sh" && -f "${VPSHOME}/herd/docker-compose.yml" && -x "${VPSHOME}/herd/tools/vps/remote.sh" ]]
+  ok "--build-only: the tree arrived by rsync, the scripts executable" "$?"
+  [[ ! -e "${VPSHOME}/herd/.git" && ! -e "${VPSHOME}/herd/.local" && ! -e "${VPSHOME}/herd/node_modules" && ! -e "${VPSHOME}/herd/web/node_modules" && ! -e "${VPSHOME}/herd/chain/target" ]]
+  ok "rsync: no .git, .local, node_modules, target on the VPS" "$?"
+  [[ -z "$(find "${VPSHOME}/herd" -name '.env*' -not -path "${VPSHOME}/herd/.env" 2>/dev/null)" ]]
+  ok "rsync: the only .env there is the one secrets.sh made" "$?"
+  grep -q '^HERD_PUBLIC_DOMAIN=herd.example.org$' "${VPSHOME}/herd/.env"
+  ok "the VPS's .env survived the rsync --delete" "$?"
+  [[ -f "${VPSHOME}/herd/.deploy-info" ]] && grep -q '^deployed=' "${VPSHOME}/herd/.deploy-info" && grep -q '^from=' "${VPSHOME}/herd/.deploy-info"
+  ok ".deploy-info says when and from what the tree was sent" "$?"
+  [[ -s "${VPSHOME}/edge/conf/Caddyfile" && -s "${VPSHOME}/edge/compose.yml" && ! -e "${VPSHOME}/edge/conf/Caddyfile.new" ]]
+  ok "Caddy: the Caddyfile and compose.yml are in ~/edge, the .new file is gone" "$?"
+  grep -q '^herd.example.org {$' "${VPSHOME}/edge/conf/Caddyfile" && grep -q 'reverse_proxy 127.0.0.1:8480' "${VPSHOME}/edge/conf/Caddyfile"
+  ok "Caddy: the Caddyfile is the rendered one for the domain" "$?"
+  [[ -f "${state}/edge-up" ]]
+  ok "Caddy: started (docker compose -p edge up -d)" "$?"
+  grep -q 'docker run --rm -v .*edge/conf:/etc/caddy:ro caddy:2.11.4-alpine@sha256:.* caddy validate --config /etc/caddy/Caddyfile.new --adapter caddyfile' "${state}/docker.log"
+  ok "Caddy: the new Caddyfile was validated with the pinned image before it replaced the old one" "$?"
+
+  # the cutover: the chain data, then the start
+  fl "${HERE}/deploy.sh" "${base[@]}" --skip-dns-check
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "no operator key and oracle state"
+  ok "deploy.sh without the chain data on the VPS: refused, says to run secrets.sh --data-only" "$?"
+  [[ ! -e "${state}/stand-up" ]]
+  ok "... and nothing was started" "$?"
+  fl "${HERE}/secrets.sh" "${base[@]}" --data-only --c2-dir "${c2}"
+  ok "secrets.sh --data-only" "${FL_RC}"
+  FAKE_LOCAL_CHAINSVC=1 fl "${HERE}/deploy.sh" "${base[@]}"
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "chain service of the stand on this machine is running"
+  ok "one publisher: deploy.sh up refuses while the stand on this machine runs its chainsvc" "$?"
+  [[ ! -e "${state}/stand-up" ]]
+  ok "... and nothing was started on the VPS" "$?"
+
+  fl "${HERE}/deploy.sh" "${base[@]}"
+  ok "deploy.sh up: exit 0" "${FL_RC}"
+  printf '%s\n' "${FL_OUT}" | sed 's/^/    | /' | tail -n 40
+  has "${FL_OUT}" "using host port 127.0.0.1:8480 for web" && grep -qx 'UP HERD_WEB_PORT=127.0.0.1:8480' "${state}/stand-up"
+  ok "up: the stand is started by tools/stand.sh's cmd_up with the web on 127.0.0.1:8480" "$?"
+  has "${FL_OUT}" "all checks passed"
+  ok "up: ends with all checks passed" "$?"
+  has "${FL_OUT}" "ok    nginx sees the request from 172.28.77.1" && has "${FL_OUT}" "ok    oracle seq floor: chainsvc maxKnownSeq=10804" && has "${FL_OUT}" "ok    rate limit: one address is limited"
+  ok "up: the checks on the VPS saw the gateway as the peer, the seq floor, the per-visitor rate limit" "$?"
+  has "${FL_OUT}" "ok    port 8480 of 203.0.113.10 does not answer from outside" && has "${FL_OUT}" "ok    port 8090 of 203.0.113.10 does not answer from outside"
+  ok "up: the checks from outside saw 8480 and 8090 closed" "$?"
+  has "${FL_OUT}" "a forged CF-Connecting-IP does not give a fresh bucket"
+  ok "up: the check from outside showed that a forged CF-Connecting-IP gives no fresh bucket" "$?"
+  has "${FL_OUT}" '"firstSeq":10805'
+  ok "up: serverInfo is printed with the oracle's firstSeq" "$?"
+  [[ -s "${VPSHOME}/.herd-jobs/stand/log" && "$(cat "${VPSHOME}/.herd-jobs/stand/status")" == 0 ]]
+  ok "up: the job and its log are kept on the VPS, status 0" "$?"
+  [[ "$(mode_of "${VPSHOME}/herd/.env")" == 600 ]]
+  ok ".env is still mode 600 after the deploy" "$?"
+
+  fl "${HERE}/deploy.sh" "${base[@]}"
+  ok "a second deploy.sh up changes nothing it should not: exit 0" "${FL_RC}"
+  lacks "${FL_OUT}" "the Caddyfile changed: reloading Caddy"
+  ok "... Caddy is not reloaded when its config is the same" "$?"
+
+  # failures
+  FAKE_COMPOSE_UP_FAIL=1 fl "${HERE}/deploy.sh" "${base[@]}"
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "failed to solve" && has "${FL_OUT}" "the job 'up' failed on the VPS"
+  ok "a failing build/start: the log is shown, deploy.sh exits non-zero and says which job failed" "$?"
+  lacks "${FL_OUT}" "checks from here"
+  ok "... and no checks are run after it" "$?"
+  FAKE_WEB_PEER=172.28.77.9 fl "${HERE}/deploy.sh" "${base[@]}"
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "FAIL  nginx saw the request from '172.28.77.9'"
+  ok "a wrong peer address at nginx (not the gateway) fails the deploy: the per-visitor limit would not work" "$?"
+  FAKE_SS_8480="0.0.0.0:8480" fl "${HERE}/deploy.sh" "${base[@]}"
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "FAIL  web: port 8480 is open on 0.0.0.0:8480"
+  ok "a web published on 0.0.0.0 fails the deploy" "$?"
+  FAKE_DNS_A=198.51.100.9 fl "${HERE}/deploy.sh" "${base[@]}"
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "does not resolve to 203.0.113.10"
+  ok "a domain that does not point at the VPS is refused before anything is sent" "$?"
+  FAKE_VPS_CHAINSVC=1 fl "${HERE}/secrets.sh" "${base[@]}" --data-only --c2-dir "${c2}" --force-data
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "running on the VPS"
+  ok "secrets.sh --data-only refuses while the VPS's chainsvc runs, even with --force-data" "$?"
+
+  # check, stop
+  fl "${HERE}/deploy.sh" check "${base[@]}" --no-ratelimit-check
+  ok "deploy.sh check --no-ratelimit-check: exit 0" "${FL_RC}"
+  has "${FL_OUT}" "rate limit: skipped (--no-ratelimit-check)" && lacks "${FL_OUT}" "rate limit: one address"
+  ok "check: the rate-limit burst is skipped on both sides" "$?"
+  fl "${HERE}/deploy.sh" stop "${base[@]}"
+  ok "deploy.sh stop: exit 0" "${FL_RC}"
+  grep -q 'docker compose -p herd -f .*docker-compose.yml stop' "${state}/docker.log"
+  ok "stop: docker compose -p herd stop on the VPS" "$?"
+
+  # the APK
+  local apk="${SANDBOX}/app-debug.apk" apkdir="${SANDBOX}/apk-src"
+  rm -rf "${apkdir}" "${apk}"
+  mkdir -p "${apkdir}/assets"
+  head -c 200000 /dev/urandom >"${apkdir}/classes.dex"
+  echo '<manifest/>' >"${apkdir}/AndroidManifest.xml"
+  echo '{"appId":"app.herd.dev","server":{"url":"https://herd.example.org","cleartext":false}}' >"${apkdir}/assets/capacitor.config.json"
+  (cd "${apkdir}" && zip -q -r "${apk}" AndroidManifest.xml classes.dex assets)
+  fl "${HERE}/deploy.sh" apk "${apk}" "${base[@]}"
+  ok "deploy.sh apk FILE: exit 0" "${FL_RC}"
+  [[ "$(sha256_of_file "${apk}")" == "$(sha256_of_file "${VPSHOME}/edge/download/herd.apk")" ]] && grep -q "^$(sha256_of_file "${apk}")  herd.apk$" "${VPSHOME}/edge/download/herd.apk.sha256"
+  ok "apk: edge/download/herd.apk is the file, herd.apk.sha256 holds its checksum" "$?"
+  [[ "$(mode_of "${VPSHOME}/edge/download/herd.apk")" == 644 ]]
+  ok "apk: world-readable (the Caddy container reads it)" "$?"
+  has "${FL_OUT}" "the APK opens https://herd.example.org" && has "${FL_OUT}" "served as 'application/vnd.android.package-archive'"
+  ok "apk: the address inside was read and the download came back intact with the Android type" "$?"
+  [[ ! -e "${VPSHOME}/edge/download/.herd.apk.new" ]]
+  ok "apk: no half-uploaded file is left" "$?"
+  rm -rf "${apkdir}/assets" && mkdir -p "${apkdir}/assets" && echo '{"server":{"url":"http://10.0.2.2:8480","cleartext":true}}' >"${apkdir}/assets/capacitor.config.json"
+  rm -f "${apk}.wrong" && (cd "${apkdir}" && zip -q -r "${apk}.wrong" AndroidManifest.xml classes.dex assets)
+  fl "${HERE}/deploy.sh" apk "${apk}.wrong" "${base[@]}"
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "the APK opens http://10.0.2.2:8480, not https://herd.example.org"
+  ok "apk built for the emulator's address is refused" "$?"
+  fl "${HERE}/deploy.sh" apk "${apk}.wrong" "${base[@]}" --any-apk-address
+  ok "... unless --any-apk-address" "${FL_RC}"
+  head -c 300000 /dev/urandom >"${SANDBOX}/not-an-apk"
+  fl "${HERE}/deploy.sh" apk "${SANDBOX}/not-an-apk" "${base[@]}"
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "is not a zip file"
+  ok "a file that is not a zip is refused" "$?"
+
+  # --rev: the rollback path with a clean export of a commit
+  fl "${HERE}/deploy.sh" "${base[@]}" --rev HEAD --build-only
+  ok "deploy.sh --rev HEAD --build-only: exit 0 (a clean export of the commit is what goes)" "${FL_RC}"
+  has "${FL_OUT}" "tree: the tracked files at HEAD"
+  ok "... and it says so" "$?"
+  grep -q 'from=' "${VPSHOME}/herd/.deploy-info" && [[ ! -e "${VPSHOME}/herd/.claude" ]]
+  ok "... .deploy-info is rewritten, no .claude directory arrived" "$?"
+}
+
+# --- docker-based tests ------------------------------------------------------------------------------------------------------------------
+
+CADDY_IMAGE="$(awk '$1 == "image:" {print $2; exit}' "${HERE}/edge/compose.yml")"
+CADDY_VERSION="${CADDY_IMAGE#caddy:}"
+CADDY_VERSION="${CADDY_VERSION%%-*}" # 2.11.4-alpine@sha256:... -> 2.11.4
+
+test_caddy() {
+  section "caddy: the rendered Caddyfile through the pinned image (${CADDY_IMAGE})"
+  local d="${SANDBOX}/caddy" v out rc
+  mkdir -p "${d}"
+  (
+    set +e
+    # shellcheck source=tools/vps/common.sh
+    source "${HERE}/common.sh"
+    render_caddyfile herd.example.org 8480 '' 0 >"${d}/Caddyfile.plain"
+    render_caddyfile herd.example.org 8480 ops@example.org 0 >"${d}/Caddyfile.email"
+    render_caddyfile herd.example.org 8480 ops@example.org 1 >"${d}/Caddyfile.staging"
+    render_caddyfile herd.example.org 8480 '' 1 >"${d}/Caddyfile.staging-noemail"
+  )
+  for v in plain email staging staging-noemail; do
+    out="$(docker run --rm -v "${d}:/etc/caddy:ro" "${CADDY_IMAGE}" caddy validate --config "/etc/caddy/Caddyfile.${v}" --adapter caddyfile 2>&1)"
+    rc=$?
+    [[ ${rc} -eq 0 ]] && has "${out}" "Valid configuration"
+    ok "caddy validate: the ${v} variant is a valid configuration" "$?"
+    out="$(docker run --rm -v "${d}:/etc/caddy:ro" "${CADDY_IMAGE}" caddy fmt --diff "/etc/caddy/Caddyfile.${v}" 2>&1)"
+    rc=$?
+    [[ ${rc} -eq 0 ]] && ! grep -qE '^[+-][^+-]' <<<"${out}"
+    ok "caddy fmt --diff: the ${v} variant is already in Caddy's own format" "$?"
+  done
+  docker run --rm -v "${d}:/etc/caddy:ro" "${CADDY_IMAGE}" caddy adapt --config /etc/caddy/Caddyfile.plain --adapter caddyfile --pretty >"${d}/plain.json" 2>/dev/null
+  ok "caddy adapt: the plain variant turns into JSON" "$?"
+  if command -v jq >/dev/null 2>&1; then
+    [[ "$(jq -r '[.. | objects | select(.handler?=="reverse_proxy") | .headers.request.set["Cf-Connecting-Ip"][0]] | first' "${d}/plain.json")" == "{http.request.remote.host}" ]]
+    ok "adapted config: the proxy sets Cf-Connecting-Ip to the remote host (replacing the visitor's own value)" "$?"
+    [[ "$(jq -r '[.. | objects | select(.handler?=="reverse_proxy") | .upstreams[0].dial] | first' "${d}/plain.json")" == "127.0.0.1:8480" ]]
+    ok "adapted config: the upstream is 127.0.0.1:8480" "$?"
+    jq -e '.apps.http.servers | to_entries[0].value.routes[0].handle[] | select(.handler=="subroute") | .routes
+      | (to_entries | map(select((.value.match // [{}])[0].path[0]? == "/download/*")) | .[0].key) as $dl
+      | ($dl != null) and ($dl < (length - 1)) and (.[-1].match == null)' "${d}/plain.json" >/dev/null
+    ok "adapted config: the /download/* route comes before the catch-all route" "$?"
+    jq -e '[.. | objects | select(.handler?=="headers") | .response.set["Strict-Transport-Security"]? // empty] | length > 0' "${d}/plain.json" >/dev/null
+    ok "adapted config: HSTS is set on responses" "$?"
+    jq -e '[.. | objects | select(.handler?=="static_response") | select(.headers.Location[0]=="/download/") | .status_code] | first == 301' "${d}/plain.json" >/dev/null
+    ok "adapted config: /download redirects to /download/" "$?"
+  else
+    skip "jq is not installed: the facts of the adapted config were not checked"
+  fi
+}
+
+test_bootstrap() {
+  section "bootstrap.sh in a throwaway ubuntu:24.04 container (--container: no systemd, no ufw enable, no swap)"
+  CONTAINER="herd-vps-dryrun-$$-$(date +%s)"
+  local key="${SANDBOX}/test_key" out rc work="${SANDBOX}/work"
+  ssh-keygen -q -t ed25519 -N '' -C 'herd-vps-dryrun' -f "${key}" >/dev/null 2>&1
+  mkdir -p "${work}"
+  cp -R "${HERE}" "${work}/vps"
+  cp "${key}.pub" "${work}/test_key.pub"
+  # --network host: the default bridge network of this kind of machine has no DNS or egress (see docker-compose.yml's notes). Nothing
+  # in the container listens or starts a daemon, and it has no extra capabilities.
+  docker run -d --name "${CONTAINER}" --network host -v "${work}:/work:ro" ubuntu:24.04 sleep 3600 >/dev/null
+  ok "the throwaway container ${CONTAINER} started" "$?"
+  local run1 run2 managed='/etc/docker/daemon.json /etc/apt/sources.list.d/docker.sources /etc/apt/keyrings/docker.asc /etc/cron.d/herd-backup /etc/apt/apt.conf.d/20auto-upgrades /home/deploy/.ssh/authorized_keys /etc/passwd /etc/group /etc/ufw/user.rules /etc/ufw/user6.rules'
+  run1="$(docker exec "${CONTAINER}" /work/vps/bootstrap.sh --container --pubkey-file /work/test_key.pub 2>&1)"
+  rc=$?
+  ok "bootstrap.sh --container: first run succeeds" "${rc}"
+  printf '%s\n' "${run1}" | tail -n 25 | sed 's/^/    | /'
+  echo "${run1}" >"${SANDBOX}/bootstrap.run1"
+  [[ -z "${HERD_VPS_TEST_LOGDIR:-}" ]] || { mkdir -p "${HERD_VPS_TEST_LOGDIR}" && echo "${run1}" >"${HERD_VPS_TEST_LOGDIR}/bootstrap.run1.log"; }
+  docker exec "${CONTAINER}" /bin/bash -c "sha256sum ${managed} >/tmp/sums1 2>&1; ls -l --time-style=full-iso ${managed} | grep -v ' /etc/ufw/' >/tmp/times1 2>&1"
+  run2="$(docker exec "${CONTAINER}" /work/vps/bootstrap.sh --container --pubkey-file /work/test_key.pub 2>&1)"
+  rc=$?
+  ok "bootstrap.sh --container: second run succeeds" "${rc}"
+  echo "${run2}" >"${SANDBOX}/bootstrap.run2"
+  [[ -z "${HERD_VPS_TEST_LOGDIR:-}" ]] || echo "${run2}" >"${HERD_VPS_TEST_LOGDIR}/bootstrap.run2.log"
+  docker exec "${CONTAINER}" /bin/bash -c "sha256sum ${managed} >/tmp/sums2 2>&1; ls -l --time-style=full-iso ${managed} | grep -v ' /etc/ufw/' >/tmp/times2 2>&1"
+  docker exec "${CONTAINER}" /bin/bash -c 'cmp /tmp/sums1 /tmp/sums2 && cmp /tmp/times1 /tmp/times2 || { diff /tmp/sums1 /tmp/sums2; diff /tmp/times1 /tmp/times2; false; }'
+  ok "idempotent: the second run leaves every file it manages as it was (content; and, apart from ufw's own rule files, which ufw re-saves, the modification times too)" "$?"
+
+  ex() { docker exec "${CONTAINER}" /bin/bash -c "$1"; }
+  ex 'dpkg -s docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null 2>&1'
+  ok "Docker Engine, CLI, containerd, buildx and the compose plugin are installed" "$?"
+  ex 'apt-cache policy docker-ce | grep -q "download.docker.com/linux/ubuntu noble/stable"'
+  ok "docker-ce comes from download.docker.com (noble/stable)" "$?"
+  ex 'test -s /etc/apt/keyrings/docker.asc && grep -q "^Signed-By: /etc/apt/keyrings/docker.asc" /etc/apt/sources.list.d/docker.sources && grep -q "^Suites: noble" /etc/apt/sources.list.d/docker.sources'
+  ok "the apt source is the deb822 file of Docker's instructions, signed by the checked key" "$?"
+  ex 'gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | grep -q "^fpr:::::::::9DC858229FC7DD38854AE2D88D81803C0EBFCD88:"'
+  ok "the key has the fingerprint bootstrap.sh checks" "$?"
+  ex 'jq -e ".\"log-driver\" == \"json-file\" and .\"log-opts\".\"max-size\" == \"10m\" and .\"log-opts\".\"max-file\" == \"5\"" /etc/docker/daemon.json >/dev/null'
+  ok "daemon.json: log rotation for every container" "$?"
+  ex 'docker --version >/dev/null && docker compose version >/dev/null'
+  ok "docker and docker compose answer" "$?"
+  ex 'id deploy | grep -q "(docker)"'
+  ok "the deploy user exists and is in the docker group" "$?"
+  ex 'test "$(stat -c %a /home/deploy/.ssh)" = 700 && test "$(stat -c %a /home/deploy/.ssh/authorized_keys)" = 600 && test "$(stat -c %U /home/deploy/.ssh/authorized_keys)" = deploy'
+  ok "the deploy user's .ssh is 700 and its authorized_keys 600, both owned by it" "$?"
+  ex "test \"\$(grep -c . /home/deploy/.ssh/authorized_keys)\" = 1 && grep -qxF \"\$(cat /work/test_key.pub)\" /home/deploy/.ssh/authorized_keys"
+  ok "the key is in authorized_keys once, after two runs" "$?"
+  ex 'for d in herd edge edge/conf edge/download backups backups/pg backups/c2 .c2 .herd-jobs; do test "$(stat -c %U /home/deploy/$d)" = deploy || exit 1; done; test "$(stat -c %a /home/deploy/.c2)" = 700 && test "$(stat -c %a /home/deploy/backups)" = 700'
+  ok "the stand's directories exist, owned by deploy; ~/.c2 and ~/backups are 700" "$?"
+  ex 'grep -q "^17 3 \* \* \* deploy " /etc/cron.d/herd-backup && test "$(stat -c %a /etc/cron.d/herd-backup)" = 644'
+  ok "/etc/cron.d/herd-backup: nightly job as the deploy user" "$?"
+  ex 'grep -q "APT::Periodic::Unattended-Upgrade \"1\"" /etc/apt/apt.conf.d/20auto-upgrades && grep -q -- "-security" /etc/apt/apt.conf.d/50unattended-upgrades'
+  ok "unattended upgrades: periodic runs on, the security pocket is allowed" "$?"
+  ex 'ufw show added | grep -q "ufw allow 22/tcp" && ufw show added | grep -q "ufw allow 80/tcp" && ufw show added | grep -q "ufw allow 443" && ufw show added | grep -q "ufw allow from 172.28.77.0/24 to 172.28.77.1 port 8090 proto tcp"'
+  ok "ufw rules written: 22, 80, 443 and the server->chainsvc rule on the stand's gateway" "$?"
+  ex 'grep -q "^DEFAULT_INPUT_POLICY=\"DROP\"" /etc/default/ufw'
+  ok "ufw default policy for incoming traffic is DROP" "$?"
+  has "${run1}" "ufw: rules written, not switched on here"
+  ok "ufw was not switched on in the container (said so)" "$?"
+  has "${run1}" "would add a 4G swap file" || has "${run1}" "no swap added"
+  ok "the swap decision is made and reported" "$?"
+  out="$(docker exec -e HERD_BOOTSTRAP_MEM_KB=2000000 "${CONTAINER}" /work/vps/bootstrap.sh --container --pubkey-file /work/test_key.pub 2>&1)"
+  has "${out}" "RAM is 1953 MiB: would add a 4G swap file"
+  ok "with 2 GB of RAM the swap file would be made (decision reported)" "$?"
+  out="$(docker exec -e HERD_BOOTSTRAP_MEM_KB=8000000 "${CONTAINER}" /work/vps/bootstrap.sh --container --pubkey-file /work/test_key.pub 2>&1)"
+  has "${out}" "no swap added"
+  ok "with 8 GB of RAM no swap is made" "$?"
+  ex 'test ! -e /etc/ssh/sshd_config.d/10-herd.conf'
+  ok "no sshd in the container: no ssh hardening file written" "$?"
+  docker exec "${CONTAINER}" /work/vps/bootstrap.sh --container >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "without a public key bootstrap.sh refuses" "$?"
+  docker exec "${CONTAINER}" /work/vps/bootstrap.sh --container --pubkey-file /work/vps/bootstrap.sh >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "a file that is not a public key line is refused" "$?"
+
+  ex 'grep -q "^version=1$" /var/lib/herd-bootstrap/done'
+  ok "the stamp /var/lib/herd-bootstrap/done was written" "$?"
+
+  # the job runner on Linux (setsid) and the sourced remote.sh inside the same container
+  ex 'cd /tmp && HERD_JOBS_DIR=/tmp/jobs HERD_APP_DIR=/tmp /work/vps/remote.sh job start j1 -- /bin/bash -c "echo hi; sleep 1; exit 2" >/dev/null; HERD_JOBS_DIR=/tmp/jobs HERD_APP_DIR=/tmp /work/vps/remote.sh job follow j1 | grep -q "^hi$"; test "${PIPESTATUS[0]}" = 2'
+  ok "the job runner on Linux: output followed, exit status 2 handed on" "$?"
+  ex 'command -v setsid >/dev/null'
+  ok "(setsid is there, so the job ran in a session of its own)" "$?"
+  docker rm -f "${CONTAINER}" >/dev/null 2>&1
+  CONTAINER=""
+}
+
+
+# The rendered Caddyfile served by the real Caddy binary of the pinned version, inside the throwaway container: a client in front, a tiny
+# upstream behind that answers with the headers it was given. Plain http on loopback ports instead of the domain (no certificate can be had
+# here); the rest of the Caddyfile is the production text.
+test_caddylive() {
+  section "caddy (live): the rendered Caddyfile served by Caddy ${CADDY_VERSION}, in the throwaway container"
+  CONTAINER="herd-vps-dryrun-live-$$-$(date +%s)"
+  local work="${SANDBOX}/live" raw out line
+  mkdir -p "${work}"
+  raw="${work}/Caddyfile.raw"
+  (
+    set +e
+    # shellcheck source=tools/vps/common.sh
+    source "${HERE}/common.sh"
+    render_caddyfile herd.example.org 18481 '' 0 >"${raw}"
+  )
+  {
+    printf '{\n\tauto_https off\n\tadmin off\n}\n\n'
+    sed -e 's|^herd.example.org {|http://127.0.0.1:18480 {|' -e 's|/srv/download|/tmp/dl|' "${raw}"
+  } >"${work}/Caddyfile"
+  grep -q '^http://127.0.0.1:18480 {' "${work}/Caddyfile" && grep -q 'reverse_proxy 127.0.0.1:18481' "${work}/Caddyfile"
+  ok "the test copy of the Caddyfile differs from the production text in the site address, the upstream port and the download root only" "$?"
+  cat >"${work}/upstream.py" <<'PYEOF'
+import http.server, json
+
+
+class H(http.server.BaseHTTPRequestHandler):
+    def reply(self):
+        if self.path == "/big":
+            body = ("<p>herd herd herd herd herd herd herd herd</p>\n" * 400).encode()
+            ctype = "text/html"
+        else:
+            body = json.dumps({"path": self.path, "method": self.command,
+                               "headers": {k.lower(): v for k, v in self.headers.items()}}).encode()
+            ctype = "application/json"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Server", "upstream-should-not-show")
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = do_POST = reply
+
+    def log_message(self, *args):
+        pass
+
+
+http.server.ThreadingHTTPServer(("127.0.0.1", 18481), H).serve_forever()
+PYEOF
+  cat >"${work}/live-test.sh" <<'LIVEEOF'
+#!/usr/bin/env bash
+# runs inside the throwaway container; prints "ok   - ..." / "FAIL - ..." / "skip - ..." lines
+export DEBIAN_FRONTEND=noninteractive
+V="$1"
+n=0
+pass() { echo "ok   - $1"; }
+fail() { echo "FAIL - $1"; }
+check() { # check "description" command...
+  local d="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then pass "${d}"; else fail "${d}"; fi
+}
+apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq curl ca-certificates python3-minimal jq >/dev/null 2>&1 || { echo "skip - could not install curl/python3/jq in the container"; exit 0; }
+arch="$(dpkg --print-architecture)"
+cd /tmp || exit 1
+base="https://github.com/caddyserver/caddy/releases/download/v${V}"
+if ! curl -fsSL -o "caddy_${V}_linux_${arch}.tar.gz" "${base}/caddy_${V}_linux_${arch}.tar.gz" || ! curl -fsSL -o "caddy_${V}_checksums.txt" "${base}/caddy_${V}_checksums.txt"; then
+  echo "skip - could not download Caddy ${V} from its GitHub release"
+  exit 0
+fi
+if grep " caddy_${V}_linux_${arch}.tar.gz\$" "caddy_${V}_checksums.txt" | sha512sum -c - >/dev/null 2>&1; then
+  pass "the Caddy ${V} release archive matches the sha512 in its checksums file"
+else
+  fail "checksum of the Caddy ${V} release archive"
+  exit 0
+fi
+tar -xzf "caddy_${V}_linux_${arch}.tar.gz" caddy
+./caddy version | grep -q "^v${V}" && pass "the binary reports v${V}" || fail "the binary reports another version: $(./caddy version)"
+mkdir -p /tmp/dl
+head -c 4096 /dev/urandom >/tmp/dl/herd.apk
+printf '%s  herd.apk\n' "$(sha256sum /tmp/dl/herd.apk | cut -d' ' -f1)" >/tmp/dl/herd.apk.sha256
+python3 /work/upstream.py &
+./caddy run --config /work/Caddyfile --adapter caddyfile >/tmp/caddy.log 2>&1 &
+for _ in $(seq 1 50); do
+  curl -s -o /dev/null http://127.0.0.1:18480/ready && break
+  sleep 0.2
+done
+P=http://127.0.0.1:18480
+
+body="$(curl -s -H 'CF-Connecting-IP: 198.51.100.77' ${P}/api/rpc/serverInfo)"
+[[ "$(jq -r '.headers["cf-connecting-ip"]' <<<"${body}")" == "127.0.0.1" ]] && pass "a forged CF-Connecting-IP is replaced by the address Caddy saw" || fail "forged CF-Connecting-IP got through: ${body}"
+body="$(curl -s ${P}/api/rpc/serverInfo)"
+[[ "$(jq -r '.headers["cf-connecting-ip"]' <<<"${body}")" == "127.0.0.1" ]] && pass "without the header the upstream gets the peer's address in it anyway" || fail "no CF-Connecting-IP without the header: ${body}"
+body="$(curl -s -H 'X-Forwarded-For: 5.6.7.8' ${P}/x)"
+[[ "$(jq -r '.headers["x-forwarded-for"]' <<<"${body}")" == "127.0.0.1" ]] && pass "an X-Forwarded-For from the visitor is not passed on" || fail "X-Forwarded-For: ${body}"
+body="$(curl -s -X POST -H 'Content-Type: application/json' -d '{"args":[]}' ${P}/api/rpc/serverInfo)"
+[[ "$(jq -r '.method + " " + .path' <<<"${body}")" == "POST /api/rpc/serverInfo" ]] && pass "POST /api/rpc/serverInfo reaches the upstream unchanged" || fail "POST path: ${body}"
+[[ "$(jq -r '.headers.host' <<<"${body}")" == "127.0.0.1:18480" ]] && pass "the Host header is passed on" || fail "Host: ${body}"
+body="$(curl -s ${P}/downloads)"
+[[ "$(jq -r '.path' <<<"${body}")" == "/downloads" ]] && pass "/downloads (not /download/) is proxied, not served as a file" || fail "/downloads: ${body}"
+
+hdrs="$(curl -sI ${P}/x)"
+grep -qi '^strict-transport-security: max-age=31536000' <<<"${hdrs}" && pass "HSTS header" || fail "HSTS header: ${hdrs}"
+grep -qi '^x-content-type-options: nosniff' <<<"${hdrs}" && pass "X-Content-Type-Options" || fail "nosniff"
+grep -qi '^referrer-policy: strict-origin-when-cross-origin' <<<"${hdrs}" && pass "Referrer-Policy" || fail "Referrer-Policy"
+grep -qi '^server:' <<<"${hdrs}" && fail "a Server header is shown: $(grep -i '^server:' <<<"${hdrs}")" || pass "no Server header (neither Caddy's nor the upstream's)"
+curl -s -o /dev/null -D - -H 'Accept-Encoding: gzip' ${P}/big | grep -qi '^content-encoding: gzip' && pass "responses are compressed" || fail "no gzip"
+
+hdrs="$(curl -sI ${P}/download)"
+head -n 1 <<<"${hdrs}" | grep -q ' 301 ' && grep -qi '^location: /download/' <<<"${hdrs}" && pass "/download redirects to /download/" || fail "redirect: ${hdrs}"
+body="$(curl -s ${P}/download/)"
+grep -q 'herd.apk' <<<"${body}" && pass "/download/ lists the files" || fail "listing: ${body:0:200}"
+hdrs="$(curl -sI ${P}/download/herd.apk)"
+head -n 1 <<<"${hdrs}" | grep -q ' 200 ' && pass "/download/herd.apk -> 200" || fail "apk status: ${hdrs}"
+grep -qi '^content-type: application/vnd.android.package-archive' <<<"${hdrs}" && pass "the APK is served as an Android package" || fail "apk content type: $(grep -i '^content-type' <<<"${hdrs}")"
+grep -qi '^content-disposition: attachment' <<<"${hdrs}" && pass "the APK is an attachment" || fail "content-disposition"
+grep -qi '^cache-control: no-cache' <<<"${hdrs}" && pass "downloads are not cached" || fail "cache-control"
+curl -s -o /tmp/got.apk ${P}/download/herd.apk
+cmp -s /tmp/got.apk /tmp/dl/herd.apk && pass "the downloaded bytes are the file's" || fail "downloaded bytes differ"
+body="$(curl -s ${P}/download/herd.apk.sha256)"
+[[ "${body}" == "$(cat /tmp/dl/herd.apk.sha256)" ]] && pass "herd.apk.sha256 is served" || fail "sha256 file: ${body}"
+code="$(curl -s -o /dev/null -w '%{http_code}' ${P}/download/nothing-here)"
+[[ "${code}" == 404 ]] && pass "a missing file under /download/ is 404 (not handed to the upstream)" || fail "missing file gives ${code}"
+body="$(curl -s --path-as-is "${P}/download/../../../../etc/passwd")"
+grep -q 'root:' <<<"${body}" && fail "a path that climbs out of /download/ reads /etc/passwd" || pass "a path that climbs out of /download/ does not read /etc/passwd (it is normalised and goes to the upstream, or is refused)"
+body="$(curl -s --path-as-is "${P}/download/..%2f..%2fetc/passwd")"
+grep -q 'root:' <<<"${body}" && fail "an encoded traversal reads /etc/passwd" || pass "an encoded traversal does not read /etc/passwd"
+body="$(curl -s --path-as-is "${P}/download/%2e%2e/%2e%2e/etc/passwd")"
+grep -q 'root:' <<<"${body}" && fail "a dot-encoded traversal reads /etc/passwd" || pass "a dot-encoded traversal does not read /etc/passwd"
+
+kill %1 %2 2>/dev/null
+wait 2>/dev/null
+LIVEEOF
+  chmod +x "${work}/live-test.sh"
+  docker run -d --name "${CONTAINER}" --network host -v "${work}:/work:ro" ubuntu:24.04 sleep 900 >/dev/null
+  ok "the throwaway container ${CONTAINER} started" "$?"
+  out="$(docker exec "${CONTAINER}" /work/live-test.sh "${CADDY_VERSION}" 2>&1)"
+  while IFS= read -r line; do
+    case "${line}" in
+      "ok   - "* | "FAIL - "* | "skip - "*)
+        case "${line}" in
+          "ok   - "*) ok "${line#ok   - }" 0 ;;
+          "FAIL - "*) ok "${line#FAIL - }" 1 ;;
+          *) skip "${line#skip - }" ;;
+        esac
+        ;;
+    esac
+  done <<<"${out}"
+  has "${out}" "ok   - " || echo "$out" | tail -5
+  docker rm -f "${CONTAINER}" >/dev/null 2>&1
+  CONTAINER=""
+}
+
+
+# backup.sh against a real Postgres 16 (Ubuntu's package; the stand runs postgres:16-alpine): pg_dump with --clean --if-exists, and the restore that
+# replaces the schema, in the throwaway container. The cluster listens on a unix socket only, in /tmp, never on the network.
+test_pgrestore() {
+  section "backup.sh against a real PostgreSQL 16 (throwaway container, unix socket only)"
+  CONTAINER="herd-vps-dryrun-pg-$$-$(date +%s)"
+  local work="${SANDBOX}/pg" out line
+  mkdir -p "${work}"
+  cp -R "${HERE}" "${work}/vps"
+  cat >"${work}/docker" <<'DOCKEREOF'
+#!/usr/bin/env bash
+# fake docker for backup.sh: the "db container" is the Postgres of this container, reached through its unix socket
+case "$1" in
+  ps) case "$*" in *service=db*) echo dbcid ;; esac ;;
+  exec)
+    shift
+    while [[ "$1" == -* ]]; do shift; done
+    shift # the container id
+    exec runuser -u postgres -- env PGHOST=/tmp/pgsock PATH="/usr/lib/postgresql/16/bin:${PATH}" "$@"
+    ;;
+  compose) printf '%s\n' "$*" >>/tmp/compose.log ;;
+esac
+DOCKEREOF
+  chmod +x "${work}/docker"
+  cat >"${work}/pg-test.sh" <<'PGEOF'
+#!/usr/bin/env bash
+export DEBIAN_FRONTEND=noninteractive
+pass() { echo "ok   - $1"; }
+fail() { echo "FAIL - $1"; }
+apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq postgresql-16 >/dev/null 2>&1 || { echo "skip - could not install postgresql-16 in the container"; exit 0; }
+PGBIN=/usr/lib/postgresql/16/bin
+mkdir -p /tmp/pgsock && chown postgres /tmp/pgsock
+runuser -u postgres -- "${PGBIN}/initdb" -D /tmp/pgdata -U herd --auth=trust >/dev/null 2>&1 || { fail "initdb"; exit 0; }
+runuser -u postgres -- "${PGBIN}/pg_ctl" -D /tmp/pgdata -o "-c listen_addresses='' -c unix_socket_directories=/tmp/pgsock" -l /tmp/pg.log -w start >/dev/null 2>&1 || { fail "pg_ctl start: $(tail -3 /tmp/pg.log)"; exit 0; }
+export PGHOST=/tmp/pgsock PATH="${PGBIN}:/work:${PATH}"
+q() { runuser -u postgres -- env PGHOST=/tmp/pgsock "${PGBIN}/psql" -X -q -At -U herd -d herd "$@"; }
+runuser -u postgres -- env PGHOST=/tmp/pgsock "${PGBIN}/createdb" -U herd herd || { fail "createdb"; exit 0; }
+pass "a PostgreSQL $(q -c 'show server_version') cluster runs on a unix socket"
+q <<'SQL'
+CREATE TABLE public.flyway_schema_history (installed_rank int primary key, version text, description text);
+INSERT INTO public.flyway_schema_history VALUES (1, '1', 'init'), (2, '7', 'markets');
+CREATE TABLE public.players (id text primary key, nick text not null);
+CREATE SEQUENCE public.event_seq START 100;
+CREATE TABLE public.events (id bigint primary key default nextval('public.event_seq'), player_id text references public.players(id), body jsonb);
+CREATE INDEX events_player ON public.events (player_id);
+CREATE VIEW public.recent AS SELECT id, player_id FROM public.events WHERE id > 100;
+INSERT INTO public.players VALUES ('p1', 'alice'), ('p2', 'bob');
+INSERT INTO public.events (player_id, body) VALUES ('p1', '{"bet":1}'), ('p2', '{"bet":2}'), ('p1', '{"bet":3}');
+SQL
+before="$(q -c "select (select count(*) from players) || ',' || (select count(*) from events) || ',' || last_value from event_seq")"
+pass "test data in place: ${before}"
+
+export HOME=/tmp/pghome HERD_BACKUP_DIR=/tmp/pghome/backups HERD_C2_PARENT=/tmp/pghome/.c2 HERD_APP_DIR=/tmp/pghome/herd
+mkdir -p "${HOME}/.c2/testnet11" "${HERD_APP_DIR}"
+echo '{}' >"${HOME}/.c2/testnet11/operator.json"
+/work/vps/backup.sh nightly >/tmp/backup.out 2>&1 && pass "backup.sh nightly against the real pg_dump succeeds" || fail "backup.sh nightly: $(cat /tmp/backup.out)"
+dump="$(ls "${HERD_BACKUP_DIR}"/pg/herd-nightly-*.sql.gz 2>/dev/null | head -n 1)"
+[[ -n "${dump}" ]] && gzip -t "${dump}" && gzip -dc "${dump}" | tail -n 12 | grep -q 'PostgreSQL database dump complete' && pass "the dump is a valid gzip ending with pg_dump's closing line" || fail "no valid dump"
+gzip -dc "${dump}" | grep -q 'DROP TABLE IF EXISTS public.events' && pass "the dump holds DROP ... IF EXISTS (--clean --if-exists)" || fail "no DROP IF EXISTS in the dump"
+gzip -dc "${dump}" | grep -qE 'OWNER TO' && fail "the dump has OWNER TO lines (--no-owner)" || pass "the dump has no OWNER TO lines (--no-owner)"
+
+# the game goes on, a newer version migrates, and then somebody restores the dump
+q <<'SQL'
+DELETE FROM public.events;
+INSERT INTO public.players VALUES ('p3', 'carol');
+INSERT INTO public.events (player_id, body) VALUES ('p3', '{"bet":99}');
+CREATE TABLE public.newer_migration (x int);
+INSERT INTO public.flyway_schema_history VALUES (3, '8', 'a newer migration');
+SQL
+mutated="$(q -c "select (select count(*) from players) || ',' || (select count(*) from events)")"
+[[ "${mutated}" == "3,1" ]] && pass "the database was changed after the dump (${mutated})" || fail "setup: ${mutated}"
+
+: >/tmp/compose.log
+/work/vps/backup.sh restore "${dump}" >/tmp/restore.out 2>&1 && fail "restore without --yes went ahead" || pass "restore without --yes is refused"
+/work/vps/backup.sh restore "${dump}" --yes >/tmp/restore.out 2>&1 && pass "restore --yes succeeds against the real psql" || fail "restore: $(tail -5 /tmp/restore.out)"
+after="$(q -c "select (select count(*) from players) || ',' || (select count(*) from events) || ',' || last_value from event_seq")"
+[[ "${after}" == "${before}" ]] && pass "players, events and the sequence are as they were at the dump (${after})" || fail "after restore: ${after}, wanted ${before}"
+[[ "$(q -c "select to_regclass('public.newer_migration') is null")" == t ]] && pass "a table that did not exist at the dump is gone (the schema was replaced, not patched)" || fail "newer_migration is still there"
+[[ "$(q -c "select count(*) from flyway_schema_history")" == 2 ]] && pass "the migration history is the dump's" || fail "flyway_schema_history"
+[[ "$(q -c "select count(*) from pg_indexes where indexname='events_player'")" == 1 && "$(q -c "select count(*) from pg_views where viewname='recent'")" == 1 ]] && pass "the index and the view are back" || fail "index or view missing"
+q -c "insert into events (player_id, body) values ('p1','{}')" >/dev/null 2>&1 && pass "the foreign key and the sequence work after the restore" || fail "insert after restore"
+grep -q 'stop server' /tmp/compose.log && grep -q 'start server' /tmp/compose.log && pass "the server was stopped for the restore and started again" || fail "compose log: $(cat /tmp/compose.log)"
+
+# a dump that does not apply leaves the database as it is
+q -c "insert into players values ('p9','zed')" >/dev/null
+state_before="$(q -c "select count(*) from players")"
+bad="${HERD_BACKUP_DIR}/pg/herd-nightly-bad.sql.gz"
+{ gzip -dc "${dump}"; echo "THIS IS NOT SQL;"; } | gzip >"${bad}"
+: >/tmp/compose.log
+/work/vps/backup.sh restore "${bad}" --yes >/tmp/restore.out 2>&1 && fail "a broken dump was accepted" || pass "a dump with an error is refused"
+state_after="$(q -c "select count(*) from players")"
+[[ "${state_before}" == "${state_after}" && "$(q -c "select to_regclass('public.players') is not null")" == t ]] && pass "... and the database is exactly as it was (one transaction, the schema was not dropped)" || fail "the failed restore changed the database (${state_before} -> ${state_after})"
+grep -q 'start server' /tmp/compose.log && pass "... and the server was started again" || fail "server not restarted after a failed restore"
+
+runuser -u postgres -- "${PGBIN}/pg_ctl" -D /tmp/pgdata -m fast stop >/dev/null 2>&1
+PGEOF
+  chmod +x "${work}/pg-test.sh"
+  docker run -d --name "${CONTAINER}" --network host -v "${work}:/work:ro" ubuntu:24.04 sleep 900 >/dev/null
+  ok "the throwaway container ${CONTAINER} started" "$?"
+  # the fake docker has to be first in PATH for backup.sh
+  out="$(docker exec -e PATH=/work:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "${CONTAINER}" /work/pg-test.sh 2>&1)"
+  while IFS= read -r line; do
+    case "${line}" in
+      "ok   - "*) ok "${line#ok   - }" 0 ;;
+      "FAIL - "*) ok "${line#FAIL - }" 1 ;;
+      "skip - "*) skip "${line#skip - }" ;;
+    esac
+  done <<<"${out}"
+  has "${out}" "ok   - " || printf '%s\n' "${out}" | tail -8
+  docker rm -f "${CONTAINER}" >/dev/null 2>&1
+  CONTAINER=""
+}
+
+# --- run -------------------------------------------------------------------------------------------------------------------------------
+
+want static && test_static
+want common && test_common
+want deploy && test_deploy
+want env && test_env
+want secrets && test_secrets
+want jobs && test_jobs
+want backup && test_backup
+want verify && test_verify
+want stand && test_stand
+want flow && test_flow
+if ((DOCKER_TESTS)); then
+  if docker info >/dev/null 2>&1; then
+    want caddy && test_caddy
+    want caddylive && test_caddylive
+    want pgrestore && test_pgrestore
+    want bootstrap && test_bootstrap
+  else
+    echo "FAIL - --docker was asked for, but the docker daemon does not answer"
+    FAILS=$((FAILS + 1))
+  fi
+else
+  if want caddy || want caddylive || want pgrestore || want bootstrap; then skip "caddy, caddylive, pgrestore and bootstrap tests: they need docker (--docker)"; fi
+fi
+
+printf '\n%s checks, %s failed, %s skipped\n' "${TOTAL}" "${FAILS}" "${SKIPPED}"
+((FAILS == 0))
