@@ -11,6 +11,10 @@
 #
 # Options:
 #   --host H / --domain D / --user U / --key K / --ssh-port P   the VPS (or HERD_VPS_*, or .local/vps.env)
+#   --root-user U       the account that bootstrap logs in as and runs bootstrap.sh with sudo (default: root; on Oracle Cloud's
+#                       Ubuntu image: ubuntu); HERD_VPS_ROOT_USER
+#   --profile P         oracle: an Oracle Cloud instance -- bootstrap.sh uses the image's iptables rules file and no ufw, and `up`
+#                       checks that the VPS's .env has the memory settings of secrets.sh --profile oracle; HERD_VPS_PROFILE
 #   --email ADDR        contact address for Let's Encrypt (optional)
 #   --build-only        sync, Caddy, and build the images, but do not start the stand: the long first build can run while
 #                       the stand on this machine is still the one that serves, and the cutover itself takes minutes
@@ -85,6 +89,14 @@ while (($# > 0)); do
       ;;
     --ssh-port)
       VPS_SSH_PORT="${2:?}"
+      shift 2
+      ;;
+    --root-user)
+      VPS_ROOT_USER="${2:?}"
+      shift 2
+      ;;
+    --profile)
+      VPS_PROFILE="${2:?}"
       shift 2
       ;;
     --email)
@@ -354,6 +366,7 @@ preflight_up() {
   done
   if ((DRY_RUN)); then
     log "dry run: would log in as ${SSH_TARGET}, check docker and ${REMOTE_APP_DIR}/.env there"
+    [[ "${VPS_PROFILE}" != oracle ]] || log "dry run: would check that ${REMOTE_APP_DIR}/.env there holds the memory settings of the oracle profile"
     ((SKIP_DNS)) || dns_check "${VPS_DOMAIN}" "${VPS_HOST}"
     ((BUILD_ONLY)) || require_local_chainsvc_stopped "${ALLOW_LOCAL}" "starting the stand on the VPS"
     return 0
@@ -361,6 +374,11 @@ preflight_up() {
   remote "true" || die "cannot log in as ${SSH_TARGET} with ${VPS_KEY} (has 'deploy.sh bootstrap' run? is the key the one given to bootstrap?)"
   remote "docker compose version >/dev/null 2>&1" || die "docker (with the compose plugin) is not usable by ${VPS_USER} on the VPS: bootstrap.sh installs it and adds the user to the docker group"
   remote "test -s ${REMOTE_APP_DIR}/.env" || die "no ${REMOTE_APP_DIR}/.env on the VPS: run tools/vps/secrets.sh --env-only first"
+  if [[ "${VPS_PROFILE}" == oracle ]]; then
+    # An Always Free instance whose memory use stays under 20% may be reclaimed (tools/vps/README.md): the heap of the server is what keeps it above.
+    remote "grep -qx 'HERD_VPS_PROFILE=oracle' ${REMOTE_APP_DIR}/.env && grep -q '^HERD_SERVER_HEAP_MB=[0-9][0-9]*' ${REMOTE_APP_DIR}/.env" \
+      || die "the profile is oracle, but ${REMOTE_APP_DIR}/.env on the VPS has no memory settings of it (an idle Always Free instance may be reclaimed): run tools/vps/secrets.sh --env-only --profile oracle first"
+  fi
   ((SKIP_DNS)) || dns_check "${VPS_DOMAIN}" "${VPS_HOST}"
   if ((!BUILD_ONLY)); then
     # The one-publisher rule, on this side: the stand here must be stopped, and the chain data must have been copied.
@@ -406,18 +424,19 @@ do_stop() {
 
 do_bootstrap() {
   vps_finalize_config 0
-  local pub="${VPS_KEY}.pub" root_target sudo=""
+  local pub="${VPS_KEY}.pub" root_target sudo="" profile_arg=""
   if ((!DRY_RUN)); then [[ -f "${pub}" ]] || die "no ${pub}: bootstrap gives the deploy user the public half of --key"; fi
   root_target="${VPS_ROOT_USER}@${VPS_HOST}"
   [[ "${VPS_ROOT_USER}" == root ]] || sudo="sudo -n "
-  log "bootstrap of ${VPS_HOST} as ${root_target}: Docker, ufw, the '${VPS_USER}' user with ${pub}, unattended upgrades, swap, clock"
+  [[ -z "${VPS_PROFILE}" ]] || profile_arg=" --profile ${VPS_PROFILE}"
+  log "bootstrap of ${VPS_HOST} as ${root_target}: Docker, the firewall, the '${VPS_USER}' user with ${pub}, unattended upgrades, swap, clock${VPS_PROFILE:+ (profile ${VPS_PROFILE})}"
   if ((DRY_RUN)); then
     printf '[dry-run] scp %s -> %s:herd-bootstrap.sh\n' "${SELF_DIR}/bootstrap.sh" "${root_target}" >&2
-    printf '[dry-run] ssh %s: %sbash herd-bootstrap.sh --deploy-user %s --ssh-port %s --pubkey-stdin   < %s\n' "${root_target}" "${sudo}" "${VPS_USER}" "${VPS_SSH_PORT}" "${pub}" >&2
+    printf '[dry-run] ssh %s: %sbash herd-bootstrap.sh --deploy-user %s --ssh-port %s --pubkey-stdin%s   < %s\n' "${root_target}" "${sudo}" "${VPS_USER}" "${VPS_SSH_PORT}" "${profile_arg}" "${pub}" >&2
     return 0
   fi
   scp -q "${SCP_OPTS[@]}" "${SELF_DIR}/bootstrap.sh" "${root_target}:herd-bootstrap.sh"
-  ssh "${SSH_OPTS[@]}" "${root_target}" "${sudo}bash herd-bootstrap.sh --deploy-user ${VPS_USER} --ssh-port ${VPS_SSH_PORT} --pubkey-stdin" <"${pub}"
+  ssh "${SSH_OPTS[@]}" "${root_target}" "${sudo}bash herd-bootstrap.sh --deploy-user ${VPS_USER} --ssh-port ${VPS_SSH_PORT} --pubkey-stdin${profile_arg}" <"${pub}"
   remote "true" || die "bootstrap finished, but ${SSH_TARGET} cannot log in with ${VPS_KEY}"
   log "bootstrap done; ${SSH_TARGET} works. Next: tools/vps/secrets.sh --env-only"
 }

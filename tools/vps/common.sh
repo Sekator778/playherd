@@ -54,7 +54,7 @@ load_defaults_file() {
       val="${val%\'}"
       val="${val#\'}"
       case "${key}" in
-        HERD_VPS_HOST | HERD_VPS_DOMAIN | HERD_VPS_USER | HERD_VPS_KEY | HERD_VPS_SSH_PORT | HERD_VPS_EMAIL | HERD_VPS_ROOT_USER)
+        HERD_VPS_HOST | HERD_VPS_DOMAIN | HERD_VPS_USER | HERD_VPS_KEY | HERD_VPS_SSH_PORT | HERD_VPS_EMAIL | HERD_VPS_ROOT_USER | HERD_VPS_PROFILE)
           [[ -n "${!key:-}" ]] || export "${key}=${val}"
           ;;
       esac
@@ -73,6 +73,7 @@ vps_load_config() {
   VPS_KEY="${HERD_VPS_KEY:-${HOME}/.ssh/herd_vps}"
   VPS_SSH_PORT="${HERD_VPS_SSH_PORT:-22}"
   VPS_EMAIL="${HERD_VPS_EMAIL:-}"
+  VPS_PROFILE="${HERD_VPS_PROFILE:-}" # oracle: an Oracle Cloud instance (bootstrap.sh's firewall, the memory settings of env-init.sh)
 }
 
 # --- validation: everything that ends up in a remote command line or in a rendered file is checked against a narrow pattern first
@@ -96,6 +97,12 @@ valid_port() {
   local re='^[1-9][0-9]{0,4}$'
   [[ "$1" =~ $re ]] || return 1
   (($1 <= 65535))
+}
+valid_profile() { # the machine profiles of the kit: oracle, or none / nothing
+  case "$1" in
+    '' | none | oracle) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 valid_wc_id() { # a Reown/WalletConnect project id: 32 hex digits
   local re='^[0-9a-f]{32}$'
@@ -138,6 +145,8 @@ vps_finalize_config() {
   valid_user "${VPS_USER}" || die "bad user '${VPS_USER}'"
   valid_user "${VPS_ROOT_USER}" || die "bad root user '${VPS_ROOT_USER}'"
   valid_port "${VPS_SSH_PORT}" || die "bad ssh port '${VPS_SSH_PORT}'"
+  valid_profile "${VPS_PROFILE}" || die "bad profile '${VPS_PROFILE}' (oracle, or none)"
+  [[ "${VPS_PROFILE}" != none ]] || VPS_PROFILE=""
   if [[ "${need_domain}" == 1 ]]; then
     VPS_DOMAIN="$(lowercase "${VPS_DOMAIN}")"
     [[ -n "${VPS_DOMAIN}" ]] || die "no domain: --domain herd.example.org, or HERD_VPS_DOMAIN"

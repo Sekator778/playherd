@@ -17,6 +17,9 @@
 #
 # Options:
 #   --host H / --domain D / --user U / --key K / --ssh-port P    the VPS (or HERD_VPS_*, or .local/vps.env)
+#   --profile oracle        an Oracle Cloud instance (or HERD_VPS_PROFILE): the .env gets the memory settings of tools/vps/env-init.sh,
+#                           sized from the RAM of the VPS -- the server's heap pinned at a quarter of it, so that an Always Free
+#                           instance is not idle by Oracle's definition (README, "Oracle Always Free")
 #   --walletconnect-id ID   the Reown project id for Sage sign-in (32 hex digits; or $VITE_WALLETCONNECT_PROJECT_ID). It is
 #                           a build argument of the web image and public. This script does not read it from any .env.
 #   --no-walletconnect-id   go on without one (the browser test wallet works without it; Sage does not)
@@ -87,6 +90,10 @@ while (($# > 0)); do
       VPS_SSH_PORT="${2:?}"
       shift 2
       ;;
+    --profile)
+      VPS_PROFILE="${2:?}"
+      shift 2
+      ;;
     --walletconnect-id)
       WC_ID="${2:?}"
       shift 2
@@ -145,6 +152,7 @@ step_env() {
   fi
   args="--domain ${VPS_DOMAIN}"
   [[ -z "${WC_ID}" ]] || args="${args} --walletconnect-id ${WC_ID}"
+  [[ -z "${VPS_PROFILE}" ]] || args="${args} --profile ${VPS_PROFILE}"
   for kv in ${EXTRAS[@]+"${EXTRAS[@]}"}; do
     name="${kv%%=*}"
     valid_env_name "${name}" || die "bad --set name in '${kv}'"
