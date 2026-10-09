@@ -6,16 +6,26 @@
 #                                      Caddyfile served by that Caddy version's release binary in a throwaway ubuntu:24.04
 #                                      container (the headers, the download path, a forged address; needs github.com),
 #                                      this machine's rsync against Ubuntu's rsync server with deploy.sh's flags,
-#                                      backup.sh against a real PostgreSQL 16 (dump, restore, a failed restore), and
-#                                      bootstrap.sh in a throwaway container -- all named herd-vps-dryrun-*
+#                                      backup.sh against a real PostgreSQL 16 (dump, restore, a failed restore),
+#                                      bootstrap.sh in a throwaway container, and again in one that looks like Oracle's
+#                                      image (netfilter-persistent and its rules file), Oracle's rules file and the
+#                                      firewall step against a real iptables-nft with probes from a second container,
+#                                      and the memory settings against the JVM and PostgreSQL images -- all named
+#                                      herd-vps-dryrun-*
+#   tools/vps/test.sh --arm64          builds server, web and chainsvc for linux/arm64 in a throwaway buildx builder (a
+#                                      few minutes on an arm64 machine; skipped on any other) and starts them
 #   tools/vps/test.sh --only A,B       only these sections: static, common, deploy, env, secrets, jobs, backup, verify,
-#                                      stand, flow (and, with --docker: caddy, caddylive, rsynccompat, pgrestore, bootstrap)
+#                                      stand, flow, oracle, memory (and, with --docker: caddy, caddylive, rsynccompat,
+#                                      pgrestore, bootstrap, oracleboot, firewall, memfloor; with --arm64: arm64)
 #
 # What is real here: the scripts, the repository files they depend on (docker-compose.yml, tools/stand.sh, web/nginx.conf,
 # the Rust and Java sources whose names and log lines they use), this machine's rsync, shellcheck, openssl. What is
 # faked: ssh and scp (run the "remote" command in a directory that stands for the VPS's home), docker, dig and ss
-# (shell functions or scripts that answer from variables). Nothing here contacts a host, and no docker command runs without --docker.
-# With --docker the only containers are the caddy image's one-shot `validate`/`fmt`/`adapt` and one ubuntu container.
+# (shell functions or scripts that answer from variables), and iptables where the kernel is not to be touched. Nothing here
+# contacts a host, and no docker command runs without --docker (or --arm64).
+# With --docker the containers are the caddy image's one-shot `validate`/`fmt`/`adapt`, ubuntu ones, a PostgreSQL and a JVM. Two of
+# them, in the firewall test, get the capability NET_ADMIN, on a network of their own and never on the host's network; the others
+# on the host's network get no capability and cannot touch the host's firewall.
 #
 # Like tools/test-stand.sh it prints one line per check and exits non-zero if one failed.
 # HERD_VPS_TEST_DEBUG=1 also prints the output of every script run in the `flow` section; HERD_VPS_TEST_LOGDIR=DIR keeps the
@@ -36,11 +46,23 @@ TOTAL=0
 SKIPPED=0
 KEEP_CONTAINER=0
 CONTAINER=""
+# what the tests that start more than one container, or a network, a builder or images, have started (herd-vps-dryrun-*): removed at the
+# end of the test and, should the run be interrupted, here
+EXTRA_CONTAINERS=""
+EXTRA_NETWORK=""
+EXTRA_BUILDER=""
+EXTRA_IMAGES=""
+ARM64_TESTS=0
 
 cleanup() {
+  local c
   if [[ -n "${CONTAINER}" ]] && ((!KEEP_CONTAINER)); then
     docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
   fi
+  for c in ${EXTRA_CONTAINERS}; do docker rm -f "${c}" >/dev/null 2>&1 || true; done
+  if [[ -n "${EXTRA_BUILDER}" ]]; then docker buildx rm --force "${EXTRA_BUILDER}" >/dev/null 2>&1 || true; fi
+  for c in ${EXTRA_IMAGES}; do docker rmi -f "${c}" >/dev/null 2>&1 || true; done
+  if [[ -n "${EXTRA_NETWORK}" ]]; then docker network rm "${EXTRA_NETWORK}" >/dev/null 2>&1 || true; fi
   rm -rf "${SANDBOX}"
 }
 trap cleanup EXIT
@@ -49,6 +71,10 @@ while (($# > 0)); do
   case "$1" in
     --docker)
       DOCKER_TESTS=1
+      shift
+      ;;
+    --arm64)
+      ARM64_TESTS=1
       shift
       ;;
     --only)
@@ -174,8 +200,12 @@ case "$1" in
   compose)
     case "$*" in
       *"port web 80"*) [[ -z "${FAKE_COMPOSE_PORT_WEB:-}" ]] || echo "${FAKE_COMPOSE_PORT_WEB}" ;;
+      *"ps -q server"*) echo "serverc0001" ;;
+      *"ps -q") [[ "${FAKE_COMPOSE_NO_CONTAINERS:-0}" == 1 ]] || printf 'dbc0001\nchainsvcc0001\nserverc0001\nwebc0001\n' ;;
     esac
     ;;
+  stats) printf '%s\n' "${FAKE_STATS:-}" ;;
+  inspect) printf 'PATH=/usr/bin\nJDK_JAVA_OPTIONS=%s\n' "${FAKE_JDK_OPTS:-}" ;;
   *) echo "fake docker (vps side): unexpected $*" >&2; exit 99 ;;
 esac
 EOF
@@ -220,6 +250,14 @@ test_static() {
   ok "docker-compose.yml: the web image takes VITE_WALLETCONNECT_PROJECT_ID from .env" "$?"
   file_has "${compose}" 'HERD_PUBLIC_DOMAIN: ${HERD_PUBLIC_DOMAIN:-herd.local}'
   ok "docker-compose.yml: HERD_PUBLIC_DOMAIN comes from .env" "$?"
+  file_has "${compose}" 'JDK_JAVA_OPTIONS: "${HERD_SERVER_HEAP_MB:+-Xms${HERD_SERVER_HEAP_MB}m -Xmx${HERD_SERVER_HEAP_MB}m -XX:+AlwaysPreTouch}"'
+  ok "docker-compose.yml: the server JVM gets -Xms and -Xmx of HERD_SERVER_HEAP_MB and AlwaysPreTouch through JDK_JAVA_OPTIONS, and no options when it is not set (the Mac stand)" "$?"
+  file_has "${compose}" 'command: ["postgres", "-c", "shared_buffers=${HERD_DB_SHARED_BUFFERS:-128MB}"]'
+  ok "docker-compose.yml: PostgreSQL's shared_buffers come from HERD_DB_SHARED_BUFFERS, its own default (128MB) when it is not set" "$?"
+  grep -q '^ENTRYPOINT \["java", ' "${REPO}/server/Dockerfile"
+  ok "server/Dockerfile: the image starts java itself, so JAVA_OPTS and JAVA_OPTS_APPEND are read by nothing and JDK_JAVA_OPTIONS, which the java launcher reads, is the variable" "$?"
+  file_has "${HERE}/remote.sh" 'MEMORY_FLOOR_PCT=25' && file_has "${HERE}/env-init.sh" 'heap_mb=$((mem_mb * 25 / 100))'
+  ok "remote.sh warns below the share (25%) that env-init.sh --profile oracle pins as the server's heap" "$?"
   file_has "${nginx}" '172.28.77.1 1;'
   ok "web/nginx.conf: trusts CF-Connecting-IP from 172.28.77.1" "$?"
   file_has "${nginx}" '$http_cf_connecting_ip'
@@ -1207,7 +1245,15 @@ case "$1" in
       *State.Running*edge-caddy*) [[ -f "${state}/edge-up" ]] && echo true || echo false ;;
       *State.Status*edge-caddy*) [[ -f "${state}/edge-up" ]] && echo running ;;
       *State.StartedAt*) echo "2026-10-08T20:00:00.000000000Z" ;;
+      *Config.Env*) printf 'PATH=/usr/bin\nJDK_JAVA_OPTIONS=%s\n' "${FAKE_JDK_OPTS:-}" ;;
     esac
+    ;;
+  stats)
+    if [[ -n "${FAKE_STATS:-}" ]]; then
+      printf '%s\n' "${FAKE_STATS}"
+    else
+      printf 'herd-server-1 3.0GiB / 11.4GiB\nherd-db-1 100MiB / 11.4GiB\nherd-chainsvc-1 20MiB / 11.4GiB\nherd-web-1 5MiB / 11.4GiB\n'
+    fi
     ;;
   ps)
     case "$*" in
@@ -1248,6 +1294,7 @@ case "$1" in
         ;;
       ps)
         case "$*" in
+          "ps -q") printf 'db0001\nchainsvc0001\nserver0001\nweb0001\n' ;;
           *"-q server"*) echo server0001 ;;
           *"-q web"*) echo web0001 ;;
           *.State*) printf 'db running healthy\nchainsvc running healthy\nserver running healthy\nweb running healthy\n' ;;
@@ -1263,9 +1310,10 @@ exit 0
 EOF
   chmod +x "${fmac}"/* "${fvps}"/*
 
-  local common_env=(FAKE_FLOW_STATE="${state}" FAKE_VPS_BIN="${fvps}" HOME="${SANDBOX}/machome" HERD_VPS_ENV_FILE="${SANDBOX}/empty.env" PATH="${fmac}:${MACBIN}:${PATH}")
+  printf 'MemTotal:       12000000 kB\nMemFree:         4000000 kB\nMemAvailable:    7400000 kB\n' >"${state}/meminfo"
+  local common_env=(FAKE_FLOW_STATE="${state}" FAKE_VPS_BIN="${fvps}" HOME="${SANDBOX}/machome" HERD_VPS_ENV_FILE="${SANDBOX}/empty.env" HERD_MEMINFO_FILE="${state}/meminfo" HERD_BOOTSTRAP_STAMP="${state}/no-stamp" PATH="${fmac}:${MACBIN}:${PATH}")
   fl() { # fl SCRIPT ARGS... : run a script of the kit through the fakes; output in FL_OUT, status in FL_RC
-    FL_OUT="$(cd "${SANDBOX}" && env -u HERD_VPS_HOST -u HERD_VPS_DOMAIN -u HERD_VPS_USER -u VITE_WALLETCONNECT_PROJECT_ID "${common_env[@]}" "$@" 2>&1)"
+    FL_OUT="$(cd "${SANDBOX}" && env -u HERD_VPS_HOST -u HERD_VPS_DOMAIN -u HERD_VPS_USER -u HERD_VPS_ROOT_USER -u HERD_VPS_PROFILE -u VITE_WALLETCONNECT_PROJECT_ID "${common_env[@]}" "$@" 2>&1)"
     FL_RC=$?
     [[ -z "${HERD_VPS_TEST_DEBUG:-}" ]] || printf '%s\n' "${FL_OUT}" | sed 's/^/      | /' >&2
   }
@@ -1336,6 +1384,8 @@ EOF
   ok "up: the job and its log are kept on the VPS, status 0" "$?"
   [[ "$(mode_of "${VPSHOME}/herd/.env")" == 600 ]]
   ok ".env is still mode 600 after the deploy" "$?"
+  has "${FL_OUT}" "ok    memory: the stand's containers hold 3197 MiB = 27.3% of the machine's 11719 MiB"
+  ok "up: the checks on the VPS report the memory the stand holds as a share of the machine" "$?"
 
   fl "${HERE}/deploy.sh" "${base[@]}"
   ok "a second deploy.sh up changes nothing it should not: exit 0" "${FL_RC}"
@@ -1370,6 +1420,27 @@ EOF
   ok "deploy.sh stop: exit 0" "${FL_RC}"
   grep -q 'docker compose -p herd -f .*docker-compose.yml stop' "${state}/docker.log"
   ok "stop: docker compose -p herd stop on the VPS" "$?"
+
+  # the oracle profile: deploy.sh refuses without the memory settings, secrets.sh makes them from the RAM of the VPS, verify checks them
+  fl "${HERE}/deploy.sh" "${base[@]}" --profile oracle
+  [[ ${FL_RC} -ne 0 ]] && has "${FL_OUT}" "has no memory settings of it" && has "${FL_OUT}" "secrets.sh --env-only --profile oracle"
+  ok "oracle profile: deploy.sh up refuses while the VPS's .env has no memory settings, and says which command makes them" "$?"
+  ! grep -q 'checks from here' <<<"${FL_OUT}"
+  ok "... before it touched anything (no checks, no build)" "$?"
+  HERD_ENVINIT_MEM_KB=12000000 fl "${HERE}/secrets.sh" "${base[@]}" --env-only --no-walletconnect-id --profile oracle
+  ok "oracle profile: secrets.sh --env-only --profile oracle (env-init.sh reads the RAM of the machine it runs on)" "${FL_RC}"
+  grep -qx 'HERD_SERVER_HEAP_MB=2929' "${VPSHOME}/herd/.env" && grep -qx 'HERD_DB_SHARED_BUFFERS=1464MB' "${VPSHOME}/herd/.env" && grep -qx 'HERD_VPS_PROFILE=oracle' "${VPSHOME}/herd/.env"
+  ok "oracle profile: the VPS's .env has the heap (2929 MiB of 11718) and the shared buffers" "$?"
+  FAKE_JDK_OPTS='-Xms2929m -Xmx2929m -XX:+AlwaysPreTouch' fl "${HERE}/deploy.sh" "${base[@]}" --profile oracle
+  ok "oracle profile: deploy.sh up goes through once the settings are there" "${FL_RC}"
+  has "${FL_OUT}" "ok    memory: the stand's containers hold 3197 MiB = 27.3%" && has "${FL_OUT}" "the oracle profile asks for at least 25%" && has "${FL_OUT}" "ok    memory: the server JVM runs with -Xms2929m -Xmx2929m -XX:+AlwaysPreTouch"
+  ok "oracle profile: the checks on the VPS confirm the share and the pinned heap" "$?"
+  FAKE_STATS=$'herd-server-1 300MiB / 11.4GiB\nherd-db-1 100MiB / 11.4GiB' FAKE_JDK_OPTS='-Xms2929m -Xmx2929m -XX:+AlwaysPreTouch' fl "${HERE}/deploy.sh" check "${base[@]}" --no-ratelimit-check
+  ok "oracle profile: a stand that holds too little memory is a warning, not a failed deploy" "${FL_RC}"
+  has "${FL_OUT}" "WARN  memory:" && has "${FL_OUT}" "BELOW the 25%"
+  ok "oracle profile: ... and the warning is in the output" "$?"
+  fl "${HERE}/deploy.sh" "${base[@]}"
+  ok "oracle profile: without --profile on this side deploy.sh still works (the profile on the VPS is read by verify)" "${FL_RC}"
 
   # the APK
   local apk="${SANDBOX}/app-debug.apk" apkdir="${SANDBOX}/apk-src"
@@ -1408,6 +1479,533 @@ EOF
   ok "... and it says so" "$?"
   grep -q 'from=' "${VPSHOME}/herd/.deploy-info" && [[ ! -e "${VPSHOME}/herd/.claude" ]]
   ok "... .deploy-info is rewritten, no .claude directory arrived" "$?"
+}
+
+# --- Oracle Cloud ---------------------------------------------------------------------------------------------------------------------------
+
+# The rules file of Oracle's Ubuntu image: the five INPUT rules and the two REJECTs as a third party shows them (blog.meinside.dev, read
+# 2026-10-09; Oracle's own tutorial inserts at position 6 of INPUT, i.e. behind exactly these five), and the rules for the boot and block
+# volumes that Oracle describes (169.254.0.2:3260, only root may reach them: the reason ufw must stay off, bestpracticescompute.htm). It is a
+# reconstruction, not a copy from an image: nobody here has one.
+oracle_rules_fixture() {
+  cat <<'EOF'
+# CLOUD_IMG: This file was created/modified by the Cloud Image build process
+# iptables configuration for Oracle Cloud Infrastructure
+
+*filter
+:INPUT ACCEPT [0:0]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [463:49013]
+:InstanceServices - [0:0]
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p icmp -j ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -p udp --sport 123 -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+-A FORWARD -j REJECT --reject-with icmp-host-prohibited
+-A OUTPUT -d 169.254.0.0/16 -j InstanceServices
+-A InstanceServices -d 169.254.0.2/32 -p tcp -m owner --uid-owner 0 -m tcp --dport 3260 -m comment --comment "See the Oracle-Provided Images section in the Oracle Cloud Infrastructure documentation for security impact of modifying or removing this rule" -j ACCEPT
+-A InstanceServices -d 169.254.0.0/16 -p tcp -m tcp -j REJECT --reject-with tcp-reset
+COMMIT
+EOF
+}
+# the same without the lines that say whose it is
+generic_rules_fixture() { oracle_rules_fixture | grep -v 'Oracle Cloud Infrastructure'; }
+
+mtime_of() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
+
+# A fake iptables, ip6tables and iptables-restore for the functions that talk to the running kernel. The INPUT chain is a file
+# ($FAKE_IPT_STATE; $FAKE_IPT6_STATE for ip6tables): first line "-P INPUT ACCEPT", then one "-A INPUT ..." line per rule, as `iptables -S INPUT` prints it.
+make_fake_iptables() { # make_fake_iptables DIR
+  local d="$1"
+  mkdir -p "${d}"
+  cat >"${d}/iptables" <<'EOF'
+#!/usr/bin/env bash
+state="${FAKE_IPT_STATE:?}"
+printf '%s %s\n' "$(basename "$0")" "$*" >>"${FAKE_IPT_LOG:-/dev/null}"
+if [[ "${FAKE_IPT_DENY:-0}" == 1 ]]; then
+  echo "$(basename "$0") v1.8.10 (nf_tables): Could not fetch rule set generation id: Permission denied (you must be root)" >&2
+  exit 4
+fi
+op="$1"
+shift
+[[ "${1:-}" == INPUT ]] || exit 2
+shift
+case "${op}" in
+  -S) cat "${state}" ;;
+  -C) grep -qxF -- "-A INPUT $*" "${state}" ;;
+  -A) echo "-A INPUT $*" >>"${state}" ;;
+  -I)
+    pos="$1"
+    shift
+    awk -v pos="${pos}" -v rule="-A INPUT $*" '/^-P/ { print; next } { n++; if (n == pos) print rule; print } END { if (n < pos) print rule }' "${state}" >"${state}.new" && mv "${state}.new" "${state}"
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+  sed 's|FAKE_IPT_STATE|FAKE_IPT6_STATE|g' "${d}/iptables" >"${d}/ip6tables"
+  cat >"${d}/iptables-restore" <<'EOF'
+#!/usr/bin/env bash
+printf '%s %s\n' "$(basename "$0")" "$*" >>"${FAKE_IPT_LOG:-/dev/null}"
+cat >/dev/null
+exit "${FAKE_RESTORE_RC:-0}"
+EOF
+  cp "${d}/iptables-restore" "${d}/ip6tables-restore"
+  chmod +x "${d}"/*
+}
+
+# the running INPUT chain of an Oracle image as `iptables -S INPUT` prints it
+fake_live_chain() { # fake_live_chain FILE
+  printf '%s\n' '-P INPUT ACCEPT' \
+    '-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT' \
+    '-A INPUT -p icmp -j ACCEPT' \
+    '-A INPUT -i lo -j ACCEPT' \
+    '-A INPUT -p udp -m udp --sport 123 -j ACCEPT' \
+    '-A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT' \
+    '-A INPUT -j REJECT --reject-with icmp-host-prohibited' >"$1"
+}
+
+test_oracle() {
+  section "Oracle Cloud: recognising the image, choosing the firewall, the rules file and the running chain (bootstrap.sh's functions; iptables is a fake)"
+  unset SSH_CONNECTION
+  local d="${SANDBOX}/oracle" r f out rc before orig n_ssh n_rej n_first n_last
+  rm -rf "${d}"
+  mkdir -p "${d}"
+  bs() { # bs ROOTFS CODE [bootstrap.sh arguments]: CODE runs in a shell that has sourced bootstrap.sh with those arguments (main runs only when it is executed)
+    local root="$1" code="$2"
+    shift 2
+    HERD_BOOTSTRAP_ROOTFS="${root}" bash -c 'f="$1"; code="$2"; shift 2; source "${f}" "$@"; set +e; trap - ERR; eval "${code}"' _ "${HERE}/bootstrap.sh" "${code}" "$@"
+  }
+  newroot() { # newroot NAME: a directory that stands for / (the places bootstrap.sh looks at), empty
+    rm -rf "${d:?}/$1"
+    mkdir -p "${d}/$1/etc/iptables" "${d}/$1/etc/cloud/cloud.cfg.d" "${d}/$1/run/cloud-init" "${d}/$1/sys/class/dmi/id" "${d}/$1/usr/sbin"
+    echo "${d}/$1"
+  }
+
+  # --- recognising Oracle Cloud
+  r="$(newroot plain)"
+  out="$(bs "${r}" 'oracle_detect; echo "rc=$?"')"
+  has "${out}" "rc=1"
+  ok "detect: a system with none of the signs is not taken for Oracle Cloud" "$?"
+  r="$(newroot cloudid)"
+  echo oracle >"${r}/run/cloud-init/cloud-id"
+  out="$(bs "${r}" 'oracle_detect; echo "rc=$? ${ORACLE_REASON}"')"
+  has "${out}" "rc=0 ${r}/run/cloud-init/cloud-id says oracle"
+  ok "detect: the file cloud-init writes at boot says oracle" "$?"
+  r="$(newroot notoracle)"
+  echo aws >"${r}/run/cloud-init/cloud-id"
+  printf 'datasource_list: [ Ec2, None ]\n' >"${r}/etc/cloud/cloud.cfg.d/90_dpkg.cfg"
+  echo "Amazon EC2" >"${r}/sys/class/dmi/id/chassis_asset_tag"
+  generic_rules_fixture >"${r}/etc/iptables/rules.v4"
+  out="$(bs "${r}" 'oracle_detect; echo "rc=$?"')"
+  has "${out}" "rc=1"
+  ok "detect: another cloud (aws in cloud-init, another asset tag, the same rules text without Oracle's header) is not Oracle Cloud" "$?"
+  r="$(newroot dsl)"
+  printf '# written by dpkg-reconfigure\ndatasource_list: [ Oracle ]\n' >"${r}/etc/cloud/cloud.cfg.d/90_dpkg.cfg"
+  out="$(bs "${r}" 'oracle_detect; echo "rc=$? ${ORACLE_REASON}"')"
+  has "${out}" "rc=0 ${r}/etc/cloud/cloud.cfg.d/90_dpkg.cfg lists the Oracle datasource"
+  ok "detect: the datasource list of the image names Oracle" "$?"
+  r="$(newroot dmi)"
+  echo "OracleCloud.com" >"${r}/sys/class/dmi/id/chassis_asset_tag"
+  out="$(bs "${r}" 'oracle_detect; echo "rc=$? ${ORACLE_REASON}"')"
+  has "${out}" "rc=0 the DMI chassis asset tag is OracleCloud.com"
+  ok "detect: the DMI chassis asset tag that cloud-init's Oracle datasource looks for" "$?"
+  r="$(newroot header)"
+  oracle_rules_fixture >"${r}/etc/iptables/rules.v4"
+  out="$(bs "${r}" 'oracle_detect; echo "rc=$? ${ORACLE_REASON}"')"
+  has "${out}" "rc=0 ${r}/etc/iptables/rules.v4 is the rules file of Oracle's image"
+  ok "detect: the header of the image's rules file" "$?"
+  r="$(newroot cmd)"
+  mkdir -p "${d}/cloudidbin"
+  printf '#!/bin/sh\necho oracle\n' >"${d}/cloudidbin/cloud-id"
+  chmod +x "${d}/cloudidbin/cloud-id"
+  out="$(PATH="${d}/cloudidbin:${PATH}" bs "${r}" 'oracle_detect; echo "rc=$? ${ORACLE_REASON}"')"
+  has "${out}" "rc=0 cloud-id says oracle"
+  ok "detect: the cloud-id command of cloud-init answers oracle" "$?"
+  r="$(newroot flag)"
+  out="$(bs "${r}" 'oracle_detect; echo "rc=$? ${ORACLE_REASON}"' --profile oracle)"
+  has "${out}" "rc=0 --profile oracle"
+  ok "detect: --profile oracle says so by itself" "$?"
+
+  # --- which firewall
+  r="$(newroot fwplain)"
+  out="$(bs "${r}" 'decide_firewall; echo "FIREWALL=${FIREWALL}"' 2>&1)"
+  has "${out}" "FIREWALL=ufw" && lacks "${out}" "netfilter-persistent"
+  ok "firewall: a plain system gets ufw, as before" "$?"
+  r="$(newroot fworacle)"
+  echo oracle >"${r}/run/cloud-init/cloud-id"
+  out="$(bs "${r}" 'decide_firewall; echo "FIREWALL=${FIREWALL}"' 2>&1)"
+  has "${out}" "FIREWALL=iptables" && has "${out}" "not ufw" && has "${out}" "Oracle says not to use ufw on it"
+  ok "firewall: on Oracle Cloud it is the rules file, not ufw, and the log says why" "$?"
+  out="$(bs "${r}" 'decide_firewall; echo "FIREWALL=${FIREWALL}"' --firewall ufw 2>&1)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "can leave the instance unable to reboot" && has "${out}" "known-issues.htm#ufw" && lacks "${out}" "FIREWALL=ufw"
+  ok "firewall: --firewall ufw on Oracle Cloud is refused, with Oracle's reason and the page" "$?"
+  r="$(newroot fwnfp)"
+  printf '#!/bin/sh\n' >"${r}/usr/sbin/netfilter-persistent"
+  chmod +x "${r}/usr/sbin/netfilter-persistent"
+  generic_rules_fixture >"${r}/etc/iptables/rules.v4"
+  out="$(bs "${r}" 'decide_firewall; echo "FIREWALL=${FIREWALL}"' 2>&1)"
+  has "${out}" "FIREWALL=iptables" && has "${out}" "ufw would remove netfilter-persistent (ufw Breaks it)"
+  ok "firewall: anywhere netfilter-persistent loads a file that rejects incoming traffic, ufw is not installed over it" "$?"
+  printf '*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n' >"${r}/etc/iptables/rules.v4"
+  out="$(bs "${r}" 'decide_firewall; echo "FIREWALL=${FIREWALL}"' 2>&1)"
+  has "${out}" "FIREWALL=ufw" && has "${out}" "installing ufw makes apt remove it"
+  ok "firewall: netfilter-persistent with a file that rejects nothing: ufw, and apt's removal of netfilter-persistent is announced" "$?"
+  out="$(bs "$(newroot fwforce)" 'decide_firewall; echo "FIREWALL=${FIREWALL}"' --firewall iptables 2>&1)"
+  has "${out}" "FIREWALL=iptables" && has "${out}" "asked for with --firewall iptables"
+  ok "firewall: --firewall iptables is obeyed anywhere" "$?"
+  out="$(bs "$(newroot args)" 'check_arguments; echo passed' --only firewall 2>&1)"
+  has "${out}" "passed"
+  ok "arguments: --only firewall needs no public key" "$?"
+  out="$(bs "$(newroot args)" 'check_arguments; echo passed' 2>&1)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "no public key"
+  ok "arguments: without --only the public key is still required" "$?"
+  for f in '--firewall bogus' '--only bogus' '--profile bogus'; do
+    # shellcheck disable=SC2086 # two words on purpose
+    out="$(bs "$(newroot args)" 'check_arguments; echo passed' --only firewall ${f} 2>&1)"
+    rc=$?
+    [[ ${rc} -ne 0 ]] && lacks "${out}" "passed"
+    ok "arguments: '${f}' is refused" "$?"
+  done
+  out="$(bs "$(newroot args)" 'check_arguments; echo "profile=[${PROFILE}]"' --only firewall --profile none 2>&1)"
+  has "${out}" "profile=[]"
+  ok "arguments: --profile none is no profile" "$?"
+  out="$("${HERE}/bootstrap.sh" --help 2>&1)"
+  has "${out}" "--profile NAME" && has "${out}" "--firewall MODE" && has "${out}" "--only firewall" && has "${out}" "Using UFW to edit rules might cause an instance not to boot"
+  ok "bootstrap.sh --help documents the profile, the firewall mode, --only firewall and Oracle's warning about ufw" "$?"
+
+  # --- the rules file
+  f="${d}/rules.v4"
+  orig="${d}/rules.v4.orig"
+  oracle_rules_fixture >"${orig}"
+  cp "${orig}" "${f}"
+  chmod 640 "${f}"
+  out="$(bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" 2>&1)"
+  rc=$?
+  ok "rules file: the first run succeeds" "${rc}"
+  [[ "$(diff "${orig}" "${f}" | grep -c '^<')" == 0 && "$(diff "${orig}" "${f}" | grep -c '^>')" == 4 ]]
+  ok "rules file: four lines were added and none was changed or removed (80, 443/tcp, 443/udp, the stand's)" "$?"
+  has "${out}" "added in front of the REJECT" && lacks "${out}" "herd-ssh"
+  ok "rules file: Oracle's own ssh rule stands for ours (no second rule for port 22)" "$?"
+  n_ssh="$(grep -n -- '--dport 22 -j ACCEPT' "${f}" | head -n 1 | cut -d: -f1)"
+  n_rej="$(grep -n -- '^-A INPUT -j REJECT' "${f}" | head -n 1 | cut -d: -f1)"
+  n_first="$(grep -n -- 'comment herd-' "${f}" | head -n 1 | cut -d: -f1)"
+  n_last="$(grep -n -- 'comment herd-' "${f}" | tail -n 1 | cut -d: -f1)"
+  ((n_ssh < n_first && n_last + 1 == n_rej))
+  ok "rules file: the new rules sit right in front of the REJECT, behind Oracle's ssh rule (lines ${n_first}-${n_last} of the INPUT rules, REJECT at ${n_rej})" "$?"
+  file_has "${f}" '-A INPUT -p tcp -m tcp --dport 80 -m comment --comment herd-http -j ACCEPT' \
+    && file_has "${f}" '-A INPUT -p tcp -m tcp --dport 443 -m comment --comment herd-https -j ACCEPT' \
+    && file_has "${f}" '-A INPUT -p udp -m udp --dport 443 -m comment --comment herd-http3 -j ACCEPT' \
+    && file_has "${f}" '-A INPUT -s 172.28.77.0/24 -d 172.28.77.1/32 -p tcp -m tcp --dport 8090 -m comment --comment herd-chainsvc -j ACCEPT'
+  ok "rules file: 80 and 443 (tcp, and udp for HTTP/3) are accepted, and the stand's server container may reach chainsvc on the gateway, port 8090" "$?"
+  [[ "$(grep -c 'dport 3260' "${f}")" == 1 && "$(grep -c '^-A FORWARD -j REJECT' "${f}")" == 1 && "$(grep -c '^COMMIT$' "${f}")" == 1 ]] \
+    && grep -qxF -- "$(grep 'dport 3260' "${orig}")" "${f}"
+  ok "rules file: the rules for the boot and block volumes, the FORWARD REJECT and the COMMIT are untouched" "$?"
+  cmp -s "${orig}" "${f}.before-herd"
+  ok "rules file: the old file is kept as rules.v4.before-herd" "$?"
+  [[ "$(mode_of "${f}")" == 640 ]]
+  ok "rules file: the mode of the file is kept (640)" "$?"
+  [[ -z "$(find "${d}" -maxdepth 1 -name '*.herd.*')" ]]
+  ok "rules file: no temporary file is left behind" "$?"
+  touch -t 202001010101 "${f}" "${f}.before-herd"
+  before="$(mtime_of "${f}")"
+  cp "${f}" "${d}/rules.v4.after1"
+  out="$(bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" 2>&1)"
+  rc=$?
+  ok "rules file: the second run succeeds" "${rc}"
+  has "${out}" "are there already; not changed"
+  ok "rules file: ... and says nothing needed to be done" "$?"
+  cmp -s "${f}" "${d}/rules.v4.after1" && [[ "$(mtime_of "${f}")" == "${before}" && "$(mtime_of "${f}.before-herd")" == "${before}" ]]
+  ok "rules file: idempotent -- the second run leaves the file byte for byte as it was, with the modification time, and the backup alone" "$?"
+  grep -v 'comment herd-http ' "${d}/rules.v4.after1" >"${f}"
+  out="$(bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" 2>&1)"
+  [[ "$(grep -c 'comment herd-' "${f}")" == 4 && "$(grep -c 'comment herd-http ' "${f}")" == 1 ]] \
+    && [[ "$(grep -n 'comment herd-' "${f}" | tail -n 1 | cut -d: -f1)" == "$(($(grep -n '^-A INPUT -j REJECT' "${f}" | cut -d: -f1) - 1))" ]] \
+    && [[ "$(echo "${out}" | grep -c '^    + ')" == 1 ]] && cmp -s "${orig}" "${f}.before-herd"
+  ok "rules file: one rule gone -> only that one comes back (in front of the REJECT again, once); the first backup is not overwritten" "$?"
+
+  # what counts as already open, ssh ports, other layouts
+  f="${d}/rules2.v4"
+  oracle_rules_fixture | awk '/^-A INPUT -j REJECT/ { print "-A INPUT -p tcp -m state --state NEW -m tcp --dport 80 -j ACCEPT" } { print }' >"${f}"
+  bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" >/dev/null 2>&1
+  ! grep -q 'herd-http ' "${f}" && grep -q 'herd-https ' "${f}"
+  ok "rules file: a plain accept for port 80 that somebody added by hand (Oracle's tutorial) is enough; 443 is still added" "$?"
+  f="${d}/rules3.v4"
+  oracle_rules_fixture >"${f}"
+  out="$(SSH_CONNECTION='198.51.100.5 50000 203.0.113.10 2222' bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" --ssh-port 2200 2>&1)"
+  file_has "${f}" '-A INPUT -p tcp -m tcp --dport 2200 -m comment --comment herd-ssh -j ACCEPT' \
+    && file_has "${f}" '-A INPUT -p tcp -m tcp --dport 2222 -m comment --comment herd-ssh -j ACCEPT' \
+    && ! file_has "${f}" '--dport 22 -m comment'
+  ok "rules file: the ssh ports the kit opens in ufw elsewhere (--ssh-port, the port of this session) are accepted; port 22 keeps Oracle's rule" "$?"
+  f="${d}/rules4.v4"
+  oracle_rules_fixture | sed 's|^-A INPUT -j REJECT --reject-with icmp-host-prohibited|-A INPUT -j DROP|' >"${f}"
+  bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" >/dev/null 2>&1
+  [[ "$(grep -n 'comment herd-' "${f}" | tail -n 1 | cut -d: -f1)" == "$(($(grep -n '^-A INPUT -j DROP' "${f}" | cut -d: -f1) - 1))" ]]
+  ok "rules file: a blanket DROP is treated like a blanket REJECT" "$?"
+  f="${d}/rules5.v4"
+  oracle_rules_fixture | grep -v '^-A INPUT -j REJECT' >"${f}"
+  cp "${f}" "${d}/rules5.orig"
+  out="$(bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" 2>&1)"
+  cmp -s "${f}" "${d}/rules5.orig" && has "${out}" "nothing is shut that has to be opened" && [[ ! -e "${f}.before-herd" ]]
+  ok "rules file: nothing rejects incoming traffic -> the file is left alone (no backup either)" "$?"
+  f="${d}/rules6.v4"
+  { printf '*nat\n:PREROUTING ACCEPT [0:0]\n-A INPUT -j REJECT\nCOMMIT\n'; oracle_rules_fixture; } >"${f}"
+  bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" >/dev/null 2>&1
+  [[ "$(sed -n '1,4p' "${f}" | grep -c herd-)" == 0 && "$(grep -c 'comment herd-' "${f}")" == 4 ]]
+  ok "rules file: only the filter table counts (a REJECT in a nat table above it is not the place)" "$?"
+  f="${d}/rules.v6"
+  printf '*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A INPUT -p ipv6-icmp -j ACCEPT\n-A INPUT -i lo -j ACCEPT\n-A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT\n-A INPUT -j REJECT --reject-with icmp6-adm-prohibited\nCOMMIT\n' >"${f}"
+  bs "$(newroot rules)" "adapt_rules_file 6 '${f}'" >/dev/null 2>&1
+  [[ "$(grep -c 'comment herd-' "${f}")" == 3 ]] && ! grep -q 'herd-chainsvc' "${f}" && ! grep -q '172.28.77' "${f}"
+  ok "rules file: IPv6 -- 80, 443/tcp and 443/udp, and not the stand's IPv4 rule" "$?"
+  out="$(bs "$(newroot rules)" "adapt_rules_file 4 '${d}/nothing.v4'" 2>&1)"
+  rc=$?
+  ok "rules file: a file that does not exist is not an error" "${rc}"
+
+  # the kernel is asked when it can be: the new file has to pass iptables-restore --test, or it is not installed
+  make_fake_iptables "${d}/fakebin"
+  fake_live_chain "${d}/state4"
+  printf '%s\n' '-P INPUT ACCEPT' >"${d}/state6"
+  f="${d}/rules7.v4"
+  oracle_rules_fixture >"${f}"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" FAKE_IPT_LOG="${d}/ipt.log" FAKE_RESTORE_RC=1 bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" 2>&1)"
+  rc=$?
+  [[ ${rc} -ne 0 ]] && has "${out}" "rejects the new" && cmp -s "${f}" "${orig}" && [[ ! -e "${f}.before-herd" && -z "$(find "${d}" -maxdepth 1 -name 'rules7.v4.herd*')" ]]
+  ok "rules file: if iptables-restore --test rejects the new file, the old one stays (no backup made, nothing left over) and the run stops" "$?"
+  : >"${d}/ipt.log"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" FAKE_IPT_LOG="${d}/ipt.log" bs "$(newroot rules)" "adapt_rules_file 4 '${f}'" 2>&1)"
+  rc=$?
+  ok "rules file: with a kernel that accepts it the file is installed" "${rc}"
+  grep -q '^iptables-restore --test$' "${d}/ipt.log" && lacks "${out}" "was not tested"
+  ok "rules file: ... after iptables-restore --test was run on it" "$?"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" FAKE_IPT_DENY=1 bs "$(newroot rules)" "adapt_rules_file 4 '${d}/rules8.v4'; cp '${orig}' '${d}/rules8.v4'; adapt_rules_file 4 '${d}/rules8.v4'" 2>&1)"
+  has "${out}" "was not tested with iptables-restore --test" && grep -q 'comment herd-' "${d}/rules8.v4"
+  ok "rules file: without access to the kernel (a container, not root) it is written untested, and says so" "$?"
+
+  # --- the running chain
+  fake_live_chain "${d}/state4"
+  : >"${d}/ipt.log"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" FAKE_IPT_LOG="${d}/ipt.log" bs "$(newroot live)" 'adapt_live_chain 4' 2>&1)"
+  rc=$?
+  ok "live chain: the first run succeeds" "${rc}"
+  [[ "$(sed -n '7,10p' "${d}/state4" | grep -c 'comment herd-')" == 4 && "$(sed -n '11p' "${d}/state4")" == '-A INPUT -j REJECT --reject-with icmp-host-prohibited' && "$(wc -l <"${d}/state4" | tr -d ' ')" == 11 ]]
+  ok "live chain: the four rules were inserted at position 6 -- in front of the REJECT, in the order of the list, behind Oracle's five" "$?"
+  [[ "$(grep -c -- '^iptables -I INPUT 6 ' "${d}/ipt.log")" == 4 ]] && ! grep -qE 'iptables-restore|iptables -F|iptables -X|iptables -P|iptables -D|iptables -R' "${d}/ipt.log"
+  ok "live chain: only -I at that position -- never a flush, a restore, a policy change or a deletion (Docker's chains and ssh stay as they are)" "$?"
+  cp "${d}/state4" "${d}/state4.after1"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" FAKE_IPT_LOG="${d}/ipt.log" bs "$(newroot live)" 'adapt_live_chain 4' 2>&1)"
+  cmp -s "${d}/state4" "${d}/state4.after1" && has "${out}" "are there already; not changed"
+  ok "live chain: idempotent -- the second run adds nothing" "$?"
+  fake_live_chain "${d}/state4"
+  awk '/^-A INPUT -j REJECT/ { print "-A INPUT -p tcp -m tcp --dport 443 -j ACCEPT" } { print }' "${d}/state4" >"${d}/state4.new" && mv "${d}/state4.new" "${d}/state4"
+  PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" bs "$(newroot live)" 'adapt_live_chain 4' >/dev/null 2>&1
+  [[ "$(grep -c 'dport 443' "${d}/state4")" == 2 ]] && grep -q 'udp.*dport 443.*herd-http3' "${d}/state4"
+  ok "live chain: a plain accept of 443/tcp already there is not doubled; 443/udp is still added" "$?"
+  printf '%s\n' '-P INPUT ACCEPT' '-A INPUT -i lo -j ACCEPT' >"${d}/state4"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" bs "$(newroot live)" 'adapt_live_chain 4' 2>&1)"
+  [[ "$(wc -l <"${d}/state4" | tr -d ' ')" == 2 ]] && has "${out}" "has no blanket REJECT/DROP; nothing to open"
+  ok "live chain: nothing rejects -> nothing is added" "$?"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" FAKE_IPT_DENY=1 bs "$(newroot live)" 'adapt_live_chain 4; echo "rc=$?"' 2>&1)"
+  has "${out}" "the kernel's firewall cannot be asked here" && has "${out}" "rc=0"
+  ok "live chain: no access to the kernel -> a message and no error (only the file was adapted)" "$?"
+  out="$(PATH="/usr/bin:/bin" bs "$(newroot live)" 'adapt_live_chain 6; echo "rc=$?"' 2>&1)"
+  has "${out}" "ip6tables is not installed here" && has "${out}" "rc=0"
+  ok "live chain: no ip6tables -> a message and no error" "$?"
+
+  # --- both together, the way bootstrap.sh runs them
+  r="$(newroot together)"
+  oracle_rules_fixture >"${r}/etc/iptables/rules.v4"
+  printf '#!/bin/sh\n' >"${r}/usr/sbin/netfilter-persistent"
+  chmod +x "${r}/usr/sbin/netfilter-persistent"
+  fake_live_chain "${d}/state4"
+  printf '%s\n' '-P INPUT ACCEPT' >"${d}/state6"
+  : >"${d}/ipt.log"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" FAKE_IPT6_STATE="${d}/state6" FAKE_IPT_LOG="${d}/ipt.log" bs "${r}" 'setup_iptables_firewall' --profile oracle --skip systemd 2>&1)"
+  rc=$?
+  ok "setup_iptables_firewall: runs through (file, running chain, netfilter-persistent, the final listing)" "${rc}"
+  has "${out}" "${r}/etc/iptables/rules.v4: added in front of the REJECT" && has "${out}" "running rules (iptables): inserted at position 6" && has "${out}" "the running INPUT chain now:" && has "${out}" "VCN"
+  ok "setup_iptables_firewall: says what it did to the file and to the running chain, shows the chain, and reminds of the VCN's security list" "$?"
+  has "${out}" "running rules (ip6tables): the INPUT chain has no blanket REJECT/DROP; nothing to open" && has "${out}" "rules.v6: there is no such file"
+  ok "setup_iptables_firewall: IPv6 without a REJECT or a file is left alone" "$?"
+  lacks "${out}" "WARNING"
+  ok "setup_iptables_firewall: no warning when netfilter-persistent is there" "$?"
+  rm -f "${r}/usr/sbin/netfilter-persistent"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" FAKE_IPT6_STATE="${d}/state6" bs "${r}" 'setup_iptables_firewall' --profile oracle --skip systemd 2>&1)"
+  has "${out}" "WARNING netfilter-persistent is not installed: nothing loads"
+  ok "setup_iptables_firewall: without netfilter-persistent it warns that the running rules are gone after a reboot" "$?"
+  rm -f "${r}/etc/iptables/rules.v4"
+  out="$(PATH="${d}/fakebin:${PATH}" FAKE_IPT_STATE="${d}/state4" FAKE_IPT6_STATE="${d}/state6" bs "${r}" 'setup_iptables_firewall' --profile oracle --skip systemd 2>&1)"
+  rc=$?
+  ok "setup_iptables_firewall: no rules file at all is not a failure" "${rc}"
+  has "${out}" "does not exist: this image has no host firewall file to adapt"
+  ok "setup_iptables_firewall: ... it says what that means" "$?"
+  grep -q ufw "${d}/ipt.log"
+  [[ $? -ne 0 ]]
+  ok "setup_iptables_firewall: ufw is not touched" "$?"
+
+  # --- the first command on an Oracle instance, through deploy.sh and secrets.sh (dry runs)
+  : >"${SANDBOX}/empty.env"
+  mkdir -p "${SANDBOX}/machome"
+  dr() { (cd "${SANDBOX}" && env -u HERD_VPS_HOST -u HERD_VPS_DOMAIN -u HERD_VPS_USER -u HERD_VPS_KEY -u HERD_VPS_SSH_PORT -u HERD_VPS_EMAIL -u HERD_VPS_ROOT_USER -u HERD_VPS_PROFILE HOME="${SANDBOX}/machome" HERD_VPS_ENV_FILE="${SANDBOX}/empty.env" PATH="${MACBIN}:${PATH}" "$@" 2>&1); }
+  out="$(dr "${HERE}/deploy.sh" bootstrap --dry-run --host 203.0.113.10 --root-user ubuntu --profile oracle)"
+  rc=$?
+  ok "deploy.sh bootstrap --root-user ubuntu --profile oracle --dry-run: exit 0" "${rc}"
+  has "${out}" "scp ${HERE}/bootstrap.sh -> ubuntu@203.0.113.10:herd-bootstrap.sh" && has "${out}" "ssh ubuntu@203.0.113.10: sudo -n bash herd-bootstrap.sh --deploy-user deploy --ssh-port 22 --pubkey-stdin --profile oracle"
+  ok "bootstrap on Oracle Cloud: logs in as ubuntu, runs bootstrap.sh with sudo, passes the profile, the public key on stdin" "$?"
+  out="$(dr env HERD_VPS_ROOT_USER=ubuntu HERD_VPS_PROFILE=oracle "${HERE}/deploy.sh" bootstrap --dry-run --host 203.0.113.10)"
+  has "${out}" "ssh ubuntu@203.0.113.10: sudo -n bash herd-bootstrap.sh --deploy-user deploy --ssh-port 22 --pubkey-stdin --profile oracle"
+  ok "... the same from HERD_VPS_ROOT_USER and HERD_VPS_PROFILE" "$?"
+  printf 'HERD_VPS_HOST=203.0.113.10\nHERD_VPS_ROOT_USER=ubuntu\nHERD_VPS_PROFILE=oracle\n' >"${SANDBOX}/oracle.env"
+  out="$(dr env HERD_VPS_ENV_FILE="${SANDBOX}/oracle.env" "${HERE}/deploy.sh" bootstrap --dry-run)"
+  has "${out}" "ssh ubuntu@203.0.113.10: sudo -n bash herd-bootstrap.sh --deploy-user deploy --ssh-port 22 --pubkey-stdin --profile oracle"
+  ok "... and from .local/vps.env (HERD_VPS_ROOT_USER, HERD_VPS_PROFILE)" "$?"
+  out="$(dr "${HERE}/deploy.sh" bootstrap --dry-run --host 203.0.113.10)"
+  has "${out}" "ssh root@203.0.113.10: bash herd-bootstrap.sh --deploy-user deploy --ssh-port 22 --pubkey-stdin   <" && lacks "${out}" "--profile"
+  ok "without the options nothing changed: root, no sudo, no profile" "$?"
+  dr "${HERE}/deploy.sh" bootstrap --dry-run --host 203.0.113.10 --profile hetzner >/dev/null
+  [[ $? -ne 0 ]]
+  ok "an unknown profile is refused" "$?"
+  out="$(dr "${HERE}/deploy.sh" --dry-run --host 203.0.113.10 --domain herd.example.org --profile oracle)"
+  has "${out}" "would check that herd/.env there holds the memory settings of the oracle profile"
+  ok "deploy.sh up --profile oracle (dry run): says it will look for the memory settings in the VPS's .env" "$?"
+  out="$(dr "${HERE}/secrets.sh" --env-only --dry-run --host 203.0.113.10 --domain herd.example.org --no-walletconnect-id --profile oracle)"
+  has "${out}" "bash -s -- --domain herd.example.org --profile oracle"
+  ok "secrets.sh --env-only --profile oracle (dry run): env-init.sh gets --profile oracle" "$?"
+  dr "${HERE}/secrets.sh" --env-only --dry-run --host 203.0.113.10 --domain herd.example.org --no-walletconnect-id --profile nonsense >/dev/null
+  [[ $? -ne 0 ]]
+  ok "secrets.sh: an unknown profile is refused" "$?"
+
+  # the README says what the scripts do
+  file_has "${HERE}/README.md" 'tools/vps/deploy.sh bootstrap --root-user ubuntu --profile oracle' \
+    && file_has "${HERE}/README.md" "sudo -n bash herd-bootstrap.sh --deploy-user deploy --ssh-port 22 --pubkey-stdin --profile oracle"
+  ok "README 2a: the first command on an Oracle instance, and what it runs, are the ones the dry run prints" "$?"
+  for f in 'Content/Compute/known-issues.htm#ufw' 'Content/Compute/References/bestpracticescompute.htm' 'Content/Compute/Tasks/connect-to-linux-instance.htm' \
+    'Content/FreeTier/freetier_topic-Always_Free_Resources.htm' 'Content/Compute/References/computemetrics.htm' 'Content/Compute/Tasks/manage-plugins.htm' \
+    'Content/developer/apache-on-ubuntu/01oci-ubuntu-apache-summary.htm'; do
+    file_has "${HERE}/README.md" "https://docs.oracle.com/en-us/iaas/${f}"
+    ok "README cites Oracle's page ${f}" "$?"
+  done
+  file_has "${HERE}/README.md" 'Idle Always Free compute instances may be reclaimed by Oracle' && file_has "${HERE}/README.md" 'Using UFW to edit rules might cause an instance not to boot' \
+    && file_has "${HERE}/README.md" 'out of host capacity' && file_has "${HERE}/README.md" 'oci_computeagent'
+  ok "README 2a: the reclamation rule, Oracle's warning about ufw, 'out of host capacity' and the metric namespace are quoted" "$?"
+  file_has "${HERE}/bootstrap.sh" 'known-issues.htm#ufw' && file_has "${HERE}/bootstrap.sh" 'bestpracticescompute.htm'
+  ok "bootstrap.sh cites the Oracle pages its firewall mode rests on" "$?"
+}
+
+# --- the memory of the stand ---------------------------------------------------------------------------------------------------------------
+
+test_memory() {
+  section "memory (oracle profile): env-init.sh sizes the heap from the RAM, remote.sh verify reports the stand's share of the machine"
+  local app="${SANDBOX}/mem-app" f="${SANDBOX}/mem-app/.env" run="${HERE}/env-init.sh" out rc first pw
+  rm -rf "${app}"
+  # 12000000 kB = 11718 MiB: about what the kernel of the A1 shape with 12 GB reports
+  out="$(HERD_ENVINIT_MEM_KB=12000000 HERD_APP_DIR="${app}" "${run}" --domain herd.example.org --profile oracle 2>&1)"
+  rc=$?
+  ok "env-init --profile oracle: runs" "${rc}"
+  file_has "${f}" "HERD_VPS_PROFILE=oracle" && file_has "${f}" "HERD_SERVER_HEAP_MB=2929" && file_has "${f}" "HERD_DB_SHARED_BUFFERS=1464MB"
+  ok "env-init --profile oracle: 11718 MiB of RAM -> a heap of 2929 MiB (a quarter) and shared_buffers of 1464MB (an eighth)" "$?"
+  has "${out}" "memory profile oracle: RAM 11718 MiB -> server heap 2929 MiB pinned"
+  ok "env-init --profile oracle: says what it set" "$?"
+  ! grep -E '^HERD_(SERVER_HEAP_MB|DB_SHARED_BUFFERS|VPS_PROFILE)=' "${f}" | cut -d= -f2- | grep -qvE '^[A-Za-z0-9_.:/,@+=-]+$'
+  ok "env-init --profile oracle: the values are single words that secrets.sh --set, .env and compose all carry (no spaces, no quotes)" "$?"
+  [[ "$(mode_of "${f}")" == 600 ]]
+  ok "env-init --profile oracle: the .env is still mode 600" "$?"
+  first="$(cat "${f}")"
+  pw="$(grep '^HERD_DB_PASSWORD=' "${f}")"
+  out="$(HERD_ENVINIT_MEM_KB=12000000 HERD_APP_DIR="${app}" "${run}" --domain herd.example.org --profile oracle 2>&1)"
+  has "${out}" ".env: unchanged" && [[ "$(cat "${f}")" == "${first}" ]]
+  ok "env-init --profile oracle: a second run on the same machine changes nothing" "$?"
+  out="$(HERD_ENVINIT_MEM_KB=24000000 HERD_APP_DIR="${app}" "${run}" --domain herd.example.org --profile oracle 2>&1)"
+  file_has "${f}" "HERD_SERVER_HEAP_MB=5859" && file_has "${f}" "HERD_DB_SHARED_BUFFERS=2929MB" && [[ "$(grep -c '^HERD_SERVER_HEAP_MB=' "${f}")" == 1 && "$(grep -c '^HERD_DB_SHARED_BUFFERS=' "${f}")" == 1 ]]
+  ok "env-init --profile oracle: a resized machine gets new numbers, in place (one line each)" "$?"
+  [[ "$(grep '^HERD_DB_PASSWORD=' "${f}")" == "${pw}" ]]
+  ok "env-init --profile oracle: the database password is the same as before" "$?"
+  HERD_ENVINIT_MEM_KB=12000000 HERD_APP_DIR="${app}" "${run}" --domain herd.example.org --profile oracle --set HERD_SERVER_HEAP_MB=4096 >/dev/null 2>&1
+  file_has "${f}" "HERD_SERVER_HEAP_MB=4096" && file_has "${f}" "HERD_DB_SHARED_BUFFERS=1464MB"
+  ok "env-init --profile oracle: --set after the profile overrides one of its numbers" "$?"
+  HERD_ENVINIT_MEM_KB=1048576 HERD_APP_DIR="${SANDBOX}/mem-app2" "${run}" --domain herd.example.org --profile oracle >/dev/null 2>&1
+  file_has "${SANDBOX}/mem-app2/.env" "HERD_SERVER_HEAP_MB=512" && file_has "${SANDBOX}/mem-app2/.env" "HERD_DB_SHARED_BUFFERS=128MB"
+  ok "env-init --profile oracle: a small machine gets at least 512 MiB of heap and 128MB of shared_buffers" "$?"
+  HERD_ENVINIT_MEM_KB=500000 HERD_APP_DIR="${SANDBOX}/mem-app3" "${run}" --domain herd.example.org --profile oracle >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "env-init --profile oracle: a machine with less than 1 GiB is refused" "$?"
+  HERD_APP_DIR="${SANDBOX}/mem-app4" "${run}" --domain herd.example.org >/dev/null 2>&1
+  ! grep -qE '^HERD_(SERVER_HEAP_MB|DB_SHARED_BUFFERS|VPS_PROFILE)=' "${SANDBOX}/mem-app4/.env"
+  ok "env-init without a profile writes none of the memory settings (docker-compose.yml's defaults stay: the Mac stand)" "$?"
+  HERD_APP_DIR="${SANDBOX}/mem-app5" "${run}" --domain herd.example.org --profile nonsense >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "env-init: an unknown profile is refused" "$?"
+
+  # remote.sh verify: the line about memory (a fake docker that answers stats, ps -q and inspect; a meminfo file for /proc/meminfo)
+  local vroot="${SANDBOX}/mem-vps" meminfo="${SANDBOX}/mem-vps/meminfo" stats_ok stats_low opts='-Xms2929m -Xmx2929m -XX:+AlwaysPreTouch'
+  rm -rf "${vroot}"
+  mkdir -p "${vroot}/herd"
+  printf 'MemTotal:       12000000 kB\nMemFree:         4000000 kB\nMemAvailable:    7400000 kB\nBuffers:           10000 kB\n' >"${meminfo}"
+  stats_ok=$'herd-server-1 3.0GiB / 11.4GiB\nherd-db-1 100MiB / 11.4GiB\nherd-chainsvc-1 20MiB / 11.4GiB\nherd-web-1 5MiB / 11.4GiB'
+  stats_low=$'herd-server-1 300MiB / 11.4GiB\nherd-db-1 100MiB / 11.4GiB\nherd-chainsvc-1 20MiB / 11.4GiB\nherd-web-1 5MiB / 11.4GiB'
+  vf() { ( export PATH="${VPSBIN}:${PATH}" HERD_MEMINFO_FILE="${VF_MEMINFO:-${meminfo}}" HERD_APP_DIR="${vroot}/herd" HERD_BOOTSTRAP_STAMP="${HERD_BOOTSTRAP_STAMP:-${vroot}/no-stamp}"; source "${HERE}/remote.sh"; set +e; "$@" ); }
+  out="$(FAKE_STATS="${stats_ok}" vf check_memory)"
+  has "${out}" "ok    memory: the stand's containers hold 3197 MiB = 27.3% of the machine's 11719 MiB (server 3072, db 100, chainsvc 20, web 5 MiB)"
+  ok "verify, memory: the sizes of the four containers are added up and shown as a share of MemTotal (3197 of 11719 MiB = 27.3%)" "$?"
+  has "${out}" "the whole machine: 38% in use without cache (MemTotal-MemAvailable), 67% not free (MemTotal-MemFree)"
+  ok "verify, memory: the machine's own figures are shown next to it (what the cloud's metric might count)" "$?"
+  lacks "${out}" "WARN" && lacks "${out}" "JVM"
+  ok "verify, memory: without a profile it is a report: no threshold, no remark about the JVM when it has no options" "$?"
+  out="$(FAKE_STATS="${stats_ok}" FAKE_JDK_OPTS="${opts}" vf check_memory)"
+  has "${out}" "ok    memory: the server JVM runs with ${opts}"
+  ok "verify, memory: the options of the server JVM are shown when it has any" "$?"
+  printf 'HERD_VPS_PROFILE=oracle\nHERD_SERVER_HEAP_MB=2929\n' >"${vroot}/herd/.env"
+  out="$(FAKE_STATS="${stats_ok}" FAKE_JDK_OPTS="${opts}" vf check_memory)"
+  has "${out}" "27.3% of the machine's 11719 MiB" && has "${out}" "the oracle profile asks for at least 25%" && has "${out}" "ok    memory: the server JVM runs with ${opts}" && lacks "${out}" "WARN"
+  ok "verify, memory: with the oracle profile and 27.3% there is no warning, and the pinned heap is confirmed" "$?"
+  out="$(FAKE_STATS="${stats_low}" FAKE_JDK_OPTS="${opts}" vf check_memory)"
+  has "${out}" "WARN  memory:" && has "${out}" "BELOW the 25% the oracle profile asks for" && has "${out}" "may be reclaimed by Oracle"
+  ok "verify, memory: with the oracle profile and 3.6% it warns, and says why it matters" "$?"
+  out="$(FAKE_STATS="${stats_ok}" FAKE_JDK_OPTS="" vf check_memory)"
+  has "${out}" "WARN  memory: the oracle profile is set in .env, but the server container has JDK_JAVA_OPTIONS=''"
+  ok "verify, memory: the profile is in .env but the server container was started without the heap option -> warning" "$?"
+  out="$(FAKE_STATS="" vf check_memory)"
+  has "${out}" "WARN  memory: no figures from docker stats"
+  ok "verify, memory: with the oracle profile, no figures from docker stats -> warning" "$?"
+  rm -f "${vroot}/herd/.env"
+  out="$(FAKE_STATS="" vf check_memory)"
+  [[ -z "${out}" ]]
+  ok "verify, memory: no profile and no figures -> silent" "$?"
+  out="$(FAKE_STATS="${stats_ok}" FAKE_COMPOSE_NO_CONTAINERS=1 vf check_memory)"
+  [[ -z "${out}" ]]
+  ok "verify, memory: no running container of the stand -> silent without a profile" "$?"
+  printf 'version=1\nfirewall=iptables\nplatform=oracle\n' >"${vroot}/stamp"
+  out="$(HERD_BOOTSTRAP_STAMP="${vroot}/stamp" FAKE_STATS="${stats_ok}" vf check_memory)"
+  has "${out}" "WARN  memory: bootstrap.sh recorded this machine as an Oracle Cloud instance, but .env has no oracle profile"
+  ok "verify, memory: bootstrap.sh recorded Oracle Cloud but .env has no oracle profile (secrets.sh was run without it) -> warning" "$?"
+  printf 'version=1\nfirewall=ufw\nplatform=none\n' >"${vroot}/stamp"
+  out="$(HERD_BOOTSTRAP_STAMP="${vroot}/stamp" FAKE_STATS="${stats_ok}" vf check_memory)"
+  lacks "${out}" "Oracle Cloud instance"
+  ok "verify, memory: ... and no such warning for a machine bootstrap.sh did not take for Oracle Cloud" "$?"
+  printf 'HERD_VPS_PROFILE=oracle\nHERD_SERVER_HEAP_MB=2929\n' >"${vroot}/herd/.env"
+  printf 'version=1\nfirewall=iptables\nplatform=oracle\n' >"${vroot}/stamp"
+  out="$(HERD_BOOTSTRAP_STAMP="${vroot}/stamp" FAKE_STATS="${stats_ok}" FAKE_JDK_OPTS="${opts}" vf check_memory)"
+  lacks "${out}" "Oracle Cloud instance" && lacks "${out}" "WARN"
+  ok "verify, memory: Oracle Cloud with the profile in .env -> no warning" "$?"
+  rm -f "${vroot}/herd/.env"
+  out="$(VF_MEMINFO="${vroot}/nope" FAKE_STATS="${stats_ok}" vf check_memory)"
+  has "${out}" "WARN  memory: cannot read MemTotal"
+  ok "verify, memory: an unreadable meminfo -> warning, no crash" "$?"
+  out="$(FAKE_STATS=$'herd-server-1 3.2GB / 11.4GB\nherd-db-1 100MB / 11.4GB' vf check_memory)"
+  has "${out}" "the stand's containers hold 3147 MiB"
+  ok "verify, memory: sizes in decimal units (older docker) are read too" "$?"
+  for rc in '1.5GiB 1536.0' '512MiB 512.0' '2048KiB 2.0' '3.2GB 3051.8' '100kB 0.1' '1TiB 1048576.0' '0B 0.0'; do
+    # shellcheck disable=SC2086 # two words on purpose
+    set -- ${rc}
+    [[ "$(vf mem_mib "$1")" == "$2" ]]
+    ok "mem_mib $1 = $2 MiB" "$?"
+  done
+  vf mem_mib 12parsecs >/dev/null 2>&1
+  [[ $? -ne 0 ]]
+  ok "mem_mib: an unknown unit is an error (the container is left out of the sum)" "$?"
 }
 
 # --- docker-based tests ------------------------------------------------------------------------------------------------------------------
@@ -1873,6 +2471,401 @@ EOF
   CONTAINER=""
 }
 
+# --- Oracle Cloud with a real kernel firewall ------------------------------------------------------------------------------------------------
+
+# Two throwaway containers on a network of their own (10.99.x.0/24, masquerading on so that apt can reach its mirrors). The capability
+# NET_ADMIN is given to these two only -- it acts on their own network namespaces; a container on the host's network never gets it, and
+# this one is on a bridge network of its own. The server one gets Oracle's rules file (loaded by the real netfilter-persistent), then the
+# firewall step of bootstrap.sh runs in it; the client probes. The stand's address pair is a made-up one (10.98.77.0/24, .1): the real
+# 172.28.77.1 is the address of the stand's network on the Docker VM, and answers ARP there.
+test_firewall() {
+  section "Oracle Cloud firewall, real iptables-nft: Oracle's rules file, the kit's firewall step, probes from a second container"
+  local octet net s c sip cip work="${SANDBOX}/fw" out rc before after pkts
+  octet=$((RANDOM % 200 + 20))
+  net="herd-vps-dryrun-fw-$$"
+  s="herd-vps-dryrun-fw-s-$$"
+  c="herd-vps-dryrun-fw-c-$$"
+  sip="10.99.${octet}.10"
+  cip="10.99.${octet}.20"
+  mkdir -p "${work}"
+  if ! docker network create -o com.docker.network.bridge.enable_ip_masquerade=true --subnet "10.99.${octet}.0/24" "${net}" >/dev/null 2>&1; then
+    skip "could not create the throwaway network ${net} (10.99.${octet}.0/24)"
+    return 0
+  fi
+  EXTRA_NETWORK="${net}"
+  EXTRA_CONTAINERS="${s} ${c}"
+  docker run -d --name "${s}" --network "${net}" --ip "${sip}" --cap-add NET_ADMIN ubuntu:24.04 sleep 1800 >/dev/null 2>&1
+  ok "the throwaway server container ${s} started" "$?"
+  docker run -d --name "${c}" --network "${net}" --ip "${cip}" --cap-add NET_ADMIN ubuntu:24.04 sleep 1800 >/dev/null 2>&1
+  ok "the throwaway client container ${c} started" "$?"
+  sx() { docker exec "${s}" bash -c "$1"; }
+  cx() { docker exec "${c}" bash -c "$1"; }
+  tcp_open() { cx "nc -z -w 3 ${2:+-s $2} ${3:-${sip}} $1" >/dev/null 2>&1; } # tcp_open PORT [SOURCE [DEST]]: can the client connect?
+  local install='export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq'
+  sx "${install} iptables iptables-persistent netcat-openbsd iproute2 >/dev/null 2>&1" &
+  local pid_s=$!
+  cx "${install} netcat-openbsd iproute2 >/dev/null 2>&1" &
+  local pid_c=$!
+  wait "${pid_s}"
+  rc=$?
+  wait "${pid_c}"
+  if ((rc != 0)) || ! sx 'iptables -S INPUT >/dev/null 2>&1 && command -v netfilter-persistent >/dev/null'; then
+    skip "could not install iptables and netfilter-persistent in the throwaway container (no network?), or the kernel gives it no iptables"
+    docker rm -f "${s}" "${c}" >/dev/null 2>&1
+    docker network rm "${net}" >/dev/null 2>&1
+    EXTRA_CONTAINERS=""
+    EXTRA_NETWORK=""
+    return 0
+  fi
+  ok "iptables ($(sx 'iptables --version')) and netfilter-persistent are installed in the server container, which can use its own firewall" 0
+
+  oracle_rules_fixture >"${work}/rules.v4"
+  docker cp "${work}/rules.v4" "${s}:/etc/iptables/rules.v4"
+  sx 'netfilter-persistent start >/dev/null 2>&1'
+  sx 'iptables -S INPUT | tail -n 1 | grep -qx -- "-A INPUT -j REJECT --reject-with icmp-host-prohibited"'
+  ok "Oracle's rules file is loaded by the real netfilter-persistent: INPUT ends in the REJECT" "$?"
+  # listeners behind every port that is probed, the stand's gateway address and a route to its network; Docker's own kind of rules, to see
+  # that they are left alone
+  sx 'for p in 22 80 443 2222 8081; do (nc -lk 0.0.0.0 $p >/dev/null 2>&1 &); done; ip addr add 10.98.77.1/32 dev lo; ip route add 10.98.77.0/24 dev eth0; (nc -lk 10.98.77.1 8090 >/dev/null 2>&1 &); sleep 1'
+  cx 'ip addr add 10.98.77.5/24 dev eth0'
+  sx 'iptables -N DOCKER-USER; iptables -A DOCKER-USER -j RETURN; iptables -I FORWARD 1 -j DOCKER-USER; iptables -t nat -A POSTROUTING -s 10.97.0.0/16 -j MASQUERADE'
+  tcp_open 22
+  ok "before: ssh (22) is accepted by Oracle's own rule" "$?"
+  ! tcp_open 80 && ! tcp_open 443 && ! tcp_open 8081
+  ok "before: 80, 443 and 8081 are rejected (the REJECT of Oracle's rules file -- why the site would be unreachable)" "$?"
+  ! tcp_open 8090 10.98.77.5 10.98.77.1
+  ok "before: the stand's server container (10.98.77.5 here) cannot reach chainsvc on the gateway address (10.98.77.1) port 8090" "$?"
+
+  docker cp "${HERE}/bootstrap.sh" "${s}:/root/bootstrap.sh"
+  out="$(docker exec "${s}" bash /root/bootstrap.sh --only firewall --profile oracle --stand-subnet 10.98.77.0/24 --stand-gateway 10.98.77.1 2>&1)"
+  rc=$?
+  ok "bootstrap.sh --only firewall --profile oracle: succeeds" "${rc}"
+  printf '%s\n' "${out}" | sed 's/^/    | /' | tail -n 22
+  has "${out}" "added in front of the REJECT" && has "${out}" "running rules (iptables): inserted at position 6" && lacks "${out}" "was not tested"
+  ok "it adapted the file and the running chain, and the new file passed the real iptables-restore --test" "$?"
+  tcp_open 22 && tcp_open 80 && tcp_open 443
+  ok "after: 22, 80 and 443 are accepted" "$?"
+  ! tcp_open 8081
+  ok "after: another port (8081) is still rejected -- the REJECT stays, only what was asked for is opened" "$?"
+  tcp_open 8090 10.98.77.5 10.98.77.1
+  ok "after: the stand's server container can reach chainsvc on the gateway address, port 8090" "$?"
+  ! tcp_open 8090 "${cip}" 10.98.77.1
+  ok "after: ... and a host outside the stand's network cannot" "$?"
+  cx "echo hello | nc -u -w 1 ${sip} 443 >/dev/null 2>&1"
+  pkts="$(sx 'iptables -L INPUT -v -n -x | grep herd-http3 | awk "{print \$1}"')"
+  [[ "${pkts}" =~ ^[0-9]+$ ]] && ((pkts > 0))
+  ok "after: a UDP packet to 443 (HTTP/3) is counted by the herd-http3 rule (${pkts} packet)" "$?"
+  sx 'iptables-restore --test < /etc/iptables/rules.v4'
+  ok "the resulting /etc/iptables/rules.v4 passes iptables-restore --test" "$?"
+  sx 'test "$(grep -c "^-A INPUT -j REJECT --reject-with icmp-host-prohibited$" /etc/iptables/rules.v4)" = 1 && test "$(grep -c "^-A FORWARD -j REJECT" /etc/iptables/rules.v4)" = 1 && grep -q -- "--dport 3260" /etc/iptables/rules.v4 && grep -q "^-A OUTPUT -d 169.254.0.0/16 -j InstanceServices$" /etc/iptables/rules.v4'
+  ok "the file keeps the INPUT and FORWARD REJECTs and the rules for the boot and block volumes" "$?"
+  [[ "$(sx 'diff /etc/iptables/rules.v4.before-herd /etc/iptables/rules.v4 | grep -c "^<"')" == 0 ]]
+  ok "nothing of Oracle's own lines was removed or changed (the diff to the kept old file only adds)" "$?"
+  sx 'iptables -S DOCKER-USER | grep -qx -- "-A DOCKER-USER -j RETURN" && iptables -S FORWARD | sed -n 2p | grep -qx -- "-A FORWARD -j DOCKER-USER" && iptables -t nat -S POSTROUTING | grep -q -- "-s 10.97.0.0/16 -j MASQUERADE"'
+  ok "chains and rules of the kind Docker keeps (DOCKER-USER in FORWARD, a MASQUERADE in nat) are untouched: nothing was flushed or restored" "$?"
+
+  # idempotent
+  before="$(sx 'sha256sum /etc/iptables/rules.v4; iptables -S INPUT')"
+  out="$(docker exec "${s}" bash /root/bootstrap.sh --only firewall --profile oracle --stand-subnet 10.98.77.0/24 --stand-gateway 10.98.77.1 2>&1)"
+  rc=$?
+  ok "a second run succeeds" "${rc}"
+  after="$(sx 'sha256sum /etc/iptables/rules.v4; iptables -S INPUT')"
+  [[ "${before}" == "${after}" ]] && has "${out}" "are there already; not changed"
+  ok "idempotent: the file and the running chain are exactly as they were" "$?"
+  [[ "$(sx 'iptables -S INPUT | grep -c "comment herd-"')" == 4 ]]
+  ok "... four rules of the kit in the running chain, no doubles" "$?"
+
+  # a reboot: netfilter-persistent loads the file into an empty table (Docker's rules come afterwards, from the daemon)
+  before="$(sx 'iptables -S INPUT')"
+  sx 'netfilter-persistent flush >/dev/null 2>&1'
+  tcp_open 8081
+  ok "(the flush before the pretend reboot really opened everything: 8081 answers)" "$?"
+  sx 'netfilter-persistent start >/dev/null 2>&1'
+  after="$(sx 'iptables -S INPUT')"
+  [[ "${before}" == "${after}" ]]
+  ok "after a pretend reboot (flush, netfilter-persistent start) the running INPUT chain is exactly what it was" "$?"
+  tcp_open 80 && tcp_open 443 && tcp_open 8090 10.98.77.5 10.98.77.1 && ! tcp_open 8081
+  ok "... and 80, 443 and the stand's path work, 8081 is rejected again" "$?"
+
+  # another ssh port
+  ! tcp_open 2222
+  ok "before: ssh on 2222 is rejected" "$?"
+  out="$(docker exec "${s}" bash /root/bootstrap.sh --only firewall --profile oracle --ssh-port 2222 --stand-subnet 10.98.77.0/24 --stand-gateway 10.98.77.1 2>&1)"
+  rc=$?
+  ok "--ssh-port 2222: the step succeeds" "${rc}"
+  tcp_open 2222 && tcp_open 22
+  ok "after: 2222 is accepted, and 22 still is" "$?"
+  sx 'grep -qx -- "-A INPUT -p tcp -m tcp --dport 2222 -m comment --comment herd-ssh -j ACCEPT" /etc/iptables/rules.v4 && iptables -S INPUT | grep -qx -- "-A INPUT -p tcp -m tcp --dport 2222 -m comment --comment herd-ssh -j ACCEPT"'
+  ok "... in the file and in the running chain" "$?"
+
+  # what ufw would have done to this system
+  out="$(sx 'apt-get -s install ufw 2>&1')"
+  has "${out}" "Remv netfilter-persistent" && has "${out}" "Remv iptables-persistent"
+  ok "why there is no ufw here: on Ubuntu 24.04 'apt-get install ufw' would REMOVE netfilter-persistent and iptables-persistent (ufw Breaks them), and with them the loading of this file at boot" "$?"
+  sx 'dpkg -s netfilter-persistent >/dev/null 2>&1 && ! dpkg -s ufw >/dev/null 2>&1'
+  ok "after all of it netfilter-persistent is still installed and ufw is not" "$?"
+
+  docker rm -f "${s}" "${c}" >/dev/null 2>&1
+  docker network rm "${net}" >/dev/null 2>&1
+  EXTRA_CONTAINERS=""
+  EXTRA_NETWORK=""
+}
+
+# bootstrap.sh as a whole in a container that looks like Oracle's Ubuntu image: netfilter-persistent installed, its rules file, cloud-init's file
+# at /run. The container is on the host's network (like the other bootstrap test) and has no NET_ADMIN, so it cannot touch any firewall: the
+# running chain is out of reach, the file is what is tested.
+test_oracleboot() {
+  section "bootstrap.sh in a throwaway ubuntu:24.04 that looks like Oracle's image (netfilter-persistent and its rules file), no profile flag"
+  CONTAINER="herd-vps-dryrun-oracle-$$-$(date +%s)"
+  local key="${SANDBOX}/test_key" out rc work="${SANDBOX}/work-oracle" run1 run2 f=/etc/iptables/rules.v4
+  ssh-keygen -q -t ed25519 -N '' -C 'herd-vps-dryrun' -f "${key}" >/dev/null 2>&1
+  mkdir -p "${work}"
+  cp -R "${HERE}" "${work}/vps"
+  cp "${key}.pub" "${work}/test_key.pub"
+  oracle_rules_fixture >"${work}/rules.v4"
+  docker run -d --name "${CONTAINER}" --network host -v "${work}:/work:ro" ubuntu:24.04 sleep 3600 >/dev/null
+  ok "the throwaway container ${CONTAINER} started" "$?"
+  ex() { docker exec "${CONTAINER}" /bin/bash -c "$1"; }
+  ex 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq iptables iptables-persistent netfilter-persistent >/dev/null 2>&1'
+  ok "netfilter-persistent and iptables are installed first, as on Oracle's image" "$?"
+  ex 'cp /work/rules.v4 /etc/iptables/rules.v4 && mkdir -p /run/cloud-init && echo oracle >/run/cloud-init/cloud-id'
+  ok "Oracle's rules file is in place and cloud-init's file says oracle" "$?"
+  if ex 'iptables -S INPUT >/dev/null 2>&1'; then
+    echo "FAIL - this container can reach a kernel firewall (it must not: it is on the host's network); the rest of this section is not run"
+    FAILS=$((FAILS + 1))
+    TOTAL=$((TOTAL + 1))
+    docker rm -f "${CONTAINER}" >/dev/null 2>&1
+    CONTAINER=""
+    return 0
+  fi
+  ok "the container cannot use any kernel firewall (no NET_ADMIN): bootstrap.sh will only be able to change the file" 0
+  out="$(ex 'apt-get -s install ufw 2>&1')"
+  has "${out}" "Remv netfilter-persistent"
+  ok "the plan of 'apt-get install ufw' here removes netfilter-persistent (ufw Breaks it): the reason bootstrap.sh keeps ufw off this image" "$?"
+
+  run1="$(docker exec "${CONTAINER}" /work/vps/bootstrap.sh --container --pubkey-file /work/test_key.pub 2>&1)"
+  rc=$?
+  ok "bootstrap.sh --container (no --profile): first run succeeds" "${rc}"
+  printf '%s\n' "${run1}" | tail -n 22 | sed 's/^/    | /'
+  has "${run1}" "firewall: the rules file of the image (/etc/iptables/rules.v4), not ufw -- Oracle Cloud (/run/cloud-init/cloud-id says oracle"
+  ok "it recognised Oracle Cloud by itself (cloud-init's file) and chose the rules file, not ufw" "$?"
+  ex 'dpkg -s ufw >/dev/null 2>&1'
+  [[ $? -ne 0 ]] && ex 'dpkg -s netfilter-persistent iptables-persistent >/dev/null 2>&1'
+  ok "ufw was not installed, and netfilter-persistent and iptables-persistent are still there" "$?"
+  has "${run1}" "running rules (iptables): the kernel's firewall cannot be asked here" && has "${run1}" "only the file was adapted"
+  ok "it said that the running chain was out of reach and that only the file was adapted" "$?"
+  ex "grep -c 'comment herd-' ${f} | grep -qx 4 && grep -qx -- '-A INPUT -p tcp -m tcp --dport 80 -m comment --comment herd-http -j ACCEPT' ${f} && grep -qx -- '-A INPUT -s 172.28.77.0/24 -d 172.28.77.1/32 -p tcp -m tcp --dport 8090 -m comment --comment herd-chainsvc -j ACCEPT' ${f}"
+  ok "rules.v4 has the four rules (80, 443/tcp, 443/udp, the stand's server container -> chainsvc at 172.28.77.1:8090)" "$?"
+  ex "n=\$(grep -n 'comment herd-' ${f} | tail -n 1 | cut -d: -f1); r=\$(grep -n '^-A INPUT -j REJECT' ${f} | cut -d: -f1); test \$((n + 1)) = \$r"
+  ok "... right in front of the REJECT" "$?"
+  ex "diff /etc/iptables/rules.v4.before-herd ${f} | grep -c '^<' | grep -qx 0 && cmp -s /work/rules.v4 /etc/iptables/rules.v4.before-herd"
+  ok "Oracle's own lines are all still there, and the old file is kept as rules.v4.before-herd" "$?"
+  ex 'grep -qx "firewall=iptables" /var/lib/herd-bootstrap/done && grep -qx "platform=oracle" /var/lib/herd-bootstrap/done'
+  ok "the stamp says: firewall iptables, platform oracle" "$?"
+  ex 'test ! -e /etc/ufw/user.rules'
+  ok "no ufw rules were written" "$?"
+  ex 'dpkg -s docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null 2>&1 && id deploy | grep -q "(docker)" && test -f /etc/cron.d/herd-backup'
+  ok "the rest of bootstrap.sh ran as always (Docker, the deploy user, the backup job)" "$?"
+  ex "sha256sum ${f} /etc/iptables/rules.v4.before-herd /etc/docker/daemon.json >/tmp/s1; ls -l --time-style=full-iso ${f} /etc/iptables/rules.v4.before-herd >/tmp/t1"
+  run2="$(docker exec "${CONTAINER}" /work/vps/bootstrap.sh --container --pubkey-file /work/test_key.pub 2>&1)"
+  rc=$?
+  ok "second run succeeds" "${rc}"
+  ex "sha256sum ${f} /etc/iptables/rules.v4.before-herd /etc/docker/daemon.json >/tmp/s2; ls -l --time-style=full-iso ${f} /etc/iptables/rules.v4.before-herd >/tmp/t2; cmp /tmp/s1 /tmp/s2 && cmp /tmp/t1 /tmp/t2"
+  ok "idempotent: the rules file, its backup and daemon.json keep their content and their modification times" "$?"
+  has "${run2}" "are there already; not changed"
+  ok "... and the second run says nothing had to be done" "$?"
+
+  # no sign of Oracle at all, but netfilter-persistent loads a file that rejects: still no ufw
+  ex 'rm -f /run/cloud-init/cloud-id; grep -v "Oracle Cloud Infrastructure" /work/rules.v4 >/etc/iptables/rules.v4'
+  out="$(docker exec "${CONTAINER}" /work/vps/bootstrap.sh --only firewall 2>&1)"
+  rc=$?
+  ok "--only firewall without any sign of Oracle (the same rules without the header): succeeds" "${rc}"
+  has "${out}" "netfilter-persistent loads /etc/iptables/rules.v4, which rejects incoming traffic" && has "${out}" "ufw would remove netfilter-persistent"
+  ok "... it still keeps ufw off, because netfilter-persistent loads a file that rejects incoming traffic" "$?"
+  ex 'dpkg -s ufw >/dev/null 2>&1'
+  [[ $? -ne 0 ]]
+  ok "... ufw is still not installed" "$?"
+  docker rm -f "${CONTAINER}" >/dev/null 2>&1
+  CONTAINER=""
+}
+
+# --- the memory floor, with real images ---------------------------------------------------------------------------------------------------------
+
+test_memfloor() {
+  section "memory floor: docker-compose.yml's settings, what the server image's JVM and PostgreSQL do with them (throwaway containers, no network)"
+  local jre pg work="${SANDBOX}/memfloor" out rc a b n mem
+  jre="$(awk '$1 == "FROM" { for (i = 2; i <= NF; i++) if ($i ~ /^eclipse-temurin:/) { print $i; exit } }' "${REPO}/server/Dockerfile")"
+  pg="$(awk '$1 == "image:" && $2 ~ /^postgres:/ { print $2; exit }' "${REPO}/docker-compose.yml")"
+  [[ -n "${jre}" && -n "${pg}" ]]
+  ok "the images are the ones the Dockerfile and the compose file name: ${jre}, ${pg}" "$?"
+  mkdir -p "${work}"
+  cp "${REPO}/docker-compose.yml" "${work}/"
+  printf 'HERD_OPERATOR_TOKEN=a\nHERD_DB_PASSWORD=b\nC2_SVC_TOKEN=c\nHERD_CHAINSVC_TOKEN=c\n' >"${work}/.env"
+  a="$(cd "${work}" && docker compose -p herd config 2>&1)"
+  rc=$?
+  ok "docker compose config: the compose file resolves with the settings absent" "${rc}"
+  has "${a}" 'JDK_JAVA_OPTIONS: ""' && has "${a}" "- shared_buffers=128MB"
+  ok "compose, nothing set (the Mac stand): no JVM options, shared_buffers at PostgreSQL's own default" "$?"
+  printf 'HERD_SERVER_HEAP_MB=2929\nHERD_DB_SHARED_BUFFERS=1464MB\n' >>"${work}/.env"
+  b="$(cd "${work}" && docker compose -p herd config 2>&1)"
+  has "${b}" 'JDK_JAVA_OPTIONS: -Xms2929m -Xmx2929m -XX:+AlwaysPreTouch' && has "${b}" "- shared_buffers=1464MB"
+  ok "compose, HERD_SERVER_HEAP_MB=2929 and HERD_DB_SHARED_BUFFERS=1464MB (what env-init.sh --profile oracle writes for 11718 MiB): -Xms=-Xmx=2929m with AlwaysPreTouch, shared_buffers=1464MB" "$?"
+  n="$(diff <(printf '%s\n' "${a}") <(printf '%s\n' "${b}") | grep -c '^[<>]')"
+  [[ "${n}" == 4 ]]
+  ok "compose: setting the two variables changes exactly two lines of the resolved file (${n} lines in the diff), nothing else" "$?"
+  printf 'HERD_SERVER_HEAP_MB=\nHERD_DB_SHARED_BUFFERS=\n' >>"${work}/.env"
+  b="$(cd "${work}" && docker compose -p herd config 2>&1)"
+  [[ "${a}" == "${b}" ]]
+  ok "compose: the two variables set to nothing (secrets.sh --set NAME=) are the same as not set" "$?"
+
+  # the JVM of the server image (the same base image as server/Dockerfile's runtime stage)
+  out="$(docker run --rm --network none -e JDK_JAVA_OPTIONS='-Xms64m -Xmx64m -XX:+AlwaysPreTouch' "${jre}" java -XX:+PrintFlagsFinal -version 2>&1)"
+  has_re "${out}" 'InitialHeapSize *= 67108864' && has_re "${out}" 'MaxHeapSize *= 67108864' && has_re "${out}" 'AlwaysPreTouch *= true'
+  ok "the server image's JVM takes -Xms, -Xmx and AlwaysPreTouch from JDK_JAVA_OPTIONS" "$?"
+  has "${out}" "NOTE: Picked up JDK_JAVA_OPTIONS: -Xms64m -Xmx64m -XX:+AlwaysPreTouch"
+  ok "... and says so" "$?"
+  out="$(docker run --rm --network none -e JAVA_OPTS='-Xmx64m' -e JAVA_OPTS_APPEND='-Xmx64m' "${jre}" java -XX:+PrintFlagsFinal -version 2>&1)"
+  ! has_re "${out}" 'MaxHeapSize *= 67108864'
+  ok "JAVA_OPTS and JAVA_OPTS_APPEND (the usual names in Quarkus images) are read by nothing in this image: the heap stays the JVM's own" "$?"
+  out="$(docker run --rm --network none -e JDK_JAVA_OPTIONS= "${jre}" java -version 2>&1)"
+  has "${out}" "NOTE: Picked up JDK_JAVA_OPTIONS:"
+  ok "an empty JDK_JAVA_OPTIONS (what the compose file passes when the heap is not set) still prints the one NOTE line at start -- the only difference on the Mac stand" "$?"
+  # a long-lived JVM: the pre-touched heap is held; the same JVM without the option is not
+  docker run -d --name "herd-vps-dryrun-mem-a-$$" --network none -e JDK_JAVA_OPTIONS='-Xms512m -Xmx512m -XX:+AlwaysPreTouch' "${jre}" java -m jdk.httpserver -b 127.0.0.1 -p 18000 -d /tmp >/dev/null 2>&1
+  docker run -d --name "herd-vps-dryrun-mem-b-$$" --network none "${jre}" java -m jdk.httpserver -b 127.0.0.1 -p 18000 -d /tmp >/dev/null 2>&1
+  EXTRA_CONTAINERS="herd-vps-dryrun-mem-a-$$ herd-vps-dryrun-mem-b-$$"
+  sleep 8
+  mem="$(docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' "herd-vps-dryrun-mem-a-$$" "herd-vps-dryrun-mem-b-$$" 2>&1)"
+  a="$(printf '%s\n' "${mem}" | awk -v n="herd-vps-dryrun-mem-a-$$" '$1 == n { print $2 }')"
+  b="$(printf '%s\n' "${mem}" | awk -v n="herd-vps-dryrun-mem-b-$$" '$1 == n { print $2 }')"
+  a="$(source "${HERE}/remote.sh"; mem_mib "${a}" 2>/dev/null)"
+  b="$(source "${HERE}/remote.sh"; mem_mib "${b}" 2>/dev/null)"
+  awk -v x="${a:-0}" 'BEGIN { exit(x + 0 >= 512 ? 0 : 1) }'
+  ok "a JVM with -Xms512m -Xmx512m AlwaysPreTouch holds the heap from the start: ${a} MiB in docker stats (at least 512)" "$?"
+  awk -v x="${b:-0}" 'BEGIN { exit(x + 0 > 0 && x + 0 < 200 ? 0 : 1) }'
+  ok "the same JVM without the options holds ${b} MiB (a few dozen) -- the pinned heap is what makes the difference" "$?"
+  docker rm -f "herd-vps-dryrun-mem-a-$$" "herd-vps-dryrun-mem-b-$$" >/dev/null 2>&1
+  EXTRA_CONTAINERS=""
+
+  # PostgreSQL: the setting reaches the server, the default is the old default, and the buffers are a cache, not a reservation
+  docker run -d --name "herd-vps-dryrun-pg-a-$$" --network none -e POSTGRES_PASSWORD=x "${pg}" postgres -c shared_buffers=1464MB >/dev/null 2>&1
+  docker run -d --name "herd-vps-dryrun-pg-b-$$" --network none -e POSTGRES_PASSWORD=x "${pg}" >/dev/null 2>&1
+  EXTRA_CONTAINERS="herd-vps-dryrun-pg-a-$$ herd-vps-dryrun-pg-b-$$"
+  for n in $(seq 1 60); do # the image initialises the cluster with a temporary server first, then starts the real one
+    docker logs "herd-vps-dryrun-pg-a-$$" 2>&1 | grep -q 'init process complete' && docker logs "herd-vps-dryrun-pg-b-$$" 2>&1 | grep -q 'init process complete' && break
+    sleep 1
+  done
+  sleep 3
+  a="$(docker exec "herd-vps-dryrun-pg-a-$$" psql -U postgres -At -c 'show shared_buffers' 2>&1)"
+  b="$(docker exec "herd-vps-dryrun-pg-b-$$" psql -U postgres -At -c 'show shared_buffers' 2>&1)"
+  [[ "${a}" == 1464MB ]]
+  ok "PostgreSQL started with -c shared_buffers=1464MB (the command the compose file builds) reports ${a}" "$?"
+  [[ "${b}" == 128MB ]]
+  ok "PostgreSQL started with no -c (the old command) reports ${b}: the compose file's default 128MB is the same value" "$?"
+  mem="$(docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' "herd-vps-dryrun-pg-a-$$" 2>&1 | awk '{ print $2 }')"
+  a="$(source "${HERE}/remote.sh"; mem_mib "${mem}" 2>/dev/null)"
+  awk -v x="${a:-9999}" 'BEGIN { exit(x + 0 < 400 ? 0 : 1) }'
+  ok "an idle PostgreSQL with 1464MB of shared_buffers holds ${a} MiB: the buffers are filled as data is read, so they do not count towards the floor -- the pinned heap does" "$?"
+  docker rm -f "herd-vps-dryrun-pg-a-$$" "herd-vps-dryrun-pg-b-$$" >/dev/null 2>&1
+  EXTRA_CONTAINERS=""
+}
+
+# --- linux/arm64 -------------------------------------------------------------------------------------------------------------------------------
+
+# The VPS builds the three images of the stand itself (remote.sh build), and on Oracle Cloud it is an Ampere A1: linux/arm64. This builds
+# the same three images on an arm64 Docker daemon (native: on any other machine it would run under emulation for an hour, so it is skipped)
+# from the tree as deploy.sh sends it, in a throwaway buildx builder with a cold cache and as little as an A1 shape has (2 CPUs, 8 GB; the
+# builder is in a network of its own with masquerading, because the default bridge of some machines has no way out), prints how long each
+# took, and starts them. Not part of --docker: it takes minutes and pulls the base images. tools/vps/test.sh --arm64
+test_arm64() {
+  section "linux/arm64: server, web and chainsvc built from the tree the VPS gets, in a throwaway buildx builder, and started"
+  local arch builder net cpus src name t0 secs rc mem cid caddy pg out
+  arch="$(docker info --format '{{.Architecture}}' 2>/dev/null)"
+  case "${arch}" in
+    aarch64 | arm64) ;;
+    *)
+      if [[ "${HERD_VPS_TEST_ARM64_EMULATED:-0}" != 1 ]]; then
+        skip "the Docker daemon is '${arch:-unknown}', not arm64: a build for arm64 would run under emulation for an hour (HERD_VPS_TEST_ARM64_EMULATED=1 does it anyway)"
+        return 0
+      fi
+      ;;
+  esac
+  caddy="$(awk '$1 == "image:" {print $2; exit}' "${HERE}/edge/compose.yml")"
+  pg="$(awk '$1 == "image:" && $2 ~ /^postgres:/ { print $2; exit }' "${REPO}/docker-compose.yml")"
+  # (the output is read whole first: grep -q leaves the pipe early, and with pipefail docker's SIGPIPE would fail the test)
+  out="$(docker buildx imagetools inspect "${caddy}" 2>&1)"
+  has_re "${out}" 'Platform: *linux/arm64'
+  ok "the pinned Caddy image (${caddy%%@*}) has a linux/arm64 variant" "$?"
+  out="$(docker buildx imagetools inspect "${pg}" 2>&1)"
+  has_re "${out}" 'Platform: *linux/arm64'
+  ok "${pg} has a linux/arm64 variant" "$?"
+  src="${SANDBOX}/arm64-src"
+  mkdir -p "${src}"
+  (
+    set +e
+    # shellcheck source=tools/vps/common.sh
+    source "${HERE}/common.sh"
+    rsync -a "${RSYNC_EXCLUDES[@]}" "${REPO}/" "${src}/"
+  ) >/dev/null 2>&1
+  ok "the tree as deploy.sh sends it (the same excludes) is in place for the builds" "$?"
+  builder="herd-vps-dryrun-arm64-$$"
+  net="herd-vps-dryrun-build-$$"
+  cpus="${HERD_VPS_TEST_ARM64_CPUS:-0-1}"
+  if ! docker network create -o com.docker.network.bridge.enable_ip_masquerade=true "${net}" >/dev/null 2>&1; then
+    skip "could not create the throwaway network ${net}"
+    return 0
+  fi
+  EXTRA_NETWORK="${net}"
+  EXTRA_BUILDER="${builder}"
+  if ! docker buildx create --name "${builder}" --driver docker-container --driver-opt "network=${net}" --driver-opt "cpuset-cpus=${cpus}" --driver-opt memory=8g --platform linux/arm64 >/dev/null 2>&1; then
+    docker buildx create --name "${builder}" --driver docker-container --driver-opt "network=${net}" --platform linux/arm64 >/dev/null 2>&1
+    echo "note - the builder could not be limited to CPUs ${cpus} and 8 GB; it has the whole machine"
+  fi
+  docker buildx inspect "${builder}" --bootstrap >/dev/null 2>&1
+  ok "the throwaway builder ${builder} is running (CPUs ${cpus}, 8 GB, its own network)" "$?"
+  EXTRA_IMAGES="herd-vps-dryrun-chainsvc:arm64 herd-vps-dryrun-server:arm64 herd-vps-dryrun-web:arm64"
+  # the order of remote.sh build_images: the Rust image first
+  for name in chainsvc server web; do
+    t0=$(date +%s)
+    case "${name}" in
+      chainsvc) docker buildx build --builder "${builder}" --platform linux/arm64 --progress plain --load -t herd-vps-dryrun-chainsvc:arm64 -f "${src}/chain/c2-svc/Dockerfile" "${src}/chain" >"${SANDBOX}/arm64-${name}.log" 2>&1 ;;
+      server) docker buildx build --builder "${builder}" --platform linux/arm64 --progress plain --load -t herd-vps-dryrun-server:arm64 -f "${src}/server/Dockerfile" "${src}" >"${SANDBOX}/arm64-${name}.log" 2>&1 ;;
+      web) docker buildx build --builder "${builder}" --platform linux/arm64 --progress plain --load --build-arg VITE_WALLETCONNECT_PROJECT_ID= -t herd-vps-dryrun-web:arm64 -f "${src}/web/Dockerfile" "${src}/web" >"${SANDBOX}/arm64-${name}.log" 2>&1 ;;
+    esac
+    rc=$?
+    secs=$(($(date +%s) - t0))
+    ok "the ${name} image builds for linux/arm64 (${secs} s, cold cache, builder limited to CPUs ${cpus} and 8 GB)" "${rc}"
+    ((rc == 0)) || tail -n 15 "${SANDBOX}/arm64-${name}.log" | sed 's/^/    | /'
+  done
+  for name in chainsvc server web; do
+    [[ "$(docker image inspect "herd-vps-dryrun-${name}:arm64" --format '{{.Os}}/{{.Architecture}}' 2>/dev/null)" == linux/arm64 ]]
+    ok "herd-vps-dryrun-${name}:arm64 is a linux/arm64 image" "$?"
+  done
+  mem="$(docker run --rm --network none herd-vps-dryrun-chainsvc:arm64 2>&1 | head -n 3)"
+  has "${mem}" "C2_SVC_TOKEN is required"
+  ok "the arm64 chain service binary runs (it stops at once asking for its token)" "$?"
+  mem="$(docker run --rm --network none --entrypoint nginx herd-vps-dryrun-web:arm64 -v 2>&1)"
+  has "${mem}" "nginx version"
+  ok "nginx of the arm64 web image runs" "$?"
+  cid="herd-vps-dryrun-server-$$"
+  docker run -d --name "${cid}" --network none -e JDK_JAVA_OPTIONS='-Xms256m -Xmx256m -XX:+AlwaysPreTouch -XX:+PrintFlagsFinal' herd-vps-dryrun-server:arm64 >/dev/null 2>&1
+  EXTRA_CONTAINERS="${cid}"
+  sleep 10
+  mem="$(docker logs "${cid}" 2>&1)"
+  has "${mem}" "NOTE: Picked up JDK_JAVA_OPTIONS: -Xms256m -Xmx256m -XX:+AlwaysPreTouch" && has_re "${mem}" 'MaxHeapSize *= 268435456' && has_re "${mem}" 'AlwaysPreTouch *= true'
+  ok "the arm64 server image: its java takes the heap and AlwaysPreTouch from JDK_JAVA_OPTIONS (what docker-compose.yml passes)" "$?"
+  has "${mem}" "io.quarkus.runtime.Application"
+  ok "... and the Quarkus application runs on arm64 (it stops at the database, as it must with no network)" "$?"
+  docker rm -f "${cid}" >/dev/null 2>&1
+  EXTRA_CONTAINERS=""
+  docker buildx rm --force "${builder}" >/dev/null 2>&1
+  EXTRA_BUILDER=""
+  docker rmi -f herd-vps-dryrun-chainsvc:arm64 herd-vps-dryrun-server:arm64 herd-vps-dryrun-web:arm64 >/dev/null 2>&1
+  EXTRA_IMAGES=""
+  docker network rm "${net}" >/dev/null 2>&1
+  EXTRA_NETWORK=""
+}
+
 # --- run -------------------------------------------------------------------------------------------------------------------------------
 
 want static && test_static
@@ -1885,6 +2878,8 @@ want backup && test_backup
 want verify && test_verify
 want stand && test_stand
 want flow && test_flow
+want oracle && test_oracle
+want memory && test_memory
 if ((DOCKER_TESTS)); then
   if docker info >/dev/null 2>&1; then
     want caddy && test_caddy
@@ -1892,12 +2887,23 @@ if ((DOCKER_TESTS)); then
     want rsynccompat && test_rsynccompat
     want pgrestore && test_pgrestore
     want bootstrap && test_bootstrap
+    want oracleboot && test_oracleboot
+    want firewall && test_firewall
+    want memfloor && test_memfloor
   else
     echo "FAIL - --docker was asked for, but the docker daemon does not answer"
     FAILS=$((FAILS + 1))
   fi
 else
-  if want caddy || want caddylive || want rsynccompat || want pgrestore || want bootstrap; then skip "caddy, caddylive, rsynccompat, pgrestore and bootstrap tests: they need docker (--docker)"; fi
+  if want caddy || want caddylive || want rsynccompat || want pgrestore || want bootstrap || want oracleboot || want firewall || want memfloor; then skip "caddy, caddylive, rsynccompat, pgrestore, bootstrap, oracleboot, firewall and memfloor tests: they need docker (--docker)"; fi
+fi
+if ((ARM64_TESTS)); then
+  if docker info >/dev/null 2>&1; then
+    want arm64 && test_arm64
+  else
+    echo "FAIL - --arm64 was asked for, but the docker daemon does not answer"
+    FAILS=$((FAILS + 1))
+  fi
 fi
 
 printf '\n%s checks, %s failed, %s skipped\n' "${TOTAL}" "${FAILS}" "${SKIPPED}"
