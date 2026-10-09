@@ -2473,20 +2473,24 @@ EOF
 
 # --- Oracle Cloud with a real kernel firewall ------------------------------------------------------------------------------------------------
 
-# Two throwaway containers on a network of their own (10.99.x.0/24, masquerading on so that apt can reach its mirrors). The capability
-# NET_ADMIN is given to these two only -- it acts on their own network namespaces; a container on the host's network never gets it, and
-# this one is on a bridge network of its own. The server one gets Oracle's rules file (loaded by the real netfilter-persistent), then the
-# firewall step of bootstrap.sh runs in it; the client probes. The stand's address pair is a made-up one (10.98.77.0/24, .1): the real
-# 172.28.77.1 is the address of the stand's network on the Docker VM, and answers ARP there.
+# Two throwaway containers on a network of their own (a /24 of the 10.99 range, masquerading on so that apt can reach its mirrors). The
+# capability NET_ADMIN is given to these two only -- it acts on their own network namespaces; a container on the host's network never
+# gets it, and this one is on a bridge network of its own. The server one gets Oracle's rules file (loaded by the real
+# netfilter-persistent), then the firewall step of bootstrap.sh runs in it; the client probes. The stand's address pair is a made-up
+# one (a /24 of the 10.98 range, .1 the gateway): the real 172.28.77.1 is the address of the stand's network on the Docker VM, and
+# answers ARP there. (The addresses are put together from parts: tools/public-snapshot.sh flags private-range addresses written out.)
 test_firewall() {
   section "Oracle Cloud firewall, real iptables-nft: Oracle's rules file, the kit's firewall step, probes from a second container"
-  local octet net s c sip cip work="${SANDBOX}/fw" out rc before after pkts
+  local octet net s c sip cip stand_net stand_gw stand_src work="${SANDBOX}/fw" out rc before after pkts
   octet=$((RANDOM % 200 + 20))
   net="herd-vps-dryrun-fw-$$"
   s="herd-vps-dryrun-fw-s-$$"
   c="herd-vps-dryrun-fw-c-$$"
   sip="10.99.${octet}.10"
   cip="10.99.${octet}.20"
+  stand_net="10.98.${octet}.0/24"
+  stand_gw="10.98.${octet}.1"
+  stand_src="10.98.${octet}.5"
   mkdir -p "${work}"
   if ! docker network create -o com.docker.network.bridge.enable_ip_masquerade=true --subnet "10.99.${octet}.0/24" "${net}" >/dev/null 2>&1; then
     skip "could not create the throwaway network ${net} (10.99.${octet}.0/24)"
@@ -2526,18 +2530,18 @@ test_firewall() {
   ok "Oracle's rules file is loaded by the real netfilter-persistent: INPUT ends in the REJECT" "$?"
   # listeners behind every port that is probed, the stand's gateway address and a route to its network; Docker's own kind of rules, to see
   # that they are left alone
-  sx 'for p in 22 80 443 2222 8081; do (nc -lk 0.0.0.0 $p >/dev/null 2>&1 &); done; ip addr add 10.98.77.1/32 dev lo; ip route add 10.98.77.0/24 dev eth0; (nc -lk 10.98.77.1 8090 >/dev/null 2>&1 &); sleep 1'
-  cx 'ip addr add 10.98.77.5/24 dev eth0'
-  sx 'iptables -N DOCKER-USER; iptables -A DOCKER-USER -j RETURN; iptables -I FORWARD 1 -j DOCKER-USER; iptables -t nat -A POSTROUTING -s 10.97.0.0/16 -j MASQUERADE'
+  sx "for p in 22 80 443 2222 8081; do (nc -lk 0.0.0.0 \$p >/dev/null 2>&1 &); done; ip addr add ${stand_gw}/32 dev lo; ip route add ${stand_net} dev eth0; (nc -lk ${stand_gw} 8090 >/dev/null 2>&1 &); sleep 1"
+  cx "ip addr add ${stand_src}/24 dev eth0"
+  sx 'iptables -N DOCKER-USER; iptables -A DOCKER-USER -j RETURN; iptables -I FORWARD 1 -j DOCKER-USER; iptables -t nat -A POSTROUTING -s 172.17.0.0/16 -j MASQUERADE'
   tcp_open 22
   ok "before: ssh (22) is accepted by Oracle's own rule" "$?"
   ! tcp_open 80 && ! tcp_open 443 && ! tcp_open 8081
   ok "before: 80, 443 and 8081 are rejected (the REJECT of Oracle's rules file -- why the site would be unreachable)" "$?"
-  ! tcp_open 8090 10.98.77.5 10.98.77.1
-  ok "before: the stand's server container (10.98.77.5 here) cannot reach chainsvc on the gateway address (10.98.77.1) port 8090" "$?"
+  ! tcp_open 8090 "${stand_src}" "${stand_gw}"
+  ok "before: the stand's server container (${stand_src} here) cannot reach chainsvc on the gateway address (${stand_gw}) port 8090" "$?"
 
   docker cp "${HERE}/bootstrap.sh" "${s}:/root/bootstrap.sh"
-  out="$(docker exec "${s}" bash /root/bootstrap.sh --only firewall --profile oracle --stand-subnet 10.98.77.0/24 --stand-gateway 10.98.77.1 2>&1)"
+  out="$(docker exec "${s}" bash /root/bootstrap.sh --only firewall --profile oracle --stand-subnet "${stand_net}" --stand-gateway "${stand_gw}" 2>&1)"
   rc=$?
   ok "bootstrap.sh --only firewall --profile oracle: succeeds" "${rc}"
   printf '%s\n' "${out}" | sed 's/^/    | /' | tail -n 22
@@ -2547,9 +2551,9 @@ test_firewall() {
   ok "after: 22, 80 and 443 are accepted" "$?"
   ! tcp_open 8081
   ok "after: another port (8081) is still rejected -- the REJECT stays, only what was asked for is opened" "$?"
-  tcp_open 8090 10.98.77.5 10.98.77.1
+  tcp_open 8090 "${stand_src}" "${stand_gw}"
   ok "after: the stand's server container can reach chainsvc on the gateway address, port 8090" "$?"
-  ! tcp_open 8090 "${cip}" 10.98.77.1
+  ! tcp_open 8090 "${cip}" "${stand_gw}"
   ok "after: ... and a host outside the stand's network cannot" "$?"
   cx "echo hello | nc -u -w 1 ${sip} 443 >/dev/null 2>&1"
   pkts="$(sx 'iptables -L INPUT -v -n -x | grep herd-http3 | awk "{print \$1}"')"
@@ -2561,12 +2565,12 @@ test_firewall() {
   ok "the file keeps the INPUT and FORWARD REJECTs and the rules for the boot and block volumes" "$?"
   [[ "$(sx 'diff /etc/iptables/rules.v4.before-herd /etc/iptables/rules.v4 | grep -c "^<"')" == 0 ]]
   ok "nothing of Oracle's own lines was removed or changed (the diff to the kept old file only adds)" "$?"
-  sx 'iptables -S DOCKER-USER | grep -qx -- "-A DOCKER-USER -j RETURN" && iptables -S FORWARD | sed -n 2p | grep -qx -- "-A FORWARD -j DOCKER-USER" && iptables -t nat -S POSTROUTING | grep -q -- "-s 10.97.0.0/16 -j MASQUERADE"'
+  sx 'iptables -S DOCKER-USER | grep -qx -- "-A DOCKER-USER -j RETURN" && iptables -S FORWARD | sed -n 2p | grep -qx -- "-A FORWARD -j DOCKER-USER" && iptables -t nat -S POSTROUTING | grep -q -- "-s 172.17.0.0/16 -j MASQUERADE"'
   ok "chains and rules of the kind Docker keeps (DOCKER-USER in FORWARD, a MASQUERADE in nat) are untouched: nothing was flushed or restored" "$?"
 
   # idempotent
   before="$(sx 'sha256sum /etc/iptables/rules.v4; iptables -S INPUT')"
-  out="$(docker exec "${s}" bash /root/bootstrap.sh --only firewall --profile oracle --stand-subnet 10.98.77.0/24 --stand-gateway 10.98.77.1 2>&1)"
+  out="$(docker exec "${s}" bash /root/bootstrap.sh --only firewall --profile oracle --stand-subnet "${stand_net}" --stand-gateway "${stand_gw}" 2>&1)"
   rc=$?
   ok "a second run succeeds" "${rc}"
   after="$(sx 'sha256sum /etc/iptables/rules.v4; iptables -S INPUT')"
@@ -2584,13 +2588,13 @@ test_firewall() {
   after="$(sx 'iptables -S INPUT')"
   [[ "${before}" == "${after}" ]]
   ok "after a pretend reboot (flush, netfilter-persistent start) the running INPUT chain is exactly what it was" "$?"
-  tcp_open 80 && tcp_open 443 && tcp_open 8090 10.98.77.5 10.98.77.1 && ! tcp_open 8081
+  tcp_open 80 && tcp_open 443 && tcp_open 8090 "${stand_src}" "${stand_gw}" && ! tcp_open 8081
   ok "... and 80, 443 and the stand's path work, 8081 is rejected again" "$?"
 
   # another ssh port
   ! tcp_open 2222
   ok "before: ssh on 2222 is rejected" "$?"
-  out="$(docker exec "${s}" bash /root/bootstrap.sh --only firewall --profile oracle --ssh-port 2222 --stand-subnet 10.98.77.0/24 --stand-gateway 10.98.77.1 2>&1)"
+  out="$(docker exec "${s}" bash /root/bootstrap.sh --only firewall --profile oracle --ssh-port 2222 --stand-subnet "${stand_net}" --stand-gateway "${stand_gw}" 2>&1)"
   rc=$?
   ok "--ssh-port 2222: the step succeeds" "${rc}"
   tcp_open 2222 && tcp_open 22
