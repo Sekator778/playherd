@@ -44,6 +44,9 @@ networks:
 services:
   db:
     image: postgres:16-alpine
+    # shared_buffers is PostgreSQL's own default (128MB) unless HERD_DB_SHARED_BUFFERS is set: the VPS kit sets it from the RAM of the
+    # machine (tools/vps/env-init.sh --profile oracle). It is the size of a cache that fills as data is read, not a memory reservation.
+    command: ["postgres", "-c", "shared_buffers=${HERD_DB_SHARED_BUFFERS:-128MB}"]
     environment:
       POSTGRES_USER: herd
       # Task item 3 (security minor): generated into .env by tools/stand.sh, same pattern as
@@ -132,6 +135,12 @@ services:
       # sandbox); this machine has the identical restriction outside any sandbox.
       network: host
     environment:
+      # The heap of the server JVM, in MiB, when .env sets HERD_SERVER_HEAP_MB (the VPS kit does, from the RAM of the machine:
+      # tools/vps/env-init.sh --profile oracle): -Xms equal to -Xmx and AlwaysPreTouch, so the JVM takes the whole heap at start
+      # and holds it. Not set (the Mac stand): no options, the JVM sizes itself as before. server/Dockerfile starts `java` directly,
+      # so JAVA_OPTS and JAVA_OPTS_APPEND are read by nothing; the java launcher reads JDK_JAVA_OPTIONS (it prints one
+      # "NOTE: Picked up JDK_JAVA_OPTIONS:" line at start, empty or not).
+      JDK_JAVA_OPTIONS: "${HERD_SERVER_HEAP_MB:+-Xms${HERD_SERVER_HEAP_MB}m -Xmx${HERD_SERVER_HEAP_MB}m -XX:+AlwaysPreTouch}"
       # live = markets and prices from the sources; replay = the old accelerated BTC-only history,
       # for tests and offline use (HERD_MODE=replay in .env).
       HERD_MODE: ${HERD_MODE:-live}

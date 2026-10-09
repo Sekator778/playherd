@@ -30,6 +30,8 @@ EDGE_CONTAINER=edge-caddy
 WEB_BIND=127.0.0.1
 WEB_PORT=8480
 GATEWAY=172.28.77.1 # docker-compose.yml: the herd_default network's gateway; chainsvc listens on it, nginx trusts it
+MEMINFO="${HERD_MEMINFO_FILE:-/proc/meminfo}"
+MEMORY_FLOOR_PCT=25 # the oracle profile (env-init.sh) pins the server's heap at this share of the RAM; verify warns below it
 
 log() { printf '[remote] %s\n' "$*" >&2; }
 die() {
@@ -343,14 +345,14 @@ check_chainsvc() {
   local code
   code="$(http_code "http://127.0.0.1:8090/health")"
   if [[ "${code}" == 200 ]]; then ok "chainsvc: /health 200 on the loopback"; else fail "chainsvc: /health answered ${code} on the loopback"; fi
-  # The path the server really uses: from its container to the gateway address. ufw's default is to drop it; bootstrap.sh
-  # adds the rule.
+  # The path the server really uses: from its container to the gateway address. The host's firewall drops it by default (ufw) or
+  # rejects it (the rules file of Oracle's image); bootstrap.sh adds the rule.
   code="$(compose exec -T server curl -s -o /dev/null -m 10 -w '%{http_code}' "http://${GATEWAY}:8090/health" 2>/dev/null)" || true
   code="${code:-000}"
   if [[ "${code}" == 200 ]]; then
     ok "chainsvc: reachable from the server container at ${GATEWAY}:8090"
   else
-    fail "chainsvc: the server container gets ${code} from http://${GATEWAY}:8090/health (ufw rule 'herd: server -> chainsvc' missing? bootstrap.sh adds it)"
+    fail "chainsvc: the server container gets ${code} from http://${GATEWAY}:8090/health (the firewall rule 'server container -> chainsvc' missing? bootstrap.sh adds it: the ufw rule 'herd: server container -> chainsvc', or on Oracle Cloud the herd-chainsvc line in /etc/iptables/rules.v4)"
   fi
 }
 
@@ -439,6 +441,83 @@ check_host() {
   if [[ -f /etc/cron.d/herd-backup ]]; then ok "backups: /etc/cron.d/herd-backup is there"; else warn "backups: no /etc/cron.d/herd-backup (bootstrap.sh writes it)"; fi
 }
 
+# MiB (one decimal) of a size as `docker stats` prints it: binary units (KiB, MiB, GiB), decimal ones (kB, MB, GB) in older versions.
+mem_mib() { # mem_mib 3.115GiB -> 3189.8
+  awk -v s="$1" 'BEGIN {
+    n = s + 0
+    u = s
+    sub(/^[0-9.]+/, "", u)
+    f["B"] = 1; f["KiB"] = 1024; f["MiB"] = 1048576; f["GiB"] = 1073741824; f["TiB"] = 1099511627776
+    f["kB"] = 1000; f["KB"] = 1000; f["MB"] = 1000000; f["GB"] = 1000000000; f["TB"] = 1000000000000
+    if (!(u in f)) exit 1
+    printf "%.1f\n", n * f[u] / 1048576
+  }'
+}
+
+# The memory the stand's containers hold, as a share of the machine's RAM -- always reported. With the oracle profile (HERD_VPS_PROFILE=oracle in
+# .env, written by env-init.sh --profile oracle) it has to be at least MEMORY_FLOOR_PCT: Oracle may reclaim an Always Free instance whose CPU, network
+# and memory use all stay under 20% (tools/vps/README.md, "Oracle Always Free"), and the pinned heap of the server is what keeps the memory above that.
+# `docker stats` reports what the containers use without their page cache; the machine's own figures are shown next to it.
+check_memory() {
+  local total_kb avail_kb free_kb ids rows name used mib sum="0" parts="" short profile opts cid line total_mib share pct_avail pct_free
+  total_kb="$(awk '/^MemTotal:/ {print $2}' "${MEMINFO}" 2>/dev/null || true)"
+  avail_kb="$(awk '/^MemAvailable:/ {print $2}' "${MEMINFO}" 2>/dev/null || true)"
+  free_kb="$(awk '/^MemFree:/ {print $2}' "${MEMINFO}" 2>/dev/null || true)"
+  if ! [[ "${total_kb}" =~ ^[0-9]+$ ]] || ((total_kb == 0)); then
+    warn "memory: cannot read MemTotal from ${MEMINFO}"
+    return 0
+  fi
+  profile="$(grep -m1 '^HERD_VPS_PROFILE=' "${APP_DIR}/.env" 2>/dev/null | cut -d= -f2- || true)"
+  ids="$(compose ps -q 2>/dev/null | tr '\n' ' ' || true)"
+  rows=""
+  if [[ -n "${ids// /}" ]]; then
+    # shellcheck disable=SC2086 # the container ids are a list of words
+    rows="$(docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' ${ids} 2>/dev/null || true)"
+  fi
+  while read -r name used _; do
+    [[ -n "${name}" && -n "${used}" ]] || continue
+    mib="$(mem_mib "${used}")" || continue
+    sum="$(awk -v a="${sum}" -v b="${mib}" 'BEGIN { printf "%.1f", a + b }')"
+    short="${name#herd-}"
+    parts="${parts}${parts:+, }${short%-[0-9]*} ${mib%.*}"
+  done <<<"${rows}"
+  if [[ "${sum}" == 0 ]]; then
+    if [[ "${profile}" == oracle ]]; then warn "memory: no figures from docker stats for the stand's containers (is the stand up?)"; fi
+    return 0
+  fi
+  total_mib="$(awk -v k="${total_kb}" 'BEGIN { printf "%.0f", k / 1024 }')"
+  share="$(awk -v s="${sum}" -v t="${total_kb}" 'BEGIN { printf "%.1f", s * 1024 * 100 / t }')"
+  line="the stand's containers hold ${sum%.*} MiB = ${share}% of the machine's ${total_mib} MiB (${parts} MiB)"
+  if [[ "${avail_kb}" =~ ^[0-9]+$ && "${free_kb}" =~ ^[0-9]+$ ]]; then
+    pct_avail="$(awk -v a="${avail_kb}" -v t="${total_kb}" 'BEGIN { printf "%.0f", (t - a) * 100 / t }')"
+    pct_free="$(awk -v f="${free_kb}" -v t="${total_kb}" 'BEGIN { printf "%.0f", (t - f) * 100 / t }')"
+    line="${line}; the whole machine: ${pct_avail}% in use without cache (MemTotal-MemAvailable), ${pct_free}% not free (MemTotal-MemFree)"
+  fi
+  if [[ "${profile}" == oracle ]]; then
+    if awk -v s="${share}" -v f="${MEMORY_FLOOR_PCT}" 'BEGIN { exit(s + 0 >= f + 0 ? 0 : 1) }'; then
+      ok "memory: ${line}; the oracle profile asks for at least ${MEMORY_FLOOR_PCT}%"
+    else
+      warn "memory: ${line} -- BELOW the ${MEMORY_FLOOR_PCT}% the oracle profile asks for: an Always Free instance whose CPU, network and memory use all stay under 20% may be reclaimed by Oracle (HERD_SERVER_HEAP_MB in .env, and the stand has to be restarted after it is set: tools/vps/deploy.sh)"
+    fi
+  else
+    ok "memory: ${line}"
+  fi
+  cid="$(compose ps -q server 2>/dev/null | head -n 1 || true)"
+  opts=""
+  if [[ -n "${cid}" ]]; then
+    opts="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${cid}" 2>/dev/null | grep -m1 '^JDK_JAVA_OPTIONS=' | cut -d= -f2- || true)"
+  fi
+  if [[ "${profile}" == oracle ]]; then
+    if [[ "${opts}" == *-Xms* && "${opts}" == *-Xmx* && "${opts}" == *-XX:+AlwaysPreTouch* ]]; then
+      ok "memory: the server JVM runs with ${opts}"
+    else
+      warn "memory: the oracle profile is set in .env, but the server container has JDK_JAVA_OPTIONS='${opts}' (it was started before the setting: tools/vps/deploy.sh restarts the stand)"
+    fi
+  elif [[ -n "${opts}" ]]; then
+    ok "memory: the server JVM runs with ${opts}"
+  fi
+}
+
 cmd_verify() {
   local domain="${1:-}" ratelimit=1 flag
   [[ -n "${domain}" ]] || die "usage: verify DOMAIN [--no-ratelimit] [--insecure]"
@@ -459,6 +538,7 @@ cmd_verify() {
   check_seq_floor
   check_web_through_caddy "${domain}"
   if ((ratelimit)); then check_ratelimit; fi
+  check_memory
   check_host
   echo "${FAILS} failed, ${WARNS} warnings"
   ((FAILS == 0))

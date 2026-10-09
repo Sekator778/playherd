@@ -3,7 +3,14 @@
 # secrets.sh pipes it over ssh (`bash -s -- ARGS < env-init.sh`); it is not kept there. It can run anywhere, with
 # HERD_APP_DIR pointing at the directory that holds (or will hold) the .env -- tools/vps/test.sh does that.
 #
-#   env-init.sh --domain DOMAIN [--walletconnect-id ID] [--set NAME=VALUE]...
+#   env-init.sh --domain DOMAIN [--walletconnect-id ID] [--profile oracle] [--set NAME=VALUE]...
+#
+# --profile oracle sizes the stand's memory from the RAM of THIS machine (MemTotal): the server JVM's heap, HERD_SERVER_HEAP_MB,
+# is 25% of it (docker-compose.yml turns that into -Xms and -Xmx of that size and AlwaysPreTouch, so the JVM takes the whole heap
+# when it starts and holds it), PostgreSQL's shared_buffers, HERD_DB_SHARED_BUFFERS, an eighth. An Always Free instance of Oracle
+# Cloud whose CPU, network and memory use all stay under 20% may be reclaimed; the heap is what keeps the memory above that
+# (tools/vps/README.md, "Oracle Always Free"). HERD_VPS_PROFILE=oracle is written too: remote.sh verify reads it. The lines are
+# set again on every run (a resized machine gets new numbers); --set after --profile overrides them.
 #
 # The four secrets docker-compose.yml needs -- HERD_OPERATOR_TOKEN, HERD_DB_PASSWORD and the chain service's token, which
 # is one value under two names (C2_SVC_TOKEN for chainsvc, HERD_CHAINSVC_TOKEN for the server), exactly what
@@ -30,6 +37,7 @@ die() {
 
 domain=""
 wc_id=""
+profile=""
 extras=()
 while (($# > 0)); do
   case "$1" in
@@ -39,6 +47,10 @@ while (($# > 0)); do
       ;;
     --walletconnect-id)
       wc_id="${2:?--walletconnect-id needs a value}"
+      shift 2
+      ;;
+    --profile)
+      profile="${2:?--profile needs a name}"
       shift 2
       ;;
     --set)
@@ -54,6 +66,10 @@ done
 if [[ -n "${wc_id}" ]]; then
   [[ "${wc_id}" =~ ^[0-9a-f]{32}$ ]] || die "bad --walletconnect-id (32 hex digits)"
 fi
+case "${profile}" in
+  '' | none | oracle) ;;
+  *) die "bad --profile '${profile}' (oracle, or none)" ;;
+esac
 for kv in ${extras[@]+"${extras[@]}"}; do
   [[ "${kv}" =~ ^[A-Z][A-Z0-9_]{0,63}=[A-Za-z0-9_.:/,@+=-]*$ ]] || die "bad --set '${kv}' (NAME=VALUE, no spaces or quotes)"
   for s in ${SECRETS}; do
@@ -101,6 +117,7 @@ else
 fi
 CHANGED_KEYS=""
 GENERATED=""
+PROFILE_NOTE=""
 
 # --- the secrets: made once, kept for good
 if ! has HERD_OPERATOR_TOKEN; then
@@ -130,12 +147,30 @@ set_kv HERD_PUBLIC_DOMAIN "${domain}" # the domain a player signs at sign-in: it
 # The session cookie of a site served over TLS. docker-compose.yml passes it on to the server only if its environment lists
 # HERD_COOKIE_SECURE (README, "Открытые пункты"); the line costs nothing until then.
 set_kv HERD_COOKIE_SECURE true
+# The memory of the stand, from the RAM of this machine (HERD_ENVINIT_MEM_KB stands in for MemTotal in tests). The heap is a quarter of
+# it (at least 512 MiB), the shared buffers an eighth (at least 128 MiB); both are plain numbers, no spaces, so that .env, compose and
+# --set can all carry them. Nothing but docker-compose.yml reads these two; HERD_VPS_PROFILE is for remote.sh verify.
+if [[ "${profile}" == oracle ]]; then
+  mem_kb="${HERD_ENVINIT_MEM_KB:-$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)}"
+  [[ "${mem_kb}" =~ ^[0-9]+$ ]] || die "cannot read the memory of this machine (MemTotal in /proc/meminfo) for --profile oracle"
+  ((mem_kb >= 1048576)) || die "MemTotal is ${mem_kb} kB: less than 1 GiB is too little for --profile oracle"
+  mem_mb=$((mem_kb / 1024))
+  heap_mb=$((mem_mb * 25 / 100))
+  ((heap_mb >= 512)) || heap_mb=512
+  buffers_mb=$((mem_mb / 8))
+  ((buffers_mb >= 128)) || buffers_mb=128
+  set_kv HERD_VPS_PROFILE oracle
+  set_kv HERD_SERVER_HEAP_MB "${heap_mb}"
+  set_kv HERD_DB_SHARED_BUFFERS "${buffers_mb}MB"
+  PROFILE_NOTE="  memory profile oracle: RAM ${mem_mb} MiB -> server heap ${heap_mb} MiB pinned (-Xms=-Xmx, AlwaysPreTouch), database shared_buffers ${buffers_mb}MB"
+fi
 for kv in ${extras[@]+"${extras[@]}"}; do
   set_kv "${kv%%=*}" "${kv#*=}"
 done
 
 if [[ "${state}" == updated && -z "${GENERATED}" && -z "${CHANGED_KEYS}" ]]; then
   echo ".env: unchanged (${ENV_FILE})"
+  [[ -z "${PROFILE_NOTE}" ]] || echo "${PROFILE_NOTE}"
   exit 0
 fi
 chmod 600 "${new}"
@@ -144,3 +179,4 @@ trap - EXIT
 echo ".env: ${state} (${ENV_FILE}, mode 600)"
 [[ -z "${GENERATED}" ]] || echo "  generated here, not shown:${GENERATED}"
 [[ -z "${CHANGED_KEYS}" ]] || echo "  set:${CHANGED_KEYS}"
+[[ -z "${PROFILE_NOTE}" ]] || echo "${PROFILE_NOTE}"
