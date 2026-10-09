@@ -468,6 +468,10 @@ check_memory() {
     return 0
   fi
   profile="$(grep -m1 '^HERD_VPS_PROFILE=' "${APP_DIR}/.env" 2>/dev/null | cut -d= -f2- || true)"
+  # bootstrap.sh writes the platform it recognised into its stamp: an Oracle Cloud instance without the profile is the case that is easy to miss
+  if [[ "${profile}" != oracle ]] && grep -qx 'platform=oracle' "${HERD_BOOTSTRAP_STAMP:-/var/lib/herd-bootstrap/done}" 2>/dev/null; then
+    warn "memory: bootstrap.sh recorded this machine as an Oracle Cloud instance, but .env has no oracle profile (HERD_VPS_PROFILE): an Always Free instance whose CPU, network and memory use all stay under 20% may be reclaimed by Oracle -- tools/vps/secrets.sh --env-only --profile oracle, then tools/vps/deploy.sh"
+  fi
   ids="$(compose ps -q 2>/dev/null | tr '\n' ' ' || true)"
   rows=""
   if [[ -n "${ids// /}" ]]; then
