@@ -144,8 +144,7 @@ has HERD_CHAINSVC_TOKEN || printf 'HERD_CHAINSVC_TOKEN=%s\n' "${shared}" >>"${ne
 # --- settings of this deployment
 set_kv HERD_PUBLIC_DOMAIN "${domain}" # the domain a player signs at sign-in: it has to be the address of the site
 [[ -z "${wc_id}" ]] || set_kv VITE_WALLETCONNECT_PROJECT_ID "${wc_id}" # a build argument of the web image (public)
-# The session cookie of a site served over TLS. docker-compose.yml passes it on to the server only if its environment lists
-# HERD_COOKIE_SECURE (README, "Открытые пункты"); the line costs nothing until then.
+# The session cookie of a site served over TLS: docker-compose.yml passes HERD_COOKIE_SECURE on to the server (since fa72aa3).
 set_kv HERD_COOKIE_SECURE true
 # The memory of the stand, from the RAM of this machine (HERD_ENVINIT_MEM_KB stands in for MemTotal in tests). The heap is a quarter of
 # it (at least 512 MiB), the shared buffers an eighth (at least 128 MiB); both are plain numbers, no spaces, so that .env, compose and
