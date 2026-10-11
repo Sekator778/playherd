@@ -1,0 +1,338 @@
+/* Feedback (Р-81): the strip at the bottom of the screen (`FeedbackStrip.tsx`) and the form's sheet (`FeedbackModal.tsx`).
+   Colours, radii, shadows, durations and easings are the app's tokens (index.css), none made up here; the strip's own three layout
+   tokens (`--feedback-strip-*`) are defined first thing below.
+
+   The strip is a quiet bar, not a game control: the one purple solid fill on a game screen is PLACE BET, so the strip is
+   outlined, never filled, and nothing in it pulses, blinks or slides after its first appearance. Words carry the meaning
+   (the action says "Feedback"); colour is only a hint. */
+
+/* ---------------------------------------------------------------------------
+   Tokens
+--------------------------------------------------------------------------- */
+
+:root {
+  /* The strip's own height — two rows of its line on a phone. */
+  --feedback-strip-height: 56px;
+  /* The clear air between the strip's bottom edge and the tab bar's top edge: 40 px on a phone (the strip does not sit on the tab
+     bar, nor within a thumb's slip of it). Tighter where that is not needed — the media queries below. */
+  --feedback-strip-gap: 40px;
+  /* What the page reserves under its content while the strip is up (`.page--feedback-strip` below): a control can always be
+     scrolled clear of the strip. */
+  --feedback-strip-space: calc(var(--feedback-strip-height) + var(--feedback-strip-gap));
+}
+/* A screen wide enough for a mouse: no thumb to keep off the tab bar. */
+@media (min-width: 721px) {
+  :root {
+    --feedback-strip-gap: 12px;
+  }
+}
+/* A short screen (a phone turned on its side): every pixel of height is the game's. */
+@media (max-height: 520px) {
+  :root {
+    --feedback-strip-gap: 8px;
+  }
+}
+/* A 320 px phone: the strip's line takes three rows there, and the room reserved under the page follows it. */
+@media (max-width: 340px) {
+  :root {
+    --feedback-strip-height: 70px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   The strip
+--------------------------------------------------------------------------- */
+
+.feedback-strip {
+  position: fixed;
+  /* Under the sign-in sheet and every result layer (200 and up), over the page. Not under the tab bar (45): they do not touch. */
+  z-index: 44;
+  left: max(12px, var(--safe-left));
+  right: max(12px, var(--safe-right));
+  /* Above the tab bar and the home-indicator inset, with the gap of the token: on a phone, clear of the tab bar and of a thumb on it. */
+  bottom: calc(var(--tabbar-height) + var(--safe-bottom) + var(--feedback-strip-gap));
+  max-width: 640px;
+  margin: 0 auto;
+  display: flex;
+  align-items: stretch;
+  min-height: var(--feedback-strip-height);
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  animation: feedback-strip-in var(--dur-base) var(--ease-out-expo);
+  transition: opacity var(--dur-fast) ease;
+}
+@keyframes feedback-strip-in {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Out of the way — while the form is open, while a text field has the keyboard on a touch screen, while a round summary is on
+   screen: gone for the eye, the thumb and the screen reader, back in the same place (no second entrance). */
+.feedback-strip--away {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) ease,
+    visibility 0s linear var(--dur-fast);
+}
+/* Kept apart from the rule above: a browser that does not know :has() drops the whole rule it is in, and the other one must stay. */
+.page:has(.quiet-notes) .feedback-strip {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* The whole strip but its × is one button — a thumb does not have to find a small word. */
+.feedback-strip__open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.feedback-strip__open:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.feedback-strip__open:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+.feedback-strip__icon {
+  flex: none;
+  color: var(--accent-text);
+}
+.feedback-strip__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.feedback-strip__action {
+  flex: none;
+  padding: 6px 12px;
+  border: 1px solid var(--accent-text);
+  border-radius: var(--radius-pill);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.feedback-strip__close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.feedback-strip__close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* The keyboard's ring (index.css: thick, gold) is drawn inside the strip, in the shape of the strip's own corners, so it stays within
+   the bar instead of overhanging it. */
+.feedback-strip__open:focus-visible {
+  outline-offset: -4px;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+.feedback-strip__close:focus-visible {
+  outline-offset: -4px;
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+/* A phone: no icon (the word on the right says what the strip is, and the room goes to the line), so the line takes two rows at
+   360 px rather than three. */
+@media (max-width: 720px) {
+  .feedback-strip__icon {
+    display: none;
+  }
+}
+/* 320 px: the arrow after the word goes too. */
+@media (max-width: 340px) {
+  .feedback-strip__arrow {
+    display: none;
+  }
+  .feedback-strip__open {
+    font-size: 13px;
+  }
+}
+
+/* The page keeps room for the strip under its content, over the tab bar's own: the footer, the last thing on every screen,
+   can always be scrolled clear of it — and so can the bet slip with PLACE BET above it. */
+.page--feedback-strip footer.app-footer {
+  padding-bottom: calc(24px + var(--tabbar-height) + var(--safe-bottom) + var(--feedback-strip-space));
+}
+
+/* ---------------------------------------------------------------------------
+   The form
+--------------------------------------------------------------------------- */
+
+/* `.modal` and `.modal-overlay` (index.css) are loaded AFTER this file (main.tsx imports App first), so a rule of the same weight
+   would lose to them: the two classes together out-weigh them whichever file comes first. */
+.modal.feedback-modal {
+  max-width: 460px;
+}
+/* On a touch screen the sheet itself takes the focus when it opens (so the keyboard stays down until the box is tapped): a ring
+   around a whole sheet says nothing — every control in it has its own. */
+.modal.feedback-modal:focus-visible {
+  outline: none;
+}
+.feedback-modal h2 {
+  margin-bottom: 14px;
+  font-size: 20px;
+}
+.feedback-field {
+  margin-bottom: 8px;
+}
+/* The question is the one thing to read: heavier than the field labels elsewhere. */
+.feedback-field label {
+  color: var(--text);
+  font-size: 15px;
+}
+.feedback-counter {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.feedback-counter--limit {
+  color: var(--warning);
+  font-weight: 700;
+}
+.feedback-note {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.feedback-credit {
+  margin: 0 0 14px;
+  font-size: 12px;
+}
+.feedback-credit a {
+  color: var(--text-faint);
+}
+.feedback-modal .field-error {
+  margin: 0 0 4px;
+}
+.feedback-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.feedback-actions .btn {
+  min-height: 48px;
+  font-size: 16px;
+}
+.feedback-actions .btn--secondary {
+  flex: 1 1 0;
+}
+.feedback-send {
+  flex: 2 1 0;
+}
+/* Sending: the button says so in words and shows it is working — a ring, never a bar that claims a percentage. */
+.feedback-send--sending::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: white;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Sent: one calm check and one sentence. */
+.feedback-sent {
+  text-align: center;
+  padding-top: 6px;
+}
+.feedback-sent h2 {
+  margin-bottom: 0;
+  font-size: 18px;
+}
+.feedback-sent__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 12px;
+  border: 2px solid var(--up-strong);
+  border-radius: 50%;
+  background: var(--up-bg);
+  color: var(--win-neon);
+  animation: feedback-badge-pop var(--dur-base) var(--ease-out-back);
+}
+@keyframes feedback-badge-pop {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* A phone: a bottom sheet — the box, the words and the buttons are in thumb reach, and the page behind it stays in view above. */
+@media (max-width: 600px) {
+  .modal-overlay.feedback-overlay {
+    align-items: flex-end;
+    padding: 0 var(--safe-right) 0 var(--safe-left);
+  }
+  .modal.feedback-modal {
+    max-width: none;
+    max-height: calc(100dvh - var(--safe-top) - 16px);
+    padding: 18px 16px calc(18px + var(--safe-bottom));
+    border-bottom: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    animation: feedback-sheet-in var(--dur-base) var(--ease-out-expo);
+  }
+}
+@keyframes feedback-sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Reduced motion: no entrance, no pop, no ring turning — the words, the colour and the check stay. */
+@media (prefers-reduced-motion: reduce) {
+  .feedback-strip,
+  .feedback-modal,
+  .feedback-sent__badge,
+  .feedback-send--sending::before {
+    animation: none;
+  }
+}
+html[data-reduced-motion="true"] .feedback-strip,
+html[data-reduced-motion="true"] .feedback-modal,
+html[data-reduced-motion="true"] .feedback-sent__badge,
+html[data-reduced-motion="true"] .feedback-send--sending::before {
+  animation: none;
+}

@@ -39,6 +39,8 @@ import {
   type CrowdOverviewDto,
   type DepositAddressDto,
   type EpochMs,
+  type FeedbackReceiptDto,
+  type FeedbackRequest,
   type HomeSummaryDto,
   type Interval,
   type LedgerEntryDto,
@@ -268,6 +270,11 @@ class RealApi implements Api {
   // --- server info (additive, task's FIXED INTERFACE (1)) ---
   serverInfo(): Promise<ServerInfoDto> {
     return rpc("serverInfo", []);
+  }
+
+  // --- feedback (Р-81): open to everyone, no session needed; a 429 is RATE_LIMITED like any other call's ---
+  submitFeedback(req: FeedbackRequest): Promise<FeedbackReceiptDto> {
+    return rpc("submitFeedback", [req]);
   }
 
   // --- "while you were away" (additive proposal — contract.ts's own doc comment) ---

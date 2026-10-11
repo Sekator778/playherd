@@ -4,7 +4,7 @@
  * clock is `performance.now() × 60` (`clock.ts`), which Vitest's fake timers control.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, MIN_STAKE_PLAY, type RoundBetting } from "./contract";
+import { ApiRequestError, FEEDBACK_MAX_LENGTH, MIN_STAKE_PLAY, type FeedbackRequest, type RoundBetting } from "./contract";
 import { SIM_SPEED, buildRoundId, parseRoundId, simNowMs } from "./clock";
 import {
   LONG,
@@ -14,7 +14,7 @@ import {
   priceStr,
   sizeForMargin,
 } from "./liquidation";
-import { mockApi } from "./mockApi";
+import { mockApi, mockFeedbackMessages } from "./mockApi";
 import { crowdOutcomeOf } from "./mockCrowdHistory";
 import { CLOSED_LISTING_MS, MOCK_CLOSING_AT_MS, MOCK_MARKETS, MOCK_NEW_LISTING_ID, mockMarketById } from "./mockMarkets";
 import { priceStrAt, TICK_MS } from "./mockPrices";
@@ -1034,5 +1034,91 @@ describe("the crowd's last outcome: a flat round is FLAT, not a loss (MarketCrow
       expect([null, "WIN", "LOSS", "LIQUIDATED", "FLAT"]).toContain(m.crowd.lastOutcome);
       expect(m.crowd.roundsWon).toBeLessThanOrEqual(m.crowd.roundsTraded);
     }
+  });
+});
+
+describe("submitFeedback (Р-81) — open to everyone, kept in memory", () => {
+  // The mock is one shared instance and the tests above leave a player signed in: these start from a visitor.
+  beforeEach(async () => {
+    await mockApi.signOut();
+  });
+
+  const request = (overrides: Partial<FeedbackRequest> = {}): FeedbackRequest => ({
+    message: "Nice game",
+    timeZone: "Europe/Berlin",
+    language: "de-DE",
+    page: "/play/BTC",
+    client: "web",
+    ...overrides,
+  });
+
+  it("resolves with an id, and keeps the message with everything it was sent with", async () => {
+    const before = mockFeedbackMessages().length;
+    const receipt = await mockApi.submitFeedback(request());
+    expect(receipt.id).toBeDefined();
+    expect(mockFeedbackMessages()).toHaveLength(before + 1);
+    expect(mockFeedbackMessages()[before]).toMatchObject({
+      id: receipt.id,
+      message: "Nice game",
+      timeZone: "Europe/Berlin",
+      language: "de-DE",
+      page: "/play/BTC",
+      client: "web",
+      playerId: null, // nobody signed in
+    });
+  });
+
+  it("every message gets its own id, and they are kept oldest first", async () => {
+    const a = await mockApi.submitFeedback(request({ message: "first" }));
+    const b = await mockApi.submitFeedback(request({ message: "second" }));
+    expect(a.id).not.toBe(b.id);
+    const kept = mockFeedbackMessages().map((m) => m.message);
+    expect(kept.indexOf("first")).toBeLessThan(kept.indexOf("second"));
+  });
+
+  it("needs no session — and with one, keeps the player id beside the message", async () => {
+    await mockApi.signOut();
+    const anonymous = await mockApi.submitFeedback(request({ message: "from a visitor" }));
+    expect(mockFeedbackMessages().find((m) => m.id === anonymous.id)?.playerId).toBeNull();
+
+    await signIn();
+    try {
+      const signedIn = await mockApi.submitFeedback(request({ message: "from a player" }));
+      expect(mockFeedbackMessages().find((m) => m.id === signedIn.id)?.playerId).toBe("me");
+    } finally {
+      await mockApi.signOut();
+    }
+  });
+
+  it("keeps the context the browser could not state as null", async () => {
+    const receipt = await mockApi.submitFeedback(request({ timeZone: null, language: null, page: null, client: null }));
+    expect(mockFeedbackMessages().find((m) => m.id === receipt.id)).toMatchObject({ timeZone: null, language: null, page: null, client: null });
+  });
+
+  it("stores the message trimmed, as the server does", async () => {
+    const receipt = await mockApi.submitFeedback(request({ message: "  \n padded \t " }));
+    expect(mockFeedbackMessages().find((m) => m.id === receipt.id)?.message).toBe("padded");
+  });
+
+  it("an empty message, or one of only whitespace, is refused and kept nowhere", async () => {
+    const before = mockFeedbackMessages().length;
+    await expectApiError(mockApi.submitFeedback(request({ message: "" })), "OTHER");
+    await expectApiError(mockApi.submitFeedback(request({ message: " \n\t " })), "OTHER");
+    expect(mockFeedbackMessages()).toHaveLength(before);
+  });
+
+  it("a message over the limit is refused, one at the limit is kept", async () => {
+    const before = mockFeedbackMessages().length;
+    await expectApiError(mockApi.submitFeedback(request({ message: "x".repeat(FEEDBACK_MAX_LENGTH + 1) })), "OTHER");
+    expect(mockFeedbackMessages()).toHaveLength(before);
+    await mockApi.submitFeedback(request({ message: "x".repeat(FEEDBACK_MAX_LENGTH) }));
+    expect(mockFeedbackMessages()).toHaveLength(before + 1);
+  });
+
+  it("outlives a sign-out: a stored message is not the session's", async () => {
+    await signIn();
+    const receipt = await mockApi.submitFeedback(request({ message: "kept after sign-out" }));
+    await mockApi.signOut();
+    expect(mockFeedbackMessages().some((m) => m.id === receipt.id)).toBe(true);
   });
 });

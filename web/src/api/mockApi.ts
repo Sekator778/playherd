@@ -1,7 +1,9 @@
 /**
  * `Api` implementation backed entirely by seeded/deterministic local data (Р-35) — no network
  * calls. A single instance (`mockApi`, exported at the bottom) holds the only real mutable state
- * in the whole mock: the signed-in demo player's identity, balance, ledger and own bets. Every
+ * in the whole mock: the signed-in demo player's identity, balance, ledger and own bets (the
+ * feedback messages of `submitFeedback` are kept beside it in module state, `mockFeedbackMessages()`: they
+ * are not the player's and outlive a sign-out). Every
  * NPC/crowd/round/price number is otherwise a pure function of the simulated clock (`clock.ts`)
  * and a seed (`mockMarkets.ts`, `mockPrices.ts`, `mockPlayers.ts`, `mockRounds.ts`,
  * `mockCrowdHistory.ts`).
@@ -27,6 +29,7 @@
 import {
   ApiRequestError,
   CROWD_STARTING_CAPITAL_USD,
+  FEEDBACK_MAX_LENGTH,
   LEVERAGE_MIN,
   MIN_STAKE_PLAY,
   RATING_ROUNDS_THRESHOLD,
@@ -44,6 +47,8 @@ import {
   type CrowdOverviewDto,
   type DepositAddressDto,
   type EpochMs,
+  type FeedbackReceiptDto,
+  type FeedbackRequest,
   type HomeSummaryDto,
   type Interval,
   type LedgerEntryDto,
@@ -148,6 +153,20 @@ const PRICE_SERIES_MAX_POINTS = 600;
 const INTERVALS: readonly Interval[] = ["HOURLY", "DAILY"];
 
 type WithdrawalRecord = WithdrawalRequestDto;
+
+/** A feedback message as the mock keeps it (Р-81): what `submitFeedback` was given (the message trimmed, as the server
+ *  stores it), the id it answered with, and the player id when someone was signed in. Not part of any session: it
+ *  outlives `signOut`, as a stored message outlives the visit. */
+export interface MockFeedbackEntry extends FeedbackRequest {
+  id: string;
+  playerId: string | null;
+}
+const mockFeedback: MockFeedbackEntry[] = [];
+
+/** The messages `mockApi.submitFeedback` has stored this page, oldest first (a test reads them; no screen does). */
+export function mockFeedbackMessages(): readonly MockFeedbackEntry[] {
+  return mockFeedback;
+}
 
 class MockApi implements Api {
   private player: PlayerSummaryDto | null = null;
@@ -885,6 +904,22 @@ class MockApi implements Api {
 
   async acknowledgeResults(roundIds: string[]): Promise<void> {
     for (const id of roundIds) this.acknowledgedRoundIds.add(id);
+  }
+
+  // -------------------------------------------------------------------------
+  // Feedback (Р-81) — open to everyone, session or not; kept in memory, nobody reads it
+  // -------------------------------------------------------------------------
+
+  async submitFeedback(req: FeedbackRequest): Promise<FeedbackReceiptDto> {
+    const message = req.message.trim();
+    // What the server refuses, in the words it would use (an unknown code reaches the UI as `OTHER` with its message).
+    if (message.length === 0) throw new ApiRequestError("OTHER", "The message is empty.");
+    if (message.length > FEEDBACK_MAX_LENGTH) {
+      throw new ApiRequestError("OTHER", `The message is longer than ${FEEDBACK_MAX_LENGTH} characters.`);
+    }
+    const id = `mock-feedback-${mockFeedback.length + 1}`;
+    mockFeedback.push({ ...req, message, id, playerId: this.player?.playerId ?? null });
+    return { id };
   }
 }
 

@@ -16,11 +16,15 @@
  * restore), land on the Lobby instead of exiting. The **only** place hardware Back exits the app is
  * the Lobby itself (`/`, the app's one root screen per the Lobby → Pair-room → Stats/Profile IA,
  * `docs/product/decisions.md` Р-59/Р-61) — matching the task's "only exit from the lobby".
+ *
+ * Before any of that, a sheet that is open takes the press (`backHandlers.ts`, Р-81: the feedback form closes on Back
+ * wherever it was opened, even on the Lobby, where Back would otherwise exit the app).
  */
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
 import type { PluginListenerHandle } from "@capacitor/core";
+import { handleBackPress } from "./backHandlers";
 
 const LOBBY_PATH = "/";
 
@@ -62,6 +66,8 @@ export function useAndroidBackButton(): void {
     loadAppPlugin().then(({ App }) => {
       if (cancelled) return;
       App.addListener("backButton", ({ canGoBack }) => {
+        // An open sheet (the feedback form, `backHandlers.ts`) closes first: Back is the way out of it, not out of the screen behind it.
+        if (handleBackPress()) return;
         if (location.pathname === LOBBY_PATH) {
           void App.exitApp();
         } else if (canGoBack) {

@@ -990,6 +990,44 @@ export interface ServerInfoDto {
 }
 
 // ---------------------------------------------------------------------------
+// Feedback (Р-81): one free-text message from a visitor, signed in or not
+// ---------------------------------------------------------------------------
+
+/** The most characters one feedback message may have (`FeedbackRequest.message`, counted as JavaScript counts a string:
+ *  UTF-16 units — the form's `maxLength` and the server's limit are the same number). Client-side check only — the
+ *  server is authoritative (Р-81: the web side's own limit is 2000, the server refuses more). */
+export const FEEDBACK_MAX_LENGTH = 2000;
+
+/** Which build sent a feedback message: a browser tab, the installed web app (display-mode standalone), or the
+ *  Android shell (Capacitor). Lets the operator tell the three apart; says nothing about the person. */
+export type FeedbackClient = "web" | "app" | "pwa";
+
+/**
+ * `submitFeedback`'s one argument (Р-81). Everything but `message` is context the browser can state by itself, and
+ * every one of them may be `null` (not known, or not available in this browser): the player types a message and
+ * nothing else — no email, no name. The country is NOT sent: the server works it out from the request's IP address
+ * and does not keep the address. The signed-in player is not sent either: the server knows the session; the message
+ * is stored with the player id when there is one. `submitFeedback` needs no session.
+ *
+ * Limits the web side keeps (the server may be stricter): `message` is trimmed, 1..{@link FEEDBACK_MAX_LENGTH};
+ * `timeZone` an IANA name (`Intl.DateTimeFormat().resolvedOptions().timeZone`, at most 64 characters); `language`
+ * `navigator.language` (at most 35); `page` the path of the screen the form was opened on — `location.pathname`,
+ * never the query string or the hash (at most 200).
+ */
+export interface FeedbackRequest {
+  message: string;
+  timeZone: string | null;
+  language: string | null;
+  page: string | null;
+  client: FeedbackClient | null;
+}
+
+/** What the server answers to a stored message: the id it gave it. Opaque (a number or a string) — the web does not use it. */
+export interface FeedbackReceiptDto {
+  id: string | number;
+}
+
+// ---------------------------------------------------------------------------
 // Pagination (предложение — no source fixes a page size/cursor shape; kept generic and small)
 // ---------------------------------------------------------------------------
 
@@ -1161,6 +1199,15 @@ export interface Api {
    * the next reload, never a lost one, and never touches balances/ledger.
    */
   acknowledgeResults?(roundIds: RoundId[]): Promise<void>;
+
+  // --- feedback (Р-81) ---
+  /**
+   * Stores one message from a visitor (the feedback form, `components/FeedbackModal.tsx`). Open to everyone — no
+   * session needed; with one, the server keeps the player id beside the message. Rejects with `ApiRequestError`
+   * `RATE_LIMITED` (HTTP 429) when the sender writes too often; any other failure leaves the text with the sender,
+   * who may try again. Not an engine read: it never reports the engine ready or not.
+   */
+  submitFeedback(req: FeedbackRequest): Promise<FeedbackReceiptDto>;
 
   /** Additive (task's FIXED INTERFACE (1)) — optional on the `Api` type itself: `MockApi`
    *  intentionally does not implement it (there is no "server" to report on in the mock era),

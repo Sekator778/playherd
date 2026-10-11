@@ -93,7 +93,8 @@ Vite/React/TS(strict)/react-router заданы условием задачи. �
 `title` и `status` в строках `CrowdOverviewDto`, `ServerInfoDto.playAssetId`/`testWallet`, точная формулировка
 `priceSeries(sinceMs)`) и ночные дополнения 2026-10-02 (`RoundBase.kind`/`priceDecimals`/`source` — цены раунда печатаются по нему,
 а не по списку рынков; `CancellationDto.marketId`/`asset`; `lastOutcome: "FLAT"`; коды `ENGINE_NOT_READY`, `NOT_FOUND`, `INVALID_NICKNAME`;
-`LedgerEntryType.OPERATOR_CORRECTION`; `ServerInfoDto.engineReady`; `ProfileRoundEntryDto.kind`).
+`LedgerEntryType.OPERATOR_CORRECTION`; `ServerInfoDto.engineReady`; `ProfileRoundEntryDto.kind`) и отзыв в приложении (Р-81, 2026-10-11:
+`submitFeedback(FeedbackRequest): FeedbackReceiptDto`, `FEEDBACK_MAX_LENGTH`).
 
 ## Архитектура
 
@@ -121,11 +122,17 @@ src/api/
                               гоняют по ним `RealApi` и все экраны (см. «Тест-стык» ниже)
   liquidation.ts              — точный TS-порт LiquidationCalculator/PositionSizing + золотые векторы
   inPlay.ts, outcome.ts, favorites.ts, marketMeta.ts, amountInput.ts, seasonStats.ts
+  feedback.ts                 — отзыв в приложении (Р-81): что уходит в `submitFeedback` (текст, пояс, язык, путь без query,
+                                `web`/`app`/`pwa`), как называется сбой (429 — «слишком много», остальное — «не отправилось»),
+                                что помнит браузер (`herd.feedback.dismissed`, `herd.feedback.sent`; хранилище недоступно —
+                                полоска просто показывается), открыта ли форма
 src/components/               — общие компоненты и «модели» без React рядом с ними (`*Model.ts`,
-                                `livePosition.ts`, `heat.ts`: у каждого файла тест)
+                                `livePosition.ts`, `heat.ts`: у каждого файла тест); `FeedbackStrip` (закрываемая полоска
+                                над нижней панелью) и `FeedbackModal` (форма отзыва, на телефоне нижний лист) — Р-81, ux_spec §2
 src/fx/                       — момент итога раунда (глобальный): шина событий, очередь, карточка, частицы,
                                 звук, вибрация; наблюдатели (`useSettlementWatcher`, `useLiquidationWatcher`,
-                                `useAwayReplay`), тихая сводка расчёта (`QuietNotes`)
+                                `useAwayReplay`), тихая сводка расчёта (`QuietNotes`); `backHandlers` — кто отвечает на
+                                «Назад» Android раньше, чем уход на экран назад (открытый лист закрывается первым)
 src/pages/                    — экраны: Lobby, Pair room, Round, Stats (Crowd/Ratings/History), Profile,
                                 Wallet, How it works, Status; скрытые /lab и /lab/states
 src/wallet/                   — тестовый кошелёк в браузере (`testWallet.ts`) и WalletConnect/Sage

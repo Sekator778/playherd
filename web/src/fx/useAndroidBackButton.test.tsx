@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registerBackHandler } from "./backHandlers";
 import { useAndroidBackButton } from "./useAndroidBackButton";
 
 /**
@@ -109,5 +110,64 @@ describe("useAndroidBackButton (player review fix item 4: hardware Back from /pl
     });
 
     expect(exitAppMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useAndroidBackButton — an open sheet takes Back first (Р-81, the feedback form)", () => {
+  it("closes the sheet instead of navigating back", async () => {
+    const closeSheet = vi.fn();
+    render(
+      <MemoryRouter initialEntries={["/", "/play/btc"]} initialIndex={1}>
+        <Harness />
+      </MemoryRouter>,
+    );
+    await flushMicrotasks();
+    const off = registerBackHandler(closeSheet);
+
+    act(() => {
+      getCapturedListener()!({ canGoBack: true });
+    });
+
+    expect(closeSheet).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("path").textContent).toBe("/play/btc"); // the screen behind did not move
+    expect(exitAppMock).not.toHaveBeenCalled();
+    off();
+  });
+
+  it("closes the sheet on the Lobby too — where Back would otherwise exit the app", async () => {
+    const closeSheet = vi.fn();
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Harness />
+      </MemoryRouter>,
+    );
+    await flushMicrotasks();
+    const off = registerBackHandler(closeSheet);
+
+    act(() => {
+      getCapturedListener()!({ canGoBack: false });
+    });
+
+    expect(closeSheet).toHaveBeenCalledTimes(1);
+    expect(exitAppMock).not.toHaveBeenCalled();
+    off();
+  });
+
+  it("with the sheet closed again, Back is itself again (navigates, exits from the Lobby)", async () => {
+    const closeSheet = vi.fn();
+    render(
+      <MemoryRouter initialEntries={["/", "/play/btc"]} initialIndex={1}>
+        <Harness />
+      </MemoryRouter>,
+    );
+    await flushMicrotasks();
+    registerBackHandler(closeSheet)();
+
+    act(() => {
+      getCapturedListener()!({ canGoBack: true });
+    });
+
+    expect(closeSheet).not.toHaveBeenCalled();
+    expect(screen.getByTestId("path").textContent).toBe("/");
   });
 });

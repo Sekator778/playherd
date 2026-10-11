@@ -5,9 +5,12 @@ import { useClock } from "../api/useClock";
 import { inPlayExcludingLiquidated, loadInPlay } from "../api/inPlay";
 import { useMyPositions } from "../api/useMyPositions";
 import { headerName } from "../api/nickname";
+import { openFeedbackForm, useFeedbackStripVisible } from "../api/feedback";
 import { formatPlayAmount, rollingPlayFormat } from "../format";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 import { EngineBanner } from "./EngineBanner";
+import { FeedbackModal } from "./FeedbackModal";
+import { FeedbackStrip } from "./FeedbackStrip";
 import { PositionsStrip } from "./PositionsStrip";
 import { ScrollManager } from "./ScrollManager";
 import { CoinIcon, SpeakerOnIcon, SpeakerMuteIcon, VibrationOnIcon, VibrationOffIcon, LobbyTabIcon, StatsTabIcon, ProfileTabIcon } from "./icons";
@@ -201,6 +204,19 @@ function ProfileMenu() {
             </NavLink>
           </li>
           <li role="none">
+            {/* Feedback (Р-81): the strip may be gone for good (closed, or a message sent) — this entry, and the footer's, never are. */}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                openFeedbackForm();
+              }}
+            >
+              Feedback
+            </button>
+          </li>
+          <li role="none">
             <button
               type="button"
               role="menuitem"
@@ -277,9 +293,11 @@ export function Layout() {
   // Android hardware Back (player review fix item 4) — native-only no-op on web, see the hook's
   // own doc comment.
   useAndroidBackButton();
+  // Feedback strip (Р-81): while it is up, the page keeps room for it under its content (`Feedback.css`).
+  const feedbackStripUp = useFeedbackStripVisible();
 
   return (
-    <div className="page">
+    <div className={`page${feedbackStripUp ? " page--feedback-strip" : ""}`}>
       <ScrollManager />
       <a href="#main-content" className="skip-link">
         Skip to content
@@ -300,10 +318,18 @@ export function Layout() {
           Herd — crowd vs market. A toy-money demo on Chia testnet11. <NavLink to="/how-it-works">How it works</NavLink>
           {" · "}
           <NavLink to="/status">Status</NavLink>
+          {" · "}
+          <button type="button" className="footer-link" onClick={openFeedbackForm}>
+            Feedback
+          </button>
         </div>
       </footer>
       <BottomTabBar />
+      {/* The invitation to leave feedback, above the tab bar (Р-81) — a quiet bar, closable for good; the form it opens (and the
+       *  footer's and the profile menu's entries open) is the sheet next to it. */}
+      <FeedbackStrip />
       <ConnectWalletModal />
+      <FeedbackModal />
       {/* Portal-ish host (result-moment.md §1) — outside <Outlet/>, on top of everything. */}
       <ResultMomentHost />
     </div>

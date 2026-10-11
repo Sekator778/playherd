@@ -230,6 +230,7 @@ class FakeApi implements Api {
   publicProfile = () => this.unused();
   myProfile = () => this.unused();
   cancellations = () => this.unused();
+  submitFeedback = () => this.unused();
 }
 
 function Host() {

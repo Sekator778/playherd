@@ -185,6 +185,57 @@ describe("RealApi — HTTP 429", () => {
   });
 });
 
+describe("RealApi — submitFeedback (Р-81)", () => {
+  const request = { message: "Nice game", timeZone: "Europe/Berlin", language: "de-DE", page: "/play/BTC", client: "web" as const };
+
+  it("POSTs /api/rpc/submitFeedback with the request as the one argument — exactly its five fields", async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({ id: 17 }));
+    const receipt = await realApi.submitFeedback(request);
+    expect(receipt).toEqual({ id: 17 });
+    const call = lastCall(fetchMock);
+    expect(call).toMatchObject({ url: "/api/rpc/submitFeedback", args: [request] });
+    expect(call.init).toMatchObject({ method: "POST", credentials: "include" });
+    expect(call.args).toHaveLength(1);
+    expect(Object.keys(call.args[0] as object).sort()).toEqual(["client", "language", "message", "page", "timeZone"]);
+  });
+
+  it("what the browser could not say goes as JSON null, not left out", async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({ id: "a1" }));
+    const receipt = await realApi.submitFeedback({ message: "x", timeZone: null, language: null, page: null, client: null });
+    expect(receipt).toEqual({ id: "a1" }); // the id is opaque: a number or a string
+    const sent = (JSON.parse(lastCall(fetchMock).init.body as string) as { args: Array<Record<string, unknown>> }).args[0];
+    expect(sent).toEqual({ message: "x", timeZone: null, language: null, page: null, client: null });
+  });
+
+  it("a rate limit is RATE_LIMITED — with the server's envelope, and without one (a proxy's own 429)", async () => {
+    fetchMock.mockResolvedValueOnce(errorResponse(429, "RATE_LIMITED", "too many requests"));
+    const withEnvelope = await realApi.submitFeedback(request).catch((e) => e);
+    expect(withEnvelope).toBeInstanceOf(ApiRequestError);
+    expect(withEnvelope.code).toBe("RATE_LIMITED");
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429, text: async () => "<html>Too Many Requests</html>" });
+    const bare = await realApi.submitFeedback(request).catch((e) => e);
+    expect(bare).toBeInstanceOf(ApiRequestError);
+    expect(bare.code).toBe("RATE_LIMITED");
+  });
+
+  it("any other refusal is an ApiRequestError, a dead network or a proxy's page a plain Error — the form words both as 'couldn't send'", async () => {
+    fetchMock.mockResolvedValueOnce(errorResponse(400, "BAD_REQUEST", "the message is empty"));
+    const refused = await realApi.submitFeedback(request).catch((e) => e);
+    expect(refused).toBeInstanceOf(ApiRequestError);
+    expect(refused.code).toBe("OTHER");
+
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const offline = await realApi.submitFeedback(request).catch((e) => e);
+    expect(offline).toBeInstanceOf(Error);
+    expect(offline).not.toBeInstanceOf(ApiRequestError);
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 502, text: async () => "<html>Bad Gateway</html>" });
+    const proxy = await realApi.submitFeedback(request).catch((e) => e);
+    expect(proxy).not.toBeInstanceOf(ApiRequestError);
+  });
+});
+
 describe("RealApi — what it tells the engine state (api/engineState.ts)", () => {
   const state = () => renderHook(() => useEngineState()).result.current;
 
@@ -208,6 +259,7 @@ describe("RealApi — what it tells the engine state (api/engineState.ts)", () =
     ["priceSeries", () => realApi.priceSeries("BTC")],
     ["currentPlayer", () => realApi.currentPlayer()],
     ["round", () => realApi.round("BTC-1h-0")],
+    ["submitFeedback", () => realApi.submitFeedback({ message: "x", timeZone: null, language: null, page: null, client: null })],
   ])("a success of %s proves nothing about the engine (the server answers it from the database): the state stays", async (_name, call) => {
     fetchMock.mockResolvedValueOnce(errorResponse(503, "ENGINE_NOT_READY", "x"));
     await realApi.myAccount().catch(() => {});

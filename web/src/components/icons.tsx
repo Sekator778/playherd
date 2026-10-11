@@ -352,3 +352,27 @@ export function AnchorIcon({ className = "" }: { className?: string }) {
     </svg>
   );
 }
+
+/** A speech bubble with two lines of text — the feedback strip (`FeedbackStrip.tsx`, Р-81). */
+export function FeedbackIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+      <path
+        d="M6 4.5h12A2.5 2.5 0 0 1 20.5 7v7.5A2.5 2.5 0 0 1 18 17h-6.2l-4.3 3.5V17H6a2.5 2.5 0 0 1-2.5-2.5V7A2.5 2.5 0 0 1 6 4.5Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path d="M8 9.2h8M8 12.4h5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A check mark — "sent" in the feedback form. */
+export function CheckIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="28" height="28" fill="none" aria-hidden="true">
+      <path d="m5.5 12.8 4.2 4.2 8.8-9.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

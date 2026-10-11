@@ -66,6 +66,8 @@
   --header-offset: calc(var(--header-height) + var(--safe-top));
   --header-gutter: 16px;
 
+  /* The feedback strip's tokens (`--feedback-strip-height`, `-gap`, `-space`, Р-81) live with the strip, in components/Feedback.css. */
+
   font-family:
     "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -1080,7 +1082,8 @@ ol {
   color: var(--text-muted);
 }
 .field input,
-.field select {
+.field select,
+.field textarea {
   background: var(--bg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -1088,8 +1091,21 @@ ol {
   color: var(--text);
   font-size: 16px;
 }
-.field input:focus-visible {
+.field input:focus-visible,
+.field textarea:focus-visible {
   border-color: var(--accent);
+}
+/* A multi-line box (the feedback form): the body font, not the monospace of a bare textarea; grows downwards only; its
+   placeholder clears AA like every other faint text. */
+.field textarea {
+  font-family: inherit;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 112px;
+}
+.field textarea::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
 }
 .field-hint {
   font-size: 12px;
@@ -1815,8 +1831,20 @@ footer.app-footer {
   color: var(--text-faint);
   font-size: 13px;
 }
-footer.app-footer a {
+footer.app-footer a,
+footer.app-footer .footer-link {
   color: var(--text-faint);
+}
+/* A button that reads as one of the footer's links (Feedback, Р-81): it opens a form, it does not go anywhere. The padding is
+   a bigger thumb target, taken back by the negative margin so the line does not grow. */
+footer.app-footer .footer-link {
+  padding: 8px 4px;
+  margin: -8px -4px;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 /* Avatar --------------------------------------------------------------------------- */
