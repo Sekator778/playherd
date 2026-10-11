@@ -204,10 +204,33 @@ check_arguments() {
 
 # --- which firewall: ufw, or the rules file of the image ----------------------------------------------------------------------
 
+# Whether a cloud-init config file sets datasource_list to Oracle alone (None, cloud-init's fallback, may stand beside it). Ubuntu's
+# generic images list about thirty datasources with Oracle among them: a Contabo VPS (2026-10-11, `cloud-id` said nocloud) has
+# "datasource_list: [ NoCloud, ConfigDrive, ..., IBMCloud, Oracle, Exoscale, ..., None ]" in 90_dpkg.cfg. So Oracle being in the list
+# says nothing; Oracle being the whole list does.
+dsl_is_oracle_only() {
+  local line names n oracle=0 others=0
+  local -a items=()
+  line="$(grep -iE '^[[:space:]]*datasource_list:' "$1" 2>/dev/null | tail -n 1 || true)"
+  [[ -n "${line}" && "${line}" == *"["*"]"* ]] || return 1
+  names="${line#*[}"
+  names="${names%%]*}"
+  IFS=',' read -r -a items <<<"${names}"
+  for n in "${items[@]}"; do
+    n="$(printf '%s' "${n}" | tr -d "[:space:]\"'" | tr '[:upper:]' '[:lower:]')"
+    case "${n}" in
+      oracle) oracle=1 ;;
+      none | "") ;;
+      *) others=1 ;;
+    esac
+  done
+  ((oracle == 1 && others == 0))
+}
+
 # Whether this is an Oracle Cloud Infrastructure instance. Any one sign is enough: the flag; cloud-init's own answer (`cloud-id` prints
 # "oracle" when its Oracle datasource found the platform); the file cloud-init writes at boot; the datasource list of the image
-# (/etc/cloud/cloud.cfg.d); the DMI chassis asset tag that datasource looks for ("OracleCloud.com"); the header of the image's rules file.
-# Sets ORACLE_REASON to the sign that was found.
+# (/etc/cloud/cloud.cfg.d) when it names Oracle alone; the DMI chassis asset tag that datasource looks for ("OracleCloud.com"); the
+# header of the image's rules file. Sets ORACLE_REASON to the sign that was found.
 oracle_detect() {
   local f tag
   ORACLE_REASON=""
@@ -226,7 +249,7 @@ oracle_detect() {
   fi
   for f in "${ROOTFS}"/etc/cloud/cloud.cfg.d/*.cfg; do
     [[ -f "${f}" ]] || continue
-    if grep -qiE '^[[:space:]]*datasource_list:.*oracle' "${f}" 2>/dev/null; then
+    if dsl_is_oracle_only "${f}"; then
       ORACLE_REASON="${f} lists the Oracle datasource of cloud-init"
       return 0
     fi
