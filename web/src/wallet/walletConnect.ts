@@ -82,7 +82,7 @@ function appMetadata() {
   const origin = typeof window !== "undefined" ? window.location.origin : "https://herd.invalid";
   return {
     name: "Herd",
-    description: "Crowd vs Market — BTC up/down rounds on toy money, testnet11 (Р-37)",
+    description: "Herd — up/down rounds on toy money · Chia testnet11",
     url: origin,
     icons: [`${origin}/icons/icon-192.png`],
   };

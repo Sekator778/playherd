@@ -10,8 +10,18 @@
     <title>Herd — crowd vs market</title>
     <meta
       name="description"
-      content="Herd — bet BTC up or down with the crowd, against the market. Demo running on toy PLAY tokens."
+      content="Herd — bet up or down with the crowd, against the market. A toy-money game on Chia testnet11: no real money."
     />
+    <!-- Link preview in Discord / Telegram (gtm decision D-11, 2026-10-11): a text card only. No `og:image`
+         and no `og:url` — both must be absolute, and the same build runs on any host. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Herd" />
+    <meta property="og:title" content="Herd — crowd vs market" />
+    <meta
+      property="og:description"
+      content="Bet up or down with the crowd, against the market. A toy-money game on Chia testnet11: no real money."
+    />
+    <meta name="twitter:card" content="summary" />
     <!-- PWA (task item 3, Р-48): installable on Android/iPhone home screens. `%BASE_URL%` is
          Vite's own placeholder (replaced at build time with `vite.config.ts`'s `base` — "/" for
          the real Docker/web build, "./" only for a future local-asset Capacitor build), so these

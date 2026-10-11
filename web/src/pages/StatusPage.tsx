@@ -318,8 +318,9 @@ function OracleSection() {
               </li>
               <li>The chain record of that round holds the SHA-256 of that file, the closing price and the asset number above.</li>
               <li>
-                Run the public verifier. It reads only the public Chia API and needs none of our keys; it is a script in the project
-                repository (<code className="mono">tools/verify-oracle</code>, with its own README).
+                Run the verifier. It reads only the public Chia API and needs none of our keys; it is a script in the project
+                repository (<code className="mono">tools/verify-oracle</code>, with its own README). The repository is private for
+                now, so the command below works once it is opened.
               </li>
             </ol>
             <div className="status-command">

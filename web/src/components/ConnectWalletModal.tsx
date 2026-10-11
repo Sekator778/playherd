@@ -507,7 +507,7 @@ function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => v
                *  everybody — the Sage button first was a dead end for a visitor without Sage. Both stay. */}
               <p className="test-wallet-tag">TEST WALLET</p>
               <p className="muted">
-                Fastest way in: this stand signs you in with a real Chia key generated right in your browser — not Sage. It doesn't move any
+                Fastest way in: this demo signs you in with a real Chia key generated right in your browser — not Sage. It doesn't move any
                 funds, and each browser/profile is a separate player.
               </p>
               <div className="modal-actions" style={{ marginTop: 0 }}>

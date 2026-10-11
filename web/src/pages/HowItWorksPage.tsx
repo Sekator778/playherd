@@ -81,6 +81,7 @@ export function HowItWorksPage() {
           opposite side of the majority. Capital never resets between seasons — only the season markers on the
           chart do.
         </p>
+        <p>Every market says where its price comes from, in one of these lines:</p>
         <OracleDisclosureLine source="coinbase" />
         <OracleDisclosureLine source="kraken" />
         <OracleDisclosureLine source="hyperliquid" />
