@@ -83,7 +83,10 @@ services:
       # succeeds) — `cargo build` needs crates.io. Same root cause the "chain service" agent
       # hit and documented in docs/research/chain_service.md §6. See
       # docs/product/local_stand.md "Известные ограничения и фиксы".
-      network: host
+      # HERD_BUILD_NETWORK: the VPS sets `default` (tools/vps/env-init.sh). Compose v5 builds through Bake, which refuses a
+      # host-network build without --allow=network.host (measured on the VPS, Compose v5.6.0, 2026-10-11), and the bridge of
+      # an ordinary Linux host has egress. Unset (this Mac): host, as before.
+      network: ${HERD_BUILD_NETWORK:-host}
     # Fix (runtime, not just build — see docs/product/local_stand.md "Известные ограничения и
     # фиксы" for the full story): this machine's compose/bridge networks (`ip-masq` disabled —
     # confirmed via `docker network inspect`/`~/.orbstack/config/docker.json`) give containers on
@@ -133,7 +136,7 @@ services:
       # Fix: same no-DNS/egress default bridge network as chainsvc above — `mvn` needs Maven
       # Central. The "server" agent's report hit this too (needed `--network host` in its own
       # sandbox); this machine has the identical restriction outside any sandbox.
-      network: host
+      network: ${HERD_BUILD_NETWORK:-host} # the VPS: default (see chainsvc above)
     environment:
       # The heap of the server JVM, in MiB, when .env sets HERD_SERVER_HEAP_MB (the VPS kit does, from the RAM of the machine:
       # tools/vps/env-init.sh --profile oracle): -Xms equal to -Xmx and AlwaysPreTouch, so the JVM takes the whole heap at start
@@ -252,7 +255,7 @@ services:
       # Fix: same no-DNS/egress default bridge network — `npm ci` needs registry.npmjs.org. The
       # "web" agent's report documents the identical failure as a sandbox limitation; it recurs
       # here for the same reason (this Mac's Docker default bridge network, not the sandbox).
-      network: host
+      network: ${HERD_BUILD_NETWORK:-host} # the VPS: default (see chainsvc above)
       args:
         # Р-55: WalletConnect/Reown projectId for Sage sign-in (public, not a secret —
         # it ships in the web bundle). Value lives in .env (Р-55, Alex, 2026-09-26).

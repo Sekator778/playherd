@@ -146,6 +146,10 @@ set_kv HERD_PUBLIC_DOMAIN "${domain}" # the domain a player signs at sign-in: it
 [[ -z "${wc_id}" ]] || set_kv VITE_WALLETCONNECT_PROJECT_ID "${wc_id}" # a build argument of the web image (public)
 # The session cookie of a site served over TLS: docker-compose.yml passes HERD_COOKIE_SECURE on to the server (since fa72aa3).
 set_kv HERD_COOKIE_SECURE true
+# The network the image builds run in (docker-compose.yml's build sections): the Mac needs `host`, but Compose v5 builds through
+# Bake, which refuses a host-network build unless it is given --allow=network.host (measured here on Compose v5.6.0, 2026-10-11).
+# The bridge of an ordinary Linux host has egress, so the builds of crates, Maven and npm work on `default`.
+set_kv HERD_BUILD_NETWORK default
 # The memory of the stand, from the RAM of this machine (HERD_ENVINIT_MEM_KB stands in for MemTotal in tests). The heap is a quarter of
 # it (at least 512 MiB), the shared buffers an eighth (at least 128 MiB); both are plain numbers, no spaces, so that .env, compose and
 # --set can all carry them. Nothing but docker-compose.yml reads these two; HERD_VPS_PROFILE is for remote.sh verify.
