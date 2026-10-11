@@ -103,7 +103,7 @@ describe("the form's words", () => {
     const note = within(dialog).getByText(/No email or name needed/);
     expect(note).toHaveTextContent(/country/);
     expect(note).toHaveTextContent(/IP address/);
-    expect(note).toHaveTextContent(/the address itself isn't kept/);
+    expect(note).toHaveTextContent(/the address itself isn't saved with it/);
     expect(note).toHaveTextContent(/time zone/);
     expect(note).toHaveTextContent(/language/);
     expect(note).toHaveTextContent(/the page you're on/);

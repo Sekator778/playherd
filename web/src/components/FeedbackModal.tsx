@@ -31,7 +31,7 @@ const FOCUSABLE_SELECTOR =
  * role, a focus trap, Escape, focus handed back on close, the page behind it locked) — and Android's Back button closes
  * it (`fx/backHandlers.ts`).
  *
- * It says plainly what is kept beside the message: the country (worked out from the IP address, which is not kept), the
+ * It says plainly what is kept beside the message: the country (worked out from the IP address, which is not saved with the message), the
  * time zone, the language, the page the form was opened on and — when signed in — the player id; the database that
  * works the country out asks for its credit (CC BY 4.0), so the credit is on the form. Opened from the strip, the footer
  * or the profile menu (`api/feedback.ts`'s store); never opens by itself.
@@ -229,7 +229,7 @@ export function FeedbackModal() {
             </div>
             <p id="feedback-note" className="feedback-note">
               No email or name needed. We keep your message with your country (worked out from your IP address — the address itself
-              isn't kept), time zone, language, the page you're on and, if you're signed in, your player ID.
+              isn't saved with it), time zone, language, the page you're on and, if you're signed in, your player ID.
             </p>
             <p className="feedback-credit">
               <a href={DB_IP_URL} target="_blank" rel="noopener noreferrer">
