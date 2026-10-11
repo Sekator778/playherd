@@ -10,7 +10,9 @@ import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Auth;
 import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Enums;
+import crowdvsmarket.server.dto.Feedback;
 import crowdvsmarket.server.dto.Paging;
+import crowdvsmarket.server.service.FeedbackService;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.service.MarketViewService;
 import crowdvsmarket.server.service.PriceSeriesService;
@@ -60,6 +62,12 @@ public class RpcResource {
     private static final Set<String> RATE_LIMITED_METHODS =
             Set.of("authChallenge", "authVerify", "placeBet", "cancelBet");
 
+    /** Р-81: in-app feedback. Open to everyone (a visitor who is not signed in can send it) and written to the database,
+     *  so it has a per-IP budget of its own, far stricter than the shared one ({@code herd.feedback.rate-limit.*}); a cap
+     *  on everyone together per day is {@code FeedbackService}'s. Not in {@link #RATE_LIMITED_METHODS}: that set is the
+     *  shared budget. */
+    private static final String FEEDBACK_METHOD = "submitFeedback";
+
     @Inject
     ObjectMapper mapper;
     @Inject
@@ -70,6 +78,8 @@ public class RpcResource {
     PriceSeriesService priceSeriesService;
     @Inject
     ServerInfoService serverInfoService;
+    @Inject
+    FeedbackService feedbackService;
     @Inject
     AuthService authService;
     @Inject
@@ -87,6 +97,10 @@ public class RpcResource {
                           @CookieParam(SESSION_COOKIE) String sessionCookie,
                           @Context HttpServerRequest httpRequest) {
         if (RATE_LIMITED_METHODS.contains(method) && !rateLimiter.tryAcquire(clientIp(httpRequest) + ":" + method)) {
+            throw ApiException.rateLimited();
+        }
+        if (FEEDBACK_METHOD.equals(method) && !rateLimiter.tryAcquire(clientIp(httpRequest) + ":" + method,
+                config.feedbackRateLimitCapacity(), config.feedbackRateLimitRefillPerHour() / 3600.0)) {
             throw ApiException.rateLimited();
         }
         JsonNode args = argsArray(body);
@@ -207,6 +221,10 @@ public class RpcResource {
             // corrections (Р-32/Р-43 pattern), unauthenticated exactly like "cancellations".
             case "ledgerCorrections" -> result = gameService.ledgerCorrections(pageParams(args, 0));
             case "home" -> result = gameService.home(playerId);
+            // Р-81: public, no session required (the player's id is stored when there is one); additive (contract.ts:
+            // submitFeedback). The client's address is used for the country and then dropped — never stored or logged.
+            case FEEDBACK_METHOD -> result = feedbackService.submit(requiredObj(args, 0, Feedback.SubmitRequest.class),
+                    playerId, clientIp(httpRequest), now);
             case "serverInfo" -> result = serverInfoService.serverInfo();
             default -> throw ApiException.notFound("unknown RPC method: " + method);
         }

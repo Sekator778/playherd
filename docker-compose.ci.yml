@@ -32,3 +32,5 @@ services:
       HERD_PRICES_SOURCE: synthetic
       HERD_MARKETS_POLYMARKET_ENABLED: "false"
       HERD_ORACLE_REQUIRE_SEQ_FLOOR: "false"
+      # no download of the DB-IP country database (Р-81) either: the job reaches nothing outside the runner
+      HERD_GEOIP_ENABLED: "false"

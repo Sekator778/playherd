@@ -13,7 +13,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>One token bucket per caller-supplied {@code key} — {@code RpcResource} keys it
  * {@code "<ip>:<method>"}, so each of the three rate-limited methods gets its own budget per IP
- * (one noisy method never starves another). In-memory only — предложение, explicitly a stand-in:
+ * (one noisy method never starves another). The budget is the shared one of {@code herd.ratelimit.*} unless the
+ * caller names its own capacity and refill rate ({@link #tryAcquire(String, int, double)}; Р-81:
+ * {@code submitFeedback}).
+ *
+ * <p>In-memory only — предложение, explicitly a stand-in:
  * it resets on every server restart and does not share state across multiple server instances,
  * which is fine for this project's single-process local stand/demo VPS (Р-38) and not meant to
  * survive a real multi-instance deployment.
@@ -27,10 +31,20 @@ public class RateLimiter {
     private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
 
     /** {@code true} if a token was available and has been consumed; {@code false} if the caller
-     *  should be refused (429 RATE_LIMITED). */
+     *  should be refused (429 RATE_LIMITED). The shared budget of {@code herd.ratelimit.*}. */
     public boolean tryAcquire(String key) {
-        Bucket bucket = buckets.computeIfAbsent(key, k -> new Bucket(config.rateLimitCapacity()));
-        return bucket.tryConsume(config.rateLimitCapacity(), config.rateLimitRefillPerSecond());
+        return tryAcquire(key, config.rateLimitCapacity(), config.rateLimitRefillPerSecond());
+    }
+
+    /**
+     * {@link #tryAcquire(String)} with a budget of its own: the bucket of {@code key} holds {@code capacity} tokens at most,
+     * starts full, and gets {@code refillPerSecond} back every second (0 = never). Р-81 uses it for {@code submitFeedback},
+     * which is limited far more strictly than the shared budget. A key must always be asked with the same budget — the
+     * bucket is made by the first call with it; the keys are {@code "<ip>:<method>"}, so each method has its own.
+     */
+    public boolean tryAcquire(String key, int capacity, double refillPerSecond) {
+        Bucket bucket = buckets.computeIfAbsent(key, k -> new Bucket(capacity));
+        return bucket.tryConsume(capacity, refillPerSecond);
     }
 
     /** One bucket's own state, refilled lazily (no background thread) at whatever rate the config

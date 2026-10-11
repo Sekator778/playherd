@@ -96,10 +96,11 @@ apk: web-deps ## Android debug APK (Capacitor); HERD_APP_URL=https://host points
 # --- local stand (docker compose project "herd", via tools/stand.sh) and e2e ---
 
 # Tests of the stand script and of the end-to-end runs that need neither docker nor a network: a fake `docker` for
-# tools/stand.sh, a fake stand on localhost with rounds of a fraction of a second for tools/e2e. Not part of `check`: no CI job runs them.
-test-tools: ## tests of tools/stand.sh and of the tools/e2e runs (a fake stand); no docker, no network
+# tools/stand.sh, a fake stand on localhost with rounds of a fraction of a second for tools/e2e, a fake server on localhost for
+# `tools/herd-operator.sh feedback` (Р-81). Not part of `check`: no CI job runs them.
+test-tools: ## tests of tools/stand.sh, of the tools/e2e runs (a fake stand) and of herd-operator.sh feedback; no docker, no network
 	bash tools/test-stand.sh
-	node --test tools/e2e/*.test.mjs
+	node --test tools/e2e/*.test.mjs tools/operator.test.mjs
 
 stand-up: ## start the local stand on :8480
 	tools/stand.sh up

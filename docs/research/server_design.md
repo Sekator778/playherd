@@ -38,7 +38,7 @@ Java 21, `mvn -s ~/.m2/settings-oss.xml …` (правило CLAUDE.md).
 | `markets.catalog` | Каталоги — какие рынки листить: `HyperliquidCatalog` (перпы из `herd.markets.*`), `PolymarketCatalog` (шансы политики и спорта), `SyntheticCatalog` (офлайн-набор для `herd.prices.source=synthetic`) |
 | `prices` | Живой ценовой конвейер (Т-12, §4.2): интерфейс `MarketPrices` и его реализация `LiveMarketPrices`, `PriceFeedService` (опрос по расписанию), `TickStore`/`TickRing` (буфер тиков), источники `HyperliquidPriceSource`/`PolymarketPriceSource`/`SyntheticPriceSource`, `RoundPath` (свёртка в ≤30 свечей) |
 | `events` | Event sourcing: `GameEvent` (замкнутый интерфейс с записями-вариантами; события раундов несут необязательное `market`, `null` = BTC, Т-13), `EventStore` (append-only `game_events`), `EventApplier` (**единственный** код, мутирующий `EngineHub` — используется и живым трафиком, и полным реплеем при рестарте, в том числе реплеем «рядом» при пересборке), `StoredRoundPrices` |
-| `persistence` | `Db` (тонкая JDBC-обвязка поверх Agroal `DataSource`, ручные транзакции, JSONB через Jackson), плюс по репозиторию на read-model таблицу (`RoundResultRepository` — итоги раундов, история игроков, серия побед; `OracleRecordRepository`, `ServerMetaRepository` и др.) |
+| `persistence` | `Db` (тонкая JDBC-обвязка поверх Agroal `DataSource`, ручные транзакции, JSONB через Jackson), плюс по репозиторию на read-model таблицу (`RoundResultRepository` — итоги раундов, история игроков, серия побед; `OracleRecordRepository`, `ServerMetaRepository`, `FeedbackRepository` — отзывы из приложения, §22 и др.) |
 | `replay` | `CandleLoader` (парсер CSV, не завязан на `engine.market.CandleSeries`/`Interval` — см. §4), `ReplayRoundPrices` — источник цен режима `replay` (только BTC) |
 | `live` | Осталась одна `HyperliquidClient` (generic `/info` REST-клиент) — ею пользуется только адаптер исполнения (§15.7, выключен по умолчанию). `LivePriceSampler` и `LiveRoundPrices` (старый поллер `markPx` и построитель путей) удалены: их заменил пакет `prices` |
 | `price` | `PriceService` — только режим `replay`: replay-серия BTC и «референсная» цена `replayReference` |
@@ -46,8 +46,9 @@ Java 21, `mvn -s ~/.m2/settings-oss.xml …` (правило CLAUDE.md).
 | `auth` | `AuthService` (challenge/verify, Р-4/Р-45; домен в тексте подписи — `herd.public-domain`), `SessionService` (`herd_session`) |
 | `bots` | `BotStrategy` (5 стратегий), `BotService` (Р-46, Т-8: ставки на несколько рынков за раунд) |
 | `scheduler` | `RoundSchedulerService` (главный тик, §5), `SettlementBackoff` (отсрочка повтора расчёта окна), `OraclePublisherService` (Р-40/41/47), `OracleReconciliationService`, `EngineRebuildService` + `EngineStateBuilder` (рестарт и восстановление после сбоя расчёта: состояние строится рядом и подменяется целиком, fail-stop), поллеры вывода/ввода PLAY |
-| `service` | `GameService` — оркестратор всех мутирующих операций Api и большинства чтений, замок движка и его узкое API чтения (`readEngine`, `requireEngineReady`); вокруг него: `SeriesSeeder` (откуда стартует серия), `RoundCancellations`, `RoundPriceChecks`, `BoundaryPrices` (закрытие раунда — открытие следующего, из памяти ядра, Р-40), `WithdrawalSubmitter` (единственное место, откуда вывод уходит в chainsvc); **модель чтения рынков** (волна 7, §20): `MarketViewService` (`markets`, `myPositions`, `crowdOverview`), `OpenBets`, `CrowdStatsMemo`, `MarketMapper`, `PriceSeriesService` + `PriceThinning` (`priceSeries`), `ServerInfoService` (`serverInfo`) |
+| `service` | `GameService` — оркестратор всех мутирующих операций Api и большинства чтений, замок движка и его узкое API чтения (`readEngine`, `requireEngineReady`); вокруг него: `SeriesSeeder` (откуда стартует серия), `RoundCancellations`, `RoundPriceChecks`, `BoundaryPrices` (закрытие раунда — открытие следующего, из памяти ядра, Р-40), `WithdrawalSubmitter` (единственное место, откуда вывод уходит в chainsvc); **модель чтения рынков** (волна 7, §20): `MarketViewService` (`markets`, `myPositions`, `crowdOverview`), `OpenBets`, `CrowdStatsMemo`, `MarketMapper`, `PriceSeriesService` + `PriceThinning` (`priceSeries`), `ServerInfoService` (`serverInfo`); `FeedbackService` (`submitFeedback`, список оператора, §22) |
 | `api` | `RpcResource` (`POST /api/rpc/{method}`), `AdminResource` (Р-43), `ResultsJsonResource` (`GET /api/rounds/{id}/results.json`), `ApiExceptionMapper`, `RateLimiter` |
+| `geoip` | Страна по IP для отзыва (Р-81, §22): `CountryLookup` (интерфейс), `DbIpCountryLookup` (бин: фоновая нить загрузки + ответы), `GeoIpUpdater` (когда и что грузить), `DbIpDownloader` (скачать и распаковать файл месяца), `CountryDatabase` (MMDB в памяти поверх `com.maxmind.db.Reader`), `IpAddresses` (разбор адреса без DNS) |
 | `util` | `ResultsHasher` (канонический JSON итогов и его хеш; для BTC байт-в-байт прежний, Т-13), `LogThrottle`, `FailureLog` (первый сбой со стеком, дальше одна строка за период), `ConstantTimeTokens` |
 | `config` | `GameConfig`, `GameMode`, `JacksonConfig` |
 
@@ -303,7 +304,7 @@ canonicalization, а не иллюстративному списку. Пред�
 сравнение constant-time. **Это временная заглушка**, не подпись ключом оператора — Р-43 говорит
 про «CLI с подписью ключом оператора», которого пока нет; токен — то же самое признание
 ограничения, что и у `OnChainWalletPort` (§3). `tools/herd-operator.sh` — curl-обёртка
-(`status`/`cancel <roundId> [reason]`). Веб-админки нет (Р-43).
+(`status`/`cancel <roundId> [reason]`, с Р-81 ещё `feedback`, §22.6). Веб-админки нет (Р-43).
 
 ## 10. Docker
 
@@ -1790,3 +1791,204 @@ Dev Services Postgres):
   `acknowledgeResults`) в стража провода не входят: набор имён задаёт `web/src/api/wireSource.ts`.
 - **`walletConnectProjectId`** в `serverInfo` по-прежнему не отдаётся (§20.11).
 - **Чтение итогов под замком** — §21.5.
+
+## 22. Feedback (Р-81) — отзыв из приложения — 2026-10-11
+
+Решение — `docs/product/decisions.md` Р-81 (Алекс, 2026-10-11): в приложении закрываемая полоска «оставьте отзыв — что
+понравилось, что нет»; одно поле, без почты и имени. Вместе с текстом сохраняем то, что нужно для статистики по регионам:
+страну (сервер определяет её по IP, сам IP не хранится), часовой пояс и язык браузера, а если человек вошёл — id игрока (по
+нему видно, сколько раундов он сыграл). Это серверная часть; веб — `web/src/components/Feedback*.tsx`, `web/src/api/feedback.ts`.
+
+### 22.1 Что хранится и чего нет
+
+Хранится (таблица `feedback`, §22.2): текст; время приёма по часам сервера; id игрока, если в запросе была сессия; страна
+(ISO 3166-1 alpha-2) или `NULL`; часовой пояс, язык, страница и клиент (`web`/`app`/`pwa`) — как прислал браузер, после очистки
+(§22.3).
+
+Не хранится: IP-адрес, имя, почта. Не пишется в лог сервера (Quarkus): ни адрес, ни текст. На принятое сообщение — одна строка
+`feedback <id> accepted: country=<код или unknown>, <N> characters`. Адрес берётся тем же способом, что у лимита запросов
+(`RpcResource#clientIp`, настройки `quarkus.http.proxy.*`, §15.2), нужен только для страны и сразу забывается; в ответе его нет. В
+базе и в логе сервера адреса нет; в памяти процесса он остаётся ключом ведра лимита (`"<ip>:submitFeedback"`, §22.4) до рестарта —
+так же, как у остальных ограниченных методов.
+
+Что здесь **не** относится к серверу: прокси перед ним ведут свои журналы запросов, как вели до Р-81. nginx контейнера `web` —
+`access_log` образа по умолчанию, формат `main` с `$remote_addr`, пишется в stdout (проверено на локальном образе `herd-web`,
+2026-10-11); на VPS ещё Caddy (`log { output stdout }` в `tools/vps/edge/Caddyfile.tmpl`). Какие именно поля адреса попадают в
+строки Caddy, не проверялось — **UNVERIFIED**.
+
+Отзыв — не игровое событие: обычная таблица, не `game_events`, реплей её не трогает (§3).
+
+### 22.2 Таблица `feedback` (`V10__feedback.sql`)
+
+`id BIGSERIAL PK`, `received_at_ms BIGINT NOT NULL`, `message TEXT NOT NULL`, `player_id TEXT`, `country TEXT`, `time_zone TEXT`,
+`language TEXT`, `page TEXT`, `client TEXT`; индекс по `received_at_ms` (список оператора и суточный потолок).
+
+- **Внешнего ключа на `players(player_id)` нет.** Проверено 2026-10-11: ничто в коде сервера не удаляет строки `players` и не
+  пересобирает таблицу реплеем (`PlayerDirectory` только вставляет и меняет ник); тесты делают `TRUNCATE players CASCADE`, а
+  `tools/stand.sh reset` сносит БД целиком. Ключа нет всё равно: отзыв должен приниматься при любом состоянии `players`, а ошибка
+  целостности — единственный способ получить 500 на «отправить отзыв»; `sessions`, `withdrawal_requests`, `deposit_requests` и
+  `player_round_history` держат `player_id` так же, мягкой ссылкой. Список оператора берёт ник `LEFT JOIN`'ом.
+- **Столбца `server_version` нет**: у сервера нет номера сборки или коммита, которые можно записать (проверено 2026-10-11:
+  `server/Dockerfile`, `docker-compose.yml`, `ServerInfoService` ничего такого не передают; версия в POM — константа
+  `0.1.0-SNAPSHOT`).
+- Старые строки не удаляются никогда (в сутки их не больше `herd.feedback.max-per-day`).
+
+### 22.3 `submitFeedback` — контракт
+
+`POST /api/rpc/submitFeedback`, тело `{"args":[ <запрос> ]}`. Открыт всем: сессия не нужна, с сессией сервер записывает id игрока
+(`herd_session`, как у остальных методов; сессия, которой сервер не знает, — это «не вошёл»). Аддитивный метод (не в изначальном
+`contract.ts`, как `ledgerCorrections`); типы для веба — в `web/src/api/contract.ts` (`FeedbackRequest`, `FeedbackReceiptDto`).
+
+Запрос: `{"message": string, "timeZone": string|null, "language": string|null, "page": string|null, "client": "web"|"app"|"pwa"|null}`.
+
+- **`message`**: удаляются все U+0000 (Postgres `TEXT` их не принимает), края обрезаются так, как их обрезает `trim()` в JS —
+  пробелы, неразрывные пробелы (U+00A0 и др.), разделители строк и абзацев, U+FEFF (`String.strip()` оставил бы неразрывные
+  пробелы, и «пустое» для веба стало бы непустым для сервера); длина в `String.length()` (то же, что `length` строки в JS) должна
+  быть 1…2000, иначе `400 BAD_REQUEST` с понятным текстом: `message is required` (нет поля),
+  `message is empty`, `message is too long: <N> characters, at most 2000`. Переводы строк и табуляция внутри текста сохраняются.
+- **Остальные поля** очищаются и **никогда не повод отказать**: края обрезаются так же; пустое, длиннее лимита или с управляющим
+  символом (`Character.isISOControl`: U+0000…U+001F, U+007F…U+009F) — становится `NULL`. Лимиты: `timeZone` ≤ 64, `language` ≤ 35,
+  `page` ≤ 200 и обязана начинаться с `/`, `client` — ровно `web`, `app` или `pwa` (регистр важен). Слишком длинное не усекается, а
+  отбрасывается.
+- Неизвестные поля запроса игнорируются. Структура там, где ждут текст (`{"timeZone": {}}`), — не очистка, а кривой запрос:
+  `400` `invalid request body`, как у любого RPC; так же `missing request body` без объекта и `invalid JSON body` без JSON.
+- **Ответ** `200`: `{"id": <число>}` — номер строки (`BIGSERIAL`); больше ничего.
+- Ошибки: `400 BAD_REQUEST`, `429 RATE_LIMITED` (§22.4).
+
+### 22.4 Лимиты
+
+Две защиты, обе отвечают `429 RATE_LIMITED`:
+
+1. **На адрес** — своё ведро токенов, много строже общего (`herd.ratelimit.*`: 30 и 0,5 в секунду): `herd.feedback.rate-limit.capacity=5`
+   (залп) и `herd.feedback.rate-limit.refill-per-hour=6` (по токену в 10 минут). Ключ `"<ip>:submitFeedback"`, адрес — тот же,
+   что у остального лимита. Токен берётся в `RpcResource.call` **до разбора тела**, как у `placeBet`/`authChallenge` — значит,
+   отклонённые с `400` запросы тоже расходуют ведро. `RateLimiter` получил перегрузку `tryAcquire(key, capacity, refillPerSecond)`;
+   `tryAcquire(key)` четырёх прежних методов (`authChallenge`, `authVerify`, `placeBet`, `cancelBet`) сводится к ней с теми же
+   числами из конфига — поведение не изменилось. Ведро в памяти, сбрасывается рестартом (как в §15.2).
+2. **Общий суточный потолок** — `herd.feedback.max-per-day=1000`: если за последние 24 часа в таблице уже столько строк
+   (`COUNT(*) WHERE received_at_ms >= now − 24 ч`, по индексу), ответ `429`, ничего не пишется. `0` закрывает приём совсем.
+   Проверка и вставка — два оператора, не одна транзакция: у самой границы одновременные запросы могут перебрать потолок на число
+   этих запросов; для защиты от заливки этого достаточно. В лог при отказе — одна строка WARN в минуту.
+
+### 22.5 Страна по IP — DB-IP «IP to Country Lite»
+
+**База.** https://db-ip.com/db/download/ip-to-country-lite (страница прочитана 2026-10-11): Creative Commons Attribution 4.0
+International, без регистрации, обновляется ежемесячно; выпуск октября 2026 — MMDB «8.0 MB» по странице (распакованный файл —
+8 348 509 байт, его MD5 совпал со страницей), 710 834 записи; индекс точности по оценке DB-IP — 81 (у платной версии — 93), то есть
+страна — оценка поставщика, не наша. **Условие лицензии:** на страницах, которые показывают или используют данные базы, должна быть
+ссылка на DB-IP.com — `<a href='https://db-ip.com'>IP Geolocation by DB-IP</a>`; её показывает форма отзыва в вебе, не сервер.
+
+**Формат** (https://db-ip.com/db/format/ip-to-country-lite/mmdb.html, 2026-10-11): MMDB 2.0, схема GeoIP2-Country — `country.iso_code`
+(ISO 3166-1 alpha-2), `country.geoname_id`, `country.is_in_european_union`, `country.names`, `continent.*`. Проверено на самом
+файле 2026-10: `database_type` `DBIP-Country-Lite`, `ip_version` 6 (IPv4 — под `::/96`), `record_size` 24, 1 383 101 узел, сборка
+2026-10-01T01:36:12Z; 251 различный код, среди них `ZZ` (5 сетей) — «страны нет»; у каждой записи есть `country.iso_code`. Пробные
+адреса: 8.8.8.8 → US, 1.1.1.1 → AU, 193.0.0.1 → NL, 62.76.0.1 → RU, `::ffff:8.8.8.8` → US; для 10.0.0.1, 127.0.0.1, 192.168.1.1,
+100.64.0.1, 169.254.1.1, 224.0.0.1, `fe80::1`, `fc00::1` записи нет.
+
+**Читалка.** `com.maxmind.db:maxmind-db` **4.2.0** (Maven Central: `maven-metadata.xml` обновлён 2026-09-10 — последний релиз;
+Apache-2.0; в POM только тестовые зависимости, своих транзитивных нет; jar 61 КБ; Java 17+). Файл читается в память целиком
+(`FileMode.MEMORY`, ~8 МБ; открытие 12 мс; скачать, распаковать и загрузить с этой машины — 441 мс, проба 2026-10-11 боевыми
+классами против настоящего `download.db-ip.com`): временный файл удаляется сразу, подмена базы — присвоение `volatile`-поля, закрывать
+старую не нужно, идущий поиск доработает на старой.
+
+**Загрузка** (пакет `crowdvsmarket.server.geoip`; ни старт сервера, ни запрос её не ждут):
+
+- URL `https://download.db-ip.com/free/dbip-country-lite-YYYY-MM.mmdb.gz`. Проверено `curl` 2026-10-11: `2026-10` и `2026-09` —
+  `200` (gzip 4 123 384 и 4 116 896 байт; у октябрьского `Last-Modified: Thu, 01 Oct 2026 06:29:26 GMT`), без редиректов; `2026-11`
+  (ещё не выпущен) и `2026-13` — `404` с `text/html`.
+- Виртуальная нить `geoip-refresh`: файл текущего месяца (UTC), при `404` — предыдущего; gunzip во временный файл (`/tmp`; потолок
+  128 МБ распакованного; на всю передачу 5 минут, на соединение 15 с), открыть читалку, подменить. Месяц, который уже загружен,
+  второй раз не качается: пока идёт тот же месяц, проверка раз в 7 дней ничего не запрашивает; в новом месяце она просит его файл, а
+  если его ещё нет (в первые часы месяца так бывает), остаётся прежний, и новый запрос уходит через час — и так, пока файл не появится.
+- Сбой (нет сети, статус ≠ 200/404, не gzip, не MMDB, вышел срок или размер): одна строка WARN на попытку; загруженная раньше база
+  остаётся; повтор через час. Пока базы нет, страна отзыва — `NULL`, сам отзыв принимается.
+- Ключи: `herd.geoip.enabled` (по умолчанию `true`; в тестах `false` — сеть не трогают), `herd.geoip.url-template` (`YYYY-MM` в
+  шаблоне — месяц), `herd.geoip.mmdb-path` (готовый файл вместо загрузки; перечитывается при смене времени или размера, смотрится
+  раз в час). `enabled=false` выключает всё, и `mmdb-path` тоже.
+- `CountryLookup#countryOf(ip)` отвечает кодом или `null` и не бросает исключений: для частных, loopback, link-local, CGNAT
+  (100.64/10), multicast адресов, неизвестной сети, `ZZ`/`XX`, текста, который не адрес, и пока базы нет. Адрес разбирает собственный
+  разборщик (`IpAddresses`), а не `InetAddress.getByName`: JDK спрашивает DNS о любой строке, не похожей на адрес (в том числе о
+  «abc:def»), а строка приходит из заголовка запроса.
+
+Серверу нужен HTTPS-доступ к `download.db-ip.com` (отмечено у сети `herd_default` в `docker-compose.yml`); `HERD_GEOIP_ENABLED=false`
+в `.env` отключает загрузку (в `docker-compose.ci.yml` так и стоит — CI не ходит наружу).
+
+### 22.6 Оператор: `GET /api/admin/feedback` и `tools/herd-operator.sh feedback`
+
+`GET /api/admin/feedback?sinceMs=&limit=` — тот же bearer-токен (`AdminResource`, без токена `401`); веб-админки нет (Р-43).
+`sinceMs` — epoch-мс, включительно (нет или отрицательное — всё); `limit` — по умолчанию 200, не больше 1000 (меньше 1 — 200,
+больше 1000 — 1000); не число — `400`. Ответ — массив, новые первыми (при равном времени — больший `id`):
+`id, receivedAtMs, message, country, timeZone, language, page, client, playerId, nickname, roundsPlayed`. `nickname` — из
+`players` (`null`, пока ника нет или отправитель не входил); `roundsPlayed` — число строк игрока в `player_round_history` (по
+строке на рассчитанный раунд, где у игрока была ставка; отменённые раунды строк не дают); `null` у не вошедшего — это не `0`.
+
+`tools/herd-operator.sh feedback [--since YYYY-MM-DD] [--limit N] [--json]`: таблица (время UTC, страна, часовой пояс, язык,
+клиент, страница, ник, раунды, сообщение) и внизу счёт по странам. `--since` — 00:00 UTC этого дня; `--json` — ответ сервера как
+есть. Таблицу строит `jq` (для `--json` он не нужен). Всё, что набрал посетитель, выводится текстом: управляющие символы (в том
+числе ESC) заменяются пробелом, переводы строк — « / », чтобы сообщение не двигало курсор и не переписывало экран оператора.
+Проверено 2026-10-11 под macOS (BSD `date`, jq 1.8.2) и в контейнере Debian bookworm (GNU `date` 9.1, jq 1.6).
+
+### 22.7 Ключи настройки
+
+| Ключ (переменная окружения) | По умолчанию | Смысл |
+|---|---|---|
+| `herd.feedback.rate-limit.capacity` (`HERD_FEEDBACK_RATE_LIMIT_CAPACITY`) | 5 | залп сообщений с одного адреса |
+| `herd.feedback.rate-limit.refill-per-hour` (`HERD_FEEDBACK_RATE_LIMIT_REFILL_PER_HOUR`) | 6 | сколько токенов возвращается за час |
+| `herd.feedback.max-per-day` (`HERD_FEEDBACK_MAX_PER_DAY`) | 1000 | потолок на всех за последние 24 часа; 0 — приём закрыт |
+| `herd.geoip.enabled` (`HERD_GEOIP_ENABLED`) | `true` (в тестах `false`) | загружать базу и определять страну |
+| `herd.geoip.url-template` (`HERD_GEOIP_URL_TEMPLATE`) | адрес DB-IP выше | откуда качать; `YYYY-MM` — месяц |
+| `herd.geoip.mmdb-path` (`HERD_GEOIP_MMDB_PATH`) | пусто | готовый файл вместо загрузки |
+
+`docker-compose.yml` пробрасывает в контейнер `server` первые четыре (из `.env`); `url-template` и `mmdb-path` в нём нет — для
+готового файла нужен ещё том, это дело того, кто развёртывает.
+
+### 22.8 Тесты и реальные числа
+
+Новые тесты (`server/src/test/java/crowdvsmarket/server/…`), 195:
+- `service/FeedbackServiceTest` (26) — очистка текста и полей, лимиты, суточный потолок, строка лога без адреса и текста, границы списка;
+- `FeedbackRpcTest` (30) — через настоящий HTTP за «nginx» (`X-Forwarded-For` от доверенного loopback): ответ ровно `{"id": n}`,
+  пустое/слишком длинное/NUL, кривые тела запроса, очистка полей, игрок и аноним (и просроченная кука), страна из переадресованного
+  адреса (IPv4, IPv6, два адреса в заголовке, частные, `ZZ`), ни адреса, ни текста в логе (`testsupport/LogCapture`), столбцов
+  под адрес в таблице нет, пять и шестой на адрес, список оператора (токен, порядок, ник, раунды, `since`/`limit`/плохие значения);
+- `FeedbackDailyCapTest` (3) — потолок 3 за сутки, считаются только последние 24 часа;
+- `geoip/…` — `TinyMmdb` (запись крошечных MMDB по спецификации 2.0 в записях DB-IP; читает настоящая `com.maxmind.db.Reader`):
+  `IpAddressesTest` (89), `CountryDatabaseTest` (11), `DbIpDownloaderTest` (10; локальный HTTP-сервер вместо DB-IP: 200, 404, 500,
+  не gzip, обрезанный gzip, потолок размера, срок, нет сервера — и никаких файлов после сбоя), `GeoIpUpdaterTest` (14; свой
+  источник месяцев и свои часы: текущий месяц, откат на прошлый, загруженный месяц не качается заново, смена месяца в UTC, декабрь →
+  январь, сбой — одна строка WARN, готовый файл), `DbIpCountryLookupTest` (7);
+- `api/RateLimiterTest` (5) — прежний бюджет не изменился, свой бюджет у ключа;
+- `ContractUnionsTest` — пара `FeedbackClient` (союз `"web" | "app" | "pwa"` добавил веб в `contract.ts`; сервер держит его против
+  `FeedbackService.CLIENTS`); `CleanDatabasePerTestClass` чистит и `feedback`;
+- `tools/operator.test.mjs` (10, node) — `herd-operator.sh feedback` против сервера-пустышки: запрос, таблица, управляющие символы,
+  отказы.
+
+Прогон 2026-10-11 (`make test-java` = `mvn -B -s ~/.m2/settings-oss.xml -f pom.xml -pl server -am verify`, Dev Services Postgres, 6 мин 18 с):
+`engine` **7 324** теста, `server` **1 831** (до этих тестов — 1 636: разница 195), **0 упавших, 0 ошибок, 0 пропущенных**.
+`make test-tools`: 58 проверок `tools/test-stand.sh`, 91 тест node (было 81), 0 упавших. `tools/vps/test.sh --only static,stand,flow,memory`
+(после правок `docker-compose.yml`): 153 проверки, 0 упавших.
+
+Мутации (в копии вне репозитория; каждая правка кода роняет ожидаемые тесты): NUL не удаляются; потолок «больше» вместо «не меньше»;
+список старыми первыми; нет лимита на адрес; адрес в строке лога; частные адреса идут в базу; загруженный месяц качается заново;
+`JOIN` вместо `LEFT JOIN players`; список без токена; управляющие символы остаются в полях; текст исключения читалки в логе;
+свой бюджет игнорируется; `ZZ` — страна; временный файл остаётся после сбоя; id игрока не пишется; `page` без `/`; `0` вместо `NULL`
+у не вошедшего; `limit` не ограничен — 18 из 18 пойманы.
+
+Проба боевых классов против настоящего `download.db-ip.com` (одноразовая, вне репозитория, 2026-10-11): `GeoIpUpdater.check()` с
+`DbIpDownloader` скачал файл `2026-10` через `java.net.http.HttpClient`, распаковал и загрузил за 441 мс, ответ — «следующий
+просмотр через 168 ч»; пробные адреса — как в §22.5; второй `check()` ничего не запрашивает (0 мс); во временном каталоге ничего не
+осталось. В репозиторные тесты сеть не входит.
+
+### 22.9 Не сделано и открыто
+
+- **Живой стенд.** Ничего не развёрнуто и не запущено на стенде или VPS: проверено тестами, пробой против DB-IP и скриптом против
+  сервера-пустышки. Первый настоящий запуск покажет загрузку базы из контейнера `server` на конкретной машине; `tools/stand.sh up`
+  проверяет достижимость бирж, но не `download.db-ip.com` (сбой загрузки — только WARN).
+- **Суточный потолок не атомарен со вставкой** (§22.4): у границы возможен перебор на число одновременных запросов.
+- **Ведра лимита не вытесняются** (как у остальных ограниченных методов, §15.2): ключ — адрес (для IPv6 — каждый /128, а не /64),
+  память растёт с числом разных адресов; защита от заливки с множества адресов — суточный потолок.
+- **Срока хранения и очистки нет**: строки не удаляются (не больше `max-per-day` в сутки); удалить сообщение — SQL руками.
+- **База не кэшируется на диске**: каждый старт сервера качает файл заново (4 МБ), в том числе в цикле перезапусков.
+- **Точность страны** — оценка DB-IP (индекс 81, §22.5); за VPN, прокси или спутниковым каналом страна адреса — не страна человека
+  (вывод из того, что определяется адрес; не измерялось).
+- **`deploy/compose.prod.yml`** (прежний стек из образов GHCR) не менялся: `HERD_GEOIP_ENABLED` и `HERD_FEEDBACK_*` в него не
+  проброшены, действуют значения по умолчанию из `application.properties` (загрузка базы включена, лимиты 5 / 6 в час / 1000 в сутки).

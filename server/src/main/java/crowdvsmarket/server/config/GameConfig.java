@@ -80,6 +80,22 @@ public class GameConfig {
     @ConfigProperty(name = "herd.ratelimit.refill-per-sec")
     double rateLimitRefillPerSecond;
 
+    /** Р-81: the per-IP token bucket of {@code submitFeedback} — its own budget, far stricter than the shared one above
+     *  (a feedback message is written to the database and read by a person). Capacity: how many messages one address
+     *  may send in a burst. */
+    @ConfigProperty(name = "herd.feedback.rate-limit.capacity", defaultValue = "5")
+    int feedbackRateLimitCapacity;
+
+    /** Р-81: tokens that flow back into a feedback bucket per HOUR (not per second, unlike the shared bucket: the
+     *  numbers are small and an hour is the unit an operator thinks in). */
+    @ConfigProperty(name = "herd.feedback.rate-limit.refill-per-hour", defaultValue = "6")
+    double feedbackRateLimitRefillPerHour;
+
+    /** Р-81: how many feedback messages the server takes in any 24 hours, from everyone together; with that many in the
+     *  last 24 hours {@code submitFeedback} answers {@code 429 RATE_LIMITED} until older ones drop out of the count. */
+    @ConfigProperty(name = "herd.feedback.max-per-day", defaultValue = "1000")
+    int feedbackMaxPerDay;
+
     /** Р-53 update: now gates the REAL on-chain deposit path — {@code myDepositAddress()} and
      *  {@code DepositPollerService} — set {@code true} once chainsvc is deployed with the FIXED
      *  INTERFACE's {@code /v1/play/*} endpoints. Does NOT gate {@code requestDeposit} any more:
@@ -203,6 +219,18 @@ public class GameConfig {
 
     public double rateLimitRefillPerSecond() {
         return rateLimitRefillPerSecond;
+    }
+
+    public int feedbackRateLimitCapacity() {
+        return feedbackRateLimitCapacity;
+    }
+
+    public double feedbackRateLimitRefillPerHour() {
+        return feedbackRateLimitRefillPerHour;
+    }
+
+    public int feedbackMaxPerDay() {
+        return feedbackMaxPerDay;
     }
 
     public boolean depositEnabled() {

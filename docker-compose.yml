@@ -25,7 +25,9 @@ networks:
   default:
     name: herd_default
     # `server` fetches live prices from api.hyperliquid.xyz, Coinbase Exchange, Kraken and Polymarket
-    # (HERD_PRICES_SOURCE=live, the default below; HERD_PRICES_DISABLED_VENUES switches any of them off).
+    # (HERD_PRICES_SOURCE=live, the default below; HERD_PRICES_DISABLED_VENUES switches any of them off), and, in the
+    # background, the DB-IP country database (a few MB, at start and when a new month's file is out) from
+    # download.db-ip.com (Р-81: the country of a feedback message; HERD_GEOIP_ENABLED=false switches it off).
     # This Mac's Docker daemon turns IP masquerading off for every bridge
     # network (`ip-masq: false` in ~/.orbstack/config/docker.json — see the chainsvc fix note
     # below), which leaves containers on a bridge with no route to the internet. Re-enabling it for
@@ -208,6 +210,15 @@ services:
       # testnet11 issuance).
       HERD_TEST_WALLET_ENABLED: ${HERD_TEST_WALLET_ENABLED:-true}
       HERD_PLAY_ASSET_ID: ${HERD_PLAY_ASSET_ID:-0x4b88ce9712e97e73ad3759541fc23d38704e31d27d6586c28be14ee716080b70}
+      # Р-81: the server derives the country of a feedback message from the visitor's address with the DB-IP "IP to Country
+      # Lite" database, which it downloads from download.db-ip.com in the background (CC BY 4.0; the address is not stored).
+      # false: no download, feedback is stored without a country.
+      HERD_GEOIP_ENABLED: ${HERD_GEOIP_ENABLED:-true}
+      # Р-81: how much feedback the server takes (docs/research/server_design.md §22.4): per client address a burst of
+      # CAPACITY messages and REFILL_PER_HOUR tokens back every hour; MAX_PER_DAY from everyone together in any 24 hours.
+      HERD_FEEDBACK_RATE_LIMIT_CAPACITY: ${HERD_FEEDBACK_RATE_LIMIT_CAPACITY:-5}
+      HERD_FEEDBACK_RATE_LIMIT_REFILL_PER_HOUR: ${HERD_FEEDBACK_RATE_LIMIT_REFILL_PER_HOUR:-6}
+      HERD_FEEDBACK_MAX_PER_DAY: ${HERD_FEEDBACK_MAX_PER_DAY:-1000}
       HERD_DB_USER: herd
       # Task item 3: same value as `db`'s own POSTGRES_PASSWORD above (tools/stand.sh generates
       # it into .env once, reused by both, same "one shared secret, two env var names" pattern as

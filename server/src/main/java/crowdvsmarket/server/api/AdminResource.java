@@ -3,12 +3,14 @@ package crowdvsmarket.server.api;
 import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Enums;
+import crowdvsmarket.server.dto.Feedback;
 import crowdvsmarket.server.dto.Ledger;
 import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.dto.ServerInfo;
 import crowdvsmarket.server.prices.PriceSource;
 import crowdvsmarket.server.prices.PriceSources;
+import crowdvsmarket.server.service.FeedbackService;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.service.ServerInfoService;
 import crowdvsmarket.server.util.ConstantTimeTokens;
@@ -20,7 +22,9 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
+import java.util.List;
 import org.jboss.logging.Logger;
 
 /**
@@ -42,6 +46,8 @@ public class AdminResource {
     ServerInfoService serverInfoService;
     @Inject
     PriceSources priceSources;
+    @Inject
+    FeedbackService feedbackService;
 
     private void requireOperator(String authorizationHeader) {
         String expected = "Bearer " + config.operatorToken();
@@ -145,6 +151,44 @@ public class AdminResource {
             }
         }
         return new AdminStatusDto(info, cancellations, corrections, priceFeeds());
+    }
+
+    /**
+     * Р-81: the feedback visitors left in the app, newest first — the operator's way to read it (no web admin UI, Р-43;
+     * {@code tools/herd-operator.sh feedback}). {@code sinceMs}: only messages received at or after that epoch-ms
+     * (default: all); {@code limit}: at most that many, default {@value FeedbackService#DEFAULT_LIST_LIMIT}, at most
+     * {@value FeedbackService#MAX_LIST_LIMIT}. Each item: {@code id}, {@code receivedAtMs}, {@code message}, {@code
+     * country} (from the IP address, which is not stored), {@code timeZone}, {@code language}, {@code page}, {@code
+     * client}, {@code playerId}, {@code nickname}, {@code roundsPlayed} (see {@link Feedback.FeedbackItemDto}). The two
+     * parameters are read as text so that a typo is a {@code 400} with a message, not a bare {@code 404}.
+     */
+    @GET
+    @Path("/feedback")
+    @Produces(MediaType.APPLICATION_JSON)
+    public List<Feedback.FeedbackItemDto> feedback(@HeaderParam("Authorization") String auth,
+                                                   @QueryParam("sinceMs") String sinceMs,
+                                                   @QueryParam("limit") String limit) {
+        requireOperator(auth);
+        return feedbackService.list(parseLong(sinceMs, "sinceMs"), parseInt(limit, "limit"));
+    }
+
+    private static Long parseLong(String text, String name) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        try {
+            return Long.valueOf(text.strip());
+        } catch (NumberFormatException e) {
+            throw ApiException.badRequest(name + " must be a whole number");
+        }
+    }
+
+    private static Integer parseInt(String text, String name) {
+        Long value = parseLong(text, name);
+        if (value == null) {
+            return null;
+        }
+        return (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, value));
     }
 
     /** What the price feeds are doing — memory only, so the page answers whatever is wrong elsewhere. */

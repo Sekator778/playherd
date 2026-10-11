@@ -12,6 +12,7 @@ import crowdvsmarket.server.prices.KrakenPriceSource;
 import crowdvsmarket.server.prices.PolymarketPriceSource;
 import crowdvsmarket.server.prices.PricesConfig;
 import crowdvsmarket.server.prices.SyntheticPriceSource;
+import crowdvsmarket.server.service.FeedbackService;
 import crowdvsmarket.server.testsupport.ContractTs;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -101,6 +102,10 @@ class ContractUnionsTest {
             new LinkedHashSet<>(List.of(HyperliquidPriceSource.NAME, CoinbasePriceSource.NAME, KrakenPriceSource.NAME)),
             Set.of());
 
+    /** The clients a feedback message may name (Р-81): what the server keeps in {@code feedback.client}. */
+    private static final Side FEEDBACK_CLIENTS = new Side("server.service.FeedbackService.CLIENTS",
+            new LinkedHashSet<>(new TreeSet<>(FeedbackService.CLIENTS)), Set.of());
+
     private static Side priceSources() {
         Set<String> values = new LinkedHashSet<>(lowerCase(PricesConfig.SourceKind.class).values());
         values.add("replay"); // mode=replay plays accelerated history instead of any source
@@ -131,6 +136,7 @@ class ContractUnionsTest {
             pair("MarketDto.source", SOURCES),
             pair("MarketDto.backupSource", BACKUP_VENUES),
             pair("MarketPriceDto.venue", PRICE_VENUES),
+            pair("FeedbackClient", FEEDBACK_CLIENTS),
             pair("RoundBase.source", SOURCES),
             pair("ServerInfoDto.mode", lowerCase(GameMode.class)),
             pair("ServerInfoDto.priceSource", priceSources()),

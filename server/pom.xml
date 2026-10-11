@@ -88,6 +88,15 @@
       <artifactId>quarkus-arc</artifactId>
     </dependency>
 
+    <!-- Reader of the DB-IP "IP to Country Lite" database (MMDB), for the country of a feedback message (Р-81,
+         crowdvsmarket.server.geoip). Apache-2.0, no dependencies of its own (the 4.2.0 POM lists only test-scoped ones).
+         4.2.0 is the newest release on Maven Central (maven-metadata.xml, lastUpdated 2026-09-10; checked 2026-10-11). -->
+    <dependency>
+      <groupId>com.maxmind.db</groupId>
+      <artifactId>maxmind-db</artifactId>
+      <version>4.2.0</version>
+    </dependency>
+
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-junit</artifactId>
