@@ -444,3 +444,142 @@
   font-size: 13px;
   font-weight: 700;
 }
+
+/* ---- layout wrappers (Р-83): one column as before below 1100 px, two columns above ---------------------------------
+   Below the breakpoint the three wrappers disappear (`display: contents`) and the room is a flex column whose `order`
+   puts the exchange note after the series tabs, exactly where it always was. */
+
+.room-grid {
+  display: flex;
+  flex-direction: column;
+}
+.room-col {
+  display: contents;
+}
+.room-sources {
+  display: contents;
+}
+.room-o1 {
+  order: 1;
+}
+.room-sources > * {
+  order: 2;
+}
+.room-o3 {
+  order: 3;
+}
+.room-below,
+.room-below__live,
+.room-below__round {
+  display: contents;
+}
+.room-below > *,
+.room-below__live > *,
+.room-below__round > * {
+  order: 3;
+}
+
+@media (min-width: 1100px) {
+  /* The page container is wider only for the room. `:has()` is progressive: where it is missing the room keeps the
+     old 1080 px container and the grid below still works. */
+  .container:has(> .room-grid) {
+    max-width: 1400px;
+  }
+  .room-root.room-grid {
+    max-width: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 420px;
+    column-gap: 32px;
+    align-items: start;
+  }
+  .room-col,
+  .room-sources {
+    display: block;
+    min-width: 0;
+  }
+  .room-below,
+  .room-below__live,
+  .room-below__round {
+    display: block;
+  }
+  .room-col--main {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .room-col--side {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .room-below {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 32px;
+    align-items: start;
+  }
+  .room-below > *,
+  .room-below__live > *,
+  .room-below__round > *,
+  .room-o1,
+  .room-o3,
+  .room-sources > * {
+    order: 0;
+  }
+  .room-below > :not(.room-below__live):not(.room-below__round) {
+    grid-column: 1 / -1;
+  }
+  .room-below__live {
+    grid-column: 1;
+  }
+  .room-below__round {
+    grid-column: 2;
+  }
+  .room-below__round:first-child {
+    grid-column: 1 / -1;
+  }
+  .room-below .room-section-title:first-child {
+    margin-top: 4px;
+  }
+  /* Left: price, chart, series and the arena under it. Right: the bet slip, from the top of the page. */
+  .room-col--main .room-sources {
+    margin-top: 6px;
+  }
+  .room-col--main .room-arena-wrap {
+    margin: 12px 0 8px;
+  }
+  .room-col--side .room-arena__count {
+    margin-top: 0;
+  }
+  /* The slip is the tallest block: tighter spacing (not smaller type) so PLACE BET stays in view on a 900 px window. */
+  .room-col--side .bet-slip {
+    padding: 14px 16px;
+  }
+  .room-col--side .bet-slip .field,
+  .room-col--side .bet-slip .herd-picker {
+    margin-bottom: 8px;
+  }
+  .room-col--side .bet-slip .stake-chips {
+    margin-top: 6px;
+  }
+  .room-col--side .bet-slip .stake-chip {
+    padding: 8px 6px;
+  }
+  .room-col--side .bet-slip .stake-step {
+    height: 44px;
+    width: 44px;
+  }
+  .room-col--side .bet-slip .leverage-dial__value {
+    line-height: 1.1;
+  }
+}
+
+/* Flex does not collapse the links' bottom margin into the rail's top margin the way block flow did: keep one of the two. */
+.room-root.room-grid .mrail {
+  margin-top: 0;
+}
+
+/* The loading room is a plain stack with the same wrapper: the wrapper stays transparent there at every width. */
+.room-root.stack > .room-col {
+  display: contents;
+}

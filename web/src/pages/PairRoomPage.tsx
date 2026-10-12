@@ -524,8 +524,11 @@ function Room({ market }: { market: MarketDto }) {
   if (!pairData || !running || !betting) {
     return (
       <div className="room-root stack" style={{ gap: 16 }}>
-        {header}
-        {chart}
+        {/* The same wrapper the loaded room has, so the header and the chart are not remounted when the rounds arrive. */}
+        <div className="room-col">
+          {header}
+          {chart}
+        </div>
         <Skeleton height={128} />
         <Skeleton height={220} />
       </div>
@@ -538,131 +541,158 @@ function Room({ market }: { market: MarketDto }) {
   const liveBets = betting.phase === "BETTING" ? liveBetRows(betting.recentBets ?? [], player?.playerId, betting.myBet) : [];
 
   return (
-    <div className="room-root">
-      {header}
-      {chart}
-
-      {runningRound && player && ownPosition && (
-        <div className="room-own">
-          <OwnPositionCard position={ownPosition} referencePrice={referencePrice} market={market} />
+    <div className="room-root room-grid">
+      {/* Wide screens (>= 1100 px) put these wrappers in two columns; below that they vanish (`display: contents`)
+          and `order` keeps the single column exactly as it was. */}
+      <div className="room-col room-col--main">
+        {header}
+        {chart}
+        <div className="room-sources">
+          <OracleDisclosureLine source={market.source} backup={market.backupSource} />
+          {/* The exchange of the round open for bets is chosen when it starts: the note is about the one already running. */}
+          {(running.phase === "RUNNING" || running.phase === "SETTLED") && (
+            <RoundVenueNote source={running.source} market={market} phase={running.phase} subject="live" />
+          )}
         </div>
-      )}
-      {ownWaiting && (
-        <div className="room-own">
-          <OwnBetWaiting position={ownWaiting} />
-        </div>
-      )}
-
-      <div className="room-series">
-        <IntervalTabs
-          value={interval}
-          onChange={setInterval_}
-          labels={{ HOURLY: seriesLabel("HOURLY"), DAILY: seriesLabel("DAILY") }}
-          openCounts={openCounts}
-        />
-        <div className="room-countdown">
-          <Countdown
-            nowMs={nowMs}
-            targetMs={betting.phase === "BETTING" ? betting.window.startMs : running.window.endMs}
-            prefix={betting.phase === "BETTING" ? "Closes in " : "Resolves in "}
-          />
-        </div>
-      </div>
-      <OracleDisclosureLine source={market.source} backup={market.backupSource} />
-      {/* The exchange of the round open for bets is chosen when it starts: the note is about the one already running. */}
-      {(running.phase === "RUNNING" || running.phase === "SETTLED") && (
-        <RoundVenueNote source={running.source} market={market} phase={running.phase} subject="live" />
-      )}
-
-      <div className="room-arena-wrap">
-        <div className={`room-arena ${lockedOverlay ? "room-arena--locked" : ""}`}>
-          <button
-            type="button"
-            className={`room-arena__side room-arena__side--up ${direction === "UP" ? "room-arena__side--selected" : ""}`}
-            style={{ flexBasis: `${upPct}%` }}
-            onClick={() => setDirection("UP")}
-            disabled={betting.phase !== "BETTING"}
-            aria-pressed={direction === "UP"}
-          >
-            <DirectionGlyph direction="UP" />
-            <span>UP</span>
-            {split && <span className="room-arena__pct mono">{split.upPct}%</span>}
-          </button>
-          <button
-            type="button"
-            className={`room-arena__side room-arena__side--down ${direction === "DOWN" ? "room-arena__side--selected" : ""}`}
-            style={{ flexBasis: `${100 - upPct}%` }}
-            onClick={() => setDirection("DOWN")}
-            disabled={betting.phase !== "BETTING"}
-            aria-pressed={direction === "DOWN"}
-          >
-            <DirectionGlyph direction="DOWN" />
-            <span>DOWN</span>
-            {split && <span className="room-arena__pct mono">{split.downPct}%</span>}
-          </button>
-        </div>
-        {lockedOverlay && (
-          <button
-            type="button"
-            className="room-arena__lock"
-            onClick={() => setLockedOverlay(null)}
-            aria-label={`Round running — you picked ${lockedOverlay.direction}. Tap to dismiss.`}
-          >
-            <LockIcon className="room-arena__lock-icon" />
-            <span className="room-arena__lock-label">Round running</span>
-            <span className={`room-arena__lock-side room-arena__lock-side--${lockedOverlay.direction.toLowerCase()}`}>
-              <DirectionGlyph direction={lockedOverlay.direction} /> You picked {lockedOverlay.direction}
-            </span>
-          </button>
+        {runningRound && player && ownPosition && (
+          <div className="room-own room-o1">
+            <OwnPositionCard position={ownPosition} referencePrice={referencePrice} market={market} />
+          </div>
         )}
-      </div>
+        {ownWaiting && (
+          <div className="room-own room-o1">
+            <OwnBetWaiting position={ownWaiting} />
+          </div>
+        )}
 
-      {betting.phase === "BETTING" ? (
-        <>
-          <p className="muted room-arena__count">
+        <div className="room-series room-o1">
+          <IntervalTabs
+            value={interval}
+            onChange={setInterval_}
+            labels={{
+              HOURLY: seriesLabel("HOURLY"),
+              DAILY: seriesLabel("DAILY"),
+            }}
+            openCounts={openCounts}
+          />
+          <div className="room-countdown">
+            <Countdown
+              nowMs={nowMs}
+              targetMs={betting.phase === "BETTING" ? betting.window.startMs : running.window.endMs}
+              prefix={betting.phase === "BETTING" ? "Closes in " : "Resolves in "}
+            />
+          </div>
+        </div>
+
+        <div className="room-arena-wrap room-o3">
+          <div className={`room-arena ${lockedOverlay ? "room-arena--locked" : ""}`}>
+            <button
+              type="button"
+              className={`room-arena__side room-arena__side--up ${direction === "UP" ? "room-arena__side--selected" : ""}`}
+              style={{ flexBasis: `${upPct}%` }}
+              onClick={() => setDirection("UP")}
+              disabled={betting.phase !== "BETTING"}
+              aria-pressed={direction === "UP"}
+            >
+              <DirectionGlyph direction="UP" />
+              <span>UP</span>
+              {split && <span className="room-arena__pct mono">{split.upPct}%</span>}
+            </button>
+            <button
+              type="button"
+              className={`room-arena__side room-arena__side--down ${direction === "DOWN" ? "room-arena__side--selected" : ""}`}
+              style={{ flexBasis: `${100 - upPct}%` }}
+              onClick={() => setDirection("DOWN")}
+              disabled={betting.phase !== "BETTING"}
+              aria-pressed={direction === "DOWN"}
+            >
+              <DirectionGlyph direction="DOWN" />
+              <span>DOWN</span>
+              {split && <span className="room-arena__pct mono">{split.downPct}%</span>}
+            </button>
+          </div>
+          {lockedOverlay && (
+            <button
+              type="button"
+              className="room-arena__lock"
+              onClick={() => setLockedOverlay(null)}
+              aria-label={`Round running — you picked ${lockedOverlay.direction}. Tap to dismiss.`}
+            >
+              <LockIcon className="room-arena__lock-icon" />
+              <span className="room-arena__lock-label">Round running</span>
+              <span className={`room-arena__lock-side room-arena__lock-side--${lockedOverlay.direction.toLowerCase()}`}>
+                <DirectionGlyph direction={lockedOverlay.direction} /> You picked {lockedOverlay.direction}
+              </span>
+            </button>
+          )}
+        </div>
+        {betting.phase === "BETTING" && (
+          <p className="muted room-arena__count room-o3">
             {betting.participantCount} {betting.participantCount === 1 ? "player has" : "players have"} voted
             {betting.upCount !== undefined && betting.downCount !== undefined && (
               <>
                 {" "}
-                · <span className="room-arena__count-up">{betting.upCount} UP</span> / <span className="room-arena__count-down">{betting.downCount} DOWN</span>
+                · <span className="room-arena__count-up">{betting.upCount} UP</span> /{" "}
+                <span className="room-arena__count-down">{betting.downCount} DOWN</span>
               </>
             )}
           </p>
-          <BetSlip round={betting} nowMs={nowMs} onChanged={load} direction={direction} onDirectionChange={setDirection} hideDirectionPicker />
-          {liveBets.length > 0 && (
-            <>
-              <h3 className="room-section-title">Live bets</h3>
-              <LiveBetFeed bets={liveBets} />
-            </>
-          )}
-        </>
-      ) : (
-        <div className="card room-cancelled">
-          <h3>This round was cancelled.</h3>
-          <p className="muted">{betting.cancellation.reason}</p>
-        </div>
-      )}
+        )}
+      </div>
 
-      {running.phase === "RUNNING" &&
-        (waitingOpen ? (
-          // The player's own bet (above) already says it; one notice is enough.
-          ownWaiting ? null : <WaitingForOpenCard symbol={market.symbol} length={seriesLabel(interval)} />
+      <div className="room-col room-col--side">
+        {betting.phase === "BETTING" ? (
+          <div className="room-bet room-o3">
+            <BetSlip
+              round={betting}
+              nowMs={nowMs}
+              onChanged={load}
+              direction={direction}
+              onDirectionChange={setDirection}
+              hideDirectionPicker
+            />
+          </div>
         ) : (
-          <>
-            <h3 className="room-section-title">Crowd account</h3>
-            <CrowdPositionCard phase="RUNNING" crowd={running.crowd} referencePrice={referencePrice} market={market} />
-            <h3 className="room-section-title">Live round</h3>
-            <LiveRoundStrip positions={running.positions} referencePrice={referencePrice} roundId={running.roundId} market={market} />
-          </>
-        ))}
-      {running.phase === "SETTLED" && <p className="muted">Settled.</p>}
+          <div className="card room-cancelled room-o3">
+            <h3>This round was cancelled.</h3>
+            <p className="muted">{betting.cancellation.reason}</p>
+          </div>
+        )}
+      </div>
 
-      <p className="room-links">
-        <Link to={`/round/${running.roundId}`}>View full round →</Link>
-        <Link to={`/stats?m=${encodeURIComponent(market.id)}`}>How the herd is doing on {market.symbol} →</Link>
-      </p>
+      <div className="room-below room-o3">
+        {liveBets.length > 0 && (
+          <div className="room-below__live">
+            <h3 className="room-section-title">Live bets</h3>
+            <LiveBetFeed bets={liveBets} />
+          </div>
+        )}
 
-      <MarketRail market={market} />
+        <div className="room-below__round">
+          {running.phase === "RUNNING" &&
+            (waitingOpen ? (
+              // The player's own bet (above) already says it; one notice is enough.
+              ownWaiting ? null : (
+                <WaitingForOpenCard symbol={market.symbol} length={seriesLabel(interval)} />
+              )
+            ) : (
+              <>
+                <h3 className="room-section-title">Crowd account</h3>
+                <CrowdPositionCard phase="RUNNING" crowd={running.crowd} referencePrice={referencePrice} market={market} />
+                <h3 className="room-section-title">Live round</h3>
+                <LiveRoundStrip positions={running.positions} referencePrice={referencePrice} roundId={running.roundId} market={market} />
+              </>
+            ))}
+          {running.phase === "SETTLED" && <p className="muted">Settled.</p>}
+        </div>
+
+        <p className="room-links">
+          <Link to={`/round/${running.roundId}`}>View full round →</Link>
+          <Link to={`/stats?m=${encodeURIComponent(market.id)}`}>How the herd is doing on {market.symbol} →</Link>
+        </p>
+
+        <MarketRail market={market} />
+      </div>
     </div>
   );
 }

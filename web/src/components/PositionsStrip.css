@@ -190,3 +190,23 @@
     transition: none;
   }
 }
+
+/* Р-83: on a wide window the strip lies in one row — the title on the left, the cards beside it — instead of a
+   header over a row of cards, so that an open bet does not push the room's action under the fold. Collapsed, it is
+   the one header line as before. Below 1100 px nothing changes. */
+@media (min-width: 1100px) {
+  .pos-strip:has(.pos-strip__list) {
+    display: flex;
+    align-items: center;
+  }
+  .pos-strip:has(.pos-strip__list) .pos-strip__head {
+    flex: 0 0 260px;
+    width: 260px;
+    padding: 8px 14px;
+  }
+  .pos-strip:has(.pos-strip__list) .pos-strip__list {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 10px 14px 10px 0;
+  }
+}
