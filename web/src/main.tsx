@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { ApiProvider } from "./api/ApiContext";
+import { I18nProvider } from "./i18n";
 import "./index.css";
 import "./fx/fx.css";
 
@@ -11,11 +12,13 @@ if (!rootElement) throw new Error("#root element not found");
 
 createRoot(rootElement).render(
   <StrictMode>
-    <BrowserRouter>
-      <ApiProvider>
-        <App />
-      </ApiProvider>
-    </BrowserRouter>
+    <I18nProvider>
+      <BrowserRouter>
+        <ApiProvider>
+          <App />
+        </ApiProvider>
+      </BrowserRouter>
+    </I18nProvider>
   </StrictMode>,
 );
 
