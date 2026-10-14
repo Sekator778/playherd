@@ -113,6 +113,12 @@ services:
       # network — see the fix note above).
       C2_SVC_TOKEN: ${C2_SVC_TOKEN:?set in .env — run tools/stand.sh up, which generates one}
       C2_BIND_ADDR: "127.0.0.1,172.28.77.1"
+      # The fee cap of one oracle publish (and of its replacements). When the testnet11 mempool is
+      # full, the node takes nothing below 5 mojos per unit of cost (`nonzero_fee_minimum_fpc`,
+      # docs/research/chain_service.md §17.9) — a 40-record batch then needs a few hundred million
+      # mojos, above the service's default cap of 50 000 000, and publishing stopped on 2026-10-14
+      # (F2 in docs/product/feedback/wave1-log.md). 1 000 000 000 mojos = 0.001 TXCH per batch at most.
+      C2_MAX_FEE_MOJOS: ${C2_MAX_FEE_MOJOS:-1000000000}
     volumes:
       - ${HOME}/.c2/testnet11:/data
     healthcheck:
