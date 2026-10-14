@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { en } from "./en";
 import { uk } from "./uk";
 import { ru } from "./ru";
+import { es } from "./es";
+import { zh } from "./zh";
+import { hi } from "./hi";
 import { LOCALE_STORAGE_KEY, detectLocale, saveLocale } from "./locale";
 import { createT } from "./translate";
 
@@ -17,19 +20,28 @@ function flatten(tree: Tree, prefix = ""): Record<string, string> {
   return out;
 }
 
-const FLAT = { en: flatten(en as unknown as Tree), uk: flatten(uk as unknown as Tree), ru: flatten(ru as unknown as Tree) };
+const FLAT = {
+  en: flatten(en as unknown as Tree),
+  uk: flatten(uk as unknown as Tree),
+  ru: flatten(ru as unknown as Tree),
+  es: flatten(es as unknown as Tree),
+  zh: flatten(zh as unknown as Tree),
+  hi: flatten(hi as unknown as Tree),
+};
+const OTHERS = ["uk", "ru", "es", "zh", "hi"] as const;
+/** How many `|`-separated forms a plural string has per language (CLDR: en/es/hi one|other, uk/ru one|few|many|other, zh none). */
+const FORMS = { en: 2, uk: 4, ru: 4, es: 2, zh: 1, hi: 2 } as const;
 
 const placeholders = (s: string) => [...new Set(s.match(/\{\w+\}/g) ?? [])].sort();
 
 describe("dictionaries", () => {
-  it("uk and ru have exactly the keys of en (tsc checks it too; this guards the runtime shape)", () => {
+  it("every language has exactly the keys of en (tsc checks it too; this guards the runtime shape)", () => {
     const keys = Object.keys(FLAT.en).sort();
-    expect(Object.keys(FLAT.uk).sort()).toEqual(keys);
-    expect(Object.keys(FLAT.ru).sort()).toEqual(keys);
+    for (const locale of OTHERS) expect(Object.keys(FLAT[locale]).sort(), locale).toEqual(keys);
   });
 
   it("no value is empty in any language", () => {
-    for (const locale of ["en", "uk", "ru"] as const) {
+    for (const locale of ["en", ...OTHERS] as const) {
       for (const [key, value] of Object.entries(FLAT[locale])) {
         expect(value.trim(), `${locale}:${key}`).not.toBe("");
       }
@@ -38,20 +50,24 @@ describe("dictionaries", () => {
 
   it("every translation uses the same {placeholders} as the English text", () => {
     for (const [key, value] of Object.entries(FLAT.en)) {
-      expect(placeholders(FLAT.uk[key]), `uk:${key}`).toEqual(placeholders(value));
-      expect(placeholders(FLAT.ru[key]), `ru:${key}`).toEqual(placeholders(value));
+      for (const locale of OTHERS) expect(placeholders(FLAT[locale][key]), `${locale}:${key}`).toEqual(placeholders(value));
     }
   });
 
-  it("plural strings carry one|other in English and one|few|many|other in uk and ru", () => {
+  it("every translation keeps the same **bold** and [[link]] markup as the English text", () => {
+    for (const [key, value] of Object.entries(FLAT.en)) {
+      for (const locale of OTHERS) {
+        expect(FLAT[locale][key].split("**").length, `${locale}:${key}`).toBe(value.split("**").length);
+        expect(FLAT[locale][key].split("[[").length, `${locale}:${key}`).toBe(value.split("[[").length);
+      }
+    }
+  });
+
+  it("plural strings carry the number of forms the language has (en/es/hi 2, uk/ru 4, zh 1)", () => {
     for (const [key, value] of Object.entries(FLAT.en)) {
       const isPlural = value.includes("|");
-      expect(FLAT.uk[key].includes("|"), `uk:${key}`).toBe(isPlural);
-      expect(FLAT.ru[key].includes("|"), `ru:${key}`).toBe(isPlural);
-      if (isPlural) {
-        expect(value.split("|"), `en:${key}`).toHaveLength(2);
-        expect(FLAT.uk[key].split("|"), `uk:${key}`).toHaveLength(4);
-        expect(FLAT.ru[key].split("|"), `ru:${key}`).toHaveLength(4);
+      for (const locale of ["en", ...OTHERS] as const) {
+        expect(FLAT[locale][key].split("|"), `${locale}:${key}`).toHaveLength(isPlural ? FORMS[locale] : 1);
       }
     }
   });
@@ -62,6 +78,9 @@ describe("t()", () => {
     expect(createT("en")("room.comingSoonTitle", { symbol: "ETH" })).toBe("ETH — coming soon");
     expect(createT("uk")("room.comingSoonTitle", { symbol: "ETH" })).toBe("ETH — незабаром");
     expect(createT("ru")("room.comingSoonTitle", { symbol: "ETH" })).toBe("ETH — скоро");
+    expect(createT("es")("room.comingSoonTitle", { symbol: "ETH" })).toBe("ETH: próximamente");
+    expect(createT("zh")("room.comingSoonTitle", { symbol: "ETH" })).toBe("ETH — 即将上线");
+    expect(createT("hi")("room.comingSoonTitle", { symbol: "ETH" })).toBe("ETH — जल्द आ रहा है");
   });
 
   it("picks English plural forms (one / other)", () => {
@@ -88,6 +107,27 @@ describe("t()", () => {
     expect(t("room.playersInRound", { count: 5 })).toBe("5 игроков в этом раунде");
     expect(t("room.playersInRound", { count: 11 })).toBe("11 игроков в этом раунде");
     expect(t("room.playersInRound", { count: 21 })).toBe("21 игрок в этом раунде");
+  });
+
+  it("picks Spanish plural forms (one / other)", () => {
+    const t = createT("es");
+    expect(t("room.playersInRound", { count: 1 })).toBe("1 jugador en esta ronda");
+    expect(t("room.playersInRound", { count: 2 })).toBe("2 jugadores en esta ronda");
+    expect(t("room.playersInRound", { count: 0 })).toBe("0 jugadores en esta ronda");
+    expect(t("lobby.count", { count: 21 })).toBe("21 mercados");
+  });
+
+  it("picks Hindi plural forms (one covers 0 and 1, other the rest)", () => {
+    const t = createT("hi");
+    expect(t("lobby.count", { count: 1 })).toBe("1 बाज़ार");
+    expect(t("lobby.count", { count: 0 })).toBe("0 बाज़ार");
+    expect(t("lobby.tabAria", { title: "क्रिप्टो", count: 1 })).toBe("क्रिप्टो, 1 खुला बाज़ार");
+    expect(t("lobby.tabAria", { title: "क्रिप्टो", count: 5 })).toBe("क्रिप्टो, 5 खुले बाज़ार");
+  });
+
+  it("Chinese has one string that reads right with any number", () => {
+    const t = createT("zh");
+    for (const count of [0, 1, 2, 5, 21]) expect(t("room.playersInRound", { count })).toBe(`本回合 ${count} 名玩家`);
   });
 
   it("falls back to the key itself for an unknown key", () => {
@@ -120,6 +160,13 @@ describe("detectLocale()", () => {
     expect(detectLocale()).toBe("uk");
     setLanguages(["ru-RU"]);
     expect(detectLocale()).toBe("ru");
+  });
+
+  it("maps es-MX to Spanish, zh-CN and zh-TW to Chinese, hi-IN to Hindi", () => {
+    for (const [tag, locale] of [["es-MX", "es"], ["es", "es"], ["zh-CN", "zh"], ["zh-TW", "zh"], ["zh-Hans-CN", "zh"], ["hi-IN", "hi"]] as const) {
+      setLanguages([tag]);
+      expect(detectLocale(), tag).toBe(locale);
+    }
   });
 
   it("falls back to English for any other language", () => {

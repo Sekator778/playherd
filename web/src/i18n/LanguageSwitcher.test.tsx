@@ -60,6 +60,27 @@ describe("footer language switcher", () => {
     expect(document.documentElement.lang).toBe("en");
   });
 
+  it("offers Spanish, Chinese and Hindi, named in themselves, and sets their <html lang>", async () => {
+    const user = userEvent.setup();
+    renderApp("/how-it-works");
+    expect(screen.getByRole("option", { name: "Español" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "中文（简体）" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "हिन्दी" })).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Language" }), "es");
+    expect(screen.getByRole("heading", { level: 1, name: "Cómo funciona" })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("es");
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Idioma" }), "zh");
+    expect(screen.getByRole("heading", { level: 1, name: "玩法说明" })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("zh-Hans");
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "语言" }), "hi");
+    expect(screen.getByRole("heading", { level: 1, name: "यह कैसे काम करता है" })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("hi");
+    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe("hi");
+  });
+
   it("starts in the saved language and also translates data-driven screens (lobby)", async () => {
     window.localStorage.setItem(LOCALE_STORAGE_KEY, "uk");
     renderApp("/");
