@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { I18nContext, setActiveLocale, type I18nValue } from "./context";
-import { detectLocale, saveLocale, type Locale } from "./locale";
+import { HTML_LANG, detectLocale, saveLocale, type Locale } from "./locale";
 import { createT } from "./translate";
 
 /** Holds the current locale (saved choice, else the browser's language), keeps `<html lang>` in
@@ -10,7 +10,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setActiveLocale(locale);
-    document.documentElement.lang = locale;
+    document.documentElement.lang = HTML_LANG[locale];
   }, [locale]);
 
   const setLocale = useCallback((next: Locale) => {

@@ -2322,3 +2322,12 @@ footer.app-footer .footer-link {
   color: var(--text-muted);
   font-size: 13px;
 }
+
+/* Chinese and Hindi: the Latin-first stack above has no CJK or Devanagari faces, so the browser would pick a fallback per glyph.
+   Naming a system face per script keeps weights and line heights even across platforms (no web font is loaded). */
+:root:lang(zh-Hans) {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", Roboto, sans-serif;
+}
+:root:lang(hi) {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Kohinoor Devanagari", "Nirmala UI", "Noto Sans Devanagari", "Segoe UI", Roboto, sans-serif;
+}

@@ -1,25 +1,44 @@
-/** Interface languages. English is the source and the default (`en.ts`); `uk` and `ru` are typed
- *  against its shape (`uk.ts`, `ru.ts`), so a missing or extra key fails `tsc`. */
-export type Locale = "en" | "uk" | "ru";
+/** Interface languages. English is the source and the default (`en.ts`); the others are typed against
+ *  its shape, so a missing or extra key fails `tsc`. */
+export type Locale = "en" | "uk" | "ru" | "es" | "zh" | "hi";
 
-export const LOCALES: readonly Locale[] = ["en", "uk", "ru"];
+export const LOCALES: readonly Locale[] = ["en", "uk", "ru", "es", "zh", "hi"];
 
 /** Each language named in itself — what the footer switcher shows. */
 export const LOCALE_NAMES: Record<Locale, string> = {
   en: "English",
   uk: "Українська",
   ru: "Русский",
+  es: "Español",
+  zh: "中文（简体）",
+  hi: "हिन्दी",
+};
+
+/** The BCP 47 tag for `<html lang>`: the script is named for Chinese, so the browser picks Simplified glyphs and fonts. */
+export const HTML_LANG: Record<Locale, string> = {
+  en: "en",
+  uk: "uk",
+  ru: "ru",
+  es: "es",
+  zh: "zh-Hans",
+  hi: "hi",
 };
 
 export const LOCALE_STORAGE_KEY = "herd.locale";
 
 function isLocale(value: unknown): value is Locale {
-  return value === "en" || value === "uk" || value === "ru";
+  return typeof value === "string" && (LOCALES as readonly string[]).includes(value);
 }
 
-/** Saved choice first; else the first browser language we have a translation for (`uk*` → uk,
- *  `ru*` → ru); anything else → en. Storage access can throw (private mode, blocked site data),
- *  so every read is guarded. */
+/** The locale a browser language tag asks for: `uk*` → uk, `ru*` → ru, `es*` → es, `zh*` (any script or region, so
+ *  `zh-TW` too — Traditional text is not translated, Simplified is the nearest) → zh, `hi*` → hi; otherwise `null`. */
+function localeOfTag(raw: string | null | undefined): Locale | null {
+  const language = (raw ?? "").toLowerCase().split(/[-_]/)[0];
+  return isLocale(language) && language !== "en" ? language : null;
+}
+
+/** Saved choice first; else the first browser language we have a translation for; anything else → en. Storage access
+ *  can throw (private mode, blocked site data), so every read is guarded. */
 export function detectLocale(): Locale {
   try {
     const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
@@ -34,9 +53,8 @@ export function detectLocale(): Locale {
         ? navigator.languages
         : [navigator.language];
   for (const raw of languages) {
-    const tag = (raw ?? "").toLowerCase();
-    if (tag === "uk" || tag.startsWith("uk-")) return "uk";
-    if (tag === "ru" || tag.startsWith("ru-")) return "ru";
+    const found = localeOfTag(raw);
+    if (found) return found;
   }
   return "en";
 }

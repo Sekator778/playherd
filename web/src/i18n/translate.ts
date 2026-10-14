@@ -1,6 +1,9 @@
 import { en } from "./en";
 import { uk } from "./uk";
 import { ru } from "./ru";
+import { es } from "./es";
+import { zh } from "./zh";
+import { hi } from "./hi";
 import type { Locale } from "./locale";
 
 /** `en.ts` is the source of truth: its shape, with every leaf widened from a literal to `string`,
@@ -17,7 +20,7 @@ export type TKey = Paths<typeof en>;
 export type TVars = Record<string, string | number>;
 export type TFn = (key: TKey, vars?: TVars) => string;
 
-export const DICTIONARIES: Record<Locale, Dict> = { en, uk, ru };
+export const DICTIONARIES: Record<Locale, Dict> = { en, uk, ru, es, zh, hi };
 
 function lookup(dict: Dict, key: string): string {
   let node: unknown = dict;
@@ -28,7 +31,7 @@ function lookup(dict: Dict, key: string): string {
   return typeof node === "string" ? node : key;
 }
 
-/** Plural categories, in the order a plural string lists its forms: en `one|other`, uk and ru
+/** Plural categories, in the order a plural string lists its forms: en/es/hi `one|other`, uk and ru
  *  `one|few|many|other` (CLDR). */
 const PLURAL_ORDER = ["one", "few", "many", "other"] as const;
 
