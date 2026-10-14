@@ -63,8 +63,9 @@ describe("footer language switcher", () => {
   it("starts in the saved language and also translates data-driven screens (lobby)", async () => {
     window.localStorage.setItem(LOCALE_STORAGE_KEY, "uk");
     renderApp("/");
-    expect(await screen.findByRole("heading", { name: "Обери ринок" })).toBeInTheDocument();
-    expect(await screen.findByText(/[ув] цьому раунді/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Ринки" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: /Крипто/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Скоро закриються/ })).toBeInTheDocument();
     expect(document.documentElement.lang).toBe("uk");
   });
 
