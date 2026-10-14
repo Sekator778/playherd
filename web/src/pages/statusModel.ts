@@ -8,6 +8,7 @@ import type { CancellationDto, MarketDto, PageParams, ServerInfoDto } from "../a
 import { mergeNewestFirst, nextPageParams, type PageOps } from "../api/paging";
 import { sourceName, type SourceId } from "../components/marketModel";
 import { formatDuration } from "../format";
+import { tEn, type TFn } from "../i18n";
 
 export { sourceName };
 
@@ -32,30 +33,28 @@ function dateOf(iso: string): string {
   return iso.slice(0, 10);
 }
 
-export function describePriceSource(info: Pick<ServerInfoDto, "mode" | "priceSource" | "replay">): PriceSourceWording {
+export function describePriceSource(info: Pick<ServerInfoDto, "mode" | "priceSource" | "replay">, t: TFn = tEn): PriceSourceWording {
   const kind = priceSourceOf(info);
   switch (kind) {
     case "live":
       return {
         kind,
-        title: "Live",
-        detail:
-          "Prices and odds are the sources' own current numbers — prices from the exchanges themselves (Coinbase and Hyperliquid, with Kraken and Coinbase as backups), odds from Polymarket — read by our server every few seconds. Rounds open and settle on them.",
+        title: t("status.srcLiveTitle"),
+        detail: t("status.srcLive"),
       };
     case "synthetic":
       return {
         kind,
-        title: "Simulated",
-        detail:
-          "No real source: the server makes up prices with a deterministic random walk. Nothing here follows a real market — this is how tests and offline runs work.",
+        title: t("status.srcSimTitle"),
+        detail: t("status.srcSim"),
       };
     case "replay":
       return {
         kind,
-        title: "Replay",
+        title: t("status.srcReplayTitle"),
         detail: info.replay
-          ? `Recorded BTC prices from ${dateOf(info.replay.sourceFromIso)} to ${dateOf(info.replay.sourceToIso)}, replayed ${info.replay.speedup}× faster than they happened. Only BTC, and not today's price.`
-          : "Recorded prices replayed faster than they happened — not today's prices.",
+          ? t("status.srcReplay", { from: dateOf(info.replay.sourceFromIso), to: dateOf(info.replay.sourceToIso), speedup: info.replay.speedup })
+          : t("status.srcReplayNoInfo"),
       };
   }
 }
@@ -66,23 +65,23 @@ export function describePriceSource(info: Pick<ServerInfoDto, "mode" | "priceSou
  * positive, finite numbers — a server that spells the keys otherwise, or sends a null, gets no "Round lengths" row at
  * all rather than "NaN SEC" (a row that cannot be read is left out, never printed broken).
  */
-export function roundLengthsOf(info: Pick<ServerInfoDto, "roundDurationsSec">): { short: string; long: string } | null {
+export function roundLengthsOf(info: Pick<ServerInfoDto, "roundDurationsSec">, t: TFn = tEn): { short: string; long: string } | null {
   const durations: Partial<ServerInfoDto["roundDurationsSec"]> | null | undefined = info.roundDurationsSec;
   const short = durations?.HOURLY;
   const long = durations?.DAILY;
   const usable = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
-  return usable(short) && usable(long) ? { short: formatDuration(short), long: formatDuration(long) } : null;
+  return usable(short) && usable(long) ? { short: formatDuration(short, t), long: formatDuration(long, t) } : null;
 }
 
 /** How old a price is, to the second while it is young: `4 s ago`, `2 min ago`, `1 h 5 min ago`. Never negative. */
-export function ageText(ms: number): string {
+export function ageText(ms: number, t: TFn = tEn): string {
   const total = Math.max(0, Math.floor(ms / 1000));
-  if (total < 60) return `${total} s ago`;
+  if (total < 60) return t("time.secAgo", { count: total });
   const minutes = Math.floor(total / 60);
-  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 60) return t("time.minAgo", { count: minutes });
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest === 0 ? `${hours} h ago` : `${hours} h ${rest} min ago`;
+  return rest === 0 ? t("time.hAgo", { count: hours }) : t("status.ageHM", { h: hours, m: rest });
 }
 
 export type FreshnessKind = "fresh" | "stale" | "none" | "closed";
@@ -97,12 +96,12 @@ export interface Freshness {
 
 /** One market's price, as the Status page reports it: closed, no price yet, stale (the server's own flag —
  *  `MarketPriceDto.stale` — the source's limit is the server's), or live. */
-export function freshnessOf(market: Pick<MarketDto, "status" | "price">, nowMs: number): Freshness {
+export function freshnessOf(market: Pick<MarketDto, "status" | "price">, nowMs: number, t: TFn = tEn): Freshness {
   const ageMs = market.price ? Math.max(0, nowMs - market.price.asOfMs) : null;
-  if (market.status === "CLOSED") return { kind: "closed", word: "Closed", ageMs };
-  if (!market.price) return { kind: "none", word: "No price yet", ageMs: null };
-  if (market.price.stale) return { kind: "stale", word: "Stale", ageMs };
-  return { kind: "fresh", word: "Live", ageMs };
+  if (market.status === "CLOSED") return { kind: "closed", word: t("status.freshClosed"), ageMs };
+  if (!market.price) return { kind: "none", word: t("status.freshNone"), ageMs: null };
+  if (market.price.stale) return { kind: "stale", word: t("status.freshStale"), ageMs };
+  return { kind: "fresh", word: t("status.freshLive"), ageMs };
 }
 
 export interface MarketsSummary {
@@ -154,10 +153,10 @@ export interface SourceSummary {
 
 /** The sources behind the open markets, each with its markets (closed ones are not served by anyone any more). Exchanges
  *  first, as {@link SOURCE_ORDER} has them; a source this build does not know follows, in the order the list names it. */
-export function summarizeSources(markets: readonly MarketDto[], nowMs: number): SourceSummary[] {
+export function summarizeSources(markets: readonly MarketDto[], nowMs: number, t: TFn = tEn): SourceSummary[] {
   const bySource = new Map<SourceId, SourceSummary>();
   const entry = (source: SourceId): SourceSummary | null => {
-    const name = sourceName(source);
+    const name = sourceName(source, t);
     if (name === null) return null;
     let summary = bySource.get(source);
     if (!summary) {
@@ -191,9 +190,9 @@ export function summarizeSources(markets: readonly MarketDto[], nowMs: number): 
 }
 
 /** A list of market tickers for a sentence: the tickers themselves while they are few, else how many ("7 markets"). */
-export function marketsList(markets: readonly Pick<MarketDto, "symbol">[], max = 6): string {
+export function marketsList(markets: readonly Pick<MarketDto, "symbol">[], max = 6, t: TFn = tEn): string {
   if (markets.length <= max) return markets.map((m) => m.symbol).join(", ");
-  return `${markets.length} markets`;
+  return t("lobby.count", { count: markets.length });
 }
 
 const MOJOS_PER_COIN = 1_000_000_000_000n;
@@ -247,6 +246,6 @@ export function mergeCancellations(known: readonly CancellationDto[], incoming: 
 }
 
 /** "1 bet" / "4 bets". */
-export function betsCount(count: number): string {
-  return `${count} ${count === 1 ? "bet" : "bets"}`;
+export function betsCount(count: number, t: TFn = tEn): string {
+  return t("status.bets", { count });
 }

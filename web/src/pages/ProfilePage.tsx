@@ -12,6 +12,7 @@ import { BotBadge, ErrorState, Skeleton } from "../components/Common";
 import { ResultTile } from "../components/ResultTile";
 import { StreakBadge } from "../components/StreakBadge";
 import { formatDateTime, formatDuration, formatPercent, formatPlayAmount } from "../format";
+import { useT, type TFn } from "../i18n";
 import "./ProfilePage.css";
 
 /** `SeasonRecordDto` has no "growth" field of its own — derive it the same way the "Richest"
@@ -28,16 +29,17 @@ function seasonBalanceChange(profile: PublicProfileDto): number {
 /** "3 MIN" for the series a history row's round was in: the row's own length (`durationSec`, which survives
  *  the market leaving the list) when the server sends it; else the market's series, when it is still on the
  *  list; nothing otherwise — never "Hourly"/"Daily" for a round that was three minutes long. */
-function seriesLabelOf(entry: ProfileRoundEntryDto, market: MarketDto | undefined): string | undefined {
-  if (entry.durationSec !== undefined && Number.isFinite(entry.durationSec) && entry.durationSec > 0) return formatDuration(entry.durationSec);
+function seriesLabelOf(entry: ProfileRoundEntryDto, market: MarketDto | undefined, t: TFn): string | undefined {
+  if (entry.durationSec !== undefined && Number.isFinite(entry.durationSec) && entry.durationSec > 0) return formatDuration(entry.durationSec, t);
   const series = market?.series.find((s) => s.interval === entry.interval);
-  return series ? formatDuration(series.durationSec) : undefined;
+  return series ? formatDuration(series.durationSec, t) : undefined;
 }
 
 export function ProfilePage({ mine = false }: { mine?: boolean }) {
   const { playerId } = useParams<{ playerId: string }>();
   const api = useApi();
   const { player, openConnectModal } = useSession();
+  const t = useT();
   const [profile, setProfile] = useState<PublicProfileDto | null>(null);
   const [error, setError] = useState<"generic" | "not-found" | null>(null);
   // A history row carries its round's real length (`durationSec`); a server that predates the field sends only
@@ -83,15 +85,15 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
     // the local stand runs the same flow on a phone too).
     return (
       <div className="state-card">
-        <p className="state-card__title">Connect your wallet to see your profile.</p>
+        <p className="state-card__title">{t("profile.connectToSee")}</p>
         <button type="button" className="btn btn--primary" onClick={openConnectModal}>
-          CONNECT WALLET
+          {t("common.connectWallet")}
         </button>
       </div>
     );
   }
 
-  if (error === "not-found") return <ErrorState message="Player not found." />;
+  if (error === "not-found") return <ErrorState message={t("profile.notFound")} />;
   if (error) return <ErrorState onRetry={load} />;
   if (!profile) {
     return (
@@ -116,11 +118,11 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
       {profile.seasonRecord && (
         <div className="profile-tiles">
           <div className="stat-tile">
-            <div className="stat-tile__label">Rounds played</div>
+            <div className="stat-tile__label">{t("profile.roundsPlayed")}</div>
             <div className="stat-tile__value">{profile.seasonRecord.roundsPlayed}</div>
           </div>
           <div className="stat-tile">
-            <div className="stat-tile__label">Direction accuracy</div>
+            <div className="stat-tile__label">{t("profile.accuracy")}</div>
             <div className="stat-tile__value">
               {profile.seasonRecord.directionEligibleRounds > 0
                 ? formatPercent(profile.seasonRecord.directionCorrectRounds / profile.seasonRecord.directionEligibleRounds)
@@ -128,7 +130,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
             </div>
           </div>
           <div className="stat-tile">
-            <div className="stat-tile__label">Balance change this season</div>
+            <div className="stat-tile__label">{t("profile.balanceChange")}</div>
             <div className="stat-tile__value">
               {formatPlayAmount(seasonBalanceChange(profile).toFixed(3), { sign: true })} PLAY
             </div>
@@ -136,9 +138,9 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
         </div>
       )}
 
-      <h2>Round history</h2>
+      <h2>{t("profile.roundHistory")}</h2>
       {profile.history.length === 0 ? (
-        <p className="muted">No rounds played yet.</p>
+        <p className="muted">{t("profile.noRounds")}</p>
       ) : (
         <div className="result-tiles">
           {profile.history.map((h) => (
@@ -152,7 +154,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
               key={h.roundId}
               roundId={h.roundId}
               symbol={h.asset}
-              seriesLabel={seriesLabelOf(h, byId.get(h.marketId))}
+              seriesLabel={seriesLabelOf(h, byId.get(h.marketId), t)}
               direction={h.direction}
               leverage={h.leverage}
               net={netFromPayoutAndStake(h.payout, h.stake)}

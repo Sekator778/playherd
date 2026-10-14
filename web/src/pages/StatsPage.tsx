@@ -10,6 +10,7 @@ import { Link, useParams } from "react-router-dom";
 import { CrowdPage } from "./CrowdPage";
 import { RatingsPage } from "./RatingsPage";
 import { ProfilePage } from "./ProfilePage";
+import { useT } from "../i18n";
 
 type StatsTab = "crowd" | "ratings" | "history";
 
@@ -19,19 +20,20 @@ function normalizeTab(raw: string | undefined): StatsTab {
 
 export function StatsPage() {
   const { tab } = useParams<{ tab?: string }>();
+  const t = useT();
   const active = normalizeTab(tab);
 
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <div className="tabs" role="tablist" aria-label="Stats">
+      <div className="tabs" role="tablist" aria-label={t("stats.aria")}>
         <Link to="/stats" role="tab" aria-selected={active === "crowd"}>
-          Crowd
+          {t("stats.crowd")}
         </Link>
         <Link to="/stats/ratings" role="tab" aria-selected={active === "ratings"}>
-          Ratings
+          {t("stats.ratings")}
         </Link>
         <Link to="/stats/history" role="tab" aria-selected={active === "history"}>
-          History
+          {t("stats.history")}
         </Link>
       </div>
 

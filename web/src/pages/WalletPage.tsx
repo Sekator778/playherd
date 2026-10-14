@@ -14,6 +14,7 @@ import { RollingDigits } from "../fx/RollingDigits";
 import { useFxSettings } from "../fx/fxSettings";
 import { primeAudioContext } from "../fx/sound";
 import { QrCode } from "../wallet/QrCode";
+import { useT, type TFn, type TKey } from "../i18n";
 import { SageDepositHints } from "../components/SageHints";
 import {
   ArrowDownTrayIcon,
@@ -31,25 +32,25 @@ import {
   VibrationOnIcon,
 } from "../components/icons";
 
-const LEDGER_LABEL: Record<LedgerEntryType, string> = {
-  STARTER_PACK: "Starter pack",
-  STAKE_DEBIT: "Bet placed",
-  STAKE_REFUND: "Bet refunded",
-  SETTLEMENT: "Round settled",
-  DEPOSIT: "Deposit confirmed",
-  WITHDRAWAL: "Withdrawal requested",
-  WITHDRAWAL_REFUND: "Withdrawal refunded",
+const LEDGER_LABEL: Record<LedgerEntryType, TKey> = {
+  STARTER_PACK: "wallet.ledgerStarterPack",
+  STAKE_DEBIT: "wallet.ledgerStakeDebit",
+  STAKE_REFUND: "wallet.ledgerStakeRefund",
+  SETTLEMENT: "wallet.ledgerSettlement",
+  DEPOSIT: "wallet.ledgerDeposit",
+  WITHDRAWAL: "wallet.ledgerWithdrawal",
+  WITHDRAWAL_REFUND: "wallet.ledgerWithdrawalRefund",
   // A signed credit or debit the operator booked to reverse a wrong deposit or withdrawal (`contract.ts`).
-  OPERATOR_CORRECTION: "Operator correction",
+  OPERATOR_CORRECTION: "wallet.ledgerOperatorCorrection",
 };
 
 /** The row's label: the table's, else — a type this build has not heard of yet — the server's word made readable
  *  ("SOME_NEW_TYPE" → "Some new type"), never a row with an amount and no name. */
-function ledgerLabel(type: string): string {
-  const known: Record<string, string> = LEDGER_LABEL;
-  if (known[type]) return known[type];
+function ledgerLabel(type: string, t: TFn): string {
+  const known: Record<string, TKey> = LEDGER_LABEL;
+  if (known[type]) return t(known[type]);
   const words = type.toLowerCase().replace(/_/g, " ").trim();
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Balance change";
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : t("wallet.ledgerFallback");
 }
 
 /** How the wallet history pages (`api/paging.ts`): by `sequence`, newest first (`atMs`, then `sequence` — rows of
@@ -98,6 +99,7 @@ function ledgerIcon(entry: LedgerEntryDto, net: number | undefined): ReactNode {
  *  resulting `DEPOSIT` ledger entry, the balance rolls and flashes on its own, no separate
  *  "deposit arrived" mechanism needed. */
 function BalanceCard({ balance }: { balance: string }) {
+  const t = useT();
   const numeric = Number(balance);
   const prevRef = useRef(numeric);
   const [flashClass, setFlashClass] = useState("");
@@ -106,13 +108,13 @@ function BalanceCard({ balance }: { balance: string }) {
     if (prevRef.current === numeric) return;
     setFlashClass(numeric > prevRef.current ? "value-flash-up" : "value-flash-down");
     prevRef.current = numeric;
-    const t = window.setTimeout(() => setFlashClass(""), 450);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(() => setFlashClass(""), 450);
+    return () => window.clearTimeout(timer);
   }, [numeric]);
 
   return (
     <div className={`card ${flashClass}`}>
-      <div className="stat-tile__label">Balance</div>
+      <div className="stat-tile__label">{t("wallet.balance")}</div>
       <div className="stat-tile__value" style={{ fontSize: 32 }}>
         <RollingDigits value={numeric} durationMs={500} format={rollingPlayFormat(numeric, { unit: true })} />
       </div>
@@ -133,6 +135,7 @@ function BalanceCard({ balance }: { balance: string }) {
  */
 function DepositCard() {
   const api = useApi();
+  const t = useT();
   const [address, setAddress] = useState<string | null>(null);
   // The real failure text (`ApiException.depositVerificationUnavailable`/`chainServiceUnavailable`
   // on the server, e.g. "deposits are not available yet") is more honest than a generic retry
@@ -147,8 +150,8 @@ function DepositCard() {
         setAddress(r.address);
         setErrorMessage(null);
       })
-      .catch((err) => setErrorMessage(mutationErrorText(err, "Couldn't load your deposit address.")));
-  }, [api]);
+      .catch((err) => setErrorMessage(mutationErrorText(err, t("wallet.depositLoadError"), t)));
+  }, [api, t]);
 
   // Loads once — and again when the server comes back from a restart (`api/engineState.ts`).
   const engineEpoch = useEngineEpoch();
@@ -158,7 +161,7 @@ function DepositCard() {
 
   return (
     <div className="card">
-      <h3>Deposit from wallet</h3>
+      <h3>{t("wallet.depositTitle")}</h3>
       {errorMessage ? (
         <ErrorState message={errorMessage} onRetry={load} />
       ) : !address ? (
@@ -169,17 +172,17 @@ function DepositCard() {
       ) : (
         <div className="stack" style={{ gap: 12 }}>
           <div className="qr-frame">
-            <QrCode value={address} size={200} label="Deposit address QR code — scan with Sage" />
+            <QrCode value={address} size={200} label={t("wallet.depositQrLabel")} />
           </div>
-          <p className="mono deposit-address" aria-label="Deposit address">
+          <p className="mono deposit-address" aria-label={t("wallet.depositAddressAria")}>
             {address}
           </p>
-          <CopyButton value={address} label="Copy address" className="btn btn--secondary btn--block" />
+          <CopyButton value={address} label={t("wallet.copyAddress")} className="btn btn--secondary btn--block" />
           <p className="muted">
-            Send PLAY from Sage to this address — credited after confirmation on testnet11 (~1–5 min).
+            {t("wallet.depositHelp")}
           </p>
           <p className="disclaimer-line">
-            <span className="live-dot" aria-hidden="true" /> Watching for deposits — this page checks automatically.
+            <span className="live-dot" aria-hidden="true" /> {t("wallet.watching")}
           </p>
         </div>
       )}
@@ -201,11 +204,11 @@ function displayWithdrawalState(w: WithdrawalRequestDto): WithdrawalDisplayState
   return w.chainState === "in_flight" ? "IN_FLIGHT" : "QUEUED";
 }
 
-const WITHDRAWAL_DISPLAY_LABEL: Record<WithdrawalDisplayState, string> = {
-  QUEUED: "QUEUED",
-  IN_FLIGHT: "IN FLIGHT",
-  CONFIRMED: "CONFIRMED",
-  FAILED: "FAILED",
+const WITHDRAWAL_DISPLAY_LABEL: Record<WithdrawalDisplayState, TKey> = {
+  QUEUED: "wallet.stateQueued",
+  IN_FLIGHT: "wallet.stateInFlight",
+  CONFIRMED: "wallet.stateConfirmed",
+  FAILED: "wallet.stateFailed",
 };
 const WITHDRAWAL_DISPLAY_CLASS: Record<WithdrawalDisplayState, string> = {
   QUEUED: "badge--betting",
@@ -219,23 +222,25 @@ const WITHDRAWAL_DISPLAY_CLASS: Record<WithdrawalDisplayState, string> = {
  *  never a link (same reasoning as `ResultsHashLine`'s "resultsHash" wouldn't link to a dead
  *  page either). */
 function WithdrawalStatusRow({ w }: { w: WithdrawalRequestDto }) {
+  const t = useT();
   const display = displayWithdrawalState(w);
   return (
     <li className="list-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
       <span className="list-row__main" style={{ justifyContent: "space-between", width: "100%" }}>
         <span className="mono">{formatPlayAmount(w.amount)} PLAY</span>
-        <span className={`badge ${WITHDRAWAL_DISPLAY_CLASS[display]}`}>{WITHDRAWAL_DISPLAY_LABEL[display]}</span>
+        <span className={`badge ${WITHDRAWAL_DISPLAY_CLASS[display]}`}>{t(WITHDRAWAL_DISPLAY_LABEL[display])}</span>
       </span>
       {display === "CONFIRMED" && (
         <span className="faint mono">
-          Coin {w.coinId ? shortenAddress(w.coinId) : "—"}
-          {w.height !== null ? ` at height ${w.height.toLocaleString("en-US")}` : ""}
+          {w.height !== null
+            ? t("wallet.coinAtHeight", { coin: w.coinId ? shortenAddress(w.coinId) : "—", height: w.height.toLocaleString("en-US") })
+            : t("wallet.coin", { coin: w.coinId ? shortenAddress(w.coinId) : "—" })}
         </span>
       )}
-      {display === "FAILED" && <span className="faint">{w.failureReason ?? "Failed — refunded to your balance."}</span>}
+      {display === "FAILED" && <span className="faint">{w.failureReason ?? t("wallet.failedRefunded")}</span>}
       {(display === "QUEUED" || display === "IN_FLIGHT") && (
         <span className="faint">
-          {display === "QUEUED" ? "Waiting for the next treasury batch." : "Submitted to testnet11 — waiting for confirmation."}
+          {display === "QUEUED" ? t("wallet.queuedHelp") : t("wallet.inFlightHelp")}
         </span>
       )}
     </li>
@@ -251,6 +256,7 @@ function WithdrawalStatusRow({ w }: { w: WithdrawalRequestDto }) {
  */
 function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; address: string; onBalanceChange: () => void }) {
   const api = useApi();
+  const t = useT();
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -299,7 +305,7 @@ function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; 
       onBalanceChange();
       pollUntilSettled(record.requestId);
     } catch (err) {
-      setErrorMessage(mutationErrorText(err, "Something went wrong requesting the withdrawal."));
+      setErrorMessage(mutationErrorText(err, t("wallet.withdrawError"), t));
     } finally {
       setSubmitting(false);
     }
@@ -307,10 +313,10 @@ function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; 
 
   return (
     <div className="card">
-      <h3>Withdraw to wallet</h3>
+      <h3>{t("wallet.withdrawTitle")}</h3>
       <form onSubmit={(e) => void submit(e)} className="stack" style={{ gap: 12 }}>
         <div className="field">
-          <label htmlFor="withdraw-amount">Amount (PLAY)</label>
+          <label htmlFor="withdraw-amount">{t("wallet.amountLabel")}</label>
           <input
             id="withdraw-amount"
             type="text"
@@ -320,29 +326,29 @@ function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; 
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0"
           />
-          <p className="field-hint">Balance: {formatPlayAmount(balance)} PLAY</p>
-          {amount.trim() !== "" && !check.isPositive && <p className="field-error">Enter an amount greater than 0.</p>}
+          <p className="field-hint">{t("wallet.balanceHint", { amount: formatPlayAmount(balance) })}</p>
+          {amount.trim() !== "" && !check.isPositive && <p className="field-error">{t("wallet.amountPositive")}</p>}
           {check.isPositive && check.tooManyDecimals && (
-            <p className="field-error">At most {PLAY_DECIMALS} decimal places.</p>
+            <p className="field-error">{t("wallet.decimals", { count: PLAY_DECIMALS })}</p>
           )}
           {check.isPositive && !check.tooManyDecimals && belowMin && (
-            <p className="field-error">Minimum withdrawal is {formatPlayAmount(MIN_WITHDRAWAL_PLAY)} PLAY.</p>
+            <p className="field-error">{t("wallet.minWithdrawal", { amount: formatPlayAmount(MIN_WITHDRAWAL_PLAY) })}</p>
           )}
           {check.overBalance && (
             <p className="field-error">
-              Not enough PLAY — you have {formatPlayAmount(balance)} PLAY, this withdrawal needs {formatPlayAmount(check.amount)} PLAY.
+              {t("wallet.notEnough", { have: formatPlayAmount(balance), need: formatPlayAmount(check.amount) })}
             </p>
           )}
         </div>
         <div className="field">
-          <span className="field-hint">Destination — your registered address:</span>
+          <span className="field-hint">{t("wallet.destination")}</span>
           <p className="mono" style={{ margin: 0 }}>
             {shortenAddress(address)}
           </p>
         </div>
         {errorMessage && <p className="field-error">{errorMessage}</p>}
         <button type="submit" className="btn btn--primary btn--block" disabled={!valid || submitting}>
-          {submitting ? "Requesting…" : "Withdraw"}
+          {submitting ? t("wallet.requesting") : t("wallet.withdraw")}
         </button>
       </form>
       {recent.length > 0 && (
@@ -362,16 +368,17 @@ function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; 
  *  second independent setting. */
 function SettingsCard() {
   const fx = useFxSettings();
+  const t = useT();
   return (
     <div className="card">
-      <h3>Settings</h3>
+      <h3>{t("wallet.settings")}</h3>
       <ul className="list-card">
         <li className="list-row">
           <span className="list-row__main">
             <span className="list-row__icon" aria-hidden="true">
               {fx.sfxEnabled ? <SpeakerOnIcon /> : <SpeakerMuteIcon />}
             </span>
-            Sound
+            {t("wallet.sound")}
           </span>
           <button
             type="button"
@@ -381,7 +388,7 @@ function SettingsCard() {
               fx.setSfxEnabled(!fx.sfxEnabled);
             }}
           >
-            {fx.sfxEnabled ? "On" : "Off"}
+            {fx.sfxEnabled ? t("common.on") : t("common.off")}
           </button>
         </li>
         <li className="list-row">
@@ -389,10 +396,10 @@ function SettingsCard() {
             <span className="list-row__icon" aria-hidden="true">
               {fx.hapticsEnabled ? <VibrationOnIcon /> : <VibrationOffIcon />}
             </span>
-            Vibration
+            {t("wallet.vibration")}
           </span>
           <button type="button" className="btn btn--secondary" onClick={() => fx.setHapticsEnabled(!fx.hapticsEnabled)}>
-            {fx.hapticsEnabled ? "On" : "Off"}
+            {fx.hapticsEnabled ? t("common.on") : t("common.off")}
           </button>
         </li>
       </ul>
@@ -407,6 +414,7 @@ function SettingsCard() {
  *  pill, profile-menu "Wallet" link, old bookmarks) — this just gives it a second caller. */
 export function WalletContent() {
   const api = useApi();
+  const t = useT();
   const { player } = useSession();
   const [account, setAccount] = useState<PlayerAccountDto | null>(null);
   const [ledger, setLedger] = useState<PagedList<LedgerEntryDto> | null>(null);
@@ -487,12 +495,12 @@ export function WalletContent() {
         <BalanceCard balance={account.balance} />
         {error && (
           <p className="status-note" role="status">
-            Couldn't refresh — these are the last numbers we had.
+            {t("wallet.refreshFailed")}
           </p>
         )}
-        <h3>Activity</h3>
+        <h3>{t("wallet.activity")}</h3>
         {ledger.items.length === 0 ? (
-          <EmptyState>No activity yet — your starter pack will appear here once you sign in.</EmptyState>
+          <EmptyState>{t("wallet.noActivity")}</EmptyState>
         ) : (
           <>
             <ul className="list-card">
@@ -508,12 +516,12 @@ export function WalletContent() {
                         {ledgerIcon(e, net)}
                       </span>
                       <span>
-                        {ledgerLabel(e.type)}
+                        {ledgerLabel(e.type, t)}
                         <br />
                         <span className="faint">{formatDateTime(e.atMs)}</span>
                         {net !== undefined && (
                           <span className={`ledger-result ${outcomeClassName(outcomeFromNet(net))}`}>
-                            {net > 0 ? "won" : net < 0 ? "lost" : "even"} {formatPlayAmount(net, { sign: true })} PLAY
+                            {t(net > 0 ? "wallet.won" : net < 0 ? "wallet.lost" : "wallet.even", { amount: formatPlayAmount(net, { sign: true }) })}
                           </span>
                         )}
                       </span>
@@ -527,12 +535,12 @@ export function WalletContent() {
             </ul>
             {ledger.hasMore && (
               <button type="button" className="btn btn--secondary" onClick={() => void loadMore()} disabled={loadingMore}>
-                {loadingMore ? "Loading…" : "Load more"}
+                {loadingMore ? t("wallet.loading") : t("common.loadMore")}
               </button>
             )}
             {moreFailed && (
               <p className="status-note" role="alert">
-                Couldn't load older activity. Try again.
+                {t("wallet.moreFailed")}
               </p>
             )}
           </>
@@ -550,24 +558,25 @@ export function WalletContent() {
 
 export function WalletPage() {
   const { player, openConnectModal } = useSession();
+  const t = useT();
 
   return (
     <div>
-      <h1>Wallet</h1>
+      <h1>{t("wallet.title")}</h1>
       {/* Р-63: the sticky top DEMO banner is gone from every screen — this is where that fact
        *  still lives, as plain text, on the screen where balances/deposits/withdrawals actually
        *  happen (task: "keep factual labels where they matter... in the wallet/How it works
        *  page"). */}
-      <p className="disclaimer-line">PLAY — test tokens on Herd's test network. Nothing here is real money.</p>
+      <p className="disclaimer-line">{t("wallet.disclaimer")}</p>
       {/* Р-63: same fact `ServerInfoBanner` used to show as a sticky top strip on every screen —
        *  renders nothing at all against `MockApi` (no `serverInfo()`, `Common.tsx`'s own doc
        *  comment) or a live (non-replay) `RealApi` build; only ever appears in test/replay mode. */}
       <ServerInfoBanner />
       {!player ? (
         <div className="state-card">
-          <p className="state-card__title">Connect your wallet to see your balance</p>
+          <p className="state-card__title">{t("wallet.connectToSee")}</p>
           <button type="button" className="btn btn--primary" onClick={openConnectModal}>
-            CONNECT WALLET
+            {t("common.connectWallet")}
           </button>
         </div>
       ) : (

@@ -18,6 +18,7 @@ import { CancellationNotice, CrowdPositionCard, PositionsList } from "../compone
 import { useServerNow } from "../components/useServerNow";
 import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
 import { formatDuration, formatPlayAmount, formatPrice } from "../format";
+import { useT } from "../i18n";
 import "./RoundPage.css";
 
 const POLL_MS = 2000;
@@ -26,6 +27,7 @@ export function RoundPage() {
   const { roundId } = useParams<{ roundId: string }>();
   const api = useApi();
   const { player } = useSession();
+  const t = useT();
   // The SERVER's clock, like the room's: a phone whose own clock is off must not close betting early or late here.
   const nowMs = useServerNow(1000);
   const [round, setRound] = useState<RoundDto | null>(null);
@@ -70,7 +72,7 @@ export function RoundPage() {
 
   usePoll(load, POLL_MS, [load]);
 
-  if (error === "not-found" && !round) return <ErrorState message="This round doesn't exist." />;
+  if (error === "not-found" && !round) return <ErrorState message={t("round.notFound")} />;
   if (error && !round) return <ErrorState onRetry={load} />;
   if (!round) {
     return (
@@ -82,7 +84,7 @@ export function RoundPage() {
   }
 
   // Which market and how long a round: the round's own window says the length (never "Hourly"/"Daily").
-  const length = formatDuration((round.window.endMs - round.window.startMs) / 1000);
+  const length = formatDuration((round.window.endMs - round.window.startMs) / 1000, t);
   // The prices of this round are printed in ITS price scale and its source is named from ITS fields: a market that
   // has left `markets()` (an odds market closes often) still has rounds that must read right.
   const { format: priceFormat, source } = roundPriceInfo(round, market);
@@ -116,7 +118,7 @@ export function RoundPage() {
     <div className="stack" style={{ gap: 16 }}>
       <div key={`hero-${revealedKey}`} className={`card card--hero stack ${revealedKey === "revealed" ? "reveal-flip-in" : ""}`} style={{ gap: 8 }}>
         <div className="round-head">
-          <Link to={`/play/${encodeURIComponent(round.marketId)}`} className="round-head__market" aria-label={`${round.asset}, ${length} round — open the market`}>
+          <Link to={`/play/${encodeURIComponent(round.marketId)}`} className="round-head__market" aria-label={t("round.headAria", { asset: round.asset, length })}>
             {market && <MarketIcon market={market} size={28} />}
             <strong>{round.asset}</strong>
             <span className="round-head__length">· {length}</span>
@@ -124,18 +126,22 @@ export function RoundPage() {
           <RoundStatusBadge phase={round.phase} />
         </div>
         {round.phase === "BETTING" && (
-          <Countdown nowMs={nowMs} targetMs={round.window.startMs} prefix="Closes in " />
+          <Countdown nowMs={nowMs} targetMs={round.window.startMs} template="room.closesIn" />
         )}
-        {round.phase === "RUNNING" && <Countdown nowMs={nowMs} targetMs={round.window.endMs} prefix="Resolves in " />}
+        {round.phase === "RUNNING" && <Countdown nowMs={nowMs} targetMs={round.window.endMs} template="room.resolvesIn" />}
         {round.phase === "SETTLED" && (
           <h2>
-            {round.asset} closed{" "}
-            {Number(round.closePrice) === Number(round.openPrice)
-              ? "FLAT"
-              : Number(round.closePrice) > Number(round.openPrice)
-                ? "UP"
-                : "DOWN"}{" "}
-            — {priceText(round.openPrice)} → {priceText(round.closePrice)}
+            {t("round.closedLine", {
+              market: round.asset,
+              direction:
+                Number(round.closePrice) === Number(round.openPrice)
+                  ? t("round.closedFlat")
+                  : Number(round.closePrice) > Number(round.openPrice)
+                    ? "UP"
+                    : "DOWN",
+              open: priceText(round.openPrice),
+              close: priceText(round.closePrice),
+            })}
           </h2>
         )}
       </div>
@@ -155,7 +161,7 @@ export function RoundPage() {
                   <span className={outcomeClassName(outcomeFromNet(net))}>{formatPlayAmount(net, { sign: true })} PLAY</span>
                 </div>
                 <p className="net-result__secondary">
-                  stake {formatPlayAmount(stake)} → paid {formatPlayAmount(ownPosition.payout)}
+                  {t("round.stakePaid", { stake: formatPlayAmount(stake), paid: formatPlayAmount(ownPosition.payout) })}
                 </p>
               </div>
             );
@@ -177,7 +183,7 @@ export function RoundPage() {
         <div className="stack" style={{ gap: 16 }}>
           {round.phase === "BETTING" && (
             <>
-              <p>{round.participantCount} players have voted</p>
+              <p>{t("round.voted", { count: round.participantCount })}</p>
               {/* Р-62 (replaces Р-22): the crowd split is now live during betting, not just at
                *  round start — optional fields, so this line simply doesn't render against a
                *  `RealApi` build that predates Р-62. */}
@@ -191,7 +197,7 @@ export function RoundPage() {
                 round={round}
                 nowMs={nowMs}
                 onChanged={load}
-                noPlayerHint="You can still watch this round without one."
+                noPlayerHint={t("round.noPlayerHint")}
               />
             </>
           )}
@@ -204,7 +210,7 @@ export function RoundPage() {
           )}
           {(round.phase === "SETTLED" || (round.phase === "RUNNING" && !waitingOpen)) && (
             <div className="stack reveal-flip-in" style={{ gap: 16 }}>
-              {round.openPrice !== null && <p className="mono">Open price: {priceText(round.openPrice)}</p>}
+              {round.openPrice !== null && <p className="mono">{t("round.openPrice", { price: priceText(round.openPrice) })}</p>}
               <OracleDisclosureLine source={source} />
               {/* A round runs entirely on one exchange (Р-76): when it ran on the market's backup, it says so. */}
               <RoundVenueNote source={round.source} market={market} phase={round.phase} />
@@ -217,7 +223,7 @@ export function RoundPage() {
                   oracleIndex={market?.oracleIndex}
                 />
               )}
-              <h3>All positions</h3>
+              <h3>{t("round.allPositions")}</h3>
               <PositionsList
                 positions={round.positions}
                 settled={round.phase === "SETTLED"}
@@ -233,7 +239,7 @@ export function RoundPage() {
           )}
           {round.phase === "BETTING" && (
             <div className="card">
-              <p className="muted">The crowd's position is revealed when this round starts.</p>
+              <p className="muted">{t("round.crowdRevealed")}</p>
             </div>
           )}
         </div>

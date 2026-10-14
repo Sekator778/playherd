@@ -22,6 +22,8 @@ import { MarketCard, MarketCardSkeleton } from "../components/MarketCard";
 import { isOpenMarket } from "../components/marketModel";
 import { useServerNow } from "../components/useServerNow";
 import { hottestIds, lobbyParams, parseLobbyParams, ribbonTabs, visibleMarkets, type LobbyState } from "./lobbyModel";
+import { useT } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import "./LobbyPage.css";
 
 type RibbonFade = "none" | "start" | "end" | "both";
@@ -52,9 +54,9 @@ function useScrollFade(watch: unknown): [React.RefObject<HTMLDivElement | null>,
 }
 
 const SORT_NOTE = {
-  listing: "",
-  hot: "biggest pools first",
-  closing: "closing first",
+  listing: null,
+  hot: "lobby.sortHot",
+  closing: "lobby.sortClosing",
 } as const;
 
 /** What this is, in one small line above the markets, for a visitor who has not signed in (first tester pass, D10: nothing on the
@@ -66,12 +68,13 @@ const SORT_NOTE = {
  *  turning it on is `<LobbyPage intro />` in `App.tsx` and nothing else. */
 function LobbyIntro() {
   const { player, loading } = useSession();
+  const t = useT();
   if (loading || player) return null;
   return (
     <p className="lobby-intro">
-      <strong>A toy-money game:</strong> bet UP or DOWN on real prices, with leverage.{" "}
+      <Rich text={t("lobby.intro")} />{" "}
       <Link to="/how-it-works" className="lobby-intro__link">
-        How it works
+        {t("layout.howItWorks")}
       </Link>
     </p>
   );
@@ -83,6 +86,7 @@ interface LobbyPageProps {
 }
 
 export function LobbyPage({ intro = false }: LobbyPageProps) {
+  const t = useT();
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => parseLobbyParams(params), [params]);
   const nowMs = useServerNow(1000);
@@ -90,7 +94,7 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
   const { favorites, toggle } = useFavorites();
   const activeTabRef = useRef<HTMLButtonElement>(null);
 
-  const tabs = useMemo(() => ribbonTabs(categories), [categories]);
+  const tabs = useMemo(() => ribbonTabs(categories, t), [categories, t]);
   const [ribbonRef, fade] = useScrollFade(tabs.length);
   // A category that is not on the ribbon (an old link, a panel that emptied) reads as "All".
   const category = tabs.some((t) => t.id === state.category) ? state.category : "all";
@@ -103,7 +107,7 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
     activeTabRef.current?.scrollIntoView?.({ inline: "center", block: "nearest" });
   }, [category, tabs.length]);
 
-  const visible = useMemo(() => visibleMarkets(markets, effective, favorites), [markets, effective, favorites]);
+  const visible = useMemo(() => visibleMarkets(markets, effective, favorites, t), [markets, effective, favorites, t]);
   const closedCount = visible.filter((m) => !isOpenMarket(m)).length;
   const openCount = visible.length - closedCount;
   const hot = useMemo(() => (effective.sort === "hot" ? hottestIds(visible) : new Set<string>()), [effective.sort, visible]);
@@ -113,7 +117,7 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
   if (loading) {
     return (
       <div className="lobby-root" aria-busy="true">
-        <h1 className="visually-hidden">Markets</h1>
+        <h1 className="visually-hidden">{t("lobby.marketsH1")}</h1>
         {intro && <LobbyIntro />}
         <Skeleton height={48} />
         <Skeleton height={44} />
@@ -128,17 +132,18 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
     );
   }
 
+  const sortNoteKey = SORT_NOTE[effective.sort];
   const filtered = effective.category !== "all" || effective.favoritesOnly || effective.query.trim() !== "";
-  const activeTitle = tabs.find((t) => t.id === category)?.title ?? "All";
+  const activeTitle = tabs.find((t) => t.id === category)?.title ?? t("cat.all");
   const reset = () => setParams(new URLSearchParams(), { replace: true });
 
   return (
     <div className="lobby-root">
-      <h1 className="visually-hidden">Markets</h1>
+      <h1 className="visually-hidden">{t("lobby.marketsH1")}</h1>
       {intro && <LobbyIntro />}
 
       <div className="lobby-ribbon-wrap">
-        <div ref={ribbonRef} className="lobby-ribbon" role="tablist" aria-label="Market categories" data-fade={fade}>
+        <div ref={ribbonRef} className="lobby-ribbon" role="tablist" aria-label={t("lobby.categoriesAria")} data-fade={fade}>
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -148,7 +153,7 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
               id={`lobby-tab-${tab.id}`}
               aria-selected={tab.id === category}
               aria-controls="lobby-list"
-              aria-label={`${tab.title}, ${tab.count} open ${tab.count === 1 ? "market" : "markets"}`}
+              aria-label={t("lobby.tabAria", { title: tab.title, count: tab.count })}
               className="lobby-ribbon__tab"
               onClick={() => set({ category: tab.id })}
             >
@@ -162,9 +167,9 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
       </div>
 
       <div className="lobby-toolbar">
-        <div className="chip-row lobby-chips" role="group" aria-label="Sort and filter">
+        <div className="chip-row lobby-chips" role="group" aria-label={t("lobby.sortFilterAria")}>
           <button type="button" className="chip" aria-pressed={effective.sort === "hot"} onClick={() => set({ sort: effective.sort === "hot" ? "listing" : "hot" })}>
-            <FlameIcon /> Hot
+            <FlameIcon /> {t("lobby.hot")}
           </button>
           <button
             type="button"
@@ -172,10 +177,10 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
             aria-pressed={effective.sort === "closing"}
             onClick={() => set({ sort: effective.sort === "closing" ? "listing" : "closing" })}
           >
-            <ClockIcon /> Closing soon
+            <ClockIcon /> {t("lobby.closingSoon")}
           </button>
           <button type="button" className="chip" aria-pressed={effective.favoritesOnly} onClick={() => set({ favoritesOnly: !effective.favoritesOnly })}>
-            <StarIcon filled={effective.favoritesOnly} /> Favorites
+            <StarIcon filled={effective.favoritesOnly} /> {t("lobby.favorites")}
             {favoriteCount > 0 && <span className="chip__count mono">{favoriteCount}</span>}
           </button>
         </div>
@@ -183,8 +188,8 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
           <SearchIcon />
           <input
             type="search"
-            aria-label="Search markets"
-            placeholder="Search markets"
+            aria-label={t("lobby.search")}
+            placeholder={t("lobby.search")}
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
@@ -192,7 +197,7 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
             onChange={(e) => set({ query: e.target.value })}
           />
           {effective.query !== "" && (
-            <button type="button" className="lobby-search__clear" aria-label="Clear search" onClick={() => set({ query: "" })}>
+            <button type="button" className="lobby-search__clear" aria-label={t("lobby.clearSearch")} onClick={() => set({ query: "" })}>
               <CloseIcon />
             </button>
           )}
@@ -201,21 +206,20 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
 
       {error && (
         <p className="lobby-notice" role="status">
-          Can't reach the server — showing the last prices we got, they may be out of date.
+          {t("lobby.offline")}
         </p>
       )}
 
       <p className="lobby-status" aria-live="polite">
         <strong>
-          {activeTitle}
-          {effective.favoritesOnly ? " · Favorites" : ""}
+          {effective.favoritesOnly ? t("lobby.titleFav", { title: activeTitle }) : activeTitle}
         </strong>
         <span>
           {/* The ribbon's chips count OPEN markets; a market that closed in the last ten minutes keeps its card, so the line
            *  says how many of the cards are open and how many are closed — the two numbers on the screen agree. */}
-          {openCount} {openCount === 1 ? "market" : "markets"}
-          {closedCount > 0 ? ` · ${closedCount} closed` : ""}
-          {SORT_NOTE[effective.sort] ? ` · ${SORT_NOTE[effective.sort]}` : ""}
+          {t("lobby.count", { count: openCount })}
+          {closedCount > 0 ? t("lobby.closedCount", { count: closedCount }) : ""}
+          {sortNoteKey ? ` · ${t(sortNoteKey)}` : ""}
         </span>
       </p>
 
@@ -223,20 +227,20 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
         {visible.length === 0 ? (
           <div className="lobby-empty">
             {markets.length === 0 ? (
-              <p className="lobby-empty__title">No markets are open right now.</p>
+              <p className="lobby-empty__title">{t("lobby.noMarkets")}</p>
             ) : effective.favoritesOnly && effective.query.trim() === "" && favoriteCount === 0 ? (
               <>
-                <p className="lobby-empty__title">No favorites yet</p>
-                <p>Tap the star on a market to keep it here.</p>
+                <p className="lobby-empty__title">{t("lobby.noFavTitle")}</p>
+                <p>{t("lobby.noFavHint")}</p>
               </>
             ) : effective.query.trim() !== "" ? (
-              <p className="lobby-empty__title">No markets match “{effective.query.trim()}”.</p>
+              <p className="lobby-empty__title">{t("lobby.noMatch", { query: effective.query.trim() })}</p>
             ) : (
-              <p className="lobby-empty__title">Nothing here yet.</p>
+              <p className="lobby-empty__title">{t("lobby.nothing")}</p>
             )}
             {filtered && markets.length > 0 && (
               <button type="button" className="btn btn--secondary" onClick={reset}>
-                Show all markets
+                {t("lobby.showAll")}
               </button>
             )}
           </div>
@@ -255,8 +259,7 @@ export function LobbyPage({ intro = false }: LobbyPageProps) {
         <>
           <BotsNote />
           <p className="faint" style={{ margin: 0 }}>
-            Prices and odds are shown as the sources publish them — Herd's rounds settle on them, with PLAY (test tokens, not real money).{" "}
-            <Link to="/how-it-works">How it works</Link>
+            {t("lobby.footnote")} <Link to="/how-it-works">{t("layout.howItWorks")}</Link>
           </p>
         </>
       )}

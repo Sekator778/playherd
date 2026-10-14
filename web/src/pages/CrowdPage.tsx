@@ -23,6 +23,7 @@ import type { CrowdAccountDto, CrowdOverviewDto, MarketDto } from "../api/contra
 import { CROWD_STARTING_CAPITAL_USD } from "../api/contract";
 import { ErrorState, OracleDisclosureLine, OracleStatusLine, Skeleton } from "../components/Common";
 import { LazyCrowdChart } from "../components/LazyCrowdChart";
+import { useT, type TFn } from "../i18n";
 import { MarketIcon } from "../components/MarketIcon";
 import { LiveStatTile } from "../components/RoundParts";
 import { bestAndWorst, marketGroups, rankedByReturn, type OverviewRow } from "../components/crowdModel";
@@ -44,24 +45,26 @@ function Return({ value }: { value: number }) {
 
 /** "closed" beside a market's ticker: a word, not just a dimmed row. */
 function ClosedTag({ row }: { row: OverviewRow }) {
-  return row.status === "CLOSED" ? <span className="crowd-closed-tag">closed</span> : null;
+  const t = useT();
+  return row.status === "CLOSED" ? <span className="crowd-closed-tag">{t("crowd.closedTag")}</span> : null;
 }
 
 /** The row's name for a spoken label: the ticker, and "closed" — the row's `title` rides along as the button's
  *  own `title` (its description), so a long question is not read out in front of every figure. */
-function rowName(row: OverviewRow): string {
-  return `${row.symbol}${row.status === "CLOSED" ? ", closed" : ""}`;
+function rowName(row: OverviewRow, t: TFn): string {
+  return row.status === "CLOSED" ? t("crowd.rowClosed", { symbol: row.symbol }) : row.symbol;
 }
 
 /** One market's mini-card in the overview (best / worst): taps through to that market's account below. */
 function Extreme({ label, row, onPick }: { label: string; row: OverviewRow; onPick: (marketId: string) => void }) {
+  const t = useT();
   return (
     <button
       type="button"
       className="crowd-extreme"
       title={row.title}
       onClick={() => onPick(row.marketId)}
-      aria-label={`${label}: ${rowName(row)}, ${formatPercent(row.returnPct, { sign: true })}. Show its account.`}
+      aria-label={t("crowd.extremeAria", { label, name: rowName(row, t), pct: formatPercent(row.returnPct, { sign: true }) })}
     >
       <span className="crowd-extreme__label">{label}</span>
       <span className="crowd-extreme__symbol">
@@ -73,22 +76,23 @@ function Extreme({ label, row, onPick }: { label: string; row: OverviewRow; onPi
 }
 
 function Overview({ overview, onPick }: { overview: CrowdOverviewDto; onPick: (marketId: string) => void }) {
+  const t = useT();
   const ranked = rankedByReturn(overview.markets);
   const extremes = bestAndWorst(overview.markets);
   const maxAbs = Math.max(0.0001, ...ranked.map((r) => Math.abs(r.returnPct)));
   return (
     <section className="card crowd-overview" aria-labelledby="crowd-overview-title">
       <h2 id="crowd-overview-title" className="section-title">
-        The whole herd — {overview.markets.length} markets
+        {t("crowd.overviewTitle", { count: overview.markets.length })}
       </h2>
       <div className="crowd-overview__totals">
         <div>
-          <div className="stat-tile__label">Herd capital (paper $)</div>
+          <div className="stat-tile__label">{t("crowd.herdCapital")}</div>
           <div className="crowd-overview__big mono">{formatUsd(overview.totalCapital)}</div>
-          <div className="faint">of {formatUsd(overview.totalStartingCapital, { decimals: 0 })} paper money at the start</div>
+          <div className="faint">{t("crowd.ofStart", { amount: formatUsd(overview.totalStartingCapital, { decimals: 0 }) })}</div>
         </div>
         <div>
-          <div className="stat-tile__label">Return</div>
+          <div className="stat-tile__label">{t("crowd.return")}</div>
           <div className="crowd-overview__big">
             <Return value={overview.returnPct} />
           </div>
@@ -96,15 +100,15 @@ function Overview({ overview, onPick }: { overview: CrowdOverviewDto; onPick: (m
       </div>
       {extremes ? (
         <div className="crowd-overview__extremes">
-          <Extreme label="Best market" row={extremes.best} onPick={onPick} />
-          {extremes.worst && <Extreme label="Worst market" row={extremes.worst} onPick={onPick} />}
+          <Extreme label={t("crowd.best")} row={extremes.best} onPick={onPick} />
+          {extremes.worst && <Extreme label={t("crowd.worst")} row={extremes.worst} onPick={onPick} />}
         </div>
       ) : (
-        <p className="muted">The herd hasn't traded yet — its first position opens when a round settles.</p>
+        <p className="muted">{t("crowd.notTraded")}</p>
       )}
       {ranked.length > 2 && (
         <details className="crowd-overview__all">
-          <summary>Every market, best to worst</summary>
+          <summary>{t("crowd.allSummary")}</summary>
           <ul className="crowd-rank">
             {ranked.map((r) => (
               <li key={r.marketId}>
@@ -113,7 +117,7 @@ function Overview({ overview, onPick }: { overview: CrowdOverviewDto; onPick: (m
                   className="crowd-rank__row"
                   title={r.title}
                   onClick={() => onPick(r.marketId)}
-                  aria-label={`${rowName(r)}: ${formatPercent(r.returnPct, { sign: true })}, won ${r.roundsWon} of ${r.roundsTraded} rounds. Show its account.`}
+                  aria-label={t("crowd.rankAria", { name: rowName(r, t), pct: formatPercent(r.returnPct, { sign: true }), won: r.roundsWon, traded: r.roundsTraded })}
                 >
                   <span className="crowd-rank__symbol">
                     {r.symbol}
@@ -135,7 +139,7 @@ function Overview({ overview, onPick }: { overview: CrowdOverviewDto; onPick: (m
           </ul>
         </details>
       )}
-      <p className="faint">The herd trades paper money — $100,000 per market — on the majority side of every round.</p>
+      <p className="faint">{t("crowd.herdTrades")}</p>
     </section>
   );
 }
@@ -146,6 +150,7 @@ type AccountMarket = Pick<MarketDto, "id" | "symbol" | "iconUrl" | "status"> & P
 
 function CrowdAccount({ market }: { market: AccountMarket }) {
   const api = useApi();
+  const t = useT();
   const tick = useClock(5000);
   const [crowd, setCrowd] = useState<CrowdAccountDto | null>(null);
   const [error, setError] = useState(false);
@@ -183,7 +188,7 @@ function CrowdAccount({ market }: { market: AccountMarket }) {
   if (crowd.history.length === 0) {
     return (
       <div className="state-card">
-        <p>The crowd account opens its first position when the first round settles.</p>
+        <p>{t("crowd.empty")}</p>
       </div>
     );
   }
@@ -194,31 +199,31 @@ function CrowdAccount({ market }: { market: AccountMarket }) {
   return (
     <div className="stack" style={{ gap: 20 }}>
       <div className="crowd-tiles">
-        <LiveStatTile label="Capital (paper $)" value={Number(crowd.capital)} format={(n) => formatUsd(n)} />
-        <LiveStatTile label="Return since day one" value={returnSinceDayOne} format={(n) => formatPercent(n, { sign: true })} />
+        <LiveStatTile label={t("crowd.capital")} value={Number(crowd.capital)} format={(n) => formatUsd(n)} />
+        <LiveStatTile label={t("crowd.sinceDayOne")} value={returnSinceDayOne} format={(n) => formatPercent(n, { sign: true })} />
         <LiveStatTile
-          label="This season"
+          label={t("crowd.thisSeason")}
           value={thisSeason ? thisSeason.returnPct : null}
           format={(n) => formatPercent(n, { sign: true })}
         />
       </div>
       <LazyCrowdChart history={crowd.history} variant="full" symbol={market.symbol} />
-      {updatedAt !== null && <p className="faint">{formatUpdatedAt(updatedAt)}</p>}
+      {updatedAt !== null && <p className="faint">{formatUpdatedAt(updatedAt, t)}</p>}
       {market.source && <OracleDisclosureLine source={market.source} backup={market.backupSource} />}
       <OracleStatusLine />
-      <h2>Season returns</h2>
+      <h2>{t("crowd.seasonReturns")}</h2>
       <table className="data-table data-table--responsive">
         <thead>
           <tr>
-            <th>Season</th>
-            <th>Return</th>
+            <th>{t("crowd.season")}</th>
+            <th>{t("crowd.return")}</th>
           </tr>
         </thead>
         <tbody>
           {[...crowd.seasonReturns].reverse().map((s) => (
             <tr key={s.season}>
-              <td data-label="Season">{s.season}</td>
-              <td data-label="Return" className="mono">
+              <td data-label={t("crowd.season")}>{s.season}</td>
+              <td data-label={t("crowd.return")} className="mono">
                 {formatPercent(s.returnPct, { sign: true })}
               </td>
             </tr>
@@ -231,6 +236,7 @@ function CrowdAccount({ market }: { market: AccountMarket }) {
 
 export function CrowdPage() {
   const api = useApi();
+  const t = useT();
   const tick = useClock(5000);
   const [params, setParams] = useSearchParams();
   const { markets, categories, loading: marketsLoading, error: marketsError, refresh } = useMarkets();
@@ -255,7 +261,7 @@ export function CrowdPage() {
     };
   }, [api, tick]);
 
-  const groups = useMemo(() => marketGroups(markets, categories), [markets, categories]);
+  const groups = useMemo(() => marketGroups(markets, categories, t), [markets, categories, t]);
 
   // The market asked for (the link, or the room it came from): from the list; else — a closed market that has
   // left it — from its row of the overview (which keeps it); else the default (`defaultMarket`: the open BTC market,
@@ -286,7 +292,7 @@ export function CrowdPage() {
 
   return (
     <div className="stack" style={{ gap: 20 }}>
-      <h1>Crowd account vs the market</h1>
+      <h1>{t("crowd.title")}</h1>
 
       {overview && <Overview overview={overview} onPick={pick} />}
 
@@ -294,23 +300,23 @@ export function CrowdPage() {
         <MarketIcon market={market} size={36} />
         <div className="crowd-selector__field">
           <label htmlFor="crowd-market" className="stat-tile__label">
-            Market
+            {t("crowd.market")}
           </label>
           <select id="crowd-market" className="crowd-selector__select" value={market.id} onChange={(e) => pick(e.target.value)}>
             {groups.map((g) => (
               <optgroup key={g.id} label={g.title}>
                 {g.markets.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.symbol} · {m.kind === "ODDS" ? (subtitleOf(m) ?? m.title) : m.title}
-                    {m.status === "CLOSED" ? " (closed)" : ""}
+                    {m.symbol} · {m.kind === "ODDS" ? (subtitleOf(m, t) ?? m.title) : m.title}
+                    {m.status === "CLOSED" ? t("crowd.closedParen") : ""}
                   </option>
                 ))}
               </optgroup>
             ))}
             {leftTheList && (
-              <optgroup label="Left the list">
+              <optgroup label={t("crowd.leftGroup")}>
                 <option value={leftTheList.id}>
-                  {leftTheList.symbol} · {leftTheList.title} (closed)
+                  {leftTheList.symbol} · {leftTheList.title}{t("crowd.closedParen")}
                 </option>
               </optgroup>
             )}
@@ -318,7 +324,7 @@ export function CrowdPage() {
         </div>
         {market.status === "ACTIVE" && (
           <Link to={`/play/${encodeURIComponent(market.id)}`} className="btn btn--secondary crowd-selector__play">
-            Play {market.symbol}
+            {t("crowd.playBtn", { symbol: market.symbol })}
           </Link>
         )}
       </div>

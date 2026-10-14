@@ -15,11 +15,13 @@ import { useSession } from "../api/ApiContext";
 import { ServerInfoBanner } from "../components/Common";
 import { ProfilePage } from "./ProfilePage";
 import { WalletContent } from "./WalletPage";
+import { useT } from "../i18n";
 
 type ProfileSegment = "overview" | "wallet";
 
 export function MyProfilePage() {
   const { player, openConnectModal } = useSession();
+  const t = useT();
   const [segment, setSegment] = useState<ProfileSegment>("overview");
 
   if (!player) {
@@ -27,9 +29,9 @@ export function MyProfilePage() {
     // from any device, no desktop-only fallback here either).
     return (
       <div className="state-card">
-        <p className="state-card__title">Connect your wallet to see your profile.</p>
+        <p className="state-card__title">{t("profile.connectToSee")}</p>
         <button type="button" className="btn btn--primary" onClick={openConnectModal}>
-          CONNECT WALLET
+          {t("common.connectWallet")}
         </button>
       </div>
     );
@@ -37,12 +39,12 @@ export function MyProfilePage() {
 
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <div className="tabs" role="tablist" aria-label="Profile">
+      <div className="tabs" role="tablist" aria-label={t("profile.tabsAria")}>
         <button type="button" role="tab" aria-selected={segment === "overview"} onClick={() => setSegment("overview")}>
-          Overview
+          {t("profile.overview")}
         </button>
         <button type="button" role="tab" aria-selected={segment === "wallet"} onClick={() => setSegment("wallet")}>
-          Wallet
+          {t("profile.wallet")}
         </button>
       </div>
 
@@ -53,7 +55,7 @@ export function MyProfilePage() {
           {/* Р-63: same fact as `WalletPage.tsx`'s standalone copy — plain text, not a sticky
            *  banner, kept here too since this is the same "wallet" section, just reached through
            *  a different tab. */}
-          <p className="disclaimer-line">PLAY — test tokens on Herd's test network. Nothing here is real money.</p>
+          <p className="disclaimer-line">{t("wallet.disclaimer")}</p>
           <ServerInfoBanner />
           <WalletContent />
         </div>

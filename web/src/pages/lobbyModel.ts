@@ -5,8 +5,9 @@
  * room lands on the same panel, and a link can open the lobby on a panel.
  */
 import type { CategoryDto, CategoryId, MarketDto } from "../api/contract";
-import { categoryTitle } from "../api/marketMeta";
+import { categoryLabel, categoryName, categoryTitle } from "../api/marketMeta";
 import { isOpenMarket, marketPool, nextCloseMs } from "../components/marketModel";
+import { tEn, type TFn } from "../i18n";
 
 /** The ribbon's first tab ("All") or one of the categories the server lists. */
 export type CategoryFilter = CategoryId | "all";
@@ -24,10 +25,10 @@ export const DEFAULT_LOBBY_STATE: LobbyState = { category: "all", sort: "listing
 
 /** Every whitespace-separated word of `query` must appear in the market's symbol, title, outcome
  *  subtitle, id or category name (case-insensitive) — so "sports" lists the sports panel, "ger" finds GER. */
-export function matchesQuery(market: MarketDto, query: string): boolean {
+export function matchesQuery(market: MarketDto, query: string, t: TFn = tEn): boolean {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return true;
-  const haystack = [market.symbol, market.title, market.subtitle ?? "", market.id, categoryTitle(market.category), market.kind === "ODDS" ? "odds" : ""]
+  const haystack = [market.symbol, market.title, market.subtitle ?? "", market.id, categoryTitle(market.category), categoryLabel(market.category, t), market.kind === "ODDS" ? "odds" : ""]
     .join(" ")
     .toLowerCase();
   return words.every((word) => haystack.includes(word));
@@ -38,12 +39,12 @@ export function matchesQuery(market: MarketDto, query: string): boolean {
  * anything — "Hot" orders by the open round's pool (biggest first), "Closing soon" by what closes
  * next (soonest first); ties keep the server's order, and closed markets always go last.
  */
-export function visibleMarkets(markets: readonly MarketDto[], state: LobbyState, favorites: ReadonlySet<string>): MarketDto[] {
+export function visibleMarkets(markets: readonly MarketDto[], state: LobbyState, favorites: ReadonlySet<string>, t: TFn = tEn): MarketDto[] {
   const indexed = markets
     .map((market, index) => ({ market, index }))
     .filter(({ market }) => state.category === "all" || market.category === state.category)
     .filter(({ market }) => !state.favoritesOnly || favorites.has(market.id))
-    .filter(({ market }) => matchesQuery(market, state.query));
+    .filter(({ market }) => matchesQuery(market, state.query, t));
   indexed.sort((a, b) => {
     const closedDelta = Number(!isOpenMarket(a.market)) - Number(!isOpenMarket(b.market));
     if (closedDelta !== 0) return closedDelta;
@@ -71,9 +72,9 @@ export function hottestIds(markets: readonly MarketDto[], count = 3): Set<string
 }
 
 /** The ribbon's tabs: "All" (open markets, the sum of the categories' counts) then each category the server lists. */
-export function ribbonTabs(categories: readonly CategoryDto[]): Array<{ id: CategoryFilter; title: string; count: number }> {
+export function ribbonTabs(categories: readonly CategoryDto[], t: TFn = tEn): Array<{ id: CategoryFilter; title: string; count: number }> {
   const total = categories.reduce((sum, c) => sum + c.marketCount, 0);
-  return [{ id: "all", title: "All", count: total }, ...categories.map((c) => ({ id: c.id, title: c.title || categoryTitle(c.id), count: c.marketCount }))];
+  return [{ id: "all", title: t("cat.all"), count: total }, ...categories.map((c) => ({ id: c.id, title: categoryName(c, t), count: c.marketCount }))];
 }
 
 // ---------------------------------------------------------------------------

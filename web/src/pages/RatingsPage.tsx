@@ -8,6 +8,7 @@ import { LeaderboardList, LeaderboardHighlights, type LeaderboardEntry, type Lea
 import { outcomeClassName, outcomeFromNet } from "../api/outcome";
 import { bestSingleRound, biggestComeback } from "../api/seasonStats";
 import { formatPercent, formatPlayAmount } from "../format";
+import { useT, type TFn } from "../i18n";
 
 /**
  * "This season" highlight strip for the Richest tab (`docs/product/design/leaderboard.md`,
@@ -17,16 +18,21 @@ import { formatPercent, formatPlayAmount } from "../format";
  * (`api/seasonStats.ts`) — never a fabricated or repainted number, and never shown at all when
  * there isn't a real one (e.g. no highlight tile for a season with no wins yet).
  */
-function ratingsHighlights(crowd: CrowdAccountDto | null, season: SeasonId, myProfile: PublicProfileDto | null): LeaderboardHighlight[] {
+function ratingsHighlights(
+  crowd: CrowdAccountDto | null,
+  season: SeasonId,
+  myProfile: PublicProfileDto | null,
+  t: TFn,
+): LeaderboardHighlight[] {
   const items: LeaderboardHighlight[] = [];
 
   const seasonReturn = crowd?.seasonReturns.find((r) => r.season === season);
   if (seasonReturn) {
     items.push({
-      label: "Crowd account — this season",
+      label: t("ratings.crowdSeasonLabel"),
       value: formatPercent(seasonReturn.returnPct, { sign: true }),
       valueClassName: outcomeClassName(outcomeFromNet(seasonReturn.returnPct)),
-      meta: "The public paper-trading account, not player balances.",
+      meta: t("ratings.crowdSeasonMeta"),
     });
   }
 
@@ -34,7 +40,7 @@ function ratingsHighlights(crowd: CrowdAccountDto | null, season: SeasonId, myPr
     const best = bestSingleRound(myProfile.history, season);
     if (best) {
       items.push({
-        label: "Your best round — this season",
+        label: t("ratings.bestRound"),
         value: `${formatPlayAmount(best.net, { sign: true })} PLAY`,
         valueClassName: "outcome-won",
         meta: `${best.entry.direction} · x${best.entry.leverage}`,
@@ -43,10 +49,10 @@ function ratingsHighlights(crowd: CrowdAccountDto | null, season: SeasonId, myPr
     const comeback = biggestComeback(myProfile.history, season);
     if (comeback) {
       items.push({
-        label: "Your biggest comeback — this season",
+        label: t("ratings.comeback"),
         value: `${formatPlayAmount(comeback.net, { sign: true })} PLAY`,
         valueClassName: "outcome-won",
-        meta: "Right after a loss.",
+        meta: t("ratings.comebackMeta"),
       });
     }
   }
@@ -64,6 +70,7 @@ type Tab = "RICH" | "PROPHETS";
 export function RatingsPage() {
   const api = useApi();
   const { player } = useSession();
+  const t = useT();
   const [tab, setTab] = useState<Tab>("RICH");
   const current = currentSeasonId();
   const [season, setSeason] = useState<SeasonId>(current);
@@ -145,42 +152,41 @@ export function RatingsPage() {
 
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <h1>Ratings</h1>
+      <h1>{t("ratings.title")}</h1>
       <MultiAccountDisclosureLine />
 
       {ownRank !== undefined && (
         <div className="card card--hero ratings-hero">
-          <span className="ratings-hero__label">Your rank · {tab === "RICH" ? "Richest" : "Prophets"}</span>
+          <span className="ratings-hero__label">{t("ratings.yourRank", { tab: tab === "RICH" ? t("ratings.richest") : t("ratings.prophets") })}</span>
           <span className="num-lg">#{ownRank}</span>
         </div>
       )}
 
       {player && ratings && myRoundsPlayed !== null && myRoundsPlayed < ratings.roundsThreshold && (
         <div className="card card--tight">
-          Play {ratings.roundsThreshold - myRoundsPlayed} more rounds this season to appear in the ratings.
+          {t("ratings.playMore", { count: ratings.roundsThreshold - myRoundsPlayed })}
         </div>
       )}
 
-      {tab === "RICH" && <LeaderboardHighlights items={ratingsHighlights(crowd, season, player ? myProfile : null)} />}
+      {tab === "RICH" && <LeaderboardHighlights items={ratingsHighlights(crowd, season, player ? myProfile : null, t)} />}
 
       <div className="direction-row" style={{ alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-        <div className="tabs" role="tablist" aria-label="Rating">
+        <div className="tabs" role="tablist" aria-label={t("ratings.tabsAria")}>
           <button type="button" role="tab" aria-selected={tab === "RICH"} onClick={() => setTab("RICH")}>
-            Richest
+            {t("ratings.richest")}
           </button>
           <button type="button" role="tab" aria-selected={tab === "PROPHETS"} onClick={() => setTab("PROPHETS")}>
-            Prophets
+            {t("ratings.prophets")}
           </button>
         </div>
         <div className="field" style={{ margin: 0 }}>
           <label htmlFor="season-picker" className="visually-hidden">
-            Season
+            {t("ratings.season")}
           </label>
           <select id="season-picker" value={season} onChange={(e) => setSeason(e.target.value)}>
             {seasons.map((s) => (
               <option key={s} value={s}>
-                {s}
-                {s === current ? " (current)" : ""}
+                {s === current ? t("ratings.seasonCurrent", { season: s }) : s}
               </option>
             ))}
           </select>
@@ -191,7 +197,7 @@ export function RatingsPage() {
         <Skeleton height={360} />
       ) : tab === "RICH" ? (
         ratings.rich.length === 0 ? (
-          <p className="muted">No one has qualified yet — play {ratings.roundsThreshold} rounds this season to appear here.</p>
+          <p className="muted">{t("ratings.noQualified", { count: ratings.roundsThreshold })}</p>
         ) : (
           <LeaderboardList
             entries={ratings.rich.map(
@@ -200,13 +206,13 @@ export function RatingsPage() {
                 player: r.player,
                 value: `${formatPlayAmount(r.growth, { sign: true })} PLAY`,
                 valueClassName: outcomeClassName(outcomeFromNet(Number(r.growth))),
-                meta: `${r.roundsPlayed} rounds`,
+                meta: t("ratings.roundsMeta", { count: r.roundsPlayed }),
               }),
             )}
           />
         )
       ) : ratings.prophets.length === 0 ? (
-        <p className="muted">No one has qualified yet — play {ratings.roundsThreshold} rounds this season to appear here.</p>
+        <p className="muted">{t("ratings.noQualified", { count: ratings.roundsThreshold })}</p>
       ) : (
         <LeaderboardList
           entries={ratings.prophets.map(
@@ -214,7 +220,7 @@ export function RatingsPage() {
               rank: r.rank,
               player: r.player,
               value: formatPercent(r.accuracy),
-              meta: `${r.roundsPlayed} rounds`,
+              meta: t("ratings.roundsMeta", { count: r.roundsPlayed }),
             }),
           )}
         />

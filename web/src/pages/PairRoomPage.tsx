@@ -75,6 +75,8 @@ import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen"
 import { useServerNow } from "../components/useServerNow";
 import { RollingDigits } from "../fx/RollingDigits";
 import { formatDateTime, formatDuration, formatPlayAmount, formatPrice, market24hMove } from "../format";
+import { useT } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import "./PairRoomPage.css";
 
 const POLL_MS = 2000;
@@ -163,15 +165,16 @@ function LiveRoundStrip({
   roundId: RoundId;
   market: MarketDto;
 }) {
+  const t = useT();
   const movers = topMovers(positions, referencePrice, 4, market);
   return (
     <div className="room-live-strip">
       <div className="room-live-strip__row">
         <span className="muted">
-          {positions.length} {positions.length === 1 ? "player" : "players"} in this round
+          {t("room.playersInRound", { count: positions.length })}
         </span>
         <Link to={`/round/${roundId}`} className="room-live-strip__link">
-          See all positions →
+          {t("room.seeAll")}
         </Link>
       </div>
       {movers.length > 0 && (
@@ -182,7 +185,7 @@ function LiveRoundStrip({
               <BotBadge isBot={m.position.player.isBot} />
               <span className={`room-mover-chip__result mono ${outcomeClassName(outcomeFromNet(m.live))}`}>
                 {formatPlayAmount(m.live, { sign: true })}
-                {m.position.liquidated && " · liq"}
+                {m.position.liquidated && ` · ${t("common.liqShort")}`}
               </span>
             </li>
           ))}
@@ -195,13 +198,14 @@ function LiveRoundStrip({
 /** "←" — one step back through the app's own history when there is one (the lobby on the panel the player
  *  came from), else to the market's own panel of the lobby. */
 function BackLink({ fallback }: { fallback: string }) {
+  const t = useT();
   const navigate = useNavigate();
   const { key } = useLocation();
   return (
     <Link
       to={fallback}
       className="room-back"
-      aria-label="Back"
+      aria-label={t("room.back")}
       onClick={(e) => {
         if (key !== "default") {
           e.preventDefault();
@@ -215,6 +219,7 @@ function BackLink({ fallback }: { fallback: string }) {
 }
 
 function FavoriteButton({ market }: { market: MarketDto }) {
+  const t = useT();
   const { isFavorite, toggle } = useFavorites();
   const on = isFavorite(market.id);
   return (
@@ -222,7 +227,7 @@ function FavoriteButton({ market }: { market: MarketDto }) {
       type="button"
       className="room-star"
       aria-pressed={on}
-      aria-label={on ? `Remove ${market.symbol} from favorites` : `Add ${market.symbol} to favorites`}
+      aria-label={on ? t("card.favRemove", { symbol: market.symbol }) : t("card.favAdd", { symbol: market.symbol })}
       onClick={() => toggle(market.id)}
     >
       <StarIcon filled={on} />
@@ -242,6 +247,7 @@ function RoomSkeleton() {
 }
 
 export function PairRoomPage() {
+  const t = useT();
   const { marketId } = useParams<{ marketId: string }>();
   const { market, loading, error, refresh } = useMarket(marketId);
 
@@ -250,9 +256,9 @@ export function PairRoomPage() {
     if (loading) return <RoomSkeleton />;
     return (
       <div className="state-card">
-        <p className="state-card__title">Unknown market.</p>
+        <p className="state-card__title">{t("room.unknownMarket")}</p>
         <Link to="/" className="btn btn--secondary">
-          Back to Lobby
+          {t("common.backToLobby")}
         </Link>
       </div>
     );
@@ -265,6 +271,7 @@ export function PairRoomPage() {
 function Room({ market }: { market: MarketDto }) {
   const marketId = market.id;
   const api = useApi();
+  const t = useT();
   const { player } = useSession();
   const [searchParams] = useSearchParams();
   const nowMs = useServerNow(1000);
@@ -368,9 +375,9 @@ function Room({ market }: { market: MarketDto }) {
             openPrice: runningRound.openPrice,
             own: ownPosition && !ownPosition.liquidated ? ownPosition : null,
             crowd: runningRound.crowd,
-          })
+          }, t)
         : [],
-    [open, runningRound, ownPosition],
+    [open, runningRound, ownPosition, t],
   );
 
   // How many of the player's bets are open per series — the dot on a series chip.
@@ -382,16 +389,16 @@ function Room({ market }: { market: MarketDto }) {
 
   const seriesLabel = (which: Interval) => {
     const s = market.series.find((x) => x.interval === which);
-    return s ? formatDuration(s.durationSec) : undefined;
+    return s ? formatDuration(s.durationSec, t) : undefined;
   };
 
   const current = referencePrice ?? (market.price ? { price: market.price.price, asOfMs: market.price.asOfMs } : null);
-  const move = market24hMove(market, market.price);
+  const move = market24hMove(market, market.price, t);
   const changeTrend = trend(move.value);
   const kickoff = kickoffOf(market, nowMs);
   const stale = open && market.price?.stale === true;
   // The shown price is the backup exchange's while the main one has no fresh price (`MarketPriceDto.venue`, Р-76).
-  const backupPrice = open ? backupPriceOf(market) : null;
+  const backupPrice = open ? backupPriceOf(market, t) : null;
   const symbolText = market.kind === "PERP" ? `${market.symbol}/USD` : market.symbol;
 
   const header = (
@@ -403,22 +410,22 @@ function Room({ market }: { market: MarketDto }) {
           <div className="room-head__name">
             <h1 className="room-head__symbol">{symbolText}</h1>
             {odds && (
-              <span className="mk-tag mk-tag--odds" title={`${oddsMarketPhrase(market.source)}: the price is a probability`}>
-                ODDS
+              <span className="mk-tag mk-tag--odds" title={t("card.oddsTitle", { what: oddsMarketPhrase(market.source, t) })}>
+                {t("parts.oddsTag")}
               </span>
             )}
             {kickoff?.state === "live" && (
-              <span className="mk-tag mk-tag--live" title="The game has kicked off">
-                <span className="mk-live-dot" aria-hidden="true" /> LIVE
+              <span className="mk-tag mk-tag--live" title={t("card.liveTitle")}>
+                <span className="mk-live-dot" aria-hidden="true" /> {t("card.liveTag")}
               </span>
             )}
-            {!open && <span className="mk-tag">CLOSED</span>}
+            {!open && <span className="mk-tag">{t("room.closedTag")}</span>}
           </div>
           <p className="room-head__title">{market.title}</p>
-          {subtitleOf(market) && <p className="room-head__sub">{subtitleOf(market)}</p>}
+          {subtitleOf(market, t) && <p className="room-head__sub">{subtitleOf(market, t)}</p>}
           {kickoff?.state === "upcoming" && (
             <p className="room-head__sub room-head__kickoff">
-              Starts in <span className="mono">{formatStartsIn(kickoff.inMs)}</span>
+              {t("card.startsIn", { time: formatStartsIn(kickoff.inMs, t) })}
             </p>
           )}
         </div>
@@ -434,24 +441,23 @@ function Room({ market }: { market: MarketDto }) {
           )}
           <span className={`room-change room-change--${changeTrend} mono`}>
             <span aria-hidden="true">{TREND_GLYPH[changeTrend]}</span>{" "}
-            <span className="visually-hidden">{move.unit === "pt" ? "24 hour change in percentage points " : "24 hour change "}</span>
-            {move.text} <span className="room-change__unit">24h</span>
+            <span className="visually-hidden">{move.unit === "pt" ? t("card.changeHiddenPts") : t("card.changeHidden")}</span>
+            {move.text} <span className="room-change__unit">{t("card.h24")}</span>
           </span>
-          {stale && <span className="room-stale">Price is stale</span>}
+          {stale && <span className="room-stale">{t("room.priceStale")}</span>}
           {backupPrice && (
-            <span className="room-venue" title={backupPriceNote(backupPrice)}>
-              {backupPrice.name} price
-              <span className="visually-hidden"> — {backupPriceNote(backupPrice)}</span>
+            <span className="room-venue" title={backupPriceNote(backupPrice, t)}>
+              {t("card.venue", { name: backupPrice.name })}
+              <span className="visually-hidden"> — {backupPriceNote(backupPrice, t)}</span>
             </span>
           )}
-          {!open && <span className="room-stale">Last price</span>}
+          {!open && <span className="room-stale">{t("card.lastPrice")}</span>}
         </div>
       </div>
 
       {odds && open && (
         <p className="room-odds-note" role="note">
-          You bet on how the odds move during the round — not on who wins. UP: the odds end the round higher than they started;
-          DOWN: lower.
+          {t("room.oddsNote")}
         </p>
       )}
     </>
@@ -484,11 +490,10 @@ function Room({ market }: { market: MarketDto }) {
         <div className="card room-closed">
           <div className="room-closed__title">
             <LockIcon />
-            <h2>This market is closed</h2>
+            <h2>{t("room.closedTitle")}</h2>
           </div>
           <p>
-            It takes no more bets. Any bet that was still waiting for its round, or in a round that had not ended, was cancelled and{" "}
-            <strong>refunded in full</strong>; rounds that had already ended were settled as usual.
+            <Rich text={t("room.closedBody")} />
           </p>
           {/* Why, in the server's own words when it gave them (`closeReason`); else the closed round's reason, if any. */}
           {market.closeReason ? (
@@ -498,13 +503,13 @@ function Room({ market }: { market: MarketDto }) {
           ) : (
             betting && betting.phase === "CANCELLED" && <p className="muted">{betting.cancellation.reason}</p>
           )}
-          {market.closedAtMs ? <p className="faint room-closed__when">Closed {formatDateTime(market.closedAtMs)}</p> : null}
+          {market.closedAtMs ? <p className="faint room-closed__when">{t("room.closedWhen", { time: formatDateTime(market.closedAtMs) })}</p> : null}
           <div className="room-closed__actions">
             <Link to={`/?c=${market.category}`} className="btn btn--primary">
-              Open markets in this panel
+              {t("room.openMarkets")}
             </Link>
             <Link to={`/stats?m=${encodeURIComponent(market.id)}`} className="btn btn--secondary">
-              How the herd did here
+              {t("room.herdStats")}
             </Link>
           </div>
         </div>
@@ -579,7 +584,7 @@ function Room({ market }: { market: MarketDto }) {
             <Countdown
               nowMs={nowMs}
               targetMs={betting.phase === "BETTING" ? betting.window.startMs : running.window.endMs}
-              prefix={betting.phase === "BETTING" ? "Closes in " : "Resolves in "}
+              template={betting.phase === "BETTING" ? "room.closesIn" : "room.resolvesIn"}
             />
           </div>
         </div>
@@ -616,19 +621,19 @@ function Room({ market }: { market: MarketDto }) {
               type="button"
               className="room-arena__lock"
               onClick={() => setLockedOverlay(null)}
-              aria-label={`Round running — you picked ${lockedOverlay.direction}. Tap to dismiss.`}
+              aria-label={t("room.lockedAria", { direction: lockedOverlay.direction })}
             >
               <LockIcon className="room-arena__lock-icon" />
-              <span className="room-arena__lock-label">Round running</span>
+              <span className="room-arena__lock-label">{t("room.roundRunning")}</span>
               <span className={`room-arena__lock-side room-arena__lock-side--${lockedOverlay.direction.toLowerCase()}`}>
-                <DirectionGlyph direction={lockedOverlay.direction} /> You picked {lockedOverlay.direction}
+                <DirectionGlyph direction={lockedOverlay.direction} /> {t("room.youPicked", { direction: lockedOverlay.direction })}
               </span>
             </button>
           )}
         </div>
         {betting.phase === "BETTING" && (
           <p className="muted room-arena__count room-o3">
-            {betting.participantCount} {betting.participantCount === 1 ? "player has" : "players have"} voted
+            {t("round.voted", { count: betting.participantCount })}
             {betting.upCount !== undefined && betting.downCount !== undefined && (
               <>
                 {" "}
@@ -654,7 +659,7 @@ function Room({ market }: { market: MarketDto }) {
           </div>
         ) : (
           <div className="card room-cancelled room-o3">
-            <h3>This round was cancelled.</h3>
+            <h3>{t("room.cancelledTitle")}</h3>
             <p className="muted">{betting.cancellation.reason}</p>
           </div>
         )}
@@ -663,7 +668,7 @@ function Room({ market }: { market: MarketDto }) {
       <div className="room-below room-o3">
         {liveBets.length > 0 && (
           <div className="room-below__live">
-            <h3 className="room-section-title">Live bets</h3>
+            <h3 className="room-section-title">{t("room.liveBets")}</h3>
             <LiveBetFeed bets={liveBets} />
           </div>
         )}
@@ -677,18 +682,18 @@ function Room({ market }: { market: MarketDto }) {
               )
             ) : (
               <>
-                <h3 className="room-section-title">Crowd account</h3>
+                <h3 className="room-section-title">{t("room.crowdAccount")}</h3>
                 <CrowdPositionCard phase="RUNNING" crowd={running.crowd} referencePrice={referencePrice} market={market} />
-                <h3 className="room-section-title">Live round</h3>
+                <h3 className="room-section-title">{t("room.liveRound")}</h3>
                 <LiveRoundStrip positions={running.positions} referencePrice={referencePrice} roundId={running.roundId} market={market} />
               </>
             ))}
-          {running.phase === "SETTLED" && <p className="muted">Settled.</p>}
+          {running.phase === "SETTLED" && <p className="muted">{t("room.settled")}</p>}
         </div>
 
         <p className="room-links">
-          <Link to={`/round/${running.roundId}`}>View full round →</Link>
-          <Link to={`/stats?m=${encodeURIComponent(market.id)}`}>How the herd is doing on {market.symbol} →</Link>
+          <Link to={`/round/${running.roundId}`}>{t("room.viewFull")}</Link>
+          <Link to={`/stats?m=${encodeURIComponent(market.id)}`}>{t("room.herdDoing", { symbol: market.symbol })}</Link>
         </p>
 
         <MarketRail market={market} />

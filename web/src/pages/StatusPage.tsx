@@ -33,6 +33,8 @@ import { MarketIcon } from "../components/MarketIcon";
 import { backupPriceOf } from "../components/marketModel";
 import { useServerNow } from "../components/useServerNow";
 import { formatDateTime, formatPrice } from "../format";
+import { useT } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import {
   ageText,
   betsCount,
@@ -65,56 +67,50 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 // ---------------------------------------------------------------------------
 
 function ServerSection() {
+  const t = useT();
   const { status, info, refreshFailed, refresh } = useServerInfo();
   // A row whose numbers cannot be read is left out, never printed as "NaN SEC".
-  const lengths = info ? roundLengthsOf(info) : null;
+  const lengths = info ? roundLengthsOf(info, t) : null;
   return (
     <section className="card status-card" aria-labelledby="status-server-title">
       <h2 id="status-server-title" className="section-title">
-        Mode and price source
+        {t("status.serverTitle")}
       </h2>
       {status === "unsupported" && (
         <p>
-          This copy of the app runs on built-in demo data, not on a server: prices are made up on your device and nothing is anchored on a
-          chain. A real deployment answers here with its mode, where its prices come from and the state of its oracle.
+          {t("status.unsupported")}
         </p>
       )}
       {status === "loading" && <Skeleton height={96} />}
-      {status === "error" && <ErrorState message="Couldn't reach the server." onRetry={refresh} />}
+      {status === "error" && <ErrorState message={t("status.reachFail")} onRetry={refresh} />}
       {status === "ready" && info && (
         <>
           <dl className="status-facts">
-            <Fact label="Mode">{info.mode === "live" ? "Live" : "Replay (a test mode)"}</Fact>
-            <Fact label="Prices">
-              <strong>{describePriceSource(info).title}.</strong> {describePriceSource(info).detail}
+            <Fact label={t("status.factMode")}>{info.mode === "live" ? t("status.modeLive") : t("status.modeReplay")}</Fact>
+            <Fact label={t("status.factPrices")}>
+              <strong>{describePriceSource(info, t).title}.</strong> {describePriceSource(info, t).detail}
             </Fact>
             {lengths && (
-              <Fact label="Round lengths">
-                Every market has two series of rounds: {lengths.short} and {lengths.long}.
+              <Fact label={t("status.factLengths")}>
+                {t("status.lengths", { short: lengths.short, long: lengths.long })}
               </Fact>
             )}
-            <Fact label="Game engine">
+            <Fact label={t("status.factEngine")}>
               {info.engineReady === false ? (
-                <>
-                  <strong>Not ready.</strong> The server is rebuilding its state after a failure: rounds, bets and balances are refused for a
-                  moment and answer again by themselves — the app keeps what it shows and asks again.
-                </>
+                <Rich text={t("status.engineNotReady")} />
               ) : (
-                <>
-                  <strong>Ready.</strong> Rounds, bets and balances are being served.
-                </>
+                <Rich text={t("status.engineReady")} />
               )}
             </Fact>
             {info.bots > 0 && (
-              <Fact label="Players">
-                {info.bots} labelled test bots play next to real players — they are marked BOT wherever a player is shown, and their bets are
-                inside the crowd split and the player counts.
+              <Fact label={t("status.factPlayers")}>
+                {t("status.botsFact", { count: info.bots })}
               </Fact>
             )}
           </dl>
           {refreshFailed && (
             <p className="status-note" role="status">
-              Couldn't refresh — this is the last answer the server gave.
+              {t("status.refreshLast")}
             </p>
           )}
         </>
@@ -130,57 +126,57 @@ function ServerSection() {
 /** One source of the prices: the exchange (or Polymarket) with the markets it is the main source of and the ones it stands
  *  behind as a backup, and how its own prices are doing — a word beside every colour, like the market rows below. */
 function SourceRow({ source }: { source: SourceSummary }) {
+  const t = useT();
   return (
     <li className="status-source">
       <div className="status-source__id">
         <strong>{source.name}</strong>
-        {source.main.length > 0 && <span className="faint">Main source of {marketsList(source.main)}</span>}
-        {source.backupFor.length > 0 && <span className="faint">Backup for {marketsList(source.backupFor)}</span>}
+        {source.main.length > 0 && <span className="faint">{t("status.mainOf", { list: marketsList(source.main, 6, t) })}</span>}
+        {source.backupFor.length > 0 && <span className="faint">{t("status.backupFor", { list: marketsList(source.backupFor, 6, t) })}</span>}
         {source.shownFor.length > 0 && (
-          <span className="status-source__shown">Its price is shown now for {marketsList(source.shownFor)}: the main exchange has no fresh price</span>
+          <span className="status-source__shown">{t("status.shownFor", { list: marketsList(source.shownFor, 6, t) })}</span>
         )}
       </div>
       <div className="status-source__state">
-        {source.fresh > 0 && <span className="status-chip status-chip--fresh">{source.fresh} live</span>}
-        {source.stale > 0 && <span className="status-chip status-chip--stale">{source.stale} stale</span>}
-        {source.noPrice > 0 && <span className="status-chip status-chip--none">{source.noPrice} no price yet</span>}
+        {source.fresh > 0 && <span className="status-chip status-chip--fresh">{t("status.chipLive", { count: source.fresh })}</span>}
+        {source.stale > 0 && <span className="status-chip status-chip--stale">{t("status.chipStale", { count: source.stale })}</span>}
+        {source.noPrice > 0 && <span className="status-chip status-chip--none">{t("status.chipNoPrice", { count: source.noPrice })}</span>}
       </div>
     </li>
   );
 }
 
 function MarketsSection() {
+  const t = useT();
   const { markets, loading, error, refresh } = useMarkets();
   const nowMs = useServerNow(1000);
   const summary = summarizeMarkets(markets, nowMs);
-  const sources = summarizeSources(markets, nowMs);
+  const sources = summarizeSources(markets, nowMs, t);
   const hasBackups = markets.some((m) => m.status === "ACTIVE" && !!m.backupSource);
   return (
     <section className="card status-card" aria-labelledby="status-markets-title">
       <h2 id="status-markets-title" className="section-title">
-        Markets and their prices
+        {t("status.marketsTitle")}
       </h2>
-      {loading && error && <ErrorState message="Couldn't load the markets." onRetry={refresh} />}
+      {loading && error && <ErrorState message={t("status.marketsLoadFail")} onRetry={refresh} />}
       {loading && !error && <Skeleton height={140} />}
-      {!loading && markets.length === 0 && <p className="muted">No market is listed right now.</p>}
+      {!loading && markets.length === 0 && <p className="muted">{t("status.marketsNone")}</p>}
       {!loading && markets.length > 0 && (
         <>
           <p className="status-summary" aria-live="polite">
-            <strong>
-              {summary.total} {summary.total === 1 ? "market" : "markets"}
-            </strong>
-            {summary.fresh > 0 && ` · ${summary.fresh} live`}
-            {summary.stale > 0 && ` · ${summary.stale} stale`}
-            {summary.noPrice > 0 && ` · ${summary.noPrice} waiting for a first price`}
-            {summary.closed > 0 && ` · ${summary.closed} closed`}
+            <strong>{t("lobby.count", { count: summary.total })}</strong>
+            {summary.fresh > 0 && t("status.sumLive", { count: summary.fresh })}
+            {summary.stale > 0 && t("status.sumStale", { count: summary.stale })}
+            {summary.noPrice > 0 && t("status.sumNoPrice", { count: summary.noPrice })}
+            {summary.closed > 0 && t("lobby.closedCount", { count: summary.closed })}
           </p>
           {error && (
             <p className="status-note" role="status">
-              Can't reach the server — these are the last prices we got; the ages below keep counting.
+              {t("status.marketsOffline")}
             </p>
           )}
           {sources.length > 0 && (
-            <ul className="status-sources" aria-label="Sources behind the prices">
+            <ul className="status-sources" aria-label={t("status.sourcesAria")}>
               {sources.map((source) => (
                 <SourceRow key={source.source} source={source} />
               ))}
@@ -188,43 +184,38 @@ function MarketsSection() {
           )}
           <ul className="status-markets">
             {markets.map((market) => {
-              const fresh = freshnessOf(market, nowMs);
-              const backupName = sourceName(market.backupSource);
-              const backupPrice = fresh.kind === "closed" ? null : backupPriceOf(market);
+              const fresh = freshnessOf(market, nowMs, t);
+              const backupName = sourceName(market.backupSource, t);
+              const backupPrice = fresh.kind === "closed" ? null : backupPriceOf(market, t);
               return (
                 <li key={market.id} className={`status-market status-market--${fresh.kind}`} title={market.title}>
                   <MarketIcon market={market} size={28} />
                   <div className="status-market__id">
                     <strong>{market.symbol}</strong>
                     <span className="faint">
-                      {sourceName(market.source)}
-                      {backupName ? ` · Backup: ${backupName}` : ""}
-                      {market.oracleIndex !== undefined ? ` · asset #${market.oracleIndex}` : ""}
+                      {sourceName(market.source, t)}
+                      {backupName ? t("status.backupLabel", { name: backupName }) : ""}
+                      {market.oracleIndex !== undefined ? t("status.assetNo", { index: market.oracleIndex }) : ""}
                     </span>
-                    {backupPrice && <span className="status-market__venue">Showing {backupPrice.name}'s price</span>}
+                    {backupPrice && <span className="status-market__venue">{t("status.showingBackup", { name: backupPrice.name })}</span>}
                     {/* The server's own words for why a market left ("Moved to a new price source: Coinbase"), as it sent them. */}
                     {fresh.kind === "closed" && market.closeReason && <span className="status-market__reason">{market.closeReason}</span>}
                   </div>
                   <div className="status-market__price mono">{market.price ? formatPrice(market.price.price, market) : "—"}</div>
                   <div className="status-market__age">
                     <span className={`status-chip status-chip--${fresh.kind}`}>{fresh.word}</span>
-                    {fresh.ageMs !== null && <span className="faint mono">{ageText(fresh.ageMs)}</span>}
+                    {fresh.ageMs !== null && <span className="faint mono">{ageText(fresh.ageMs, t)}</span>}
                   </div>
                 </li>
               );
             })}
           </ul>
           <p className="faint status-fine">
-            A price is stale when its source has sent nothing newer within its limit. A round that ends with no reliable price holds up the
-            rounds after it — betting on that market, for that round length, pauses meanwhile — for five minutes at most (fifteen for
-            Polymarket's odds, two when the market's other exchange is still sending prices), counted again after the server restarts; then
-            the round is cancelled and every bet refunded (see the log below). A round nobody bet on, if its price can't be read, is skipped.
+            {t("status.fine1")}
           </p>
           {hasBackups && (
             <p className="faint status-fine">
-              A crypto market has a backup exchange. A round runs entirely on one exchange, chosen when it starts — the main one if it has a live
-              price then, otherwise the backup — so its open, its close and every liquidation come from that exchange alone. While the main
-              exchange has no fresh price a market shows the backup's price and says so.
+              {t("status.fine2")}
             </p>
           )}
         </>
@@ -238,98 +229,90 @@ function MarketsSection() {
 // ---------------------------------------------------------------------------
 
 function OracleSection() {
+  const t = useT();
   const { status, info, refresh } = useServerInfo();
   const oracle = info?.oracle;
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   return (
     <section className="card status-card" aria-labelledby="status-oracle-title">
       <h2 id="status-oracle-title" className="section-title">
-        Anchored on Chia
+        {t("status.oracleTitle")}
       </h2>
-      {status === "unsupported" && <p className="muted">Nothing is anchored in a demo build — there is no oracle to show.</p>}
+      {status === "unsupported" && <p className="muted">{t("status.oracleDemo")}</p>}
       {status === "loading" && <Skeleton height={140} />}
-      {status === "error" && <ErrorState message="Couldn't reach the server." onRetry={refresh} />}
+      {status === "error" && <ErrorState message={t("status.reachFail")} onRetry={refresh} />}
       {status === "ready" && oracle && (
         <>
           <p className="muted status-lead">
-            After every round the server publishes one record to an oracle on the Chia chain: the closing price and a hash of the round's full
-            results. It is one key — ours — not a decentralized oracle; the chain makes the record permanent and public, so it can't be changed
-            afterwards.
+            {t("status.oracleLead")}
           </p>
           <dl className="status-facts">
-            <Fact label="Network">{oracle.network} — a test network; its coins and PLAY have no real value.</Fact>
-            <Fact label="Launcher id">
+            <Fact label={t("status.factNetwork")}>{t("status.networkBody", { network: oracle.network })}</Fact>
+            <Fact label={t("status.factLauncher")}>
               <span className="status-id">
-                <code className="mono status-id__value" aria-label="Oracle launcher id">
+                <code className="mono status-id__value" aria-label={t("status.launcherAria")}>
                   {oracle.launcherId}
                 </code>
-                <CopyButton value={oracle.launcherId} label="Copy" className="btn btn--secondary status-id__copy" />
+                <CopyButton value={oracle.launcherId} className="btn btn--secondary status-id__copy" />
               </span>
-              <span className="faint status-hint">The oracle's identity on the chain; the verifier below starts from it.</span>
+              <span className="faint status-hint">{t("status.launcherHint")}</span>
             </Fact>
-            <Fact label="Last confirmed record">
+            <Fact label={t("status.factLast")}>
               {oracle.lastConfirmedSeq !== null ? (
-                <>
-                  <span className="mono">#{oracle.lastConfirmedSeq}</span>
-                  {oracle.lastConfirmedHeight !== null && (
-                    <>
-                      {" "}
-                      at block <span className="mono">{oracle.lastConfirmedHeight.toLocaleString("en-US")}</span>
-                    </>
-                  )}
-                </>
+                <span className="mono">
+                  {oracle.lastConfirmedHeight !== null
+                    ? t("status.lastAt", { seq: oracle.lastConfirmedSeq, height: oracle.lastConfirmedHeight.toLocaleString("en-US") })
+                    : t("status.lastSeq", { seq: oracle.lastConfirmedSeq })}
+                </span>
               ) : (
-                "none yet"
+                t("status.noneYet")
               )}
             </Fact>
-            <Fact label="Waiting to be anchored">
-              <span className="mono">{oracle.pendingRecords}</span> {oracle.pendingRecords === 1 ? "record" : "records"}
-              {oracle.pendingRecords > 0 && <span className="faint status-hint">Records go out in batches — a round's record joins the next one.</span>}
+            <Fact label={t("status.factPending")}>
+              <span className="mono">{t("status.records", { count: oracle.pendingRecords })}</span>
+              {oracle.pendingRecords > 0 && <span className="faint status-hint">{t("status.pendingHint")}</span>}
             </Fact>
             {oracle.firstSeq !== undefined && oracle.firstSeq !== null && (
-              <Fact label="Oldest record here">
+              <Fact label={t("status.factOldest")}>
                 <span className="mono">#{oracle.firstSeq}</span>
                 <span className="faint status-hint">
-                  The lowest record number this server's database knows; earlier ones were published before this database existed and can only
-                  be checked on the chain.
+                  {t("status.oldestHint")}
                 </span>
               </Fact>
             )}
-            <Fact label="Operator balance">
-              <span className="mono" title={oracle.operatorBalanceMojos ? `${oracle.operatorBalanceMojos} mojos` : undefined}>
+            <Fact label={t("status.factOperator")}>
+              <span className="mono" title={oracle.operatorBalanceMojos ? t("status.mojos", { mojos: oracle.operatorBalanceMojos }) : undefined}>
                 {formatOperatorBalance(oracle.operatorBalanceMojos)}
               </span>
-              <span className="faint status-hint">What the publishing key holds to pay network fees.</span>
+              <span className="faint status-hint">{t("status.operatorHint")}</span>
             </Fact>
           </dl>
           <p className="status-links">
             <a href="/api/markets/registry.json" target="_blank" rel="noopener noreferrer">
-              Market registry (registry.json)
+              {t("status.registry")}
             </a>
-            <span className="faint">which asset number in a record is which market</span>
+            <span className="faint">{t("status.registryNote")}</span>
           </p>
 
           <div className="status-verify" id="verify">
-            <h3>Check it yourself</h3>
+            <h3>{t("status.verifyTitle")}</h3>
             <ol>
               <li>
-                Open any settled round and follow “verify results.json”: the full list of its bets and payouts, at{" "}
+                {t("status.verify1")}{" "}
                 <code className="mono">/api/rounds/&lt;round id&gt;/results.json</code>.
               </li>
-              <li>The chain record of that round holds the SHA-256 of that file, the closing price and the asset number above.</li>
+              <li>{t("status.verify2")}</li>
               <li>
-                Run the verifier. It reads only the public Chia API and needs none of our keys; it is a script in the project
-                repository (<code className="mono">tools/verify-oracle</code>, with its own README). The repository is private for
-                now, so the command below works once it is opened.
+                {t("status.verify3", { path: "tools/verify-oracle" })}
               </li>
             </ol>
             <div className="status-command">
-              <code className="mono" aria-label="Verifier command">
+              <code className="mono" aria-label={t("status.commandAria")}>
                 {verifierCommand(oracle.launcherId, origin)}
               </code>
-              <CopyButton value={verifierCommand(oracle.launcherId, origin)} label="Copy command" className="btn btn--secondary" />
+              <CopyButton value={verifierCommand(oracle.launcherId, origin)} label={t("status.copyCommand")} className="btn btn--secondary" />
             </div>
-            <p className="faint status-fine">A healthy run ends with “CONFLICTS: 0”, “Gaps in the seq sequence: 0” and “Mismatches: 0”.</p>
+            <p className="faint status-fine">{t("status.healthy")}</p>
           </div>
         </>
       )}
@@ -345,6 +328,7 @@ type LogState = PagedList<CancellationDto>;
 
 /** One row's market, when the server names it (`CancellationDto.asset`): "GER" — an older server sends none. */
 function CancellationRow({ c }: { c: CancellationDto }) {
+  const t = useT();
   return (
     <li className="status-cancel">
       <p className="status-cancel__head">
@@ -352,7 +336,7 @@ function CancellationRow({ c }: { c: CancellationDto }) {
           {c.asset && <strong className="status-cancel__market">{c.asset}</strong>}
           <span className="mono">{formatDateTime(c.cancelledAtMs)}</span>
         </span>
-        <span className="status-chip status-chip--none">{betsCount(c.refundedBetCount)} refunded</span>
+        <span className="status-chip status-chip--none">{t("status.refundedChip", { bets: betsCount(c.refundedBetCount, t) })}</span>
       </p>
       <p className="status-cancel__reason">{c.reason}</p>
       <p className="faint status-cancel__round">
@@ -366,6 +350,7 @@ function CancellationRow({ c }: { c: CancellationDto }) {
 
 function CancellationsSection() {
   const api = useApi();
+  const t = useT();
   const [log, setLog] = useState<LogState | null>(null);
   const [failed, setFailed] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -419,20 +404,19 @@ function CancellationsSection() {
   return (
     <section className="card status-card" aria-labelledby="status-cancel-title">
       <h2 id="status-cancel-title" className="section-title">
-        Cancelled rounds
+        {t("status.cancelTitle")}
       </h2>
       <p className="muted status-lead">
-        A round is cancelled when no reliable price can be read, when its market closes, or when an operator steps in. Every bet in it is refunded
-        — liquidated ones too — and the reason is public, here and on the round's page.
+        {t("status.cancelLead")}
       </p>
-      {!log && failed && <ErrorState message="Couldn't load the log." onRetry={load} />}
+      {!log && failed && <ErrorState message={t("status.logLoadFail")} onRetry={load} />}
       {!log && !failed && <Skeleton height={96} />}
       {log && failed && (
         <p className="status-note" role="status">
-          Couldn't refresh the log — this is what we had.
+          {t("status.logRefreshFail")}
         </p>
       )}
-      {log && log.items.length === 0 && <p className="muted">No round has been cancelled so far.</p>}
+      {log && log.items.length === 0 && <p className="muted">{t("status.logNone")}</p>}
       {log && log.items.length > 0 && (
         <>
           <ul className="status-cancels">
@@ -442,12 +426,12 @@ function CancellationsSection() {
           </ul>
           {log.hasMore && (
             <button type="button" className="btn btn--secondary" onClick={() => void loadMore()} disabled={loadingMore}>
-              {loadingMore ? "Loading…" : "Show older"}
+              {loadingMore ? t("wallet.loading") : t("status.showOlder")}
             </button>
           )}
           {moreFailed && (
             <p className="status-note" role="alert">
-              Couldn't load older cancellations. Try again.
+              {t("status.olderFail")}
             </p>
           )}
         </>
@@ -457,13 +441,13 @@ function CancellationsSection() {
 }
 
 export function StatusPage() {
+  const t = useT();
   return (
     <div className="status-page stack" style={{ gap: 16 }}>
       <header>
-        <h1>Status</h1>
+        <h1>{t("layout.status")}</h1>
         <p className="muted status-lead">
-          Where the prices come from, how fresh they are, what is written on the Chia chain, and every round that was cancelled. Public — no sign-in
-          needed.
+          {t("status.pageLead")}
         </p>
       </header>
       <ServerSection />
@@ -471,7 +455,7 @@ export function StatusPage() {
       <OracleSection />
       <CancellationsSection />
       <p>
-        <Link to="/how-it-works">How it works →</Link>
+        <Link to="/how-it-works">{t("status.howLink")}</Link>
       </p>
     </div>
   );
