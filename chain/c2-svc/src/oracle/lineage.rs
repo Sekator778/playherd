@@ -210,6 +210,89 @@ fn announcement_messages(coin_spend: &CoinSpend) -> Result<Vec<Bytes>> {
         .collect())
 }
 
+/// What one spend of a singleton coin says, read from its puzzle and solution: the generation
+/// (`WalkedGeneration`), every announcement that decoded as an oracle record (`ChainRecord`, in
+/// announcement order, duplicates kept -- the caller decides which occurrence counts), and the
+/// warnings for whatever did not decode. `coin_spend == None` is "the coin is spent but its
+/// puzzle/solution could not be fetched": a generation with `announced == None` and a warning.
+pub struct ReadGeneration {
+    pub generation: WalkedGeneration,
+    pub records: Vec<ChainRecord>,
+    pub warnings: Vec<String>,
+}
+
+/// Reads one generation: the spend `coin_spend` of `spent_coin`, confirmed at `height`. Shared by
+/// `walk_lineage` (a spend the coin index knows) and `walk_from_spend` (a spend found in the
+/// blocks themselves while the index still shows the coin unspent, `docs/research/chain_service.md` §20).
+pub fn read_generation(spent_coin: Coin, coin_spend: Option<&CoinSpend>, height: Option<u32>) -> ReadGeneration {
+    let next = Coin::new(spent_coin.coin_id(), spent_coin.puzzle_hash, spent_coin.amount);
+    let mut records = Vec::new();
+    let mut warnings = Vec::new();
+    // `Some` only when this spend was read completely (see `WalkedGeneration::announced`).
+    let mut announced: Option<Vec<u64>> = None;
+    match coin_spend {
+        Some(coin_spend) => match announcement_messages(coin_spend) {
+            Ok(messages) => {
+                let mut seqs = Vec::with_capacity(messages.len());
+                let mut complete = true;
+                for message in messages {
+                    match decode_oracle_record(message.as_ref()) {
+                        Ok(record) => {
+                            seqs.push(record.seq);
+                            records.push(ChainRecord { height, coin_id: format!("{}", next.coin_id()), record });
+                        }
+                        Err(e) => {
+                            complete = false;
+                            warnings.push(format!(
+                                "coin {} spend: announcement did not decode as an oracle record: {e:#}",
+                                spent_coin.coin_id()
+                            ));
+                        }
+                    }
+                }
+                if complete {
+                    announced = Some(seqs);
+                }
+            }
+            Err(e) => warnings.push(format!(
+                "coin {} spend: could not decode conditions from its puzzle+solution: {e:#}",
+                spent_coin.coin_id()
+            )),
+        },
+        None => warnings.push(format!(
+            "coin {} is marked spent but coinset returned no puzzle/solution for it",
+            spent_coin.coin_id()
+        )),
+    }
+    ReadGeneration {
+        generation: WalkedGeneration { spent_coin, next_coin: next, height, announced },
+        records,
+        warnings,
+    }
+}
+
+/// A walk of exactly one generation, from a spend of `spent_coin` that was found in block `height`
+/// itself (`get_puzzle_and_solution` with an explicit height) while the coin index still showed
+/// the coin unspent (`docs/research/chain_service.md` §20). The outcome has the shape
+/// `walk_lineage` would have produced had the index known the spend, so `QueueFile::
+/// reconcile_with_chain` settles the in-flight bundle from it the same way: the records the spend
+/// announced are confirmed, the ones it did not announce go back to `pending`, and the tip is the
+/// coin the spend recreated.
+pub fn walk_from_spend(spent_coin: Coin, coin_spend: &CoinSpend, height: u32) -> LineageWalkOutcome {
+    let read = read_generation(spent_coin, Some(coin_spend), Some(height));
+    let mut confirmed = BTreeMap::new();
+    for chain_record in read.records {
+        confirmed.entry(chain_record.record.seq).or_insert(chain_record);
+    }
+    LineageWalkOutcome {
+        confirmed,
+        tip_coin: read.generation.next_coin,
+        generations_advanced: 1,
+        generations: vec![read.generation],
+        decode_warnings: read.warnings,
+    }
+}
+
 /// Walks the singleton lineage forward from `start` (either the genesis
 /// coin, or a persisted checkpoint -- caller's choice, see
 /// `Publisher::reconcile_queue_with_chain`), decoding every confirmed
@@ -258,60 +341,17 @@ pub async fn walk_lineage<C: ChainClient>(chain: &C, start: Coin) -> Result<Line
             .puzzle_and_solution(current.coin_id(), record_info.spent_height)
             .await
             .with_context(|| format!("puzzle_and_solution({}) while walking oracle singleton lineage", current.coin_id()))?;
-        let next = Coin::new(current.coin_id(), current.puzzle_hash, current.amount);
 
-        // `Some` only when this spend was read completely (see `WalkedGeneration::announced`).
-        let mut announced: Option<Vec<u64>> = None;
-        match coin_spend {
-            Some(coin_spend) => match announcement_messages(&coin_spend) {
-                Ok(messages) => {
-                    let mut seqs = Vec::with_capacity(messages.len());
-                    let mut complete = true;
-                    for message in messages {
-                        match decode_oracle_record(message.as_ref()) {
-                            Ok(record) => {
-                                seqs.push(record.seq);
-                                // First occurrence wins (module doc):
-                                // ascending generation order + `entry(..).
-                                // or_insert(..)` means a later duplicate
-                                // (exactly what caused this incident, see
-                                // §11.1) can never overwrite the original.
-                                confirmed.entry(record.seq).or_insert(ChainRecord {
-                                    height: record_info.spent_height,
-                                    coin_id: format!("{}", next.coin_id()),
-                                    record,
-                                });
-                            }
-                            Err(e) => {
-                                complete = false;
-                                decode_warnings.push(format!(
-                                    "coin {} spend: announcement did not decode as an oracle record: {e:#}",
-                                    current.coin_id()
-                                ));
-                            }
-                        }
-                    }
-                    if complete {
-                        announced = Some(seqs);
-                    }
-                }
-                Err(e) => decode_warnings.push(format!(
-                    "coin {} spend: could not decode conditions from its puzzle+solution: {e:#}",
-                    current.coin_id()
-                )),
-            },
-            None => decode_warnings.push(format!(
-                "coin {} is marked spent but coinset returned no puzzle/solution for it",
-                current.coin_id()
-            )),
+        let read = read_generation(current, coin_spend.as_ref(), record_info.spent_height);
+        for chain_record in read.records {
+            // First occurrence wins (module doc): ascending generation order + `entry(..).
+            // or_insert(..)` means a later duplicate (exactly what caused this incident, see
+            // §11.1) can never overwrite the original.
+            confirmed.entry(chain_record.record.seq).or_insert(chain_record);
         }
-
-        generations.push(WalkedGeneration {
-            spent_coin: current,
-            next_coin: next,
-            height: record_info.spent_height,
-            announced,
-        });
+        decode_warnings.extend(read.warnings);
+        let next = read.generation.next_coin;
+        generations.push(read.generation);
         current = next;
         generations_advanced += 1;
     }

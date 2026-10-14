@@ -69,6 +69,13 @@ use crate::oracle::chain_client::ChainClient;
 #[derive(Debug, Default)]
 pub struct FeeCoinAllocator {
     pub(crate) reserved: tokio::sync::Mutex<HashSet<Bytes32>>,
+    /// Coins a block was seen to spend while the coin index still listed them unspent
+    /// (`exclude_spent`, `docs/research/chain_service.md` §20): the wallet scan keeps offering
+    /// them for as long as the index is behind, and `reserve` must never hand one out again --
+    /// a bundle built on it is refused by the node as a double spend however often it is pushed.
+    /// In memory only, like `reserved`: a restarted process learns the same thing again from the
+    /// same blocks if the index is still behind.
+    pub(crate) spent_per_block: std::sync::Mutex<HashSet<Bytes32>>,
     pub(crate) policy: FeeCoinPolicy,
     pub(crate) reserve_state: std::sync::Mutex<ReserveState>,
     pub(crate) fees: FeeEstimator,
@@ -162,6 +169,9 @@ impl FeeCoinAllocator {
     ) -> Result<(WalletKey, Coin)> {
         let mut reserved = self.reserved.lock().await;
         let mut coins = chain.unspent_coins(master_sk).await?;
+        // A coin a block already spent is not unspent, whatever the index says (`exclude_spent`).
+        let spent_per_block = self.spent_per_block.lock().expect("spent_per_block lock").clone();
+        coins.retain(|(_, coin)| !spent_per_block.contains(&coin.coin_id()));
         let snapshot: Vec<(Bytes32, u64)> = coins.iter().map(|(_, coin)| (coin.coin_id(), coin.amount)).collect();
         let best = (0..coins.len())
             .filter(|&i| coins[i].1.amount >= min_amount && !reserved.contains(&snapshot[i].0))
@@ -207,6 +217,18 @@ impl FeeCoinAllocator {
     /// non-test-cfg public API.
     pub async fn is_reserved(&self, coin_id: Bytes32) -> bool {
         self.reserved.lock().await.contains(&coin_id)
+    }
+
+    /// Records that a block spends `coin_id` although the coin index lists it unspent
+    /// (`Publisher::scan_blocks_for_spends`, `docs/research/chain_service.md` §20): `reserve` never
+    /// offers it again. Idempotent.
+    pub fn exclude_spent(&self, coin_id: Bytes32) {
+        self.spent_per_block.lock().expect("spent_per_block lock").insert(coin_id);
+    }
+
+    /// Whether `exclude_spent` was called for `coin_id` -- for tests.
+    pub fn is_excluded(&self, coin_id: Bytes32) -> bool {
+        self.spent_per_block.lock().expect("spent_per_block lock").contains(&coin_id)
     }
 }
 

@@ -122,6 +122,12 @@ pub trait ChainClient: Send + Sync {
         coin_id: Bytes32,
         height: Option<u32>,
     ) -> impl Future<Output = Result<Option<CoinSpend>>> + Send;
+
+    /// The chain's current peak height (`get_blockchain_state`). Bounds the
+    /// stale-index scan (`Publisher::scan_blocks_for_spends`, `docs/research/
+    /// chain_service.md` §20) and is `GET /v1/play/deposits`'s `tipHeight`
+    /// (it used to live on `play::chain_client::PlayChainClient`).
+    fn peak_height(&self) -> impl Future<Output = Result<u32>> + Send;
 }
 
 #[derive(Debug, Clone)]
@@ -273,5 +279,17 @@ impl ChainClient for CoinsetChainClient {
         // puzzle/solution for (never spent, or simply unknown to it) with
         // `coin_solution: null`, not a `success: false` error.
         Ok(response.coin_solution)
+    }
+
+    async fn peak_height(&self) -> Result<u32> {
+        // Decoded by hand (`play::chain_client::parse_peak_height`): testnet11 intermittently
+        // answers `peak.height` as a JSON float, which the typed `get_blockchain_state` wrapper
+        // refuses whole (`docs/research/chain_service.md` §13).
+        let body: serde_json::Value = self
+            .client
+            .make_post_request("get_blockchain_state", serde_json::json!({}))
+            .await
+            .context("get_blockchain_state")?;
+        crate::play::chain_client::parse_peak_height(&body)
     }
 }

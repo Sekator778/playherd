@@ -146,6 +146,15 @@ see `docs/research/chain_service.md` §1. Write-ups:
     `resultsHash`, `priceCents`, `asset` and `ts` -- `null` for a record confirmed
     before the content was kept. Contract fixtures: `tests/contract/OracleRecordsResponse.json`,
     `OracleRecordStatusResponse.json`, `OracleRecordStatusResponse_without_content.json`.
+  - The coin index behind the chain API is not the last word (`docs/research/chain_service.md`
+    §20): when the node refuses a push of the in-flight bundle as `DOUBLE_SPEND` while
+    `get_coin_record_by_name` still shows the bundle's coins unspent, the publisher reads the
+    blocks themselves (`get_puzzle_and_solution` with an explicit height, from the coins'
+    creation height to the peak, 40 heights per tick, cursor on the bundle) and settles the
+    batch from the spend it finds, or rebuilds with another fee coin when only the fee coin is
+    spent; a coin a block spent is never offered by the fee-coin pool again
+    (`FeeCoinAllocator::exclude_spent`). On 2026-10-13 the index missed blocks 4 818 913–4 818 914
+    and publishing stood for twelve hours behind a batch that had confirmed at 4 818 914.
   - The oracle queue file stays bounded (`src/oracle/queue.rs`): a confirmed record's entry
     (height, coin, content; about 410 bytes) is dropped once it has been confirmed for
     `C2_ORACLE_RETAIN_CONFIRMED_SECS` (default 86 400, 0 = keep for good) -- a pass every ten minutes, and

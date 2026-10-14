@@ -136,6 +136,25 @@ pub struct SupersededBundle {
     pub reason: String,
 }
 
+/// Where the stale-index scan of an in-flight bundle stands (`Publisher::scan_blocks_for_spends`,
+/// `docs/research/chain_service.md` §20). Started when the node refuses a push of the bundle (a
+/// retry, or a replacement of it) as a double spend while the coin index still shows every coin the
+/// bundle spends unspent: the node's coin store and the index that answers reads then disagree, and
+/// the blocks themselves are asked, one height at a time (`get_puzzle_and_solution` with an explicit
+/// height), for the spend of the singleton coin and of the fee coin. `#[serde(default)]` on the
+/// field: a queue file written before this existed has no scan.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StaleIndexScan {
+    /// The first height this scan looked at: the lowest creation height the index gives for the
+    /// bundle's coins plus one, else the height of the last confirmed batch plus one.
+    pub from_height: u32,
+    /// The next height to look at; everything below it (from `from_height`) has been looked at
+    /// and held no spend of the bundle's coins.
+    pub next_height: u32,
+    /// The node's answer that started the scan.
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InFlightSpend {
     /// Records this spend announces, ascending by `seq` (see
@@ -175,6 +194,9 @@ pub struct InFlightSpend {
     /// `#[serde(default)]` as above.
     #[serde(default)]
     pub replace_blocked: Option<String>,
+    /// The stale-index scan in progress for this bundle, if any (`StaleIndexScan`).
+    #[serde(default)]
+    pub stale_index_scan: Option<StaleIndexScan>,
 }
 
 impl InFlightSpend {
@@ -1027,6 +1049,7 @@ mod tests {
             last_push_error: None,
             superseded: Vec::new(),
             replace_blocked: None,
+            stale_index_scan: None,
         }
     }
 

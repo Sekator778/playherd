@@ -220,6 +220,10 @@ impl ChainClient for FakePlayChainClient {
     async fn puzzle_and_solution(&self, coin_id: Bytes32, _height: Option<u32>) -> Result<Option<CoinSpend>> {
         Ok(self.0.lock().unwrap().puzzle_solutions.get(&coin_id).cloned())
     }
+
+    async fn peak_height(&self) -> Result<u32> {
+        Ok(self.0.lock().unwrap().peak_height)
+    }
 }
 
 impl PlayChainClient for FakePlayChainClient {
@@ -236,9 +240,5 @@ impl PlayChainClient for FakePlayChainClient {
             .filter(|r| puzzle_hashes.contains(&r.puzzle_hash))
             .filter(|r| start_height.is_none_or(|h| r.confirmed_height >= h))
             .collect())
-    }
-
-    async fn peak_height(&self) -> Result<u32> {
-        Ok(self.0.lock().unwrap().peak_height)
     }
 }

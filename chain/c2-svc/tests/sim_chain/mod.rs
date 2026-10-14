@@ -349,6 +349,10 @@ impl ChainClient for SimChain {
     async fn puzzle_and_solution(&self, coin_id: Bytes32, _height: Option<u32>) -> Result<Option<CoinSpend>> {
         Ok(self.0.lock().unwrap().sim.coin_spend(coin_id))
     }
+
+    async fn peak_height(&self) -> Result<u32> {
+        Ok(self.0.lock().unwrap().sim.height())
+    }
 }
 
 /// The two extra reads the PLAY side needs. Only unspent coins are listed -- the simulator's own
@@ -377,9 +381,5 @@ impl PlayChainClient for SimChain {
             }
         }
         Ok(records)
-    }
-
-    async fn peak_height(&self) -> Result<u32> {
-        Ok(self.0.lock().unwrap().sim.height())
     }
 }

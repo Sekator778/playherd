@@ -47,10 +47,6 @@ pub trait PlayChainClient: ChainClient {
         puzzle_hashes: Vec<Bytes32>,
         start_height: Option<u32>,
     ) -> impl Future<Output = Result<Vec<PuzzleHashCoinRecord>>> + Send;
-
-    /// The chain's current peak height (`GET /v1/play/deposits`'s
-    /// `tipHeight`).
-    fn peak_height(&self) -> impl Future<Output = Result<u32>> + Send;
 }
 
 impl PlayChainClient for CoinsetChainClient {
@@ -86,34 +82,25 @@ impl PlayChainClient for CoinsetChainClient {
             })
             .collect())
     }
-
-    async fn peak_height(&self) -> Result<u32> {
-        // Task fix (`docs/research/chain_service.md` §13): testnet11
-        // intermittently answers `peak.height` as a JSON *float* (e.g.
-        // `0.0`) instead of an integer -- `chia_sdk_coinset::
-        // get_blockchain_state()`'s strongly-typed `BlockchainState` (whose
-        // `peak: chia_protocol::BlockRecord` declares `height: u32`) fails
-        // to deserialize the *entire* response the moment that happens,
-        // turning `GET /v1/play/deposits` into a 500. Decode the raw JSON
-        // body ourselves instead (same "only model the fields this service
-        // actually uses" precedent `oracle::chain_client::
-        // FeeEstimateResponse` already sets for `get_fee_estimate`),
-        // tolerant of `height` being a float, and of every other field's
-        // shape (never even named here).
-        let body: serde_json::Value = self
-            .client()
-            .make_post_request("get_blockchain_state", serde_json::json!({}))
-            .await
-            .context("get_blockchain_state")?;
-        parse_peak_height(&body)
-    }
 }
 
 /// Decodes only `peak.height` out of a raw `get_blockchain_state` response
-/// body -- see `peak_height`'s doc comment for why. Kept as a standalone,
+/// body, for `ChainClient::peak_height` (`oracle/chain_client.rs`; the
+/// method lived on `PlayChainClient` until the stale-index scan of
+/// `docs/research/chain_service.md` §20 needed it on the oracle side too).
+/// Task fix (`docs/research/chain_service.md` §13): testnet11 intermittently
+/// answers `peak.height` as a JSON *float* (e.g. `0.0`) instead of an
+/// integer -- `chia_sdk_coinset::get_blockchain_state()`'s strongly-typed
+/// `BlockchainState` (whose `peak: chia_protocol::BlockRecord` declares
+/// `height: u32`) fails to deserialize the *entire* response the moment that
+/// happens, turning `GET /v1/play/deposits` into a 500. So the raw JSON body
+/// is decoded by hand (same "only model the fields this service actually
+/// uses" precedent `oracle::chain_client::FeeEstimateResponse` already sets
+/// for `get_fee_estimate`), tolerant of `height` being a float, and of every
+/// other field's shape (never even named here). Kept as a standalone,
 /// synchronous function (no network) so it's directly unit-testable against
 /// a recorded body, without a mock HTTP server.
-fn parse_peak_height(body: &serde_json::Value) -> Result<u32> {
+pub(crate) fn parse_peak_height(body: &serde_json::Value) -> Result<u32> {
     if body.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
         bail!(
             "get_blockchain_state failed: {}",

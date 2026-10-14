@@ -79,11 +79,11 @@ use crate::keys_file::{load_operator_master_sk, load_operator_wallet_key};
 use crate::mempool_rule::{MEMPOOL_MIN_FEE_INCREASE, required_replacement_fee};
 use crate::state_file::{load_oracle_state, save_oracle_state_atomic};
 
-use super::chain_client::ChainClient;
-use super::lineage::{genesis_coin, tip_lineage_proof, walk_lineage};
+use super::chain_client::{ChainClient, CoinRecordInfo};
+use super::lineage::{LineageWalkOutcome, genesis_coin, tip_lineage_proof, walk_from_spend, walk_lineage};
 use super::queue::{
     ConfirmedRecordInfo, EnqueueOutcome, InFlightSpend, QueueCache, QueueFile, ReconcileOutcome, RecordState,
-    ResolvedInFlight, RetentionOutcome,
+    ResolvedInFlight, RetentionOutcome, StaleIndexScan,
 };
 use super::spend::{MAX_RECORDS_PER_SPEND, build_oracle_publish_batch};
 use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusResponse, RECORD_FORMAT};
@@ -160,6 +160,11 @@ fn now_unix() -> i64 {
 /// the pass is made every ten minutes, not every tick -- the file then holds the last
 /// `C2_ORACLE_RETAIN_CONFIRMED_SECS` plus at most these ten minutes. **предложение**.
 const RETENTION_EVERY_SECS: i64 = 600;
+
+/// Heights the stale-index scan (`Publisher::scan_blocks_for_spends`) reads per tick: one or two
+/// `get_puzzle_and_solution` calls each, under `queue_lock`. A spend is normally a few blocks past
+/// the coin's creation, so one tick finds it; a long backlog is read at this pace. **предложение**.
+const STALE_INDEX_SCAN_HEIGHTS_PER_TICK: u32 = 40;
 
 /// A replacement bundle `replace_in_mempool` is ready to make durable and push.
 struct ReplacementBundle {
@@ -650,7 +655,7 @@ impl<C: ChainClient> Publisher<C> {
     /// no-op, not an error -- there is nothing to reconcile against before
     /// the singleton even exists.
     async fn reconcile_queue_with_chain(&self, queue: &mut QueueFile) -> Result<ReconcileOutcome> {
-        let Ok(mut oracle_state) = load_oracle_state(&self.data_dir, &self.operator_name) else {
+        let Ok(oracle_state) = load_oracle_state(&self.data_dir, &self.operator_name) else {
             return Ok(ReconcileOutcome::default());
         };
         let start = queue
@@ -659,8 +664,20 @@ impl<C: ChainClient> Publisher<C> {
         let walk = walk_lineage(&self.chain, start)
             .await
             .context("walking oracle singleton lineage for chain reconciliation")?;
+        self.apply_walk(queue, oracle_state, &walk).await
+    }
+
+    /// Reconciles `queue` and `oracle_state` with what a walk of the lineage found -- the second
+    /// half of `reconcile_queue_with_chain`, shared with `settle_from_block_spend` (a one-generation
+    /// walk built from a spend the coin index does not show, `lineage::walk_from_spend`).
+    async fn apply_walk(
+        &self,
+        queue: &mut QueueFile,
+        mut oracle_state: OracleState,
+        walk: &LineageWalkOutcome,
+    ) -> Result<ReconcileOutcome> {
         let in_flight_before = queue.in_flight.clone();
-        let mut outcome = queue.reconcile_with_chain(&walk, now_unix());
+        let mut outcome = queue.reconcile_with_chain(walk, now_unix());
 
         for warning in &outcome.decode_warnings {
             tracing::warn!(%warning, "oracle lineage walk");
@@ -964,6 +981,17 @@ impl<C: ChainClient> Publisher<C> {
             // visible.
             return Ok(TickOutcome::WaitingForConfirmation);
         }
+
+        // The index says the singleton coin is unspent. When the node has refused a push of this
+        // bundle as a double spend all the same, the index is not to be believed before the blocks
+        // themselves have been asked (`scan_blocks_for_spends`, `docs/research/chain_service.md`
+        // §20) -- before the mempool is consulted, because the same index answered "in the
+        // mempool" for a bundle whose coins were long spent (2026-10-13).
+        let mut in_flight = in_flight;
+        if let Some(outcome) = self.scan_blocks_for_spends(queue, &mut in_flight, &spent_record).await? {
+            return Ok(outcome);
+        }
+
         let in_mempool = self
             .chain
             .in_mempool(in_flight.bundle.name())
@@ -984,7 +1012,6 @@ impl<C: ChainClient> Publisher<C> {
 
         // Not in the mempool any more (or never): whatever kept the bundle from being replaced
         // is over. Clear it so `stuckReason` stops naming it.
-        let mut in_flight = in_flight;
         if in_flight.replace_blocked.take().is_some() {
             queue.in_flight = Some(in_flight.clone());
             self.save_queue(queue).context("clearing a stale 'replacement blocked' note from the in-flight spend")?;
@@ -1168,6 +1195,183 @@ impl<C: ChainClient> Publisher<C> {
         Ok(TickOutcome::Confirmed { records: confirmed_count })
     }
 
+    /// The stale-index scan (`docs/research/chain_service.md` §20). The coin index has just said the
+    /// in-flight bundle's singleton coin is unspent. If the node has nonetheless refused a push of
+    /// this bundle -- a retry, or a replacement of it -- as a double spend (`last_push_error`,
+    /// `replace_blocked`), the node's coin store and the index that answers reads disagree, and
+    /// the index cannot settle the question: on 2026-10-13 it showed the singleton coin and the fee
+    /// coin unspent, and the successor coin absent, for twelve hours after six independent nodes
+    /// had them spent and created at height 4,818,914 -- and answered the bundle "in the mempool"
+    /// by its id while the mempool's own list did not hold it. The blocks themselves are asked
+    /// instead: `get_puzzle_and_solution` with an explicit height answers from the block, not the
+    /// index (verified live against coinset the same day), so this walks the heights from the
+    /// lowest creation height the index gives for the bundle's coins (else the last confirmed
+    /// batch's height) up to the peak, `STALE_INDEX_SCAN_HEIGHTS_PER_TICK` per tick with the
+    /// cursor persisted on the bundle (`InFlightSpend::stale_index_scan`), until it finds:
+    ///
+    /// * the spend of the singleton coin -- the bundle (some version of it, or a foreign spend) is
+    ///   on chain: settled from that spend's own announcements exactly as the lineage walk settles
+    ///   a spend the index knows (`settle_from_block_spend`), the oracle state advanced to the
+    ///   successor; a fee coin the same block spends is excluded from the allocator;
+    /// * the spend of the fee coin alone -- the fee coin is gone (the §15 case, with an index that
+    ///   does not show it): excluded from the allocator (`FeeCoinAllocator::exclude_spent`, so the
+    ///   wallet scan cannot hand it out again while the index is behind) and the bundle rebuilt
+    ///   with another coin at once.
+    ///
+    /// `Ok(None)`: nothing to scan (no such refusal, or the index itself shows the fee coin spent
+    /// -- the existing path handles that), or the scan has reached the peak without finding a
+    /// spend (the refusal was not about these coins after all; the usual retry/replacement logic
+    /// goes on). `Ok(Some(..))`: the tick is decided here. Reads only; the one write is the cursor.
+    async fn scan_blocks_for_spends(
+        &self,
+        queue: &mut QueueFile,
+        in_flight: &mut InFlightSpend,
+        singleton_record: &CoinRecordInfo,
+    ) -> Result<Option<TickOutcome>> {
+        let refusal = [in_flight.last_push_error.as_deref(), in_flight.replace_blocked.as_deref()]
+            .into_iter()
+            .flatten()
+            .find(|error| is_coin_spent_rejection(Some(error)))
+            .map(str::to_string);
+        if in_flight.stale_index_scan.is_none() && refusal.is_none() {
+            return Ok(None);
+        }
+
+        let fee_coin = fee_coin_of(&in_flight.bundle, in_flight.spent_coin);
+        let mut fee_record = None;
+        if let Some(coin) = fee_coin {
+            let record = self
+                .chain
+                .coin_record(coin.coin_id())
+                .await
+                .context("checking the fee coin before reading the blocks for its spend")?;
+            if record.spent {
+                // The index knows this one: `advance_in_flight`'s own fee-coin path rebuilds.
+                return Ok(None);
+            }
+            fee_record = Some(record);
+        }
+
+        if in_flight.stale_index_scan.is_none() {
+            let lowest_creation = [singleton_record.confirmed_height, fee_record.and_then(|r| r.confirmed_height)]
+                .into_iter()
+                .flatten()
+                .min();
+            let Some(from_height) = lowest_creation.or(queue.last_confirmed_height).map(|h| h.saturating_add(1)) else {
+                tracing::warn!(
+                    bundle_id = %in_flight.bundle_id,
+                    "the node refused a push of the in-flight bundle as a double spend while the coin index shows \
+                     its coins unspent, but no height is known to read the blocks from -- not scanning"
+                );
+                return Ok(None);
+            };
+            let reason = refusal.unwrap_or_default();
+            tracing::warn!(
+                bundle_id = %in_flight.bundle_id,
+                from_height,
+                %reason,
+                "the node refused a push of the in-flight bundle as a double spend while the coin index shows its \
+                 coins unspent -- the index is not trusted: reading the blocks for the spend of the singleton coin \
+                 and of the fee coin (docs/research/chain_service.md §20)"
+            );
+            in_flight.stale_index_scan = Some(StaleIndexScan { from_height, next_height: from_height, reason });
+            queue.in_flight = Some(in_flight.clone());
+            self.save_queue(queue).context("persisting the start of the stale-index scan")?;
+        }
+
+        let peak = self.chain.peak_height().await.context("peak height for the stale-index scan")?;
+        let next_height = in_flight.stale_index_scan.as_ref().map(|scan| scan.next_height).expect("set above");
+        if next_height > peak {
+            // Caught up with the chain and nothing found so far: the usual logic goes on; the
+            // next tick looks at whatever blocks arrive.
+            return Ok(None);
+        }
+        let end = peak.min(next_height.saturating_add(STALE_INDEX_SCAN_HEIGHTS_PER_TICK - 1));
+        for height in next_height..=end {
+            let singleton_spend = self
+                .chain
+                .puzzle_and_solution(in_flight.spent_coin.coin_id(), Some(height))
+                .await
+                .with_context(|| format!("reading block {height} for the spend of the in-flight singleton coin"))?;
+            let fee_spent = match fee_coin {
+                Some(coin) => self
+                    .chain
+                    .puzzle_and_solution(coin.coin_id(), Some(height))
+                    .await
+                    .with_context(|| format!("reading block {height} for the spend of the in-flight fee coin"))?
+                    .is_some(),
+                None => false,
+            };
+            if fee_spent && let Some(coin) = fee_coin {
+                self.fee_allocator.exclude_spent(coin.coin_id());
+            }
+            if let Some(spend) = singleton_spend {
+                return self.settle_from_block_spend(queue, in_flight, spend, height).await.map(Some);
+            }
+            if fee_spent && let Some(coin) = fee_coin {
+                tracing::warn!(
+                    bundle_id = %in_flight.bundle_id,
+                    fee_coin = %coin.coin_id(),
+                    height,
+                    "the in-flight bundle's fee coin is spent in a block the coin index does not show -- the coin is \
+                     excluded from the fee-coin pool and the bundle is rebuilt with another one"
+                );
+                in_flight.stale_index_scan = None;
+                return self.rebuild_in_flight(queue, in_flight.clone()).await.map(Some);
+            }
+        }
+
+        if let Some(scan) = in_flight.stale_index_scan.as_mut() {
+            scan.next_height = end.saturating_add(1);
+        }
+        queue.in_flight = Some(in_flight.clone());
+        self.save_queue(queue).context("persisting the stale-index scan's cursor")?;
+        // More blocks to read next tick: nothing else is done to the bundle meanwhile. At the peak
+        // with nothing found, the usual logic goes on.
+        Ok(if end < peak { Some(TickOutcome::WaitingForConfirmation) } else { None })
+    }
+
+    /// The stale-index scan found the spend of the in-flight bundle's singleton coin in block
+    /// `height`: settle the bundle from it the way the lineage walk settles a spend the index
+    /// knows (`apply_walk` over a one-generation walk, `lineage::walk_from_spend`) -- the records
+    /// the spend announced confirmed, the others back in `pending`, the oracle state advanced to
+    /// the successor coin, the fee coins released, the scan checkpoint on the successor.
+    async fn settle_from_block_spend(
+        &self,
+        queue: &mut QueueFile,
+        in_flight: &InFlightSpend,
+        spend: CoinSpend,
+        height: u32,
+    ) -> Result<TickOutcome> {
+        let oracle_state = load_oracle_state(&self.data_dir, &self.operator_name)
+            .context("loading oracle state to settle a spend found in the blocks")?;
+        let walk = walk_from_spend(in_flight.spent_coin, &spend, height);
+        let outcome = self.apply_walk(queue, oracle_state, &walk).await?;
+        if outcome.in_flight_unreadable {
+            // The spend is there but its announcements did not decode: nothing is concluded; the
+            // cursor stays on this block so the next tick reads it again.
+            if let Some(current) = queue.in_flight.as_mut()
+                && let Some(scan) = current.stale_index_scan.as_mut()
+            {
+                scan.next_height = height;
+            }
+            self.save_queue(queue).context("persisting the stale-index scan at an unreadable spend")?;
+            return Ok(TickOutcome::WaitingForConfirmation);
+        }
+        self.save_queue(queue).context("persisting the queue settled from a spend found in the blocks")?;
+        tracing::warn!(
+            bundle_id = %in_flight.bundle_id,
+            height,
+            successor = %in_flight.next_coin.coin_id(),
+            "the in-flight bundle's singleton coin is spent in a block the coin index does not show -- settled from \
+             the block itself (docs/research/chain_service.md §20)"
+        );
+        Ok(match &outcome.resolved_in_flight {
+            Some(resolved) if resolved.ours => TickOutcome::Confirmed { records: resolved.confirmed.len() },
+            _ => TickOutcome::WaitingForConfirmation,
+        })
+    }
+
     /// The in-flight bundle is in the node's mempool: replace it once it has waited
     /// `mempool_replace_after` since the last time this publisher acted on it
     /// (`last_attempt_at_unix`: the last push, or the last time a replacement was tried and could
@@ -1308,6 +1512,7 @@ impl<C: ChainClient> Publisher<C> {
             last_push_error: None,
             superseded,
             replace_blocked: None,
+            stale_index_scan: None,
         };
         let batch_len = replacement.records.len();
         let replacement_fee = replacement.fee_mojos;
@@ -1632,6 +1837,7 @@ impl<C: ChainClient> Publisher<C> {
                 versions
             },
             replace_blocked: None,
+            stale_index_scan: None,
         });
         // Durability first, same invariant as `start_new_batch`.
         self.save_queue(queue).context("persisting rebuilt in-flight spend before broadcasting")?;
@@ -1781,6 +1987,7 @@ impl<C: ChainClient> Publisher<C> {
             last_push_error: None,
             superseded: Vec::new(),
             replace_blocked: None,
+            stale_index_scan: None,
         });
         // Durability first (task instruction: "queue records durably ...
         // while a spend is in flight"): this atomic write is what removes

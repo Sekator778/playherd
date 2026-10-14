@@ -75,6 +75,14 @@ struct FakeChainClientInner {
     /// `docs/research/chain_service.md` §11). Populated by
     /// `set_puzzle_and_solution` / `push_lineage_generation` below.
     coin_spends: HashMap<Bytes32, CoinSpend>,
+    /// (coin_id, height) -> the spend of that coin in that block, answered by `puzzle_and_solution`
+    /// *only* for that exact height -- what the blocks themselves say, independent of
+    /// `coin_records` (the index): the stale-index scan of `docs/research/chain_service.md` §20
+    /// reads these while `coin_records` still shows the coin unspent (`set_block_spend`).
+    block_spends: HashMap<(Bytes32, u32), CoinSpend>,
+    /// `peak_height`'s answer. 0 by default: a scan has no block to read, so no pre-existing
+    /// test's behavior changes (`set_peak_height`).
+    peak_height: u32,
 }
 
 pub struct FakeChainClient(Mutex<FakeChainClientInner>);
@@ -100,7 +108,20 @@ impl FakeChainClient {
             in_mempool: HashMap::new(),
             delay: Duration::ZERO,
             coin_spends: HashMap::new(),
+            block_spends: HashMap::new(),
+            peak_height: 0,
         }))
+    }
+
+    fn set_peak_height(&self, height: u32) {
+        self.0.lock().unwrap().peak_height = height;
+    }
+
+    /// Registers `coin_spend` as the spend of `coin_id` in block `height` -- in the block only:
+    /// `coin_record(coin_id)` keeps answering whatever it answered before (unspent, or unknown),
+    /// the way a coin index that missed the block does (`docs/research/chain_service.md` §20).
+    fn set_block_spend(&self, coin_id: Bytes32, height: u32, coin_spend: CoinSpend) {
+        self.0.lock().unwrap().block_spends.insert((coin_id, height), coin_spend);
     }
 
     fn set_delay(&self, delay: Duration) {
@@ -306,17 +327,35 @@ impl ChainClient for FakeChainClient {
     fn puzzle_and_solution(
         &self,
         coin_id: Bytes32,
-        _height: Option<u32>,
+        height: Option<u32>,
     ) -> impl Future<Output = Result<Option<CoinSpend>>> + Send {
         let (coin_spend, delay) = {
             let inner = self.0.lock().unwrap();
-            (inner.coin_spends.get(&coin_id).cloned(), inner.delay)
+            // A spend registered for the block itself (`set_block_spend`) answers only for its
+            // own height; a spend the index knows (`set_lineage_spend`) answers for any height,
+            // as before.
+            let from_block = height.and_then(|h| inner.block_spends.get(&(coin_id, h)).cloned());
+            let from_index = inner.coin_spends.get(&coin_id).cloned();
+            (from_block.or(from_index), inner.delay)
         };
         async move {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
             Ok(coin_spend)
+        }
+    }
+
+    fn peak_height(&self) -> impl Future<Output = Result<u32>> + Send {
+        let (peak, delay) = {
+            let inner = self.0.lock().unwrap();
+            (inner.peak_height, inner.delay)
+        };
+        async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            Ok(peak)
         }
     }
 }
@@ -1241,7 +1280,188 @@ fn in_flight_stub(records: &[OracleRecord]) -> c2_svc::oracle::queue::InFlightSp
         last_push_error: None,
         superseded: Vec::new(),
         replace_blocked: None,
+        stale_index_scan: None,
     }
+}
+
+// --- the coin index behind the chain API is behind the chain (docs/research/chain_service.md §20) --
+
+/// The incident of 2026-10-13 (`docs/research/chain_service.md` §20): the in-flight bundle confirmed,
+/// but the coin index kept showing its singleton coin and fee coin unspent, the successor coin
+/// absent, and the bundle "in the mempool" by its id -- while the node refused every replacement as
+/// `DOUBLE_SPEND`. The publisher must not take the index's word over the node's: once the node
+/// has refused the bundle as a double spend, it reads the blocks themselves, finds the spend,
+/// settles the batch from that spend (records confirmed once, oracle state on the successor,
+/// nothing pushed again) and publishes the next batch from the successor.
+#[tokio::test]
+async fn a_spend_the_coin_index_does_not_show_is_settled_from_the_block_itself() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.chain.set_fee_estimate(1_000);
+    // A fee coin big enough for a replacement (+10,000,000 mojos), so the replacement is built and
+    // pushed -- and refused by the node -- rather than blocked by the coin's size.
+    fx.publisher.chain.set_funding_amount(100_000_000);
+    fx.publisher.enqueue(vec![record(1), record(2)]).await?;
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 2, accepted: true });
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.clone().expect("in flight");
+    let fee_coin = fee_coin_of(&in_flight.bundle, in_flight.spent_coin).expect("the bundle pays a fee");
+
+    // What the stand saw. The index: the singleton coin unspent (created at 4_818_911), the fee
+    // coin unspent, the successor unknown, the bundle "in the mempool". The blocks: both coins
+    // spent in 4_818_914 by exactly the in-flight bundle's own spends. The node: DOUBLE_SPEND.
+    fx.publisher.chain.set_confirmed(in_flight.spent_coin.coin_id(), 4_818_911);
+    fx.publisher.chain.set_confirmed(fee_coin.coin_id(), 4_818_911);
+    fx.publisher.chain.set_in_mempool(in_flight.bundle.name(), true);
+    for spend in &in_flight.bundle.coin_spends {
+        fx.publisher.chain.set_block_spend(spend.coin.coin_id(), 4_818_914, spend.clone());
+    }
+    fx.publisher.chain.set_peak_height(4_821_340);
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xb8fbb9db, error DOUBLE_SPEND".to_string()),
+    });
+
+    // The replacement is due and refused: the publisher now knows the node disagrees with the index.
+    {
+        let mut queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+        let in_flight = queue.in_flight.as_mut().unwrap();
+        in_flight.last_attempt_at_unix -= 200;
+        queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+    }
+    let outcome = fx.publisher.tick().await?;
+    assert!(matches!(&outcome, TickOutcome::ReplacementBlocked { reason } if reason.contains("DOUBLE_SPEND")), "{outcome:?}");
+    let pushes_so_far = fx.publisher.chain.push_call_count();
+
+    // Next tick: the blocks are read from the coin's creation height; the spend is at +3.
+    {
+        let mut queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+        queue.in_flight.as_mut().unwrap().last_attempt_at_unix -= 200;
+        queue.save_atomic(&fx.publisher.data_dir, "operator")?;
+    }
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Confirmed { records: 2 });
+    assert_eq!(fx.publisher.chain.push_call_count(), pushes_so_far, "nothing is pushed again");
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.in_flight.is_none());
+    assert!(queue.pending.is_empty(), "no record goes back to pending: the block carries both");
+    assert_eq!(queue.last_confirmed_seq, Some(2));
+    assert_eq!(queue.last_confirmed_height, Some(4_818_914));
+    for seq in [1, 2] {
+        let info = queue.confirmed.get(&seq).expect("confirmed from the block");
+        assert_eq!(info.height, Some(4_818_914));
+        assert_eq!(info.coin_id, format!("{}", in_flight.next_coin.coin_id()));
+    }
+    assert_eq!(queue.chain_scan_checkpoint, Some(in_flight.next_coin));
+    let oracle_state = c2_svc::state_file::load_oracle_state(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(oracle_state.current_coin, in_flight.next_coin, "the oracle state is on the successor");
+    assert!(!fx.publisher.fee_allocator.is_reserved(fee_coin.coin_id()).await, "the fee coin is released");
+    assert!(
+        fx.publisher.fee_allocator.is_excluded(fee_coin.coin_id()),
+        "the fee coin the block spent is never offered again while the index lists it unspent"
+    );
+    assert!(fx.publisher.health_check().await?.is_none(), "nothing is stuck");
+
+    // The next batch goes out from the successor -- which the index still does not know -- and
+    // with a fee coin other than the spent one, which the index still lists as unspent.
+    let other_coin = Coin::new(Bytes32::from([12u8; 32]), fx.manager.puzzle_hash, 3_000_000);
+    fx.publisher.chain.add_funding_coin(other_coin);
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+    fx.publisher.enqueue(vec![record(3)]).await?;
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: true });
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let next = queue.in_flight.expect("the next batch is in flight");
+    assert_eq!(next.spent_coin, in_flight.next_coin);
+    assert_eq!(fee_coin_of(&next.bundle, next.spent_coin), Some(other_coin), "not the coin the block spent");
+    Ok(())
+}
+
+/// The same disagreement about the fee coin alone (the §15 case with an index that does not show the
+/// spend): a fresh batch refused as `DOUBLE_SPEND`, the index showing both of its coins unspent, the
+/// block showing the fee coin spent -- the bundle is rebuilt with another fee coin at once and the
+/// spent coin is excluded from the pool for good, instead of the identical bytes being pushed until
+/// the retries run out.
+#[tokio::test]
+async fn a_fee_coin_the_block_spends_but_the_index_lists_unspent_is_replaced_and_never_picked_again() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.chain.set_fee_estimate(1_000);
+    let other_coin = Coin::new(Bytes32::from([12u8; 32]), fx.manager.puzzle_hash, 3_000_000);
+    fx.publisher.chain.add_funding_coin(other_coin);
+    fx.publisher.enqueue(vec![record(1)]).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xdead, error DOUBLE_SPEND".to_string()),
+    });
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.clone().expect("in flight");
+    let dead_fee_coin = fee_coin_of(&in_flight.bundle, in_flight.spent_coin).expect("the bundle pays a fee");
+    assert_ne!(dead_fee_coin, other_coin, "the smaller default coin is picked first");
+
+    // The index: the singleton coin unspent, the fee coin unspent (created at 100). The block at
+    // 102: the fee coin spent by someone else (any spend will do for the fake). The singleton coin
+    // is not spent anywhere.
+    fx.publisher.chain.set_confirmed(in_flight.spent_coin.coin_id(), 100);
+    fx.publisher.chain.set_confirmed(dead_fee_coin.coin_id(), 100);
+    let fee_spend = in_flight.bundle.coin_spends.iter().find(|s| s.coin == dead_fee_coin).unwrap().clone();
+    fx.publisher.chain.set_block_spend(dead_fee_coin.coin_id(), 102, fee_spend);
+    fx.publisher.chain.set_peak_height(110);
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+
+    let outcome = fx.publisher.tick().await?;
+    assert!(matches!(outcome, TickOutcome::Rebuilt { records: 1, accepted: true, .. }), "{outcome:?}");
+    assert_eq!(fx.publisher.chain.push_call_count(), 2, "one push for the rebuild, no retry of the dead bundle");
+
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let rebuilt = queue.in_flight.expect("rebuilt bundle in flight");
+    assert_eq!(fee_coin_of(&rebuilt.bundle, rebuilt.spent_coin), Some(other_coin));
+    assert_eq!(rebuilt.spent_coin, in_flight.spent_coin, "same singleton coin");
+    assert!(rebuilt.stale_index_scan.is_none());
+    assert!(fx.publisher.fee_allocator.is_excluded(dead_fee_coin.coin_id()));
+    assert!(!fx.publisher.fee_allocator.is_reserved(dead_fee_coin.coin_id()).await);
+
+    // The pool never offers the dead coin again, however the index lists it.
+    let master_sk = c2_svc::keys_file::load_operator_master_sk(&fx.publisher.data_dir, "operator")?;
+    match fx.publisher.fee_allocator.reserve(&fx.publisher.chain, &master_sk, 1).await {
+        Ok((_, coin)) => panic!("the pool offered {} although the block spent {}", coin.coin_id(), dead_fee_coin.coin_id()),
+        Err(err) => assert!(err.to_string().contains("no unspent, unreserved coin"), "{err:#}"),
+    }
+    Ok(())
+}
+
+/// A scan that reaches the peak without finding a spend (the node's refusal was about something
+/// else, or transient) changes nothing: the usual retry goes on, and the scan follows the peak.
+#[tokio::test]
+async fn a_scan_that_finds_nothing_leaves_the_usual_retry_in_place() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.chain.set_fee_estimate(1_000);
+    fx.publisher.enqueue(vec![record(1)]).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xdead, error DOUBLE_SPEND".to_string()),
+    });
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Broadcast { records: 1, accepted: false });
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let in_flight = queue.in_flight.clone().expect("in flight");
+    fx.publisher.chain.set_confirmed(in_flight.spent_coin.coin_id(), 100);
+    fx.publisher.chain.set_peak_height(105);
+
+    let outcome = fx.publisher.tick().await?;
+    assert_eq!(outcome, TickOutcome::Retried { accepted: false });
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    let scan = queue.in_flight.unwrap().stale_index_scan.expect("the scan is recorded on the bundle");
+    assert_eq!(scan.from_height, 101);
+    assert_eq!(scan.next_height, 106, "read up to the peak");
+    Ok(())
 }
 
 /// Task instruction: "restart with records in queue/in_flight" -- a `tick()`
