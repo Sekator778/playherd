@@ -4,6 +4,7 @@ import { impact } from "../fx/haptics";
 import { usePrefersReducedMotion } from "../fx/reducedMotion";
 import { HEAT_VAR, leverageHeatTier, type HeatTier } from "./heat";
 import { useT, type TKey } from "../i18n";
+import { Rich } from "../i18n/Rich";
 
 /**
  * "Power dial" leverage control (`docs/product/design/live-round.md` §1) — replaces the unstyled
@@ -118,7 +119,7 @@ export function LeverageDial({
         </span>
         {/* The market's own cap, always in view: the dial's right end is not x40 everywhere. */}
         <span className="leverage-dial__cap">
-          x{min} – <strong>max x{max}</strong>
+          <Rich text={t("dial.cap", { min, max })} />
         </span>
       </div>
     </div>

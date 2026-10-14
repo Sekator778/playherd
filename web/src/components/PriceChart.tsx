@@ -245,7 +245,9 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
           {placed.map(({ line, placement, y: ly }, i) => {
             // A line beyond the scale is pinned to that edge and says how far off it is, in words.
             const away = placement.off
-              ? ` · ${((Math.abs(line.price - last.price) / (Math.abs(last.price) || 1)) * 100).toFixed(1)}% ${placement.off === "above" ? "above" : "below"}`
+              ? ` · ${t(placement.off === "above" ? "pchart.above" : "pchart.below", {
+                  pct: ((Math.abs(line.price - last.price) / (Math.abs(last.price) || 1)) * 100).toFixed(1),
+                })}`
               : "";
             const text = `${line.label} ${price(line.price)}${away}`;
             const boxW = Math.min(plotW - 8, text.length * REF_CHAR_PX + 14);
