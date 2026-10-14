@@ -3,11 +3,13 @@ import { useApi } from "../api/ApiContext";
 import type { MarketDto, RoundPhase, ServerInfoDto } from "../api/contract";
 import { formatCountdown } from "../format";
 import { backupRoundNote, backupRoundOf, originPhrase, sourceName, type RoundSubject } from "./marketModel";
+import { useT, type TKey } from "../i18n";
 
 export function DemoBanner() {
+  const t = useT();
   return (
     <div className="demo-banner" role="note">
-      DEMO — PLAY is toy money on a test network. Nothing here is real funds.
+      {t("common.demoBanner")}
     </div>
   );
 }
@@ -20,6 +22,7 @@ export function DemoBanner() {
  */
 export function ServerInfoBanner() {
   const api = useApi();
+  const t = useT();
   const [info, setInfo] = useState<ServerInfoDto | null>(null);
 
   useEffect(() => {
@@ -42,18 +45,19 @@ export function ServerInfoBanner() {
   const fmt = (iso: string) => iso.slice(0, 10);
   return (
     <div className="replay-banner" role="note">
-      Replay: BTC prices from {fmt(sourceFromIso)}–{fmt(sourceToIso)}, {speedup}× speed
-      {info.bots > 0 ? ` · ${info.bots} bots playing` : ""}
+      {t("common.replay", { from: fmt(sourceFromIso), to: fmt(sourceToIso), speedup })}
+      {info.bots > 0 ? ` · ${t("common.botsPlaying", { count: info.bots })}` : ""}
     </div>
   );
 }
 
 /** Task item 4: "bot badge wherever isBot". Small enough to sit inline next to a nickname. */
 export function BotBadge({ isBot }: { isBot?: boolean }) {
+  const t = useT();
   if (!isBot) return null;
   return (
-    <span className="bot-badge" title="Played by a test-mode bot (Р-46)">
-      BOT
+    <span className="bot-badge" title={t("common.botBadgeTitle")}>
+      {t("common.botBadge")}
     </span>
   );
 }
@@ -64,13 +68,14 @@ export function BotBadge({ isBot }: { isBot?: boolean }) {
  *  singleton spend confirms — see `ServerInfoDto.oracle.pendingRecords`), so this renders
  *  nothing at all until it exists rather than a placeholder/loading state. */
 export function ResultsHashLine({ roundId, resultsHash }: { roundId: string; resultsHash?: string }) {
+  const t = useT();
   if (!resultsHash) return null;
   const short = `${resultsHash.slice(0, 10)}…${resultsHash.slice(-6)}`;
   return (
     <p className="disclaimer-line mono">
-      Results hash: {short} —{" "}
+      {t("common.resultsHash", { hash: short })}{" "}
       <a href={`/api/rounds/${encodeURIComponent(roundId)}/results.json`} target="_blank" rel="noopener noreferrer">
-        verify results.json
+        {t("common.verifyResults")}
       </a>
     </p>
   );
@@ -82,6 +87,7 @@ export function ResultsHashLine({ roundId, resultsHash }: { roundId: string; res
  *  is no server to ask, like the other lines of this family). */
 export function BotsNote() {
   const api = useApi();
+  const t = useT();
   const [bots, setBots] = useState(0);
 
   useEffect(() => {
@@ -100,7 +106,7 @@ export function BotsNote() {
   if (bots <= 0) return null;
   return (
     <p className="faint" style={{ margin: 0 }}>
-      Player counts and the crowd split include {bots} labelled test bots (BOT in the live bets feed).
+      {t("common.botsNote", { count: bots })}
     </p>
   );
 }
@@ -108,6 +114,7 @@ export function BotsNote() {
 /** Task item 4: "oracle status line (last confirmed seq/height on testnet11)". */
 export function OracleStatusLine() {
   const api = useApi();
+  const t = useT();
   const [info, setInfo] = useState<ServerInfoDto | null>(null);
 
   useEffect(() => {
@@ -129,9 +136,12 @@ export function OracleStatusLine() {
   const { oracle } = info;
   return (
     <p className="disclaimer-line mono">
-      Oracle ({oracle.network}): last confirmed seq {oracle.lastConfirmedSeq ?? "—"}, height{" "}
-      {oracle.lastConfirmedHeight ?? "—"}
-      {oracle.pendingRecords > 0 ? ` · ${oracle.pendingRecords} pending` : ""}
+      {t("common.oracle", {
+        network: oracle.network,
+        seq: oracle.lastConfirmedSeq ?? "—",
+        height: oracle.lastConfirmedHeight ?? "—",
+      })}
+      {oracle.pendingRecords > 0 ? ` · ${t("common.oraclePending", { count: oracle.pendingRecords })}` : ""}
     </p>
   );
 }
@@ -144,16 +154,17 @@ export function OracleStatusLine() {
  *  "Price from Hyperliquid" for an odds round). A market that has a backup exchange (Р-76) says so after it: which one,
  *  and that a round runs on it only when the main exchange has no price at the round's start. */
 export function OracleDisclosureLine({ source, backup }: { source?: MarketDto["source"]; backup?: MarketDto["backupSource"] }) {
-  const origin = originPhrase(source);
-  const backupLabel = sourceName(backup);
+  const t = useT();
+  const origin = originPhrase(source, t);
+  const backupLabel = sourceName(backup, t);
   return (
     <p className="disclaimer-line">
-      {origin ? `${origin}, published by our team's key` : "Published by our team's key"} — not a decentralized oracle.
+      {origin ? t("common.disclosureOrigin", { origin }) : t("common.disclosureNoOrigin")}
       {backupLabel && (
         <>
           {" "}
           <span className="disclaimer-line__backup">
-            Backup: {backupLabel}, used for a round only if {sourceName(source) ?? "the main exchange"} has no price when it starts.
+            {t("common.disclosureBackup", { backup: backupLabel, main: sourceName(source, t) ?? t("source.mainExchange") })}
           </span>
         </>
       )}
@@ -180,18 +191,20 @@ export function RoundVenueNote({
    *  chosen yet — it is the one that starts next). */
   subject?: RoundSubject;
 }) {
-  const backup = backupRoundOf({ source }, market);
+  const t = useT();
+  const backup = backupRoundOf({ source }, market, t);
   if (!backup) return null;
   return (
     <p className="venue-note" role="note">
-      {backupRoundNote(backup, phase, subject)}
+      {backupRoundNote(backup, phase, subject, t)}
     </p>
   );
 }
 
 /** §2 ("Про отсутствие защиты от мультиаккаунтов"). */
 export function MultiAccountDisclosureLine() {
-  return <p className="disclaimer-line">Ratings are for fun — we don't detect multiple accounts.</p>;
+  const t = useT();
+  return <p className="disclaimer-line">{t("common.multiAccount")}</p>;
 }
 
 /**
@@ -202,8 +215,8 @@ export function MultiAccountDisclosureLine() {
  */
 export function CopyButton({
   value,
-  label = "Copy",
-  copiedLabel = "Copied!",
+  label,
+  copiedLabel,
   className = "btn btn--secondary",
 }: {
   value: string;
@@ -211,6 +224,7 @@ export function CopyButton({
   copiedLabel?: string;
   className?: string;
 }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const timeoutRef = useRef<number | undefined>(undefined);
 
@@ -240,21 +254,22 @@ export function CopyButton({
 
   return (
     <button type="button" className={className} onClick={() => void onClick()}>
-      {copied ? copiedLabel : label}
+      {copied ? (copiedLabel ?? t("common.copied")) : (label ?? t("common.copy"))}
     </button>
   );
 }
 
-export function ErrorState({ message = "Something went wrong.", onRetry }: { message?: string; onRetry?: () => void }) {
+export function ErrorState({ message, onRetry }: { message?: string; onRetry?: () => void }) {
+  const t = useT();
   return (
     <div className="state-card" role="alert">
       <div className="state-card__icon" aria-hidden="true">
         ⚠
       </div>
-      <p className="state-card__title">{message}</p>
+      <p className="state-card__title">{message ?? t("common.somethingWrong")}</p>
       {onRetry && (
         <button type="button" className="btn btn--secondary" onClick={onRetry}>
-          Try again
+          {t("common.tryAgain")}
         </button>
       )}
     </div>
@@ -281,11 +296,11 @@ export function Skeleton({
   return <div className="skeleton" style={{ width, height, ...style }} aria-hidden="true" />;
 }
 
-const PHASE_LABEL: Record<RoundPhase, string> = {
-  BETTING: "OPEN FOR BETS",
-  RUNNING: "LIVE",
-  SETTLED: "SETTLED",
-  CANCELLED: "CANCELLED",
+const PHASE_LABEL: Record<RoundPhase, TKey> = {
+  BETTING: "phase.betting",
+  RUNNING: "phase.running",
+  SETTLED: "phase.settled",
+  CANCELLED: "phase.cancelled",
 };
 const PHASE_CLASS: Record<RoundPhase, string> = {
   BETTING: "badge--betting",
@@ -295,22 +310,25 @@ const PHASE_CLASS: Record<RoundPhase, string> = {
 };
 
 export function RoundStatusBadge({ phase }: { phase: RoundPhase }) {
-  return <span className={`badge ${PHASE_CLASS[phase]}`}>{PHASE_LABEL[phase]}</span>;
+  const t = useT();
+  return <span className={`badge ${PHASE_CLASS[phase]}`}>{t(PHASE_LABEL[phase])}</span>;
 }
 
 export function Countdown({
   nowMs,
   targetMs,
-  prefix,
+  template,
   calm = false,
 }: {
   nowMs: number;
   targetMs: number;
-  prefix?: string;
+  /** Dictionary key of a sentence with a `{time}` slot ("Closes in {time}"); omitted → the bare time. */
+  template?: TKey;
   /** No last-10-seconds escalation: for a list where eighteen cards tick down in unison, a
    *  screen-wide pulse would be noise, not information (the room's own countdown still escalates). */
   calm?: boolean;
 }) {
+  const t = useT();
   const remaining = Math.max(0, targetMs - nowMs);
   // Escalation in the last 10s/3s (docs/product/design/live-round.md §4) — a real, existing
   // timer reading more urgently as it actually runs out, not a fabricated pressure timer
@@ -318,8 +336,7 @@ export function Countdown({
   const tier = calm ? "" : remaining <= 3000 ? "countdown--critical" : remaining <= 10000 ? "countdown--warn" : "";
   return (
     <span className={`countdown mono ${calm ? "countdown--calm" : ""} ${tier}`}>
-      {prefix}
-      {formatCountdown(remaining)}
+      {template ? t(template, { time: formatCountdown(remaining) }) : formatCountdown(remaining)}
     </span>
   );
 }

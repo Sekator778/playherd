@@ -17,6 +17,7 @@
 import { useSyncExternalStore } from "react";
 import { Capacitor } from "@capacitor/core";
 import { ApiRequestError, FEEDBACK_MAX_LENGTH, type FeedbackClient, type FeedbackRequest } from "./contract";
+import { tEn, type TFn } from "../i18n";
 
 // ---------------------------------------------------------------------------
 // Words (one place, so the form and its tests say the same thing)
@@ -30,14 +31,14 @@ import { ApiRequestError, FEEDBACK_MAX_LENGTH, type FeedbackClient, type Feedbac
 export const FEEDBACK_SEND_TIMEOUT_MS = 20_000;
 
 /** HTTP 429 (`RATE_LIMITED`): the sender writes too often. Not "a few seconds" — a limit on messages can be longer than that. */
-export const FEEDBACK_RATE_LIMITED_TEXT = "Too many messages just now — please try again a bit later.";
+export const FEEDBACK_RATE_LIMITED_TEXT = tEn("feedback.rateLimited");
 /** Every other failure (network, server, a refusal): the message is still in the box, and says so. */
-export const FEEDBACK_FAILED_TEXT = "Couldn't send your message — please try again. What you wrote is still here.";
+export const FEEDBACK_FAILED_TEXT = tEn("feedback.failed");
 
 /** How a failed `submitFeedback` is told to the sender: a rate limit in its own words, anything else as "couldn't send, try again". */
-export function feedbackErrorText(err: unknown): string {
-  if (err instanceof ApiRequestError && err.code === "RATE_LIMITED") return FEEDBACK_RATE_LIMITED_TEXT;
-  return FEEDBACK_FAILED_TEXT;
+export function feedbackErrorText(err: unknown, t: TFn = tEn): string {
+  if (err instanceof ApiRequestError && err.code === "RATE_LIMITED") return t("feedback.rateLimited");
+  return t("feedback.failed");
 }
 
 // ---------------------------------------------------------------------------

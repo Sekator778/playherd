@@ -14,11 +14,18 @@ import {
 import type { DotItemDotProps } from "recharts/types/util/types";
 import type { CrowdHistoryPointDto } from "../api/contract";
 import { formatUsd, timeZoneNote } from "../format";
+import { useT, type TKey } from "../i18n";
 import { capitalAxis, crowdRanges, dedupeByTime, defaultCrowdRange, formatAxisTick, formatAxisTooltip } from "./crowdModel";
 
 const COLOR_CROWD = "#9147ff";
 const COLOR_HOLD = "#8b93a8";
 const COLOR_ANTI = "#f5b93d";
+
+const SERIES_LABEL: Record<string, TKey> = {
+  crowdCapital: "chart.crowdAccount",
+  holdCapital: "chart.holdAsset",
+  antiCrowdCapital: "chart.antiCrowd",
+};
 
 function TooltipContent({
   active,
@@ -31,13 +38,14 @@ function TooltipContent({
   label?: number;
   spanMs: number;
 }) {
+  const t = useT();
   if (!active || !payload || !label) return null;
   return (
     <div className="chart-tooltip">
       <div className="faint">{formatAxisTooltip(label, spanMs)}</div>
       {payload.map((p) => (
         <div key={p.name} style={{ color: p.color }}>
-          {p.name}: {formatUsd(p.value)}
+          {SERIES_LABEL[p.name] ? t(SERIES_LABEL[p.name]) : p.name}: {formatUsd(p.value)}
         </div>
       ))}
     </div>
@@ -63,6 +71,7 @@ interface CrowdChartProps {
  * show time of day when the data span is short".
  */
 export function CrowdChart({ history: rawHistory, variant = "full", symbol }: CrowdChartProps) {
+  const t = useT();
   // One point per instant (the rounds of two series that end together share a millisecond — see `dedupeByTime`).
   const history = useMemo(() => dedupeByTime(rawHistory), [rawHistory]);
   const [picked, setPicked] = useState<string | null>(null);
@@ -109,17 +118,17 @@ export function CrowdChart({ history: rawHistory, variant = "full", symbol }: Cr
     <div className="crowd-chart">
       {variant === "full" ? (
         ranges.length > 1 && (
-          <div className="tabs" role="tablist" aria-label="Chart range">
+          <div className="tabs" role="tablist" aria-label={t("chart.rangeAria")}>
             {ranges.map((r) => (
               <button key={r.key} type="button" role="tab" aria-selected={effective.key === r.key} onClick={() => setPicked(r.key)}>
-                {r.label}
+                {r.key === "ALL" ? t("chart.all") : r.label}
               </button>
             ))}
           </div>
         )
       ) : (
         <button type="button" className="btn btn--secondary" onClick={() => setCompactShowAll((v) => !v)}>
-          {compactShowAll ? "Show the default range" : "Show full period"}
+          {compactShowAll ? t("chart.showDefault") : t("chart.showFull")}
         </button>
       )}
 
@@ -148,7 +157,13 @@ export function CrowdChart({ history: rawHistory, variant = "full", symbol }: Cr
             <Tooltip content={<TooltipContent spanMs={visibleSpanMs} />} />
             <Legend
               formatter={(value: string) =>
-                value === "crowdCapital" ? "Crowd account" : value === "holdCapital" ? (symbol ? `Hold ${symbol}` : "Hold the asset") : "Anti-crowd"
+                value === "crowdCapital"
+                  ? t("chart.crowdAccount")
+                  : value === "holdCapital"
+                    ? symbol
+                      ? t("chart.hold", { symbol })
+                      : t("chart.holdAsset")
+                    : t("chart.antiCrowd")
               }
             />
             {boundaries.map((b) => (
@@ -177,7 +192,7 @@ export function CrowdChart({ history: rawHistory, variant = "full", symbol }: Cr
       </div>
       {visibleSpanMs > 0 && variant === "full" && (
         <p className="faint crowd-chart__axis-note">
-          Amounts are paper dollars. Dates and times are in {timeZoneNote(newest)}.
+          {t("chart.axisNote", { zone: timeZoneNote(newest, t) })}
         </p>
       )}
     </div>

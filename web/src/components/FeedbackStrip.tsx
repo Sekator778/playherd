@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useLocation } from "react-router-dom";
 import { dismissFeedbackStrip, openFeedbackForm, useFeedbackFormOpen, useFeedbackStripVisible } from "../api/feedback";
+import { useT } from "../i18n";
 import { CloseIcon, FeedbackIcon } from "./icons";
 import "./Feedback.css";
 
 /** What the strip says. One short line; the word on the right names where a tap goes. */
-const FEEDBACK_STRIP_TEXT = "Tell us what you liked and what you didn't";
 
 /** What the strip never sits on: the room's arena (the big UP and DOWN) and the bet slip — the stake, the leverage, PLACE BET
  *  (and, once there is a bet, its edit and cancel). The lobby's cards are not on the list: their small UP and DOWN lead to the
@@ -106,6 +106,7 @@ function useControlsUnderStrip(strip: RefObject<HTMLElement | null>, enabled: bo
  * open, and, on a touch screen, while a text field has the keyboard. It never moves or resizes the page: stepping aside changes only the strip.
  */
 export function FeedbackStrip() {
+  const t = useT();
   const visible = useFeedbackStripVisible();
   const formOpen = useFeedbackFormOpen();
   const typing = useTextEntryFocused();
@@ -114,19 +115,19 @@ export function FeedbackStrip() {
   if (!visible) return null;
   const away = formOpen || typing || onControls;
   return (
-    <section ref={ref} className={`feedback-strip${away ? " feedback-strip--away" : ""}`} aria-label="Feedback">
+    <section ref={ref} className={`feedback-strip${away ? " feedback-strip--away" : ""}`} aria-label={t("layout.feedback")}>
       <button type="button" className="feedback-strip__open" onClick={openFeedbackForm}>
         <FeedbackIcon className="feedback-strip__icon" />
-        <span className="feedback-strip__text">{FEEDBACK_STRIP_TEXT}</span>
+        <span className="feedback-strip__text">{t("feedback.stripText")}</span>
         <span className="feedback-strip__action">
-          Feedback <span className="feedback-strip__arrow" aria-hidden="true">→</span>
+          {t("layout.feedback")} <span className="feedback-strip__arrow" aria-hidden="true">→</span>
         </span>
       </button>
       <button
         type="button"
         className="feedback-strip__close"
-        aria-label="Close the feedback banner"
-        title="Close — Feedback stays in the footer"
+        aria-label={t("feedback.closeAria")}
+        title={t("feedback.closeTitle")}
         onClick={dismissFeedbackStrip}
       >
         <CloseIcon />

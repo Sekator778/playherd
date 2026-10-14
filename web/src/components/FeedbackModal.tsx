@@ -13,12 +13,12 @@ import {
   useFeedbackFormOpen,
 } from "../api/feedback";
 import { useBackHandler } from "../fx/backHandlers";
+import { useT } from "../i18n";
 import { CheckIcon } from "./icons";
 import "./Feedback.css";
 
 type Phase = "editing" | "sending" | "sent";
 
-const THANKS = "Thanks — we read every message.";
 const DB_IP_URL = "https://db-ip.com";
 const NUMBER = new Intl.NumberFormat("en-US");
 
@@ -43,6 +43,7 @@ const FOCUSABLE_SELECTOR =
  */
 export function FeedbackModal() {
   const isOpen = useFeedbackFormOpen();
+  const t = useT();
   const api = useApi();
   const { pathname } = useLocation();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -154,7 +155,7 @@ export function FeedbackModal() {
       setText("");
       setPhase("sent");
     } catch (err) {
-      setError(feedbackErrorText(err));
+      setError(feedbackErrorText(err, t));
       setPhase("editing");
     } finally {
       window.clearTimeout(giveUp);
@@ -184,7 +185,7 @@ export function FeedbackModal() {
       >
         {/* What a screen reader should hear as it happens; always in the page, so that the change is what gets announced. */}
         <p className="visually-hidden" role="status">
-          {sending ? "Sending…" : phase === "sent" ? THANKS : ""}
+          {sending ? t("feedback.sending") : phase === "sent" ? t("feedback.thanks") : ""}
         </p>
 
         {phase === "sent" ? (
@@ -192,18 +193,18 @@ export function FeedbackModal() {
             <span className="feedback-sent__badge" aria-hidden="true">
               <CheckIcon />
             </span>
-            <h2 id="feedback-title">{THANKS}</h2>
+            <h2 id="feedback-title">{t("feedback.thanks")}</h2>
             <div className="modal-actions">
               <button ref={closeRef} type="button" className="btn btn--primary btn--block btn--lg" onClick={close}>
-                Close
+                {t("common.close")}
               </button>
             </div>
           </div>
         ) : (
           <form onSubmit={(e) => void submit(e)} noValidate aria-busy={sending}>
-            <h2 id="feedback-title">Feedback</h2>
+            <h2 id="feedback-title">{t("layout.feedback")}</h2>
             <div className="field feedback-field">
-              <label htmlFor="feedback-message">What did you like? What didn't work for you?</label>
+              <label htmlFor="feedback-message">{t("feedback.label")}</label>
               <textarea
                 id="feedback-message"
                 ref={textRef}
@@ -215,7 +216,7 @@ export function FeedbackModal() {
                   setText(e.target.value);
                   setError(null);
                 }}
-                placeholder="Anything helps — even one sentence."
+                placeholder={t("feedback.placeholder")}
                 autoCapitalize="sentences"
                 aria-describedby={describedBy}
                 aria-invalid={error !== null}
@@ -223,17 +224,16 @@ export function FeedbackModal() {
               {counterShown && (
                 <p id="feedback-counter" className={`field-hint feedback-counter${atLimit ? " feedback-counter--limit" : ""}`}>
                   {NUMBER.format(text.length)} / {NUMBER.format(FEEDBACK_MAX_LENGTH)}
-                  {atLimit ? " — that's the limit" : ""}
+                  {atLimit ? t("feedback.limit") : ""}
                 </p>
               )}
             </div>
             <p id="feedback-note" className="feedback-note">
-              No email or name needed. We keep your message with your country (worked out from your IP address — the address itself
-              isn't saved with it), time zone, language, the page you're on and, if you're signed in, your player ID.
+              {t("feedback.note")}
             </p>
             <p className="feedback-credit">
               <a href={DB_IP_URL} target="_blank" rel="noopener noreferrer">
-                IP Geolocation by DB-IP
+                {t("feedback.credit")}
               </a>
             </p>
             {error && (
@@ -243,7 +243,7 @@ export function FeedbackModal() {
             )}
             <div className="feedback-actions">
               <button type="button" className="btn btn--secondary" onClick={close}>
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 ref={sendRef}
@@ -251,7 +251,7 @@ export function FeedbackModal() {
                 className={`btn btn--primary feedback-send${sending ? " feedback-send--sending" : ""}`}
                 disabled={!canSendFeedback(text) || sending}
               >
-                {sending ? "Sending…" : "Send"}
+                {sending ? t("feedback.sending") : t("feedback.send")}
               </button>
             </div>
           </form>

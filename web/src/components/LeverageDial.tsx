@@ -3,6 +3,7 @@ import { startAmbientEmission } from "../fx/particles";
 import { impact } from "../fx/haptics";
 import { usePrefersReducedMotion } from "../fx/reducedMotion";
 import { HEAT_VAR, leverageHeatTier, type HeatTier } from "./heat";
+import { useT, type TKey } from "../i18n";
 
 /**
  * "Power dial" leverage control (`docs/product/design/live-round.md` §1) — replaces the unstyled
@@ -14,12 +15,12 @@ import { HEAT_VAR, leverageHeatTier, type HeatTier } from "./heat";
  * динамика" Alex asked for. Ambient sparks (Hot/Danger/Flame zones) and per-step haptics from
  * live-round.md §1's table are wired below via `fx/particles.ts`/`fx/haptics.ts`.
  */
-const ZONE_LABEL: Record<HeatTier, string> = {
-  1: "Calm",
-  2: "Warm",
-  3: "Hot",
-  4: "Danger",
-  5: "Flame",
+const ZONE_LABEL: Record<HeatTier, TKey> = {
+  1: "dial.calm",
+  2: "dial.warm",
+  3: "dial.hot",
+  4: "dial.danger",
+  5: "dial.flame",
 };
 
 /** live-round.md §1's ambient-particle rate per zone — `0` for Calm/Warm (no particles there). */
@@ -41,6 +42,7 @@ export function LeverageDial({
   max: number;
   onChange: (value: number) => void;
 }) {
+  const t = useT();
   const tier = leverageHeatTier(value, max);
   const pct = ((value - min) / (max - min)) * 100;
   const style = {
@@ -112,7 +114,7 @@ export function LeverageDial({
       />
       <div className="leverage-dial__foot">
         <span id={`${id}-zone`} className="leverage-dial__zone">
-          {ZONE_LABEL[tier]}
+          {t(ZONE_LABEL[tier])}
         </span>
         {/* The market's own cap, always in view: the dial's right end is not x40 everywhere. */}
         <span className="leverage-dial__cap">

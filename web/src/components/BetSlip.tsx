@@ -32,6 +32,8 @@ import {
   type SavedChange,
 } from "./betSlipModel";
 import { herdSideOf } from "./marketModel";
+import { useT } from "../i18n";
+import { Rich } from "../i18n/Rich";
 
 interface BetSlipProps {
   round: RoundBetting;
@@ -62,7 +64,6 @@ interface BetSlipProps {
 const NOTICE_MS = 5000;
 
 /** What the status line says from the moment the server has the player's change until the page shows it. */
-const SAVING_TEXT = "Saved, refreshing…";
 
 /** How long the slip waits for the page to show a change the server has accepted: ten polls of the room. Past it the slip stops
  *  waiting (see where it is used) — the reload and the poll after it have had every chance. */
@@ -113,6 +114,7 @@ export function BetSlip({
   hideDirectionPicker,
 }: BetSlipProps) {
   const { player, openConnectModal } = useSession();
+  const t = useT();
   // The market's own leverage cap (Т-4) bounds the dial; until the market list arrives the
   // platform-wide cap stands, as it did before markets.
   const { market } = useMarket(round.marketId);
@@ -122,9 +124,9 @@ export function BetSlip({
   if (bettingClosed) {
     return (
       <div className="card">
-        <p>Betting just closed for this round.</p>
+        <p>{t("betSlip.closed")}</p>
         <Link className="btn btn--secondary" to={`/round/${nextRoundId(round)}`}>
-          View next round
+          {t("betSlip.viewNext")}
         </Link>
       </div>
     );
@@ -171,9 +173,10 @@ function DirectionPicker({
   direction: Direction;
   onChange: (direction: Direction) => void;
 }) {
+  const t = useT();
   return (
     <div className="field">
-      <span id={id}>Direction</span>
+      <span id={id}>{t("betSlip.direction")}</span>
       <div className="direction-row" role="group" aria-labelledby={id}>
         <button
           type="button"
@@ -214,6 +217,7 @@ export function HerdPicker({
   direction: Direction;
   onPick: (direction: Direction) => void;
 }) {
+  const t = useT();
   const against: Direction | null = herd === null ? null : herd === "UP" ? "DOWN" : "UP";
   const button = (kind: "with" | "against", side: Direction | null) => (
     <button
@@ -223,7 +227,7 @@ export function HerdPicker({
       aria-pressed={side !== null && direction === side}
       onClick={() => side && onPick(side)}
     >
-      <span className="herd-btn__what">{kind === "with" ? "With the herd" : "Against the herd"}</span>
+      <span className="herd-btn__what">{kind === "with" ? t("betSlip.withHerd") : t("betSlip.againstHerd")}</span>
       {side && (
         <span className={`herd-btn__side herd-btn__side--${side.toLowerCase()}`}>
           <DirectionGlyph direction={side} /> {side}
@@ -232,15 +236,15 @@ export function HerdPicker({
     </button>
   );
   return (
-    <div className="herd-picker" role="group" aria-label="Pick a side relative to the herd">
+    <div className="herd-picker" role="group" aria-label={t("betSlip.pickSideAria")}>
       <div className="herd-picker__row">
         {button("with", herd)}
         {button("against", against)}
       </div>
       <p className="herd-picker__hint faint">
         {herd === null
-          ? "No herd yet — the crowd is split evenly, or nobody has bet."
-          : "The herd is the side with more PLAY on it right now — players and test bots together."}
+          ? t("betSlip.noHerd")
+          : t("betSlip.herdHint")}
       </p>
     </div>
   );
@@ -260,13 +264,14 @@ function StakeField({
   /** The most the player could stake; `undefined` (a signed-out preview) hides the available line and the chips. */
   balance?: number;
 }) {
+  const t = useT();
   const current = Number(value) || 0;
   const step = (delta: number) => onChange(steppedStake(current, delta, balance));
   return (
     <div className="field stake-field">
       <label htmlFor={inputId}>{label}</label>
       <div className="stake-row">
-        <button type="button" className="stake-step" aria-label={`Decrease stake by ${STAKE_STEP} PLAY`} onClick={() => step(-STAKE_STEP)}>
+        <button type="button" className="stake-step" aria-label={t("betSlip.decrease", { step: STAKE_STEP })} onClick={() => step(-STAKE_STEP)}>
           <span aria-hidden="true">−</span>
         </button>
         <div className="stake-amount">
@@ -286,14 +291,14 @@ function StakeField({
             PLAY
           </span>
         </div>
-        <button type="button" className="stake-step" aria-label={`Increase stake by ${STAKE_STEP} PLAY`} onClick={() => step(STAKE_STEP)}>
+        <button type="button" className="stake-step" aria-label={t("betSlip.increase", { step: STAKE_STEP })} onClick={() => step(STAKE_STEP)}>
           <span aria-hidden="true">+</span>
         </button>
       </div>
       {balance !== undefined && (
         <>
           <p className="stake-available">
-            Available: <strong className="mono">{formatPlayAmount(balance)}</strong> PLAY
+            <Rich text={t("betSlip.available", { amount: formatPlayAmount(balance) })} />
           </p>
           <div className="stake-chips">
             {STAKE_CHIPS.map((chip) => {
@@ -304,10 +309,10 @@ function StakeField({
                   type="button"
                   className={`stake-chip ${chip.fraction === 1 ? "stake-chip--max" : ""}`}
                   aria-pressed={value === chipValue}
-                  aria-label={chip.fraction === 1 ? "MAX — your whole balance" : `${chip.label} of your balance`}
+                  aria-label={chip.fraction === 1 ? t("betSlip.maxAria") : t("betSlip.chipAria", { label: chip.label })}
                   onClick={() => onChange(chipValue)}
                 >
-                  {chip.label}
+                  {chip.fraction === 1 ? t("betSlip.max") : chip.label}
                 </button>
               );
             })}
@@ -328,24 +333,24 @@ function StakeField({
  * thumb when it does.
  */
 function LiquidationPreviewHead({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const t = useT();
   const explainerId = useId();
   return (
     <>
       <p style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
         <span className="section-title" style={{ marginBottom: 0 }}>
-          Liquidation preview
+          {t("betSlip.liqPreview")}
         </span>
         <button type="button" className="text-button" aria-expanded={open} aria-controls={explainerId} onClick={onToggle}>
-          What's this?
+          {t("betSlip.whatsThis")}
         </button>
       </p>
       {open && (
         <div id={explainerId} className="liquidation-explainer">
           <p>
-            If the price reaches the liquidation price at any moment of the round — not only at its close — your bet is liquidated and the whole
-            stake is lost.
+            {t("betSlip.explain1")}
           </p>
-          <p>The higher the leverage, the closer that price sits to the entry price.</p>
+          <p>{t("betSlip.explain2")}</p>
         </div>
       )}
     </>
@@ -367,14 +372,15 @@ function BetSummary({
   leverage: number;
   stake: number;
 }) {
-  const length = formatDuration((round.window.endMs - round.window.startMs) / 1000);
+  const t = useT();
+  const length = formatDuration((round.window.endMs - round.window.startMs) / 1000, t);
   return (
     <p className="bet-summary">
       <strong className="mono">{formatPlayAmount(stake)} PLAY</strong> · <span className={`bet-summary__side bet-summary__side--${direction.toLowerCase()}`}>
         <DirectionGlyph direction={direction} /> {direction}
       </span>{" "}
-      · <strong className="mono">x{leverage}</strong> on {round.asset}
-      {market?.kind === "ODDS" ? " odds" : ""} · {length} round
+      · <strong className="mono">x{leverage}</strong>{" "}
+      {t(market?.kind === "ODDS" ? "betSlip.summaryTailOdds" : "betSlip.summaryTail", { asset: round.asset, length })}
     </p>
   );
 }
@@ -410,6 +416,7 @@ function BetSlipPreview({
   onDirectionChange?: (direction: Direction) => void;
   hideDirectionPicker?: boolean;
 }) {
+  const t = useT();
   const [internalDirection, setInternalDirection] = useState<Direction>("UP");
   const direction = controlledDirection ?? internalDirection;
   const setDirection = onDirectionChange ?? setInternalDirection;
@@ -423,14 +430,14 @@ function BetSlipPreview({
 
   return (
     <div className="card bet-slip">
-      <p className="test-wallet-tag">PREVIEW — not signed in</p>
+      <p className="test-wallet-tag">{t("betSlip.previewTag")}</p>
 
       {!hideDirectionPicker && <DirectionPicker id="preview-direction-label" direction={direction} onChange={setDirection} />}
       <HerdPicker herd={herdSideOf(round)} direction={direction} onPick={setDirection} />
 
       <div className="field">
         <label htmlFor="preview-leverage-input" className="visually-hidden">
-          Leverage
+          {t("betSlip.leverage")}
         </label>
         <LeverageDial id="preview-leverage-input" value={leverage} min={LEVERAGE_MIN} max={maxLeverage} onChange={setLeverage} />
       </div>
@@ -439,7 +446,7 @@ function BetSlipPreview({
        *  real users only ever see one of the two, but the two components briefly coexist in the
        *  accessibility tree while sign-in state settles, and this is the label a screen reader (or
        *  `findByLabelText` in tests) would otherwise have to disambiguate by timing alone. */}
-      <StakeField inputId="preview-stake-input" label="Preview stake (PLAY)" value={stake} onChange={setStake} />
+      <StakeField inputId="preview-stake-input" label={t("betSlip.previewStake")} value={stake} onChange={setStake} />
 
       {preview && (
         <div className="card card--tight liquidation-preview">
@@ -453,10 +460,10 @@ function BetSlipPreview({
         </div>
       )}
 
-      <p className="muted">Connect your wallet to actually place this bet.</p>
+      <p className="muted">{t("betSlip.connectToPlace")}</p>
       {noPlayerHint && <p className="muted">{noPlayerHint}</p>}
       <button type="button" className="btn btn--primary btn--lg btn--block" onClick={onConnect}>
-        CONNECT WALLET
+        {t("common.connectWallet")}
       </button>
     </div>
   );
@@ -480,6 +487,7 @@ function BetSlipForm({
   hideDirectionPicker?: boolean;
 }) {
   const api = useApi();
+  const t = useT();
   const existing = round.myBet;
   const [formOpen, setFormOpen] = useState(!existing);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -523,9 +531,9 @@ function BetSlipForm({
     } else if (savedChangeIsShown(saved, existing)) {
       setSaved(null);
       if (saved.kind === "cancelled") {
-        setNotice({ kind: "cancelled", text: `Bet cancelled — ${formatPlayAmount(saved.refund)} PLAY is back in your balance.` });
+        setNotice({ kind: "cancelled", text: t("betSlip.cancelledNotice", { amount: formatPlayAmount(saved.refund) }) });
       } else {
-        setNotice(saved.kind === "updated" ? { kind: "updated", text: "Bet updated." } : { kind: "placed", text: "Bet placed." });
+        setNotice(saved.kind === "updated" ? { kind: "updated", text: t("betSlip.updated") } : { kind: "placed", text: t("betSlip.placed") });
         setFormOpen(false);
       }
     }
@@ -630,7 +638,7 @@ function BetSlipForm({
   // THE STATUS LINE: one element, always in the slip, and only its text changes — a live region that appears already filled is
   // often not read at all, one that is there and changes is. It sits above whichever view the slip is showing, so it survives
   // the card giving way to the form and back.
-  const statusText = saved ? SAVING_TEXT : (notice?.text ?? "");
+  const statusText = saved ? t("betSlip.saving") : (notice?.text ?? "");
   const statusKind = saved ? "saving" : notice?.kind;
   const statusGlyph = saved ? "↻" : notice?.kind === "cancelled" ? "↩" : "✓";
   const statusLine = (
@@ -667,7 +675,7 @@ function BetSlipForm({
         {showCancelConfirm ? (
           <>
             <p ref={promptRef} tabIndex={-1}>
-              Cancel your bet and get {formatPlayAmount(existing.stake)} PLAY back?
+              {t("betSlip.cancelConfirm", { amount: formatPlayAmount(existing.stake) })}
             </p>
             <div className="direction-row">
               <button
@@ -678,7 +686,7 @@ function BetSlipForm({
                   requestFocus("card");
                 }}
               >
-                KEEP BET
+                {t("betSlip.keepBet")}
               </button>
               <button
                 type="button"
@@ -696,13 +704,13 @@ function BetSlipForm({
                     requestFocus("status");
                     reload();
                   } catch (err) {
-                    setCancelError(mutationErrorText(err, "Couldn't cancel the bet — try again."));
+                    setCancelError(mutationErrorText(err, t("betSlip.cancelFail"), t));
                   } finally {
                     setCancelling(false);
                   }
                 }}
               >
-                {cancelling ? "CANCELLING…" : "CANCEL BET"}
+                {cancelling ? t("betSlip.cancelling") : t("betSlip.cancelBet")}
               </button>
             </div>
             {cancelError && <p className="field-error">{cancelError}</p>}
@@ -710,7 +718,7 @@ function BetSlipForm({
         ) : (
           <>
             <p ref={cardRef} tabIndex={-1}>
-              Your bet: <DirectionGlyph direction={existing.direction} /> {existing.direction} · x{existing.leverage} ·{" "}
+              {t("betSlip.yourBet")} <DirectionGlyph direction={existing.direction} /> {existing.direction} · x{existing.leverage} ·{" "}
               {formatPlayAmount(existing.stake)} PLAY
             </p>
             <div className="direction-row">
@@ -725,7 +733,7 @@ function BetSlipForm({
                   requestFocus("form");
                 }}
               >
-                EDIT BET
+                {t("betSlip.editBet")}
               </button>
               <button
                 type="button"
@@ -736,7 +744,7 @@ function BetSlipForm({
                   requestFocus("prompt");
                 }}
               >
-                CANCEL BET
+                {t("betSlip.cancelBet")}
               </button>
             </div>
           </>
@@ -766,7 +774,7 @@ function BetSlipForm({
       requestFocus("status");
       reload();
     } catch (err) {
-      setErrorMessage(mutationErrorText(err, "Something went wrong."));
+      setErrorMessage(mutationErrorText(err, t("common.somethingWrong"), t));
     } finally {
       setSubmitting(false);
     }
@@ -778,7 +786,7 @@ function BetSlipForm({
       <form
         ref={formRef}
         tabIndex={-1}
-        aria-label={existing ? "Edit your bet" : "Place a bet"}
+        aria-label={existing ? t("betSlip.formEdit") : t("betSlip.formPlace")}
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
@@ -789,26 +797,26 @@ function BetSlipForm({
 
         <div className="field">
           <label htmlFor="leverage-input" className="visually-hidden">
-            Leverage
+            {t("betSlip.leverage")}
           </label>
           <LeverageDial id="leverage-input" value={leverage} min={LEVERAGE_MIN} max={maxLeverage} onChange={setLeverage} />
         </div>
 
-        <StakeField inputId="stake-input" label="Stake (PLAY)" value={stake} onChange={setStake} balance={balance === null ? undefined : effectiveBalance} />
-        {belowMin && <p className="field-error">Minimum stake is 100 PLAY.</p>}
+        <StakeField inputId="stake-input" label={t("betSlip.stake")} value={stake} onChange={setStake} balance={balance === null ? undefined : effectiveBalance} />
+        {belowMin && <p className="field-error">{t("betSlip.minStake")}</p>}
         {balance === null && balanceFailed && (
           <div className="stack" style={{ gap: 8 }} role="status">
             <p className="field-hint" style={{ margin: 0 }}>
-              Couldn't load your balance yet — trying again.
+              {t("betSlip.balanceFail")}
             </p>
             <button type="button" className="btn btn--secondary" onClick={() => setBalanceAttempt((n) => n + 1)}>
-              Try now
+              {t("betSlip.tryNow")}
             </button>
           </div>
         )}
         {!belowMin && overBalance && (
           <p className="field-error">
-            Not enough PLAY — you have {formatPlayAmount(effectiveBalance)} PLAY, this bet needs {formatPlayAmount(stakeNum)} PLAY.
+            {t("betSlip.notEnough", { have: formatPlayAmount(effectiveBalance), need: formatPlayAmount(stakeNum) })}
           </p>
         )}
 
@@ -822,7 +830,7 @@ function BetSlipForm({
               market={market}
             />
             <p className="faint">
-              Estimated from the current price — your real entry price is set when the round starts.
+              {t("betSlip.estimated")}
             </p>
           </div>
         )}
@@ -831,7 +839,7 @@ function BetSlipForm({
 
         <BetSummary round={round} market={market} direction={direction} leverage={leverage} stake={stakeNum} />
         <button type="submit" className="btn btn--primary btn--lg btn--block" disabled={disabled}>
-          {existing ? "UPDATE BET" : "PLACE BET"}
+          {existing ? t("betSlip.updateBet") : t("betSlip.placeBet")}
         </button>
         {existing && (
           // The way out of edit mode that does not send anything — and back to the card with CANCEL BET on it.
@@ -844,7 +852,7 @@ function BetSlipForm({
               requestFocus("card");
             }}
           >
-            BACK TO YOUR BET
+            {t("betSlip.backToBet")}
           </button>
         )}
       </form>

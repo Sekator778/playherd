@@ -2,6 +2,7 @@ import type { MarketDto, MarketReferenceDto, PublicPositionDto } from "../api/co
 import { outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
 import { formatPlayAmount, formatPrice, rollingPlayFormat, type PriceFormatMarket } from "../format";
 import { RollingDigits } from "../fx/RollingDigits";
+import { useT } from "../i18n";
 import { DirectionGlyph } from "./icons";
 import { liquidationLiveCardClass } from "./heat";
 import { LiveLiqBar } from "./LiquidationBar";
@@ -31,26 +32,28 @@ export function OwnPositionCard({
   /** The price the round CLOSED at, once it has: a liquidated bet is explained against it ("this round closed at …"). */
   closePrice?: string | null;
 }) {
+  const t = useT();
   const heroClass = hero ? "card--hero" : "";
   const priceText = (price: string) => formatPrice(price, market ?? format ?? FALLBACK);
   if (position.liquidated) {
     // The page used to say only "liquidated, you lost your whole stake" under a round that closed a point away from where it
     // opened (first tester pass, D6): no liquidation price, and not a word that it is the path of the price DURING the round
     // that liquidates, not its close. Both are said now, in the market's own words ("odds" for an odds market).
-    const word = (market ?? format ?? FALLBACK).kind === "ODDS" ? "odds" : "price";
+    const whyKey = (market ?? format ?? FALLBACK).kind === "ODDS" ? "own.whyOdds" : "own.whyPrice";
     return (
       <div className={`card ${heroClass} own-outcome own-outcome--liquidated`}>
         <div className="net-result">
-          <span className="outcome-lost">{formatPlayAmount(-Number(positionStakeStr(position)), { sign: true })} PLAY · liquidated</span>
+          <span className="outcome-lost">{t("room.liquidatedLine", { amount: formatPlayAmount(-Number(positionStakeStr(position)), { sign: true }) })}</span>
         </div>
-        <p className="net-result__secondary">You lost your whole stake.</p>
+        <p className="net-result__secondary">{t("room.lostWholeStake")}</p>
         <p className="mono muted live-prices">
-          Entry {priceText(position.entryPrice)} · Liquidation price {priceText(position.liquidationPrice)}
+          {t("own.entryLiq", { entry: priceText(position.entryPrice), liq: priceText(position.liquidationPrice) })}
         </p>
         <p className="muted own-outcome__why">
-          The {word} reached {priceText(position.liquidationPrice)} during the round, so the position was liquidated at that moment.
-          Liquidation is checked all through the round, not only at its close
-          {closePrice ? ` (this round closed at ${priceText(closePrice)})` : ""}.
+          {t(whyKey, {
+            level: priceText(position.liquidationPrice),
+            closed: closePrice ? t("own.closedAt", { price: priceText(closePrice) }) : "",
+          })}
         </p>
       </div>
     );
@@ -59,7 +62,7 @@ export function OwnPositionCard({
   return (
     <div className={`card ${heroClass} own-outcome ${read ? liquidationLiveCardClass(read.roomFraction) : ""}`}>
       <p className="faint">
-        Your position: <DirectionGlyph direction={position.direction} /> {position.direction} · x{position.leverage}
+        {t("room.yourPosition")} <DirectionGlyph direction={position.direction} /> {position.direction} · x{position.leverage}
         {market ? ` · ${market.symbol}` : ""}
       </p>
       {read ? (
@@ -67,14 +70,14 @@ export function OwnPositionCard({
           <span className={outcomeClassName(outcomeFromNet(read.pnl))}>
             <RollingDigits value={read.pnl} durationMs={400} format={rollingPlayFormat(read.pnl, { sign: true, unit: true })} />
           </span>{" "}
-          <span className="net-result__secondary">unrealized</span>
+          <span className="net-result__secondary">{t("room.unrealized")}</span>
         </div>
       ) : (
-        <p className="muted">Your position is live.</p>
+        <p className="muted">{t("room.positionLive")}</p>
       )}
       {read && <LiveLiqBar roomFraction={read.roomFraction} pctToLiquidation={read.pctToLiquidation} />}
       <p className="mono muted live-prices">
-        Entry {priceText(position.entryPrice)} · Liquidation {priceText(position.liquidationPrice)}
+        {t("own.entryLive", { entry: priceText(position.entryPrice), liq: priceText(position.liquidationPrice) })}
       </p>
     </div>
   );

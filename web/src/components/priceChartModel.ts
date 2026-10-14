@@ -6,6 +6,7 @@
  * numbers that decide a round are `api/liquidation.ts`'s).
  */
 import type { EpochMs, PriceTickDto } from "../api/contract";
+import { tEn, type TFn } from "../i18n";
 
 export interface Point {
   atMs: EpochMs;
@@ -207,7 +208,10 @@ const glyph = (direction: "UP" | "DOWN") => (direction === "UP" ? "▲" : "▼")
  * what it is for the player. The liquidation lines are the informative ones: the player's own (solid)
  * and the herd's (the same colour, fainter).
  */
-export function buildChartLines(input: { openPrice?: string | null; own?: PositionLinesInput | null; crowd?: PositionLinesInput | null }): ChartLine[] {
+export function buildChartLines(
+  input: { openPrice?: string | null; own?: PositionLinesInput | null; crowd?: PositionLinesInput | null },
+  t: TFn = tEn,
+): ChartLine[] {
   const lines: ChartLine[] = [];
   const open = input.openPrice != null ? Number(input.openPrice) : null;
   const openOk = open !== null && Number.isFinite(open);
@@ -220,29 +224,29 @@ export function buildChartLines(input: { openPrice?: string | null; own?: Positi
     const entryIsOpen = own !== null && ownEntry !== null && sameLevel(ownEntry, open);
     lines.push({
       id: "open",
-      label: entryIsOpen ? `OPEN · YOUR ENTRY ${glyph(own.direction)} x${own.leverage}` : "OPEN",
+      label: entryIsOpen ? t("lines.openEntry", { glyph: glyph(own.direction), leverage: own.leverage }) : t("lines.open"),
       price: open,
       tone: entryIsOpen ? "entry" : "open",
       faint: false,
     });
   }
   if (own && ownEntry !== null && Number.isFinite(ownEntry) && !(openOk && sameLevel(ownEntry, open))) {
-    lines.push({ id: "own-entry", label: `YOUR ENTRY ${glyph(own.direction)} x${own.leverage}`, price: ownEntry, tone: "entry", faint: false });
+    lines.push({ id: "own-entry", label: t("lines.yourEntry", { glyph: glyph(own.direction), leverage: own.leverage }), price: ownEntry, tone: "entry", faint: false });
   }
   if (own) {
     const liq = Number(own.liquidationPrice);
-    if (Number.isFinite(liq)) lines.push({ id: "own-liq", label: "YOUR LIQ", price: liq, tone: "liq", faint: false });
+    if (Number.isFinite(liq)) lines.push({ id: "own-liq", label: t("lines.yourLiq"), price: liq, tone: "liq", faint: false });
   }
   if (crowd && crowdEntry !== null && Number.isFinite(crowdEntry)) {
     const mergedIntoOpen = openOk && sameLevel(crowdEntry, open);
     const mergedIntoOwn = ownEntry !== null && sameLevel(crowdEntry, ownEntry);
     if (!mergedIntoOpen && !mergedIntoOwn) {
-      lines.push({ id: "crowd-entry", label: `HERD ENTRY ${glyph(crowd.direction)} x${crowd.leverage}`, price: crowdEntry, tone: "entry", faint: true });
+      lines.push({ id: "crowd-entry", label: t("lines.herdEntry", { glyph: glyph(crowd.direction), leverage: crowd.leverage }), price: crowdEntry, tone: "entry", faint: true });
     }
   }
   if (crowd) {
     const liq = Number(crowd.liquidationPrice);
-    if (Number.isFinite(liq)) lines.push({ id: "crowd-liq", label: `HERD LIQ ${glyph(crowd.direction)} x${crowd.leverage}`, price: liq, tone: "liq", faint: true });
+    if (Number.isFinite(liq)) lines.push({ id: "crowd-liq", label: t("lines.herdLiq", { glyph: glyph(crowd.direction), leverage: crowd.leverage }), price: liq, tone: "liq", faint: true });
   }
   return lines;
 }

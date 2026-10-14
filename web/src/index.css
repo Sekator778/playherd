@@ -2308,3 +2308,17 @@ footer.app-footer .footer-link {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
+/* Footer language select (i18n) */
+.lang-switcher {
+  display: inline-block;
+  margin-top: 12px;
+}
+.lang-switcher select {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+}

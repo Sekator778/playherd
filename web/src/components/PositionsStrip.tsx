@@ -11,20 +11,21 @@ import { ChevronIcon, CrackIcon, DirectionGlyph } from "./icons";
 import { liquidationLiveCardClass } from "./heat";
 import { LiveLiqBar } from "./LiquidationBar";
 import { isWaitingForOpen, liveReadOfPosition, type LiveRead } from "./livePosition";
-import { WAITING_FOR_OPEN } from "./WaitingForOpen";
+import { useT, type TFn } from "../i18n";
 import { positionRoomPath, readStripCollapsed, writeStripCollapsed } from "./positionsStripModel";
 import { useServerNow } from "./useServerNow";
 import "./PositionsStrip.css";
 
 /** "3 MIN" — the position's own round length (`MyPositionDto.durationSec`), so the label survives the market
  *  leaving `markets()`; nothing at all if a server sent none, never "NaN SEC". */
-function lengthLabel(position: MyPositionDto): string | null {
-  return Number.isFinite(position.durationSec) && position.durationSec > 0 ? formatDuration(position.durationSec) : null;
+function lengthLabel(position: MyPositionDto, t: TFn): string | null {
+  return Number.isFinite(position.durationSec) && position.durationSec > 0 ? formatDuration(position.durationSec, t) : null;
 }
 
 export function PositionCard({ position, market, nowMs }: { position: MyPositionDto; market: MarketDto | undefined; nowMs: number }) {
+  const t = useT();
   const read: LiveRead | null = liveReadOfPosition(position, market?.price?.price, market);
-  const length = lengthLabel(position);
+  const length = lengthLabel(position, t);
   const waitingOpen = isWaitingForOpen(position);
   const betting = position.phase === "BETTING";
   const timeLeft = formatCountdown(position.untilMs - nowMs);
@@ -32,16 +33,16 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
   const pulse = read ? liquidationLiveCardClass(read.roomFraction) : "";
   const sideClass = position.direction.toLowerCase();
   const label =
-    `${position.symbol}, ${position.direction} x${position.leverage}, stake ${formatPlayAmount(position.stake)} PLAY` +
+    t("pos.ariaBase", { symbol: position.symbol, direction: position.direction, leverage: position.leverage, stake: formatPlayAmount(position.stake) }) +
     (liquidated
-      ? ", liquidated"
+      ? `, ${t("pos.ariaLiquidated")}`
       : betting
-        ? `, round starts in ${timeLeft}`
+        ? `, ${t("pos.ariaStarts", { time: timeLeft })}`
         : waitingOpen
-          ? ", waiting for the opening price"
+          ? `, ${t("pos.ariaWaiting")}`
           : read
-          ? `, live ${formatPlayAmount(read.pnl, { sign: true })} PLAY, ${(read.pctToLiquidation * 100).toFixed(1)}% to liquidation`
-          : "");
+            ? `, ${t("pos.ariaLive", { pnl: formatPlayAmount(read.pnl, { sign: true }), pct: `${(read.pctToLiquidation * 100).toFixed(1)}%` })}`
+            : "");
   return (
     <Link
       to={positionRoomPath(position)}
@@ -53,25 +54,25 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
           <DirectionGlyph direction={position.direction} /> {position.symbol}
         </span>
         <span className="pos-card__lev mono">x{position.leverage}</span>
-        <span className="pos-card__time mono">{betting ? `starts ${timeLeft}` : `ends ${timeLeft}`}</span>
+        <span className="pos-card__time mono">{betting ? t("pos.starts", { time: timeLeft }) : t("pos.ends", { time: timeLeft })}</span>
       </span>
 
       {liquidated ? (
         <span className="pos-card__pnl pos-card__pnl--liq">
           <CrackIcon className="pos-card__crack" />
           <span className="mono">{formatPlayAmount(-Number(position.stake), { sign: true })} PLAY</span>
-          <span className="pos-card__note">liquidated</span>
+          <span className="pos-card__note">{t("pos.liquidated")}</span>
         </span>
       ) : betting ? (
         <span className="pos-card__pnl pos-card__pnl--wait">
-          <span className="pos-card__note">Bet placed — waits for the round to start</span>
+          <span className="pos-card__note">{t("pos.betPlaced")}</span>
         </span>
       ) : waitingOpen ? (
         // The round has no opening price yet: no entry, no P&L, no meter — never a zero.
         <span className="pos-card__pnl pos-card__pnl--wait">
           <span className="pos-card__note pos-card__note--waiting">
             <span className="pos-card__waiting-dot" aria-hidden="true" />
-            {WAITING_FOR_OPEN}
+            {t("waiting.title")}
           </span>
         </span>
       ) : read ? (
@@ -83,12 +84,12 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
         </>
       ) : (
         <span className="pos-card__pnl pos-card__pnl--wait">
-          <span className="pos-card__note">Live — waiting for a price</span>
+          <span className="pos-card__note">{t("pos.waitingPrice")}</span>
         </span>
       )}
 
       <span className="pos-card__foot mono">
-        stake {formatPlayAmount(position.stake)}
+        {t("pos.foot", { stake: formatPlayAmount(position.stake) })}
         {length ? ` · ${length}` : ""}
       </span>
     </Link>
@@ -116,6 +117,7 @@ export function PositionsStrip() {
 }
 
 function StripBody({ positions }: { positions: readonly MyPositionDto[] }) {
+  const t = useT();
   const { byId } = useMarkets();
   const nowMs = useServerNow(1000);
   const [collapsed, setCollapsed] = useState(readStripCollapsed);
@@ -134,18 +136,18 @@ function StripBody({ positions }: { positions: readonly MyPositionDto[] }) {
   };
 
   return (
-    <section className="pos-strip" aria-label="Your open bets and positions">
+    <section className="pos-strip" aria-label={t("pos.stripAria")}>
       <button type="button" className="pos-strip__head" aria-expanded={!collapsed} aria-controls="pos-strip-list" onClick={toggle}>
         <span className="pos-strip__title">
-          Your bets <span className="pos-strip__count mono">{total}</span>
+          {t("pos.title")} <span className="pos-strip__count mono">{total}</span>
         </span>
         <span className="pos-strip__summary">
           {liveReads.length > 0 && (
             <span className={`mono ${outcomeClassName(outcomeFromNet(liveTotal))}`}>
-              {formatPlayAmount(liveTotal, { sign: true })} PLAY live
+              {t("pos.summaryLive", { amount: formatPlayAmount(liveTotal, { sign: true }) })}
             </span>
           )}
-          {liquidatedCount > 0 && <span className="pos-strip__liq">{liquidatedCount} liquidated</span>}
+          {liquidatedCount > 0 && <span className="pos-strip__liq">{t("pos.liqCount", { count: liquidatedCount })}</span>}
         </span>
         <ChevronIcon open={!collapsed} className="pos-strip__chevron" />
       </button>

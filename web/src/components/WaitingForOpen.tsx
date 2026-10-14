@@ -1,5 +1,6 @@
 import type { MyPositionDto } from "../api/contract";
 import { formatPlayAmount } from "../format";
+import { useT } from "../i18n";
 import { DirectionGlyph } from "./icons";
 import "./WaitingForOpen.css";
 
@@ -11,7 +12,6 @@ import "./WaitingForOpen.css";
  * liquidation price or meter, never a zero (`contract.ts`). Calm on purpose — nothing is wrong that the player
  * can fix, and nothing is promised beyond what the contract says: the numbers appear when the price does.
  */
-export const WAITING_FOR_OPEN = "Waiting for the opening price…";
 
 /** A small pulsing dot (still under reduced motion: the word carries the state, the dot is decoration). */
 function WaitingDot() {
@@ -21,11 +21,12 @@ function WaitingDot() {
 /** The round-level notice: what is missing and what comes back once it arrives. Replaces every figure of a
  *  running round — the crowd's position, the list of players, the open price line. */
 export function WaitingForOpenCard({ symbol, length }: { symbol?: string; length?: string }) {
+  const t = useT();
   return (
     <div className="card waiting-open" role="status">
       <div className="waiting-open__head">
         <WaitingDot />
-        <h3>{WAITING_FOR_OPEN}</h3>
+        <h3>{t("waiting.title")}</h3>
       </div>
       {(symbol || length) && (
         <p className="faint waiting-open__ctx">
@@ -35,8 +36,7 @@ export function WaitingForOpenCard({ symbol, length }: { symbol?: string; length
         </p>
       )}
       <p className="muted waiting-open__text">
-        This round has started, but the price source hasn't sent its opening price yet. Positions, live P&amp;L and liquidation prices
-        appear as soon as it does — until then there is no number to show.
+        {t("waiting.card")}
       </p>
     </div>
   );
@@ -51,19 +51,19 @@ export function OwnBetWaiting({
   position: Pick<MyPositionDto, "direction" | "leverage" | "stake" | "symbol">;
   hero?: boolean;
 }) {
+  const t = useT();
   return (
     <div className={`card ${hero ? "card--hero" : ""} own-outcome waiting-open waiting-open--own`} role="status">
       <p className="faint">
-        Your bet: <DirectionGlyph direction={position.direction} /> {position.direction} · x{position.leverage} · {position.symbol} ·{" "}
+        {t("betSlip.yourBet")} <DirectionGlyph direction={position.direction} /> {position.direction} · x{position.leverage} · {position.symbol} ·{" "}
         {formatPlayAmount(position.stake)} PLAY
       </p>
       <div className="waiting-open__head">
         <WaitingDot />
-        <p className="waiting-open__headline">{WAITING_FOR_OPEN}</p>
+        <p className="waiting-open__headline">{t("waiting.title")}</p>
       </div>
       <p className="muted waiting-open__text">
-        This round has started, but the price source hasn't sent its opening price yet. Your entry price, live P&amp;L and liquidation price —
-        and everyone's positions — appear as soon as it does.
+        {t("waiting.own")}
       </p>
     </div>
   );

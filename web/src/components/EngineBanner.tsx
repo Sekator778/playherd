@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useApi } from "../api/ApiContext";
 import { useEngineNotReady } from "../api/engineState";
+import { useT } from "../i18n";
 import "./EngineBanner.css";
 
 /** How often the banner asks the server whether it is back, while it is showing. */
@@ -35,11 +36,12 @@ export function EngineBanner() {
 
 /** The notice itself (also drawn on its own in `/lab/states`). */
 export function EngineNotice() {
+  const t = useT();
   return (
     <div className="engine-banner" role="status">
       <span className="engine-banner__dot" aria-hidden="true" />
       <p>
-        <strong>The server is restarting.</strong> What you see is the last data we had — it updates by itself when the server is back.
+        <strong>{t("engine.title")}</strong> {t("engine.body")}
       </p>
     </div>
   );

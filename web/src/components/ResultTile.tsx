@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import type { Direction, MarketDto, RoundId } from "../api/contract";
 import { outcomeFromNet } from "../api/outcome";
 import { formatPlayAmount } from "../format";
+import { useT } from "../i18n";
 import { CrackIcon, DirectionGlyph, MinusDiscIcon, TrophyIcon } from "./icons";
 import { oddsMarketPhrase } from "./marketModel";
 
@@ -61,6 +62,7 @@ export function ResultTile({
    *  whose odds they are only then — an unknown source is not called "Polymarket". */
   source?: MarketDto["source"];
 }) {
+  const t = useT();
   const kind = resultKind(net, liquidated);
   return (
     <Link to={`/round/${roundId}`} className={`result-tile result-tile--${kind}`}>
@@ -80,8 +82,8 @@ export function ResultTile({
               {odds && (
                 <>
                   {" "}
-                  <span className="mk-tag mk-tag--odds" title={`${oddsMarketPhrase(source)}: the result is how the odds moved`}>
-                    ODDS
+                  <span className="mk-tag mk-tag--odds" title={t("parts.oddsTitle", { what: oddsMarketPhrase(source, t) })}>
+                    {t("parts.oddsTag")}
                   </span>
                 </>
               )}
@@ -110,7 +112,7 @@ export function ResultTile({
       </span>
       <span className={`result-tile__net ${NET_CLASS[kind]}`}>
         {formatPlayAmount(net, { sign: true })} PLAY
-        {liquidated && <span className="result-tile__tag"> · LIQ</span>}
+        {liquidated && <span className="result-tile__tag"> · {t("resultTile.liq")}</span>}
       </span>
     </Link>
   );

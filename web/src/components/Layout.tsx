@@ -22,6 +22,7 @@ import { ResultMomentHost } from "../fx/ResultMomentHost";
 import { RollingDigits } from "../fx/RollingDigits";
 import { useFxSettings } from "../fx/fxSettings";
 import { primeAudioContext } from "../fx/sound";
+import { LOCALES, LOCALE_NAMES, useLocale, useT, type Locale, type TKey } from "../i18n";
 
 /**
  * Bottom tab bar (task IA: "Lobby / Stats / Profile") — replaces the old top nav row
@@ -34,14 +35,15 @@ import { primeAudioContext } from "../fx/sound";
  * `/profile/me` (`MyProfilePage.tsx`), which shows that profile with Wallet moved inside it as a
  * sub-tab; `/wallet` is unchanged as a direct deep link (header balance pill, profile menu).
  */
-const TAB_LINKS = [
-  { to: "/", label: "Lobby", end: true, Icon: LobbyTabIcon },
-  { to: "/stats", label: "Stats", end: false, Icon: StatsTabIcon },
-  { to: "/profile/me", label: "Profile", end: false, Icon: ProfileTabIcon },
+const TAB_LINKS: { to: string; labelKey: TKey; end: boolean; Icon: typeof LobbyTabIcon }[] = [
+  { to: "/", labelKey: "layout.tabLobby", end: true, Icon: LobbyTabIcon },
+  { to: "/stats", labelKey: "layout.tabStats", end: false, Icon: StatsTabIcon },
+  { to: "/profile/me", labelKey: "layout.tabProfile", end: false, Icon: ProfileTabIcon },
 ];
 
 function BalancePill() {
   const api = useApi();
+  const t = useT();
   const { player } = useSession();
   const [balance, setBalance] = useState<string | null>(null);
   // Sum of the player's stakes still tied up in an open or running round (Alex's report,
@@ -79,7 +81,7 @@ function BalancePill() {
 
   if (!player || balance === null) return null;
   return (
-    <NavLink to="/wallet" className="balance-pill" aria-label={`Balance: ${formatPlayAmount(balance)} PLAY`}>
+    <NavLink to="/wallet" className="balance-pill" aria-label={t("layout.balanceAria", { amount: formatPlayAmount(balance) })}>
       <CoinIcon className="balance-pill__coin" />
       {/* Rolls on ANY change, not only while a result moment is on screen — the direct answer to
        *  Alex's "чтобы сумма выигрыша или проигрыша... сразу это проявлялось"
@@ -93,7 +95,7 @@ function BalancePill() {
         <RollingDigits value={Number(balance)} format={rollingPlayFormat(Number(balance))} durationMs={500} />
       </span>
       {shownInPlay !== null && shownInPlay > 0 && (
-        <span className="balance-pill__in-play">+{formatPlayAmount(shownInPlay)} in play</span>
+        <span className="balance-pill__in-play">{t("layout.inPlay", { amount: formatPlayAmount(shownInPlay) })}</span>
       )}
     </NavLink>
   );
@@ -108,6 +110,7 @@ function BalancePill() {
  *  since sound/haptics apply before sign-in too. */
 function FxMenu() {
   const fx = useFxSettings();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -126,8 +129,8 @@ function FxMenu() {
         className="fx-toggle"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Sound and vibration settings"
-        title="Sound and vibration"
+        aria-label={t("layout.fxAria")}
+        title={t("layout.fxTitle")}
         onClick={() => setOpen((v) => !v)}
       >
         {fx.sfxEnabled ? <SpeakerOnIcon /> : <SpeakerMuteIcon />}
@@ -145,7 +148,7 @@ function FxMenu() {
               }}
             >
               {fx.sfxEnabled ? <SpeakerOnIcon /> : <SpeakerMuteIcon />}
-              <span>Sound {fx.sfxEnabled ? "on" : "off"}</span>
+              <span>{fx.sfxEnabled ? t("layout.soundOn") : t("layout.soundOff")}</span>
             </button>
           </li>
           <li role="none">
@@ -156,7 +159,7 @@ function FxMenu() {
               onClick={() => fx.setHapticsEnabled(!fx.hapticsEnabled)}
             >
               {fx.hapticsEnabled ? <VibrationOnIcon /> : <VibrationOffIcon />}
-              <span>Vibration {fx.hapticsEnabled ? "on" : "off"}</span>
+              <span>{fx.hapticsEnabled ? t("layout.vibrationOn") : t("layout.vibrationOff")}</span>
             </button>
           </li>
         </ul>
@@ -167,6 +170,7 @@ function FxMenu() {
 
 function ProfileMenu() {
   const { player, signOut } = useSession();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -189,18 +193,18 @@ function ProfileMenu() {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {headerName(player)} ▾
+        {headerName(player, t)} ▾
       </button>
       {open && (
         <ul className="profile-menu__list" role="menu">
           <li role="none">
             <NavLink to="/profile/me" role="menuitem" onClick={() => setOpen(false)}>
-              My profile
+              {t("layout.myProfile")}
             </NavLink>
           </li>
           <li role="none">
             <NavLink to="/wallet" role="menuitem" onClick={() => setOpen(false)}>
-              Wallet
+              {t("layout.wallet")}
             </NavLink>
           </li>
           <li role="none">
@@ -213,7 +217,7 @@ function ProfileMenu() {
                 openFeedbackForm();
               }}
             >
-              Feedback
+              {t("layout.feedback")}
             </button>
           </li>
           <li role="none">
@@ -225,7 +229,7 @@ function ProfileMenu() {
                 void signOut();
               }}
             >
-              Sign out
+              {t("layout.signOut")}
             </button>
           </li>
         </ul>
@@ -243,6 +247,7 @@ function ProfileMenu() {
  */
 function Header() {
   const { player, openConnectModal } = useSession();
+  const t = useT();
 
   return (
     <header className="app-header">
@@ -256,7 +261,7 @@ function Header() {
           <ProfileMenu />
         ) : (
           <button type="button" className="btn btn--primary" onClick={openConnectModal}>
-            CONNECT WALLET
+            {t("common.connectWallet")}
           </button>
         )}
       </div>
@@ -268,19 +273,40 @@ function Header() {
  *  mobile alike (concept A, `docs/product/design/concepts.md`: "плавающая нижняя навигация-
  *  таблетка с иконками"). */
 function BottomTabBar() {
+  const t = useT();
   return (
-    <nav className="tab-bar" aria-label="Main">
-      {TAB_LINKS.map(({ to, label, end, Icon }) => (
+    <nav className="tab-bar" aria-label={t("layout.navMain")}>
+      {TAB_LINKS.map(({ to, labelKey, end, Icon }) => (
         <NavLink key={to} to={to} end={end} className="tab-bar__item">
           <Icon className="tab-bar__icon" />
-          <span>{label}</span>
+          <span>{t(labelKey)}</span>
         </NavLink>
       ))}
     </nav>
   );
 }
 
+/** Footer language select — each language is named in itself, so it stays readable whichever
+ *  language the page is in. The choice is saved by the provider (`i18n/I18nProvider.tsx`). */
+function LanguageSwitcher() {
+  const t = useT();
+  const { locale, setLocale } = useLocale();
+  return (
+    <label className="lang-switcher">
+      <span className="visually-hidden">{t("layout.language")}</span>
+      <select value={locale} onChange={(e) => setLocale(e.target.value as Locale)}>
+        {LOCALES.map((l) => (
+          <option key={l} value={l} lang={l}>
+            {LOCALE_NAMES[l]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function Layout() {
+  const t = useT();
   // Global settlement-event watcher (implementation-plan.md §3) — runs regardless of which page
   // is mounted below, so a result moment fires "видно с любой страницы" (game-designer.md).
   useSettlementWatcher();
@@ -300,7 +326,7 @@ export function Layout() {
     <div className={`page${feedbackStripUp ? " page--feedback-strip" : ""}`}>
       <ScrollManager />
       <a href="#main-content" className="skip-link">
-        Skip to content
+        {t("layout.skip")}
       </a>
       <Header />
       <main id="main-content" className="main-content">
@@ -315,13 +341,16 @@ export function Layout() {
       </main>
       <footer className="app-footer">
         <div className="container">
-          Herd — crowd vs market. A toy-money demo on Chia testnet11. <NavLink to="/how-it-works">How it works</NavLink>
+          {t("layout.footerTagline")} <NavLink to="/how-it-works">{t("layout.howItWorks")}</NavLink>
           {" · "}
-          <NavLink to="/status">Status</NavLink>
+          <NavLink to="/status">{t("layout.status")}</NavLink>
           {" · "}
           <button type="button" className="footer-link" onClick={openFeedbackForm}>
-            Feedback
+            {t("layout.feedback")}
           </button>
+        </div>
+        <div className="container">
+          <LanguageSwitcher />
         </div>
       </footer>
       <BottomTabBar />

@@ -5,6 +5,7 @@
  * is a source of truth for a market's parameters (those are `MarketDto`'s).
  */
 import type { CategoryDto, CategoryId } from "./contract";
+import { tEn, type TFn } from "../i18n";
 
 /**
  * The lobby panels in display order — Т-1 (`docs/research/markets_architecture.md` §2) lists
@@ -26,6 +27,17 @@ export const CATEGORY_TITLES: Readonly<Record<CategoryId, string>> = {
 
 export function categoryTitle(id: CategoryId): string {
   return CATEGORY_TITLES[id];
+}
+
+/** The category's name in the interface language (`categoryTitle` is the English one, kept for matching and ordering). */
+export function categoryLabel(id: CategoryId, t: TFn = tEn): string {
+  return t(`cat.${id}`);
+}
+
+/** A category as the screens name it: translated for the categories this build knows, else the server's own title (a newer
+ *  server may add one), else its id. */
+export function categoryName(category: Pick<CategoryDto, "id" | "title">, t: TFn = tEn): string {
+  return Object.hasOwn(CATEGORY_TITLES, category.id) ? categoryLabel(category.id, t) : category.title || category.id;
 }
 
 /** `categories` in Т-1 order, whatever order they arrived in (unknown ids, from a newer server, last). */

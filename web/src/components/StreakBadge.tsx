@@ -1,3 +1,4 @@
+import { useT } from "../i18n";
 import { FlameIcon } from "./icons";
 import "./StreakBadge.css";
 
@@ -11,27 +12,28 @@ import "./StreakBadge.css";
  * empty space and not a shamed "0".
  */
 export function StreakBadge({ current, best }: { current: number; best: number }) {
+  const t = useT();
   const active = current > 0;
   return (
     <div
       className={`streak ${active ? "streak--on" : "streak--off"}`}
       role="group"
-      aria-label={`Win streak: ${current} in a row now, best ${best}`}
+      aria-label={t("streak.aria", { current, best })}
     >
       <FlameIcon className="streak__flame" />
       <div className="streak__body">
         <p className="streak__main">
           {active ? (
             <>
-              <span className="streak__num mono">{current}</span> {current === 1 ? "win in a row" : "wins in a row"}
+              <span className="streak__num mono">{current}</span> {t("streak.wins", { count: current })}
             </>
           ) : (
-            "No win streak right now"
+            t("streak.none")
           )}
         </p>
         <p className="streak__sub">
-          Best: <span className="mono">{best}</span>
-          {active ? " · a loss resets it, a flat round doesn't" : best > 0 ? " · the next win starts a new one" : " · a win starts one"}
+          {t("streak.best")} <span className="mono">{best}</span>
+          {active ? t("streak.subActive") : best > 0 ? t("streak.subBest") : t("streak.subNone")}
         </p>
       </div>
     </div>

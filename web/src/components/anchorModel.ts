@@ -7,6 +7,7 @@
  * before it is, and the pending states do not promise a time.
  */
 import type { OracleAnchorDto } from "../api/contract";
+import { tEn, type TFn } from "../i18n";
 
 export type AnchorTone = "ok" | "wait" | "bad" | "idle";
 
@@ -20,58 +21,54 @@ export interface AnchorWording {
   detail: string;
 }
 
-export function describeAnchor(anchor: OracleAnchorDto): AnchorWording {
-  const record = `oracle record #${anchor.seq}`;
+export function describeAnchor(anchor: OracleAnchorDto, t: TFn = tEn): AnchorWording {
+  const seq = anchor.seq;
   switch (anchor.state) {
     case "confirmed":
       return {
-        chip: "CONFIRMED",
+        chip: t("anchor.confirmedChip"),
         tone: "ok",
-        title: "Anchored on Chia",
+        title: t("anchor.confirmedTitle"),
         detail:
           anchor.height !== null
-            ? `${capitalize(record)}, confirmed at block ${anchor.height.toLocaleString("en-US")} on testnet11.`
-            : `${capitalize(record)} is confirmed on testnet11.`,
+            ? t("anchor.confirmedAtBlock", { seq, height: anchor.height.toLocaleString("en-US") })
+            : t("anchor.confirmed", { seq }),
       };
     case "in_flight":
       return {
-        chip: "SENT",
+        chip: t("anchor.sentChip"),
         tone: "wait",
-        title: "Being anchored on Chia",
-        detail: `${capitalize(record)} was sent to testnet11 and is waiting for confirmation.`,
+        title: t("anchor.sentTitle"),
+        detail: t("anchor.sent", { seq }),
       };
     case "queued":
       return {
-        chip: "QUEUED",
+        chip: t("anchor.queuedChip"),
         tone: "wait",
-        title: "Waiting to be anchored on Chia",
-        detail: `${capitalize(record)} is queued and goes out with the next batch.`,
+        title: t("anchor.queuedTitle"),
+        detail: t("anchor.queued", { seq }),
       };
     case "unknown":
       return {
-        chip: "PENDING",
+        chip: t("anchor.pendingChip"),
         tone: "idle",
-        title: "Not anchored yet",
-        detail: "This round's oracle record hasn't reached the publishing queue.",
+        title: t("anchor.pendingTitle"),
+        detail: t("anchor.pending"),
       };
     case "conflict":
       return {
-        chip: "CONFLICT",
+        chip: t("anchor.conflictChip"),
         tone: "bad",
-        title: "Not anchored — conflict",
-        detail: `The chain already holds a different record at position #${anchor.seq}, so this round's record was held back and flagged.`,
+        title: t("anchor.conflictTitle"),
+        detail: t("anchor.conflict", { seq }),
       };
     default:
       // A state a newer server invented: say what we know instead of guessing a meaning.
       return {
         chip: anchor.state.toUpperCase(),
         tone: "idle",
-        title: "Oracle record",
-        detail: `${capitalize(record)} — state "${anchor.state}".`,
+        title: t("anchor.otherTitle"),
+        detail: t("anchor.other", { seq, state: anchor.state }),
       };
   }
-}
-
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }

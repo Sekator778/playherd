@@ -22,7 +22,7 @@
  * `ENGINE_NOT_READY` marks it not ready; a success of a read that needs the engine, or `serverInfo()` saying
  * `engineReady !== false`, marks it ready again.
  */
-import { RATE_LIMITED_TEXT } from "./apiErrors";
+import { tNow } from "../i18n";
 import { reportEngineNotReady, reportEngineReady } from "./engineState";
 import {
   ApiRequestError,
@@ -122,7 +122,7 @@ async function rpc<T>(method: string, args: unknown[]): Promise<T> {
       body: JSON.stringify({ args }),
     });
   } catch {
-    throw new Error("Network error — check your connection and try again.");
+    throw new Error(tNow("common.networkError"));
   }
 
   let body: unknown = null;
@@ -140,7 +140,7 @@ async function rpc<T>(method: string, args: unknown[]): Promise<T> {
     const message = err?.message || `Request failed (${res.status}).`;
     if (!err) {
       // No server envelope: a transport/proxy failure — except a rate limit, which is one whoever applies it.
-      if (res.status === 429) throw new ApiRequestError("RATE_LIMITED", RATE_LIMITED_TEXT);
+      if (res.status === 429) throw new ApiRequestError("RATE_LIMITED", tNow("errors.rateLimited"));
       throw new Error(message);
     }
     const code: ApiErrorCode = err.code && KNOWN_ERROR_CODES.has(err.code) ? (err.code as ApiErrorCode) : "OTHER";

@@ -5,7 +5,8 @@
  * live deployment months — one set of chips and one date format cannot serve both).
  */
 import type { CategoryDto, CategoryId, CrowdOverviewDto, MarketDto } from "../api/contract";
-import { categoryTitle } from "../api/marketMeta";
+import { categoryName } from "../api/marketMeta";
+import { tEn, type TFn } from "../i18n";
 import { formatClock, formatDate, formatDateTime, formatUsd } from "../format";
 
 export type OverviewRow = CrowdOverviewDto["markets"][number];
@@ -36,12 +37,12 @@ export interface MarketGroup {
 
 /** The selector's `<optgroup>`s: the server's categories in its order, each with its markets (closed ones
  *  too — their crowd account is still there to read); markets of a category the list does not name go last. */
-export function marketGroups(markets: readonly MarketDto[], categories: readonly CategoryDto[]): MarketGroup[] {
-  const groups: MarketGroup[] = categories.map((c) => ({ id: c.id, title: c.title || categoryTitle(c.id), markets: [] }));
+export function marketGroups(markets: readonly MarketDto[], categories: readonly CategoryDto[], t: TFn = tEn): MarketGroup[] {
+  const groups: MarketGroup[] = categories.map((c) => ({ id: c.id, title: categoryName(c, t), markets: [] }));
   for (const market of markets) {
     let group = groups.find((g) => g.id === market.category);
     if (!group) {
-      group = { id: market.category, title: categoryTitle(market.category) ?? market.category, markets: [] };
+      group = { id: market.category, title: categoryName({ id: market.category, title: "" }, t), markets: [] };
       groups.push(group);
     }
     group.markets.push(market);

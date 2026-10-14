@@ -5,6 +5,7 @@
  */
 import type { Direction, EpochMs, MarketDto, MarketKind, MarketPriceDto, MarketSeriesDto } from "../api/contract";
 import type { PriceFormatMarket } from "../format";
+import { tEn, type TFn } from "../i18n";
 
 /** A market that takes bets: not closed. Closed ones stay in `markets()` for a while (a card can say
  *  why it left) but take no more bets. */
@@ -130,7 +131,7 @@ const SELF_EXPLAINING_OUTCOME = /^(yes|no|draw|tie|over|under)$/i;
  * then only the outcome is worth saying: "Steelers to win" for a team of a sports game, "Yes" / "Draw" / "Over" as
  * they are. Any other subtitle is shown as the server sent it; `null` when there is none.
  */
-export function subtitleOf(market: Pick<MarketDto, "title" | "subtitle" | "category">): string | null {
+export function subtitleOf(market: Pick<MarketDto, "title" | "subtitle" | "category">, t: TFn = tEn): string | null {
   const subtitle = market.subtitle?.trim();
   if (!subtitle) return null;
   const at = subtitle.indexOf(" · ");
@@ -139,7 +140,7 @@ export function subtitleOf(market: Pick<MarketDto, "title" | "subtitle" | "categ
   const context = subtitle.slice(at + 3).trim();
   const repeatsTitle = context.localeCompare(market.title.trim(), "en", { sensitivity: "base" }) === 0;
   if (!outcome || !repeatsTitle) return subtitle;
-  return market.category === "sports" && !SELF_EXPLAINING_OUTCOME.test(outcome) ? `${outcome} to win` : outcome;
+  return market.category === "sports" && !SELF_EXPLAINING_OUTCOME.test(outcome) ? t("source.toWin", { outcome }) : outcome;
 }
 
 /**
@@ -148,8 +149,11 @@ export function subtitleOf(market: Pick<MarketDto, "title" | "subtitle" | "categ
  * and 320 px the line read "Jasmine Paolini to …" and "Taylah Presto…", and the percentage above it no longer said whose it
  * was (first tester pass, D7). `null` when there is no subtitle.
  */
-export function subtitleParts(market: Pick<MarketDto, "title" | "subtitle" | "category">): { outcome: string; context: string | null } | null {
-  const text = subtitleOf(market);
+export function subtitleParts(
+  market: Pick<MarketDto, "title" | "subtitle" | "category">,
+  t: TFn = tEn,
+): { outcome: string; context: string | null } | null {
+  const text = subtitleOf(market, t);
   if (text === null) return null;
   const at = text.indexOf(" · ");
   if (at < 0) return { outcome: text, context: null };
@@ -171,7 +175,7 @@ const SOURCE_NAMES: Readonly<Record<SourceId, string>> = {
   coinbase: "Coinbase",
   kraken: "Kraken",
   polymarket: "Polymarket",
-  synthetic: "Simulated",
+  synthetic: "Simulated", // shown through `t("source.simulated")` — see `sourceName`
 };
 
 /**
@@ -180,9 +184,10 @@ const SOURCE_NAMES: Readonly<Record<SourceId, string>> = {
  * is printed as the server sent it, capitalised, never as another source's name; no name at all is `null`, and a page
  * then claims no source (never "Hyperliquid" by default).
  */
-export function sourceName(source: string | null | undefined): string | null {
+export function sourceName(source: string | null | undefined, t: TFn = tEn): string | null {
   const raw = typeof source === "string" ? source.trim() : "";
   if (raw === "") return null;
+  if (raw === "synthetic") return t("source.simulated");
   if (Object.hasOwn(SOURCE_NAMES, raw)) return SOURCE_NAMES[raw as SourceId];
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
@@ -192,20 +197,20 @@ export function sourceName(source: string | null | undefined): string | null {
  * Kraken", "Price from Hyperliquid", "Odds from Polymarket", "Simulated demo prices (no live source)"; `null` for a
  * source nobody names.
  */
-export function originPhrase(source: string | null | undefined): string | null {
-  const name = sourceName(source);
+export function originPhrase(source: string | null | undefined, t: TFn = tEn): string | null {
+  const name = sourceName(source, t);
   if (name === null) return null;
-  if (source === "polymarket") return "Odds from Polymarket";
-  if (source === "synthetic") return "Simulated demo prices (no live source)";
-  return `Price from ${name}`;
+  if (source === "polymarket") return t("source.oddsFrom", { name });
+  if (source === "synthetic") return t("source.simulatedLong");
+  return t("source.priceFrom", { name });
 }
 
 /** The start of the hover text of an `ODDS` tag: whose odds they are, when the market says — a simulated market is not
  *  a Polymarket one, and a result tile that does not know its market's source claims none. */
-export function oddsMarketPhrase(source: string | null | undefined): string {
-  if (source === "synthetic") return "A simulated odds market";
-  const name = sourceName(source);
-  return name ? `A ${name} odds market` : "An odds market";
+export function oddsMarketPhrase(source: string | null | undefined, t: TFn = tEn): string {
+  if (source === "synthetic") return t("source.oddsMarketSim");
+  const name = sourceName(source, t);
+  return name ? t("source.oddsMarketNamed", { name }) : t("source.oddsMarket");
 }
 
 /** A shown price that is the BACKUP exchange's (Р-76): which one, and whose it stands in for. */
@@ -222,16 +227,16 @@ export interface BackupPrice {
  * a null one, or one equal to the market's own source (a server that names the venue of every price) — and when there
  * is no price.
  */
-export function backupPriceOf(market: Pick<MarketDto, "source" | "price">): BackupPrice | null {
+export function backupPriceOf(market: Pick<MarketDto, "source" | "price">, t: TFn = tEn): BackupPrice | null {
   const venue = market.price?.venue;
   if (!venue || venue === market.source) return null;
-  const name = sourceName(venue);
-  return name === null ? null : { name, primaryName: sourceName(market.source) };
+  const name = sourceName(venue, t);
+  return name === null ? null : { name, primaryName: sourceName(market.source, t) };
 }
 
 /** Why the number is another exchange's, in one sentence: the hover text of the "Kraken price" marks and the chart's caption. */
-export function backupPriceNote(backup: BackupPrice): string {
-  return `${backup.primaryName ?? "The main exchange"} has no fresh price right now, so this is ${backup.name}'s — its backup.`;
+export function backupPriceNote(backup: BackupPrice, t: TFn = tEn): string {
+  return t("source.backupPrice", { primary: backup.primaryName ?? t("source.mainExchangeCap"), name: backup.name });
 }
 
 /** A round on the backup exchange (Р-76): which one, and the main exchange that could not price its start. */
@@ -252,11 +257,12 @@ export interface BackupRound {
 export function backupRoundOf(
   round: { source?: SourceId | null },
   market: Pick<MarketDto, "source" | "backupSource"> | undefined,
+  t: TFn = tEn,
 ): BackupRound | null {
   if (!market || !round.source || !market.backupSource) return null;
   if (round.source !== market.backupSource || round.source === market.source) return null;
-  const name = sourceName(round.source);
-  const primaryName = sourceName(market.source);
+  const name = sourceName(round.source, t);
+  const primaryName = sourceName(market.source, t);
   return name === null || primaryName === null ? null : { name, primaryName };
 }
 
@@ -265,9 +271,20 @@ export function backupRoundOf(
 export type RoundSubject = "this" | "live";
 
 /** What the page says about such a round, in the tense of its phase. */
-export function backupRoundNote(backup: BackupRound, phase: "RUNNING" | "SETTLED", subject: RoundSubject = "this"): string {
-  const runs = phase === "SETTLED" ? "ran" : "runs";
-  const are = phase === "SETTLED" ? "were" : "are";
-  const which = subject === "live" ? (phase === "SETTLED" ? "The round that just ended" : "The live round") : "This round";
-  return `${which} ${runs} on ${backup.name}, the backup exchange — ${backup.primaryName} had no price when it started. Its open and close prices and every liquidation ${are} ${backup.name}'s.`;
+export function backupRoundNote(
+  backup: BackupRound,
+  phase: "RUNNING" | "SETTLED",
+  subject: RoundSubject = "this",
+  t: TFn = tEn,
+): string {
+  const settled = phase === "SETTLED";
+  const key =
+    subject === "live"
+      ? settled
+        ? "source.venueLiveSettled"
+        : "source.venueLiveRunning"
+      : settled
+        ? "source.venueThisSettled"
+        : "source.venueThisRunning";
+  return t(key, { name: backup.name, primary: backup.primaryName });
 }

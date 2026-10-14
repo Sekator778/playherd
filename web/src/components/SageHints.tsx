@@ -1,18 +1,20 @@
 import { useServerInfo } from "../api/useServerInfo";
 import { CopyButton } from "./Common";
+import { Rich } from "../i18n/Rich";
+import { useT } from "../i18n";
 import { playAssetIdOf, RECOMMENDED_DEPOSIT_FEE } from "./playAsset";
 import "./SageHints.css";
 
 /** The two things that trip a first Sage sign-in (`docs/research/sage_real_e2e.md` «Трение» п. 1, 3). */
 export function SageSignInTips() {
+  const t = useT();
   return (
     <ul className="sage-tips sage-tips--compact">
       <li>
-        <strong>Network.</strong> Sage starts on mainnet — switch it to <strong>testnet11</strong> first (Settings → Network).
+        <Rich text={t("sage.signInNetwork")} />
       </li>
       <li>
-        <strong>Every sign-in is a new connection.</strong> On the same phone, copy the link below and paste it in Sage → Settings →
-        WalletConnect; scanning only works from another device.
+        <Rich text={t("sage.signInNew")} />
       </li>
     </ul>
   );
@@ -25,33 +27,31 @@ export function SageSignInTips() {
  * sign-in is a new WalletConnect pairing.
  */
 export function SageDepositHints() {
+  const t = useT();
   // The server's own PLAY asset id when it sends one (`ServerInfoDto.playAssetId`), else this build's.
   const { info } = useServerInfo();
   const assetId = playAssetIdOf(info);
   return (
     <div className="card sage-hints">
-      <h3>Using Sage? Four things to know</h3>
+      <h3>{t("sage.depositTitle")}</h3>
       <ol className="sage-tips">
         <li>
-          <strong>Network.</strong> Sage starts on mainnet — switch it to <strong>testnet11</strong> (Settings → Network → Default network).
+          <Rich text={t("sage.depositNetwork")} />
         </li>
         <li>
-          <strong>“Unknown CAT”.</strong> PLAY shows up in Sage under that name — it isn't on a token list yet. Use its asset id to add or
-          rename the token:
+          <Rich text={t("sage.unknownCat")} />
           <span className="sage-asset">
-            <code className="mono sage-asset__id" aria-label="PLAY asset id">
+            <code className="mono sage-asset__id" aria-label={t("sage.assetAria")}>
               {assetId}
             </code>
-            <CopyButton value={assetId} label="Copy asset id" className="btn btn--secondary sage-asset__copy" />
+            <CopyButton value={assetId} label={t("sage.copyAsset")} className="btn btn--secondary sage-asset__copy" />
           </span>
         </li>
         <li>
-          <strong>Fee.</strong> When you send PLAY to your deposit address, set the network fee to about{" "}
-          <strong className="mono">{RECOMMENDED_DEPOSIT_FEE}</strong> — a busy testnet11 rejects a transfer with a zero fee.
+          <Rich text={t("sage.fee", { fee: RECOMMENDED_DEPOSIT_FEE })} />
         </li>
         <li>
-          <strong>Signing in again.</strong> Each sign-in is a new WalletConnect connection: copy the link in Herd, paste it in Sage →
-          Settings → WalletConnect. It isn't remembered after you reload this page.
+          <Rich text={t("sage.again")} />
         </li>
       </ol>
     </div>

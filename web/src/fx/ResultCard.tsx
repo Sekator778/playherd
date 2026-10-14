@@ -20,6 +20,8 @@ import { burst, spawnCoinArc } from "./particles";
 import { impact, notification } from "./haptics";
 import { playLiquidationCrack, playLossThud, playTick, playWinJingle, primeAudioContext } from "./sound";
 import { useFxSettings } from "./fxSettings";
+import { useT, type TFn } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import { TrophyIcon, CrackIcon, MinusDiscIcon, EqualsDiscIcon, SpeakerOnIcon, SpeakerMuteIcon } from "../components/icons";
 
 // Tier tables — result-moment.md §2. Durations in ms.
@@ -54,11 +56,11 @@ function balancePillRect(): DOMRect | null {
 /** "3 MIN" for the series an event's round was in: the round's own length when the event carries it
  *  (`ResultEvent.durationSec`, from the server's history row or the round's window); otherwise the length of the
  *  market's series, and nothing when the market has left the list — never "Hourly"/"Daily" for a 3-minute round. */
-function useSeriesLabel(event: Pick<ResultEvent, "marketId" | "interval" | "durationSec">): string | null {
+function useSeriesLabel(event: Pick<ResultEvent, "marketId" | "interval" | "durationSec">, t: TFn): string | null {
   const { byId } = useMarkets();
-  if (event.durationSec !== undefined && Number.isFinite(event.durationSec) && event.durationSec > 0) return formatDuration(event.durationSec);
+  if (event.durationSec !== undefined && Number.isFinite(event.durationSec) && event.durationSec > 0) return formatDuration(event.durationSec, t);
   const series = byId.get(event.marketId)?.series.find((s) => s.interval === event.interval);
-  return series ? formatDuration(series.durationSec) : null;
+  return series ? formatDuration(series.durationSec, t) : null;
 }
 
 /** An `ODDS` result is worded as odds: the event's own kind when it carries one, else the market's, if it is listed. */
@@ -70,17 +72,18 @@ function useIsOdds(event: Pick<ResultEvent, "marketId" | "marketKind">): boolean
 /** The round settled on its market's BACKUP exchange (Р-76: a round runs entirely on one exchange, chosen when it starts):
  *  the event carries the exchange the round ran on (a live settlement does; a history row does not), the market list says
  *  which exchange is the main one. `null` otherwise — a result on the main exchange says nothing of any. */
-function useBackupRound(event: Pick<ResultEvent, "marketId" | "venue">): BackupRound | null {
+function useBackupRound(event: Pick<ResultEvent, "marketId" | "venue">, t: TFn): BackupRound | null {
   const { byId } = useMarkets();
-  return backupRoundOf({ source: event.venue }, byId.get(event.marketId));
+  return backupRoundOf({ source: event.venue }, byId.get(event.marketId), t);
 }
 
 function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss: () => void }) {
   const reducedMotion = usePrefersReducedMotion();
   const fx = useFxSettings();
-  const seriesLabel = useSeriesLabel(event);
+  const tr = useT();
+  const seriesLabel = useSeriesLabel(event, tr);
   const odds = useIsOdds(event);
-  const backupRound = useBackupRound(event);
+  const backupRound = useBackupRound(event, tr);
   const cardRef = useRef<HTMLDivElement>(null);
   // Coin-arc launch point for WIN (below) — deliberately the icon, not the whole card: the
   // card's own bounding-rect center used to be the arc's origin, which on a WIN sits at/just
@@ -241,7 +244,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
           {event.kind === "EVEN" && <EqualsDiscIcon />}
         </div>
 
-        {isLiquidation && <div className="result-card__stamp">LIQUIDATED</div>}
+        {isLiquidation && <div className="result-card__stamp">{tr("results.liquidated")}</div>}
 
         <div className={`result-card__title num-xl mono result-card__title--${kindClass}`}>
           {event.kind === "EVEN" ? (
@@ -254,25 +257,25 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             />
           )}
         </div>
-        {event.kind === "EVEN" && <p className="result-card__secondary">No gain, no loss</p>}
+        {event.kind === "EVEN" && <p className="result-card__secondary">{tr("results.noGainNoLoss")}</p>}
         {event.kind !== "EVEN" && (
           <p className="result-card__secondary">
             <strong className="result-card__symbol">{event.symbol}</strong>
-            {odds ? " odds" : ""} · stake {formatPlayAmount(event.stakePlay)} PLAY · x{event.leverage}
-            {seriesLabel ? ` · ${seriesLabel} round` : ""}
+            {odds ? ` ${tr("results.oddsSuffix")}` : ""} · {tr("results.stakeLine", { stake: formatPlayAmount(event.stakePlay), leverage: event.leverage })}
+            {seriesLabel ? ` · ${tr("results.lengthRound", { length: seriesLabel })}` : ""}
           </p>
         )}
         {event.kind === "EVEN" && (
           <p className="result-card__secondary">
             <strong className="result-card__symbol">{event.symbol}</strong>
-            {odds ? " odds" : ""}
-            {seriesLabel ? ` · ${seriesLabel} round` : ""}
+            {odds ? ` ${tr("results.oddsSuffix")}` : ""}
+            {seriesLabel ? ` · ${tr("results.lengthRound", { length: seriesLabel })}` : ""}
           </p>
         )}
         {/* Р-76: a round that ran on the backup exchange says whose prices settled it — one quiet line, under the figures. */}
         {backupRound && event.kind !== "LIQUIDATION" && (
           <p className="result-card__venue">
-            Settled on {backupRound.name}, the backup exchange — {backupRound.primaryName} had no price when the round started
+            {tr("results.venue", { name: backupRound.name, primary: backupRound.primaryName })}
           </p>
         )}
         {/* Р-50 / Р-7, said plainly while it is true: liquidated NOW, not at the end of the round. And the one rule
@@ -280,24 +283,24 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             liquidated ones too (Р-23) — so "lost" is what happens when the round settles, which it has not yet. */}
         {event.kind === "LIQUIDATION" && event.midRound && (
           <p className="result-card__note">
-            <strong>Your whole stake is lost.</strong> The round is still running — if it is cancelled, every bet in it is refunded.
+            <Rich text={tr("results.midRound")} />
           </p>
         )}
 
         {!isLiquidation && (
           <p className="result-card__balance mono">
-            Balance: <RollingDigits value={balanceDisplay} durationMs={200} format={rollingPlayFormat(balanceDisplay, { unit: true })} />
+            {tr("results.balance")} <RollingDigits value={balanceDisplay} durationMs={200} format={rollingPlayFormat(balanceDisplay, { unit: true })} />
           </p>
         )}
 
         <div className="result-card__actions">
           <Link to={`/round/${event.roundId}`} className="result-card__link" onClick={dismiss}>
-            View round
+            {tr("results.viewRound")}
           </Link>
           <button
             type="button"
             className="result-card__sound-toggle"
-            aria-label={fx.sfxEnabled ? "Mute sound" : "Unmute sound"}
+            aria-label={fx.sfxEnabled ? tr("results.mute") : tr("results.unmute")}
             onClick={(e) => {
               e.stopPropagation();
               if (!fx.sfxEnabled) primeAudioContext();
@@ -307,7 +310,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             {fx.sfxEnabled ? <SpeakerOnIcon /> : <SpeakerMuteIcon />}
           </button>
         </div>
-        <p className="result-card__hint faint">Tap to dismiss</p>
+        <p className="result-card__hint faint">{tr("results.tapDismiss")}</p>
       </div>
     </div>
   );
@@ -325,11 +328,12 @@ function resultClass(e: ResultEvent): string {
 
 /** One result on a line: the signed net first, then which bet it was — "-0.12 PLAY  BTC · x2", "liquidated · BTC · x2". */
 function ResultLine({ event }: { event: ResultEvent }) {
+  const tr = useT();
   return (
     <>
       <span className={resultClass(event)}>{formatPlayAmount(event.netPlay, { sign: true })} PLAY</span>{" "}
       <span className="muted">
-        {event.kind === "LIQUIDATION" ? "liquidated · " : ""}
+        {event.kind === "LIQUIDATION" ? `${tr("results.liquidatedPrefix")} · ` : ""}
         {event.symbol} · x{event.leverage}
       </span>
     </>
@@ -347,6 +351,7 @@ function focusCameByKeyboard(target: EventTarget): boolean {
 }
 
 function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss: () => void }) {
+  const tr = useT();
   const [expanded, setExpanded] = useState(false);
   // One dismissal, whoever asks first (the hold timer, the dimmed area, the button) — as on a single card.
   const dismissedRef = useRef(false);
@@ -387,7 +392,7 @@ function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss:
         {events.length === 1 ? (
           // A "summary" of one result is that result: named, not "+1 more results" behind a tap.
           <>
-            <p className="result-card__overflow-header result-card__overflow-header--one">1 more result</p>
+            <p className="result-card__overflow-header result-card__overflow-header--one">{tr("results.oneMore")}</p>
             <ul className="result-card__overflow-list">
               <li>
                 <ResultLine event={events[0]} />
@@ -398,7 +403,7 @@ function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss:
           <>
             <button type="button" className="result-card__overflow-header" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
               <span>
-                +{events.length} more results — <span className={outcomeClassName(outcomeFromNet(sum))}>{formatPlayAmount(sum, { sign: true })} PLAY</span> net
+                {tr("results.moreResults", { count: events.length })} <span className={outcomeClassName(outcomeFromNet(sum))}>{formatPlayAmount(sum, { sign: true })} PLAY</span> {tr("results.net")}
               </span>
               <span aria-hidden="true">{expanded ? "▲" : "▼"}</span>
             </button>
@@ -414,7 +419,7 @@ function OverflowCard({ events, onDismiss }: { events: ResultEvent[]; onDismiss:
           </>
         )}
         <button type="button" className="btn btn--secondary btn--block" onClick={dismiss}>
-          Dismiss
+          {tr("results.dismiss")}
         </button>
       </div>
     </div>

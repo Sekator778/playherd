@@ -5,6 +5,8 @@ import { symbolMeta } from "../api/marketMeta";
 import { formatDuration, formatPercent, formatPrice, market24hMove } from "../format";
 import { Countdown, Skeleton } from "./Common";
 import { FlameIcon, LockIcon, StarIcon } from "./icons";
+import { useT } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import { MarketIcon } from "./MarketIcon";
 import { formatAgo, formatStartsIn, formatTimeLeft, trend, TREND_GLYPH } from "./marketFormat";
 import { backupPriceNote, backupPriceOf, crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, oddsMarketPhrase, subtitleParts } from "./marketModel";
@@ -28,12 +30,13 @@ export function CrowdSplitBar({
   /** An empty round invites the first bet — unless the market cannot take one right now (no price yet). */
   invite?: boolean;
 }) {
+  const t = useT();
   const split = crowdSplitOf({ upStake, downStake });
   if (!split) {
     return (
-      <div className="mk-split mk-split--empty" role="img" aria-label={`${symbol}: no bets yet in the open round`}>
+      <div className="mk-split mk-split--empty" role="img" aria-label={t("card.noBetsAria", { symbol })}>
         <div className="mk-split__bar" />
-        <p className="mk-split__empty">{invite ? "No bets yet — be the first to call it" : "No bets yet"}</p>
+        <p className="mk-split__empty">{invite ? t("card.noBetsInvite") : t("card.noBets")}</p>
       </div>
     );
   }
@@ -41,13 +44,13 @@ export function CrowdSplitBar({
     <div
       className="mk-split"
       role="img"
-      aria-label={`Crowd split by stake on ${symbol}: ${split.upPct}% up, ${split.downPct}% down${players !== undefined ? `, ${players} playing` : ""}`}
+      aria-label={t("card.splitAria", { symbol, up: split.upPct, down: split.downPct }) + (players !== undefined ? t("card.splitPlayers", { count: players }) : "")}
     >
       <div className="mk-split__labels mono" aria-hidden="true">
         <span className="mk-split__label mk-split__label--up">▲ UP {split.upPct}%</span>
         {players !== undefined && (
           <span className="mk-split__players">
-            <span className="mk-live-dot" /> {players} playing
+            <span className="mk-live-dot" /> {t("card.playersLabel", { count: players })}
           </span>
         )}
         <span className="mk-split__label mk-split__label--down">{split.downPct}% DOWN ▼</span>
@@ -63,25 +66,26 @@ export function CrowdSplitBar({
 /** The herd badge — the market's own crowd account (Р-5, Т-6) in one chip, signed and arrowed so the
  *  colour is never the only signal. A market where the crowd has not traded yet says so instead of a "0.0%". */
 export function HerdBadge({ market }: { market: MarketDto }) {
+  const t = useT();
   const { roundsTraded, returnPct } = market.crowd;
   const to = `/stats?m=${encodeURIComponent(market.id)}`;
   if (roundsTraded === 0) {
     return (
-      <Link to={to} className="mk-herd mk-herd--none" title="The crowd account has not traded here yet">
-        Herd — no trades yet
+      <Link to={to} className="mk-herd mk-herd--none" title={t("card.herdNoneTitle")}>
+        {t("card.herdNone")}
       </Link>
     );
   }
-  const t = trend(returnPct);
+  const tone = trend(returnPct);
   const text = formatPercent(returnPct, { sign: true });
   return (
     <Link
       to={to}
-      className={`mk-herd mk-herd--${t}`}
-      title="The crowd account's paper-money return on this market — open its stats"
-      aria-label={`Herd on ${market.symbol}: ${text} return over ${roundsTraded} traded rounds. Open crowd stats.`}
+      className={`mk-herd mk-herd--${tone}`}
+      title={t("card.herdTitle")}
+      aria-label={t("card.herdAria", { symbol: market.symbol, text, count: roundsTraded })}
     >
-      <span aria-hidden="true">{TREND_GLYPH[t]}</span> Herd <span className="mono">{text}</span>
+      <span aria-hidden="true">{TREND_GLYPH[tone]}</span> {t("card.herd")} <span className="mono">{text}</span>
     </Link>
   );
 }
@@ -90,7 +94,8 @@ export function HerdBadge({ market }: { market: MarketDto }) {
  *  ("· UEFA Nations League"). On a narrow card the context gives way first and the outcome wraps rather than being cut
  *  (first tester pass, D7: "Jasmine Paolini to …" left the percentage with no owner). */
 function OddsSubline({ market }: { market: MarketDto }) {
-  const parts = subtitleParts(market);
+  const t = useT();
+  const parts = subtitleParts(market, t);
   // No subtitle: nothing to add — the question below is the title, and says it once.
   if (!parts) return null;
   return (
@@ -133,13 +138,14 @@ interface MarketCardProps {
  * main exchange has no fresh price): "Kraken price" under the number, with the reason on hover and for a screen reader.
  */
 export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = false }: MarketCardProps) {
+  const t = useT();
   const meta = symbolMeta(market.symbol);
   const series = leadSeries(market);
   const open = isOpenMarket(market);
   const price = market.price;
   const stale = open && price?.stale === true;
-  const backupPrice = open ? backupPriceOf(market) : null;
-  const move = market24hMove(market, price);
+  const backupPrice = open ? backupPriceOf(market, t) : null;
+  const move = market24hMove(market, price, t);
   const changeTrend = trend(move.value);
   const kickoff = kickoffOf(market, nowMs);
   const herdSide = series ? herdSideOf(series) : null;
@@ -153,7 +159,7 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
       type="button"
       className="mk-star"
       aria-pressed={favorite}
-      aria-label={favorite ? `Remove ${market.symbol} from favorites` : `Add ${market.symbol} to favorites`}
+      aria-label={favorite ? t("card.favRemove", { symbol: market.symbol }) : t("card.favAdd", { symbol: market.symbol })}
       onClick={() => onToggleFavorite(market.id)}
     >
       <StarIcon filled={favorite} />
@@ -171,24 +177,24 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
         <div className="mk-card__id">
           <div className="mk-card__namerow">
             <h3 className="mk-card__symbol" id={titleId}>
-              <Link to={room} className="mk-card__link" aria-label={`${market.symbol} — ${market.title}${open ? "" : " (closed)"}`}>
+              <Link to={room} className="mk-card__link" aria-label={t(open ? "card.linkAria" : "card.linkAriaClosed", { symbol: market.symbol, title: market.title })}>
                 {market.symbol}
               </Link>
             </h3>
             {star}
             {odds && (
-              <span className="mk-tag mk-tag--odds" title={`${oddsMarketPhrase(market.source)}: the price is a probability`}>
-                ODDS
+              <span className="mk-tag mk-tag--odds" title={t("card.oddsTitle", { what: oddsMarketPhrase(market.source, t) })}>
+                {t("parts.oddsTag")}
               </span>
             )}
             {kickoff?.state === "live" && (
-              <span className="mk-tag mk-tag--live" title="The game has kicked off">
-                <span className="mk-live-dot" aria-hidden="true" /> LIVE
+              <span className="mk-tag mk-tag--live" title={t("card.liveTitle")}>
+                <span className="mk-live-dot" aria-hidden="true" /> {t("card.liveTag")}
               </span>
             )}
             {hot && (
               <span className="mk-tag mk-tag--hot">
-                <FlameIcon className="mk-tag__icon" /> HOT
+                <FlameIcon className="mk-tag__icon" /> {t("card.hot")}
               </span>
             )}
           </div>
@@ -200,29 +206,29 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
               <span className="mk-card__price-num mono">{formatPrice(price.price, market)}</span>
               <span className={`mk-card__change mono mk-card__change--${changeTrend}`}>
                 <span aria-hidden="true">{TREND_GLYPH[changeTrend]}</span>{" "}
-                <span className="visually-hidden">{move.unit === "pt" ? "24 hour change in percentage points " : "24 hour change "}</span>
+                <span className="visually-hidden">{move.unit === "pt" ? t("card.changeHiddenPts") : t("card.changeHidden")}</span>
                 {move.text}
-                <span className="mk-card__change-unit"> 24h</span>
+                <span className="mk-card__change-unit"> {t("card.h24")}</span>
               </span>
               {stale && (
                 <span className="mk-card__stale" role="status">
-                  Stale · {formatAgo(nowMs - price.asOfMs)}
+                  {t("card.stale", { ago: formatAgo(nowMs - price.asOfMs, t) })}
                 </span>
               )}
               {backupPrice && (
-                <span className="mk-card__venue" title={backupPriceNote(backupPrice)}>
-                  {backupPrice.name} price
-                  <span className="visually-hidden"> — {backupPriceNote(backupPrice)}</span>
+                <span className="mk-card__venue" title={backupPriceNote(backupPrice, t)}>
+                  {t("card.venue", { name: backupPrice.name })}
+                  <span className="visually-hidden"> — {backupPriceNote(backupPrice, t)}</span>
                 </span>
               )}
-              {!open && <span className="mk-card__stale">Last price</span>}
+              {!open && <span className="mk-card__stale">{t("card.lastPrice")}</span>}
             </>
           ) : (
             <>
-              <span className="mk-card__price-num mk-card__price-num--none mono" aria-label="No price yet">
+              <span className="mk-card__price-num mk-card__price-num--none mono" aria-label={t("card.noPriceAria")}>
                 —
               </span>
-              <span className="mk-card__stale">Waiting for a price</span>
+              <span className="mk-card__stale">{t("card.waitingPrice")}</span>
             </>
           )}
         </div>
@@ -240,18 +246,18 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
           <CrowdSplitBar upStake={series.upStake} downStake={series.downStake} symbol={market.symbol} players={series.participantCount} invite={canBet} />
           <div className="mk-card__meta">
             <span className="mk-card__meta-item">
-              <span className="mono">{formatDuration(series.durationSec)}</span>
+              <span className="mono">{formatDuration(series.durationSec, t)}</span>
               <span aria-hidden="true"> · </span>
-              <Countdown nowMs={nowMs} targetMs={series.bettingClosesAtMs} prefix="closes in " calm />
+              <Countdown nowMs={nowMs} targetMs={series.bettingClosesAtMs} template="card.closesIn" calm />
             </span>
             {kickoff?.state === "upcoming" && (
-              <span className="mk-card__meta-item mk-card__meta-item--faint" title="The game has not started yet — rounds run meanwhile">
-                Starts in <span className="mono">{formatStartsIn(kickoff.inMs)}</span>
+              <span className="mk-card__meta-item mk-card__meta-item--faint" title={t("card.startsInTitle")}>
+                {t("card.startsIn", { time: formatStartsIn(kickoff.inMs, t) })}
               </span>
             )}
             {odds && endsInMs !== null && endsInMs > 0 && (
-              <span className="mk-card__meta-item mk-card__meta-item--faint" title="If the market closes first, open bets are refunded">
-                Event ends in <span className="mono">{formatTimeLeft(endsInMs)}</span>
+              <span className="mk-card__meta-item mk-card__meta-item--faint" title={t("card.eventEndsTitle")}>
+                {t("card.eventEnds", { time: formatTimeLeft(endsInMs, t) })}
               </span>
             )}
             <HerdBadge market={market} />
@@ -262,26 +268,26 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
                 <Link
                   to={`${room}?side=up`}
                   className={`mk-dir mk-dir--up ${herdSide === "UP" ? "mk-dir--herd" : ""}`}
-                  aria-label={`Bet UP on ${market.symbol}${herdSide === "UP" ? " — the herd's side" : ""}`}
+                  aria-label={t(herdSide === "UP" ? "card.betUpHerd" : "card.betUp", { symbol: market.symbol })}
                 >
                   <span aria-hidden="true">▲</span> UP
-                  {herdSide === "UP" && <span className="mk-dir__herd">herd</span>}
+                  {herdSide === "UP" && <span className="mk-dir__herd">{t("card.herdTag")}</span>}
                 </Link>
                 <Link
                   to={`${room}?side=down`}
                   className={`mk-dir mk-dir--down ${herdSide === "DOWN" ? "mk-dir--herd" : ""}`}
-                  aria-label={`Bet DOWN on ${market.symbol}${herdSide === "DOWN" ? " — the herd's side" : ""}`}
+                  aria-label={t(herdSide === "DOWN" ? "card.betDownHerd" : "card.betDown", { symbol: market.symbol })}
                 >
                   <span aria-hidden="true">▼</span> DOWN
-                  {herdSide === "DOWN" && <span className="mk-dir__herd">herd</span>}
+                  {herdSide === "DOWN" && <span className="mk-dir__herd">{t("card.herdTag")}</span>}
                 </Link>
               </>
             ) : (
               <>
-                <button type="button" className="mk-dir mk-dir--up" disabled aria-label={`Bet UP on ${market.symbol} — waiting for a price`}>
+                <button type="button" className="mk-dir mk-dir--up" disabled aria-label={t("card.betUpWait", { symbol: market.symbol })}>
                   <span aria-hidden="true">▲</span> UP
                 </button>
-                <button type="button" className="mk-dir mk-dir--down" disabled aria-label={`Bet DOWN on ${market.symbol} — waiting for a price`}>
+                <button type="button" className="mk-dir mk-dir--down" disabled aria-label={t("card.betDownWait", { symbol: market.symbol })}>
                   <span aria-hidden="true">▼</span> DOWN
                 </button>
               </>
@@ -291,7 +297,7 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
       ) : open ? (
         // An open market the server lists with no round series: nothing to bet on yet, and it is not closed.
         <>
-          <p className="mk-card__none">No rounds are open on this market yet.</p>
+          <p className="mk-card__none">{t("card.noRounds")}</p>
           <div className="mk-card__foot">
             <HerdBadge market={market} />
           </div>
@@ -304,14 +310,14 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
               // The server said why, in plain words — shown as it is, never reworded.
               <div>
                 <p>
-                  <strong>Closed</strong>
-                  {market.closedAtMs ? ` ${formatAgo(nowMs - market.closedAtMs)}` : ""} — {market.closeReason}
+                  <strong>{t("card.closed")}</strong>
+                  {market.closedAtMs ? ` ${formatAgo(nowMs - market.closedAtMs, t)}` : ""} — {market.closeReason}
                 </p>
-                <p className="mk-closed__sub">Open bets were refunded. This market takes no more bets.</p>
+                <p className="mk-closed__sub">{t("card.closedSub")}</p>
               </div>
             ) : (
               <p>
-                <strong>Closed</strong> — open bets refunded. This market takes no more bets.
+                <Rich text={t("card.closedNoReason")} />
               </p>
             )}
           </div>

@@ -9,9 +9,10 @@
  * - `RATE_LIMITED` (HTTP 429): the server's own message is a developer's sentence; the player gets a plain one.
  */
 import { ApiRequestError, type ApiErrorCode } from "./contract";
+import { tEn, type TFn } from "../i18n";
 
-export const ENGINE_RESTARTING_TEXT = "The server is restarting — try again in a moment.";
-export const RATE_LIMITED_TEXT = "Too many requests just now — wait a few seconds and try again.";
+export const ENGINE_RESTARTING_TEXT = tEn("errors.engineRestarting");
+export const RATE_LIMITED_TEXT = tEn("errors.rateLimited");
 
 /** The code of a failure that came with one (`ApiRequestError`), else `null` (a transport failure, or not an API error). */
 export function apiErrorCode(err: unknown): ApiErrorCode | null {
@@ -34,10 +35,10 @@ export function isNotFound(err: unknown): boolean {
  * code arrives as `OTHER` with its message), a transport failure as its own message ("Network error — check your
  * connection…"), and `fallback` for anything else.
  */
-export function mutationErrorText(err: unknown, fallback: string): string {
+export function mutationErrorText(err: unknown, fallback: string, t: TFn = tEn): string {
   const code = apiErrorCode(err);
-  if (code === "ENGINE_NOT_READY") return ENGINE_RESTARTING_TEXT;
-  if (code === "RATE_LIMITED") return RATE_LIMITED_TEXT;
+  if (code === "ENGINE_NOT_READY") return t("errors.engineRestarting");
+  if (code === "RATE_LIMITED") return t("errors.rateLimited");
   if (err instanceof Error && err.message) return err.message;
   return fallback;
 }

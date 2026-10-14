@@ -3,7 +3,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useApi, useConnectModalState, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
 import { STARTER_PACK_PLAY } from "../api/contract";
-import { checkNickname, hasPlaceholderNickname, NICKNAME_HINT, NICKNAME_MAX } from "../api/nickname";
+import { checkNickname, hasPlaceholderNickname, NICKNAME_MAX } from "../api/nickname";
+import { useT } from "../i18n";
 import { prefetchServerInfo, useServerInfo } from "../api/useServerInfo";
 import { formatPlayAmount, shortenAddress } from "../format";
 import { connectAndSignWithSage, getWalletConnectProjectId, rememberSageAddress } from "../wallet/walletConnect";
@@ -31,6 +32,7 @@ export function ConnectWalletModal() {
   const session = useSession();
   const api = useApi();
   const navigate = useNavigate();
+  const t = useT();
   const { pathname } = useLocation();
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
@@ -197,7 +199,7 @@ export function ConnectWalletModal() {
       await finishSignIn(attemptId, signed, challenge.nonce);
     } catch (err) {
       if (attemptIdRef.current !== attemptId) return;
-      setErrorMessage(mutationErrorText(err, "Something went wrong signing in."));
+      setErrorMessage(mutationErrorText(err, t("connect.signInError"), t));
       setStep("error");
     }
   };
@@ -235,14 +237,14 @@ export function ConnectWalletModal() {
       await finishSignIn(attemptId, signed, nonce);
     } catch (err) {
       if (attemptIdRef.current !== attemptId) return;
-      setErrorMessage(mutationErrorText(err, "Something went wrong connecting to Sage."));
+      setErrorMessage(mutationErrorText(err, t("connect.sageError"), t));
       setStep("error");
     }
   };
 
   // Checked here first, with the reason in words (`api/nickname.ts` mirrors the server's rule); if the server refuses
   // anyway — 400 `INVALID_NICKNAME`, or 503 while it restarts — its sentence stays beside the field and the step stays.
-  const nicknameCheck = checkNickname(nickname);
+  const nicknameCheck = checkNickname(nickname, t);
   const submitNickname = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nicknameCheck.ok || savingNickname) return;
@@ -257,7 +259,7 @@ export function ConnectWalletModal() {
       else close();
     } catch (err) {
       if (attemptIdRef.current !== attemptId) return;
-      setNicknameError(mutationErrorText(err, "Couldn't save the nickname — try again."));
+      setNicknameError(mutationErrorText(err, t("connect.nicknameSaveFail"), t));
     } finally {
       setSavingNickname(false);
     }
@@ -291,31 +293,29 @@ export function ConnectWalletModal() {
 
         {step === "sage-qr" && (
           <div className="text-center">
-            <h2 id="connect-modal-title">Connect with Sage</h2>
+            <h2 id="connect-modal-title">{t("connect.sageTitle")}</h2>
             {pairingUri ? (
               <>
                 <div className="qr-frame">
-                  <QrCode value={pairingUri} size={220} label="WalletConnect pairing QR code — scan with Sage" />
+                  <QrCode value={pairingUri} size={220} label={t("connect.qrLabel")} />
                 </div>
                 <p className="muted">
-                  Open Sage on your phone or desktop, scan this code, then approve the connection and the sign-in
-                  message it shows you.
+                  {t("connect.scanHelp")}
                 </p>
-                <CopyButton value={pairingUri} label="Copy connection link" className="btn btn--secondary btn--block" />
+                <CopyButton value={pairingUri} label={t("connect.copyLink")} className="btn btn--secondary btn--block" />
                 <SageSignInTips />
               </>
             ) : sageStalled ? (
               <div className="stack" style={{ gap: 12, padding: "12px 0" }}>
                 <div role="alert">
-                  <p className="field-error">Couldn't reach Sage.</p>
+                  <p className="field-error">{t("connect.stalledTitle")}</p>
                   <p className="muted">
-                    The connection it needs did not open within {SAGE_CONNECT_WAIT_MS / 1000} seconds — it may be your network, or this site's
-                    address may not be allowed to use WalletConnect yet.
+                    {t("connect.stalledBody", { seconds: SAGE_CONNECT_WAIT_MS / 1000 })}
                   </p>
                 </div>
                 {testWalletOffered && (
                   <button type="button" className="btn btn--primary btn--block btn--lg" onClick={() => void startConnect()}>
-                    Continue with test wallet
+                    {t("connect.continueTest")}
                   </button>
                 )}
                 <button
@@ -323,17 +323,17 @@ export function ConnectWalletModal() {
                   className={`btn ${testWalletOffered ? "btn--secondary" : "btn--primary btn--lg"} btn--block`}
                   onClick={() => void startSageConnect(sageProjectIdRef.current)}
                 >
-                  Try Sage again
+                  {t("connect.tryAgainSage")}
                 </button>
               </div>
             ) : (
               <div style={{ padding: "24px 0" }}>
                 <div className="spinner" aria-hidden="true" />
-                <p style={{ marginTop: 16 }}>Opening a connection to Sage…</p>
+                <p style={{ marginTop: 16 }}>{t("connect.opening")}</p>
               </div>
             )}
             <button type="button" className="modal-close-text" onClick={handleClose}>
-              Cancel
+              {t("connect.cancel")}
             </button>
           </div>
         )}
@@ -342,19 +342,19 @@ export function ConnectWalletModal() {
           <div className="text-center" style={{ padding: "24px 0" }}>
             <div className="spinner" aria-hidden="true" />
             <p style={{ marginTop: 16 }}>
-              {signInVia === "Sage" ? "Waiting for the sign-in message to be approved in Sage…" : "Signing in with your test wallet…"}
+              {signInVia === "Sage" ? t("connect.waitingSage") : t("connect.waitingTest")}
             </p>
           </div>
         )}
 
         {step === "error" && (
           <div className="text-center">
-            <h2 id="connect-modal-title">Couldn't connect</h2>
+            <h2 id="connect-modal-title">{t("connect.failedTitle")}</h2>
             <p className="field-error">{errorMessage}</p>
             <div className="modal-actions stack" style={{ gap: 10 }}>
               {signInVia === "Sage" && testWalletOffered && (
                 <button type="button" className="btn btn--primary btn--block btn--lg" onClick={() => void startConnect()}>
-                  Continue with test wallet
+                  {t("connect.continueTest")}
                 </button>
               )}
               <button
@@ -362,10 +362,10 @@ export function ConnectWalletModal() {
                 className={`btn ${signInVia === "Sage" && testWalletOffered ? "btn--secondary" : "btn--primary btn--lg"} btn--block`}
                 onClick={() => setStep("connect")}
               >
-                Try again
+                {t("common.tryAgain")}
               </button>
               <button type="button" className="btn btn--secondary btn--block" onClick={handleClose}>
-                Cancel
+                {t("connect.cancel")}
               </button>
             </div>
           </div>
@@ -373,10 +373,10 @@ export function ConnectWalletModal() {
 
         {step === "nickname" && (
           <form onSubmit={(e) => void submitNickname(e)} noValidate>
-            <h2 id="connect-modal-title">Pick a nickname</h2>
-            <p className="muted">Shown next to your wallet address — {shortenAddress(address)}.</p>
+            <h2 id="connect-modal-title">{t("connect.pickNickname")}</h2>
+            <p className="muted">{t("connect.nicknameHint", { address: shortenAddress(address) })}</p>
             <div className="field">
-              <label htmlFor="nickname-input">Nickname</label>
+              <label htmlFor="nickname-input">{t("connect.nickname")}</label>
               <input
                 id="nickname-input"
                 type="text"
@@ -390,12 +390,12 @@ export function ConnectWalletModal() {
                   setNickname(e.target.value);
                   setNicknameError(null);
                 }}
-                placeholder="e.g. moonWalker"
+                placeholder={t("connect.nicknamePlaceholder")}
                 aria-describedby="nickname-hint nickname-error"
                 aria-invalid={nicknameError !== null || (!nicknameCheck.ok && nicknameCheck.reason !== null)}
               />
               <p id="nickname-hint" className="field-hint">
-                {NICKNAME_HINT}
+                {t("nickname.hint")}
               </p>
               {/* What is wrong with what is typed — or the server's own refusal; one line, in words. */}
               <p id="nickname-error" className="field-error" role="alert" hidden={!(nicknameError ?? (nicknameCheck.ok ? null : nicknameCheck.reason))}>
@@ -405,13 +405,13 @@ export function ConnectWalletModal() {
             <MultiAccountDisclosureLine />
             <div className="modal-actions stack" style={{ gap: 10 }}>
               <button type="submit" className="btn btn--primary btn--block btn--lg" disabled={!nicknameCheck.ok || savingNickname}>
-                {savingNickname ? "SAVING…" : "CONTINUE"}
+                {savingNickname ? t("connect.saving") : t("connect.continue")}
               </button>
               {/* A returning player who left their first sign-in at this step is asked once more — and may leave it again. A new
                   player is picking the first one. */}
               {!startedAsNewPlayer && (
                 <button type="button" className="btn btn--secondary btn--block" disabled={savingNickname} onClick={skipNickname}>
-                  Not now
+                  {t("connect.notNow")}
                 </button>
               )}
             </div>
@@ -422,17 +422,17 @@ export function ConnectWalletModal() {
           <div className="text-center">
             {startedAsNewPlayer ? (
               <>
-                <h2 id="connect-modal-title">You've got {formatPlayAmount(STARTER_PACK_PLAY)} PLAY</h2>
+                <h2 id="connect-modal-title">{t("connect.starterTitle", { amount: formatPlayAmount(STARTER_PACK_PLAY) })}</h2>
                 <p className="muted">
-                  PLAY — test tokens for this demo, not real money. Place your first bet or explore the crowd account.
+                  {t("connect.starterBody")}
                 </p>
               </>
             ) : (
               <>
                 {/* A returning player's pack comes on top of the balance they have: "You've got 10,000" would be wrong. */}
-                <h2 id="connect-modal-title">New season: +{formatPlayAmount(STARTER_PACK_PLAY)} PLAY</h2>
+                <h2 id="connect-modal-title">{t("connect.starterSeasonTitle", { amount: formatPlayAmount(STARTER_PACK_PLAY) })}</h2>
                 <p className="muted">
-                  A new month started, so a new starter pack was added to your balance. PLAY — test tokens for this demo, not real money.
+                  {t("connect.starterSeasonBody")}
                 </p>
               </>
             )}
@@ -447,10 +447,10 @@ export function ConnectWalletModal() {
                   if (!isBettingScreen(pathname)) navigate("/");
                 }}
               >
-                PLACE A BET
+                {t("connect.placeBet")}
               </button>
               <button type="button" className="btn btn--secondary btn--block" onClick={handleClose}>
-                EXPLORE
+                {t("connect.explore")}
               </button>
             </div>
           </div>
@@ -474,6 +474,7 @@ function isBettingScreen(pathname: string): boolean {
  * test wallet and Sage as the build's own project id allows.
  */
 function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => void; onSage: (projectId: string) => void; onCancel: () => void }) {
+  const t = useT();
   const { status, info, refresh } = useServerInfo();
   const known = status === "ready" || status === "unsupported";
   const testWalletOffered = status === "unsupported" ? true : info?.testWallet !== false;
@@ -481,9 +482,9 @@ function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => v
 
   return (
     <>
-      <h2 id="connect-modal-title">Connect your wallet</h2>
+      <h2 id="connect-modal-title">{t("connect.title")}</h2>
       {status === "loading" && (
-        <div className="stack" style={{ gap: 12 }} role="status" aria-label="Asking the server how you can sign in">
+        <div className="stack" style={{ gap: 12 }} role="status" aria-label={t("connect.loadingAria")}>
           <Skeleton height={20} width="70%" />
           <Skeleton height={52} />
           <Skeleton height={52} />
@@ -492,10 +493,10 @@ function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => v
       {status === "error" && (
         <div className="stack" style={{ gap: 12 }}>
           <p className="field-error" role="alert">
-            Can't reach the server right now, so we can't tell how you can sign in. Check your connection and try again.
+            {t("connect.unreachable")}
           </p>
           <button type="button" className="btn btn--primary btn--block btn--lg" onClick={refresh}>
-            Try again
+            {t("common.tryAgain")}
           </button>
         </div>
       )}
@@ -505,23 +506,22 @@ function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => v
             <>
               {/* The test wallet leads on this stand (HANDOFF §6 п.10): it is the one path that works for
                *  everybody — the Sage button first was a dead end for a visitor without Sage. Both stay. */}
-              <p className="test-wallet-tag">TEST WALLET</p>
+              <p className="test-wallet-tag">{t("connect.testWalletTag")}</p>
               <p className="muted">
-                Fastest way in: this demo signs you in with a real Chia key generated right in your browser — not Sage. It doesn't move any
-                funds, and each browser/profile is a separate player.
+                {t("connect.testWalletBody")}
               </p>
               <div className="modal-actions" style={{ marginTop: 0 }}>
                 <button type="button" className="btn btn--primary btn--block btn--lg" onClick={onTestWallet}>
-                  Continue with test wallet
+                  {t("connect.continueTest")}
                 </button>
               </div>
               <div className="modal-or" role="separator">
-                <span>or</span>
+                <span>{t("connect.or")}</span>
               </div>
             </>
           ) : (
             <p className="muted">
-              This server signs you in with your own Chia wallet (Sage) — a real signature on testnet11; it doesn't move any funds.
+              {t("connect.sageOnly")}
             </p>
           )}
           <button
@@ -529,21 +529,21 @@ function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => v
             className={`btn ${testWalletOffered ? "btn--secondary" : "btn--primary"} btn--block btn--lg`}
             onClick={() => wcProjectId && onSage(wcProjectId)}
             disabled={!wcProjectId}
-            title={wcProjectId ? undefined : "Coming soon — needs WalletConnect project id"}
+            title={wcProjectId ? undefined : t("connect.soonTitle")}
           >
-            Connect with Sage
+            {t("connect.withSage")}
           </button>
           {!wcProjectId ? (
             <p className="field-hint">
-              {testWalletOffered ? "Coming soon — needs WalletConnect project id." : "Sign-in isn't available on this server yet — Sage needs a WalletConnect project id."}
+              {testWalletOffered ? t("connect.soonHint") : t("connect.soonUnavailable")}
             </p>
           ) : (
-            <p className="field-hint">Real wallet, real signature — Sage needs to be on testnet11.</p>
+            <p className="field-hint">{t("connect.realWallet")}</p>
           )}
         </>
       )}
       <button type="button" className="modal-close-text" onClick={onCancel}>
-        Cancel
+        {t("connect.cancel")}
       </button>
     </>
   );

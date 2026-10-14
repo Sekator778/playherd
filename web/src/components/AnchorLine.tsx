@@ -1,5 +1,6 @@
 import type { OracleAnchorDto } from "../api/contract";
 import { describeAnchor } from "./anchorModel";
+import { useT } from "../i18n";
 import { AnchorIcon } from "./icons";
 import "./AnchorLine.css";
 
@@ -29,8 +30,9 @@ export function AnchorLine({
   symbol?: string;
   oracleIndex?: number;
 }) {
+  const t = useT();
   if (!anchor && !resultsHash) return null;
-  const said = anchor ? describeAnchor(anchor) : null;
+  const said = anchor ? describeAnchor(anchor, t) : null;
   const short = resultsHash ? `${resultsHash.slice(0, 10)}…${resultsHash.slice(-6)}` : null;
   const href = `/api/rounds/${encodeURIComponent(roundId)}/results.json`;
   return (
@@ -45,26 +47,24 @@ export function AnchorLine({
             <p className="anchor__detail">{said.detail}</p>
           </>
         ) : (
-          <p className="anchor__title">Results published</p>
+          <p className="anchor__title">{t("anchorLine.published")}</p>
         )}
         {oracleIndex !== undefined && Number.isInteger(oracleIndex) && (
           <p className="anchor__asset">
-            {symbol ? `${symbol} is asset` : "Asset"} #{oracleIndex} in the oracle record ·{" "}
+            {symbol ? t("anchorLine.asset", { symbol, index: oracleIndex }) : t("anchorLine.assetAnon", { index: oracleIndex })} ·{" "}
             <a href="/api/markets/registry.json" target="_blank" rel="noopener noreferrer">
-              market registry
+              {t("anchorLine.registry")}
             </a>
           </p>
         )}
         <p className="anchor__hash mono">
           {short ? (
-            <>
-              Results hash: {short} —{" "}
-            </>
+            <>{t("common.resultsHash", { hash: short })} </>
           ) : (
-            <>Results hash not published yet — </>
+            <>{t("anchorLine.hashPending")} </>
           )}
           <a href={href} target="_blank" rel="noopener noreferrer">
-            verify results.json
+            {t("common.verifyResults")}
           </a>
         </p>
       </div>

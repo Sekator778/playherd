@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import type { EpochMs, MarketDto, PriceTickDto } from "../api/contract";
 import { formatClock, formatPrice, timeZoneNote } from "../format";
+import { useT, type TKey } from "../i18n";
 import {
   availableRanges,
   axisValues,
@@ -37,6 +38,8 @@ const FALLBACK_WIDTH = 340;
  *  a ref object read in a mount effect: the plot's container only exists once there are prices to draw, so
  *  the observer has to attach whenever that element appears — an observer set up at mount never saw it, and
  *  the chart stayed at its fallback width inside a wider box. */
+const RANGE_LABEL: Record<RangeId, TKey> = { "1M": "pchart.r1M", "5M": "pchart.r5M", "15M": "pchart.r15M" };
+
 function useWidth(): [(element: HTMLDivElement | null) => void, number] {
   const [element, setElement] = useState<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
@@ -84,6 +87,7 @@ export interface PriceChartProps {
  * Hand-drawn SVG (no chart library): ~600 points, one path, redrawn on each 2 s poll.
  */
 export function PriceChart({ market, ticks, current, lines, roundStartMs, loading, error, stale = false, live = true, backup = null }: PriceChartProps) {
+  const t = useT();
   const [measureRef, measured] = useWidth();
   const gradientId = useId();
   const [picked, setPicked] = useState<RangeId | null>(null);
@@ -109,7 +113,7 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
   if (points.length < 2) {
     return (
       <div className="pchart pchart--empty" role="status" style={{ height: HEIGHT }}>
-        <p>{error ? "The price feed isn't answering — the chart will come back when it does." : "Waiting for the first prices…"}</p>
+        <p>{error ? t("pchart.feedDown") : t("pchart.waiting")}</p>
       </div>
     );
   }
@@ -166,8 +170,13 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
   const moveTone = move ? move.tone : "flat";
 
   const summary =
-    `${market.symbol} price, ${range ?? "recent"} view: ${price(first.price)} to ${price(last.price)}` +
-    (open ? `; round opened at ${price(open.price)}` : "") +
+    t("pchart.summary", {
+      symbol: market.symbol,
+      range: range ? t(RANGE_LABEL[range]) : t("pchart.recent"),
+      from: price(first.price),
+      to: price(last.price),
+    }) +
+    (open ? `; ${t("pchart.sumOpen", { price: price(open.price) })}` : "") +
     lines
       .filter((l) => l.tone === "liq")
       .map((l) => `; ${l.label.toLowerCase()} ${price(l.price)}`)
@@ -176,7 +185,7 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
   return (
     <figure className="pchart">
       <div className="pchart__bar">
-        <div className="chip-row pchart__chips" role="tablist" aria-label="Chart range">
+        <div className="chip-row pchart__chips" role="tablist" aria-label={t("chart.rangeAria")}>
           {CHART_RANGES.filter((r) => available.includes(r.id)).map((r) => (
             <button
               key={r.id}
@@ -186,15 +195,15 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
               className="chip chip--small"
               onClick={() => setPicked(r.id)}
             >
-              {r.id}
+              {t(RANGE_LABEL[r.id])}
             </button>
           ))}
-          {available.length === 0 && <span className="pchart__live faint">Live</span>}
+          {available.length === 0 && <span className="pchart__live faint">{t("pchart.live")}</span>}
         </div>
         {moveText && (
           <p className={`pchart__move pchart__move--${moveTone} mono`}>
             <span aria-hidden="true">{moveTone === "up" ? "▲" : moveTone === "down" ? "▼" : "•"}</span> {moveText}{" "}
-            <span className="pchart__move-note">vs round open</span>
+            <span className="pchart__move-note">{t("pchart.vsOpen")}</span>
           </p>
         )}
       </div>
@@ -266,33 +275,33 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
         {open && (
           <span>
             <i className={`pchart__swatch pchart__swatch--${open.tone}`} aria-hidden="true" />{" "}
-            {open.tone === "entry" ? "Round open = your entry price" : "Round open — every bet's entry price"}
+            {open.tone === "entry" ? t("pchart.openEntry") : t("pchart.openAll")}
           </span>
         )}
         {startInView && (
           <span>
-            <i className="pchart__swatch pchart__swatch--start" aria-hidden="true" /> Round start
+            <i className="pchart__swatch pchart__swatch--start" aria-hidden="true" /> {t("pchart.start")}
           </span>
         )}
         {lines.some((l) => l.id === "own-liq") && (
           <span>
-            <i className="pchart__swatch pchart__swatch--liq" aria-hidden="true" /> Your liquidation price
+            <i className="pchart__swatch pchart__swatch--liq" aria-hidden="true" /> {t("pchart.ownLiq")}
           </span>
         )}
         {lines.some((l) => l.id === "crowd-liq") && (
           <span>
-            <i className="pchart__swatch pchart__swatch--liq pchart__swatch--faint" aria-hidden="true" /> Herd's liquidation price
+            <i className="pchart__swatch pchart__swatch--liq pchart__swatch--faint" aria-hidden="true" /> {t("pchart.herdLiq")}
           </span>
         )}
         {backup && (
           <span className="pchart__venue">
-            Latest point: {backup.name}'s price — {backup.primaryName ?? "the main exchange"} has no fresh price right now
+            {t("pchart.venue", { name: backup.name, primary: backup.primaryName ?? t("source.mainExchange") })}
           </span>
         )}
-        {stale && <span className="pchart__stale">Price feed is stale — the last point is old</span>}
-        {error && !stale && <span className="pchart__stale">Reconnecting to the price feed…</span>}
+        {stale && <span className="pchart__stale">{t("pchart.stale")}</span>}
+        {error && !stale && <span className="pchart__stale">{t("pchart.reconnecting")}</span>}
         {/* The axis labels carry no zone of their own: it is said here, so a player does not read them off their own clock (first tester pass, D9). */}
-        <span className="pchart__zone">Times in {timeZoneNote(x1)}</span>
+        <span className="pchart__zone">{t("pchart.zone", { zone: timeZoneNote(x1, t) })}</span>
       </figcaption>
     </figure>
   );

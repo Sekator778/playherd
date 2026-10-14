@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { useT } from "../i18n";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -39,12 +40,13 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 }
 
 /** The line that stands where a chart could not be drawn: short, and it does not pretend there was nothing to draw. */
-export const CHART_FAILED_TEXT = "This chart could not be drawn.";
+export const CHART_FAILED_TEXT = "This chart could not be drawn."; // English; the page shows `errors.chartFailed` in the chosen language
 
 /** An {@link ErrorBoundary} for one chart: whatever it throws, the rest of the page stays. */
 export function ChartBoundary({ children, resetKey }: { children: ReactNode; resetKey?: unknown }) {
+  const t = useT();
   return (
-    <ErrorBoundary resetKey={resetKey} fallback={<p className="chart-failed muted">{CHART_FAILED_TEXT}</p>}>
+    <ErrorBoundary resetKey={resetKey} fallback={<p className="chart-failed muted">{t("errors.chartFailed")}</p>}>
       {children}
     </ErrorBoundary>
   );

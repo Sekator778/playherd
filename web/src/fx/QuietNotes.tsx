@@ -14,6 +14,7 @@ import type { ResultEvent } from "./resultEvent";
 import { useMarkets } from "../api/useMarkets";
 import { formatDuration, formatPlayAmount } from "../format";
 import { CloseIcon, CrackIcon, RefundIcon } from "../components/icons";
+import { useT } from "../i18n";
 
 /** How long a note stays: long enough to read one line, short enough not to pile up. */
 export const QUIET_NOTE_MS = 7000;
@@ -22,6 +23,7 @@ const MAX_VISIBLE = 3;
 
 function QuietNote({ event, onDismiss }: { event: ResultEvent; onDismiss: (id: string) => void }) {
   const { byId } = useMarkets();
+  const t = useT();
   useEffect(() => {
     const timer = window.setTimeout(() => onDismiss(event.id), QUIET_NOTE_MS);
     return () => window.clearTimeout(timer);
@@ -29,10 +31,10 @@ function QuietNote({ event, onDismiss }: { event: ResultEvent; onDismiss: (id: s
 
   const length =
     event.durationSec !== undefined && Number.isFinite(event.durationSec) && event.durationSec > 0
-      ? formatDuration(event.durationSec)
+      ? formatDuration(event.durationSec, t)
       : (() => {
           const series = byId.get(event.marketId)?.series.find((s) => s.interval === event.interval);
-          return series ? formatDuration(series.durationSec) : null;
+          return series ? formatDuration(series.durationSec, t) : null;
         })();
 
   const refunded = event.refunded === true;
@@ -42,24 +44,24 @@ function QuietNote({ event, onDismiss }: { event: ResultEvent; onDismiss: (id: s
       <div className="quiet-note__body">
         <p className="quiet-note__title">
           <strong>{event.symbol}</strong>
-          {length ? ` · ${length}` : ""} {refunded ? "round cancelled" : "round ended"}
+          {length ? ` · ${length}` : ""} {refunded ? t("quiet.roundCancelled") : t("quiet.roundEnded")}
         </p>
         {refunded ? (
           <p className="quiet-note__text">
-            {event.stakePlay > 0 ? `Your stake of ${formatPlayAmount(event.stakePlay)} PLAY is refunded` : "Your stake is refunded"} — a cancelled round returns every bet in
-            it, liquidated ones too.
+            {event.stakePlay > 0 ? t("quiet.refundedStake", { amount: formatPlayAmount(event.stakePlay) }) : t("quiet.refundedNoAmount")}
+            {t("quiet.refundNote")}
           </p>
         ) : (
           <p className="quiet-note__text">
-            Your liquidated bet: <span className="outcome-lost">{formatPlayAmount(event.netPlay, { sign: true })} PLAY</span>. Your balance doesn't
-            change now — the stake was lost when you were liquidated.
+            {t("quiet.liqBet")} <span className="outcome-lost">{formatPlayAmount(event.netPlay, { sign: true })} PLAY</span>
+            {t("quiet.liqTail")}
           </p>
         )}
       </div>
       <Link to={`/round/${event.roundId}`} className="quiet-note__link" onClick={() => onDismiss(event.id)}>
-        View round
+        {t("results.viewRound")}
       </Link>
-      <button type="button" className="quiet-note__close" aria-label="Dismiss" onClick={() => onDismiss(event.id)}>
+      <button type="button" className="quiet-note__close" aria-label={t("results.dismiss")} onClick={() => onDismiss(event.id)}>
         <CloseIcon />
       </button>
     </li>
@@ -67,12 +69,13 @@ function QuietNote({ event, onDismiss }: { event: ResultEvent; onDismiss: (id: s
 }
 
 export function QuietNotes({ notes, onDismiss }: { notes: readonly ResultEvent[]; onDismiss: (id: string) => void }) {
+  const t = useT();
   if (notes.length === 0) return null;
   const visible = notes.slice(-MAX_VISIBLE);
   const folded = notes.length - visible.length;
   return (
-    <ul className="quiet-notes" role="status" aria-live="polite" aria-label="Round summaries">
-      {folded > 0 && <li className="quiet-notes__more">+{folded} earlier round summaries</li>}
+    <ul className="quiet-notes" role="status" aria-live="polite" aria-label={t("quiet.listAria")}>
+      {folded > 0 && <li className="quiet-notes__more">{t("quiet.earlier", { count: folded })}</li>}
       {visible.map((event) => (
         <QuietNote key={event.id} event={event} onDismiss={onDismiss} />
       ))}

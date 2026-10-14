@@ -2,6 +2,7 @@
  *  plain decimal strings, per contract.ts's own doc comment) and from `api/liquidation.ts`
  *  (exact math). Nothing here is a source of truth for a number, only how it is printed. */
 import type { MarketDto, MarketPriceDto } from "./api/contract";
+import { tEn, type TFn } from "./i18n";
 
 /** One convention for every PLAY amount in the app (independent critique, 2026-09-26, "Game feel
  *  / number formatting consistency": whole numbers in some places, 2-3 decimals in others, for
@@ -111,10 +112,10 @@ export function oddsMove24hPoints(price: string | number, change24h: number | nu
 }
 
 /** A move in percentage points as text: `+1.0 pt`, `-0.4 pt`, `0.0 pt` — one decimal, no sign on a zero. */
-export function formatPoints(points: number, opts: { sign?: boolean } = {}): string {
+export function formatPoints(points: number, opts: { sign?: boolean } = {}, t: TFn = tEn): string {
   const rounded = Math.round(points * 10) / 10;
   const sign = opts.sign && rounded > 0 ? "+" : "";
-  return `${sign}${rounded === 0 ? "0.0" : rounded.toFixed(1)} pt`;
+  return `${sign}${rounded === 0 ? "0.0" : rounded.toFixed(1)} ${t("time.pt")}`;
 }
 
 /** What a market's 24 h figure reads as: the text, and the signed number the trend arrow and colour follow. */
@@ -130,13 +131,13 @@ export interface Move24h {
  * market in percentage points (`+1.0 pt` — the price is itself a percentage, so a percentage of a percentage
  * would read as 1.56% for a 0.64 → 0.65 move). `price` may be `null` (no price yet): a dash, never a zero.
  */
-export function market24hMove(market: Pick<MarketDto, "kind">, price: Pick<MarketPriceDto, "price" | "change24h"> | null): Move24h {
+export function market24hMove(market: Pick<MarketDto, "kind">, price: Pick<MarketPriceDto, "price" | "change24h"> | null, t: TFn = tEn): Move24h {
   const change = price ? price.change24h : null;
   if (market.kind === "ODDS") {
     const points = price ? oddsMove24hPoints(price.price, change) : null;
     if (points === null) return { text: "—", value: null, unit: "pt" };
     const rounded = Math.round(points * 10) / 10;
-    return { text: formatPoints(points, { sign: true }), value: rounded, unit: "pt" };
+    return { text: formatPoints(points, { sign: true }, t), value: rounded, unit: "pt" };
   }
   const known = change !== null && Number.isFinite(change);
   // The value follows what the text shows: a change that prints as 0.00% is flat.
@@ -149,12 +150,12 @@ export function market24hMove(market: Pick<MarketDto, "kind">, price: Pick<Marke
  * evenly (so 90 minutes reads `"90 MIN"`, not "1.5 HOURS"); anything that is not a whole number of
  * minutes falls back to seconds.
  */
-export function formatDuration(durationSec: number): string {
+export function formatDuration(durationSec: number, t: TFn = tEn): string {
   const sec = Math.round(durationSec);
-  if (sec > 0 && sec % 86_400 === 0) return `${sec / 86_400} ${sec === 86_400 ? "DAY" : "DAYS"}`;
-  if (sec > 0 && sec % 3_600 === 0) return `${sec / 3_600} ${sec === 3_600 ? "HOUR" : "HOURS"}`;
-  if (sec > 0 && sec % 60 === 0) return `${sec / 60} MIN`;
-  return `${sec} SEC`;
+  if (sec > 0 && sec % 86_400 === 0) return t("time.day", { count: sec / 86_400 });
+  if (sec > 0 && sec % 3_600 === 0) return t("time.hour", { count: sec / 3_600 });
+  if (sec > 0 && sec % 60 === 0) return t("time.min", { count: sec / 60 });
+  return t("time.sec", { count: sec });
 }
 
 /** Doc pattern `docs/research/round_engine_design.md` §4.7: first 6 / last 4 characters, full
@@ -268,9 +269,9 @@ export function timeZoneLabel(ms: number = Date.now()): string {
  * "your time zone (GMT+2)". The labels on a chart's axis carry no zone of their own; the note under it is where it is named
  * ("Times in UTC").
  */
-export function timeZoneNote(ms: number = Date.now()): string {
+export function timeZoneNote(ms: number = Date.now(), t: TFn = tEn): string {
   const label = timeZoneLabel(ms);
-  return pinnedZone === null && label !== "UTC" ? `your time zone (${label})` : label;
+  return pinnedZone === null && label !== "UTC" ? t("time.yourZone", { zone: label }) : label;
 }
 
 /** A date and time with its zone: "2026-10-06 22:41 GMT+2". */
@@ -279,7 +280,7 @@ export function formatDateTime(ms: number): string {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ${p.zone}`;
 }
 
-export function formatUpdatedAt(ms: number): string {
+export function formatUpdatedAt(ms: number, t: TFn = tEn): string {
   const p = clockParts(ms);
-  return `Updated ${p.hour}:${p.minute}:${p.second} ${p.zone}`;
+  return t("time.updated", { time: `${p.hour}:${p.minute}:${p.second} ${p.zone}` });
 }

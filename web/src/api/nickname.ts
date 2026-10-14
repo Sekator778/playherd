@@ -6,6 +6,7 @@
  */
 import type { PlayerSummaryDto } from "./contract";
 import { shortenAddress } from "../format";
+import { tEn, type TFn } from "../i18n";
 
 export const NICKNAME_MIN = 3;
 export const NICKNAME_MAX = 24;
@@ -31,8 +32,8 @@ export function hasPlaceholderNickname(player: Pick<PlayerSummaryDto, "nickname"
 /** What the header calls the player: the nickname — or "Player" until one is picked, so the shortened address
  *  (whose own "…" the header's ellipsis doubled, "txch1z……") is not what stands on the button. Short on purpose:
  *  the button is capped at 92 px (68 px at 320), and "New player" came out as "New pla…". */
-export function headerName(player: Pick<PlayerSummaryDto, "nickname" | "walletAddress">): string {
-  return hasPlaceholderNickname(player) ? "Player" : player.nickname;
+export function headerName(player: Pick<PlayerSummaryDto, "nickname" | "walletAddress">, t: TFn = tEn): string {
+  return hasPlaceholderNickname(player) ? t("layout.playerFallback") : player.nickname;
 }
 
 export type NicknameCheck =
@@ -40,7 +41,7 @@ export type NicknameCheck =
   /** `reason` is `null` for an empty field — nothing to complain about yet, the button just stays off. */
   | { ok: false; reason: string | null };
 
-export function checkNickname(raw: string): NicknameCheck {
+export function checkNickname(raw: string, t: TFn = tEn): NicknameCheck {
   const value = raw.trim();
   if (value === "") return { ok: false, reason: null };
   // Code points, not UTF-16 units: an emoji is one character the player can see, and one to name.
@@ -48,9 +49,9 @@ export function checkNickname(raw: string): NicknameCheck {
   const refused = Array.from(new Set(chars.filter((c) => !ALLOWED.test(c))));
   if (refused.length > 0) {
     const shown = refused.slice(0, 4).join(" ");
-    return { ok: false, reason: `Only letters A–Z, digits, space, _ . - are allowed — not: ${shown}${refused.length > 4 ? " …" : ""}` };
+    return { ok: false, reason: t("nickname.badChars", { shown: `${shown}${refused.length > 4 ? " …" : ""}` }) };
   }
-  if (chars.length < NICKNAME_MIN) return { ok: false, reason: `Too short — at least ${NICKNAME_MIN} characters.` };
-  if (chars.length > NICKNAME_MAX) return { ok: false, reason: `Too long — at most ${NICKNAME_MAX} characters.` };
+  if (chars.length < NICKNAME_MIN) return { ok: false, reason: t("nickname.tooShort", { count: NICKNAME_MIN }) };
+  if (chars.length > NICKNAME_MAX) return { ok: false, reason: t("nickname.tooLong", { count: NICKNAME_MAX }) };
   return { ok: true, value };
 }

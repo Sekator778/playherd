@@ -17,6 +17,7 @@ import { Avatar } from "./Avatar";
 import { BotBadge, EmptyState, ResultsHashLine, RoundStatusBadge } from "./Common";
 import { DirectionGlyph } from "./icons";
 import { RollingDigits } from "../fx/RollingDigits";
+import { useT } from "../i18n";
 
 /** `labels` name the two series by their real length (`formatDuration(MarketSeriesDto.durationSec)`,
  *  "3 MIN" / "15 MIN"). A series with no label (a market the server lists without it) is called what it is —
@@ -33,19 +34,20 @@ export function IntervalTabs({
   labels?: Partial<Record<Interval, string>>;
   openCounts?: Partial<Record<Interval, number>>;
 }) {
+  const t = useT();
   const tab = (interval: Interval, fallback: string) => {
     const open = openCounts?.[interval] ?? 0;
     return (
       <button type="button" role="tab" aria-selected={value === interval} onClick={() => onChange(interval)}>
         {labels?.[interval] ?? fallback}
-        {open > 0 && <span className="tabs__dot" role="img" aria-label={`${open} of your bets open in this series`} />}
+        {open > 0 && <span className="tabs__dot" role="img" aria-label={t("parts.openInSeries", { count: open })} />}
       </button>
     );
   };
   return (
-    <div className="tabs" role="tablist" aria-label="Round interval">
-      {tab("HOURLY", "Shorter")}
-      {tab("DAILY", "Longer")}
+    <div className="tabs" role="tablist" aria-label={t("interval.aria")}>
+      {tab("HOURLY", t("parts.shorter"))}
+      {tab("DAILY", t("parts.longer"))}
     </div>
   );
 }
@@ -104,7 +106,8 @@ export function PositionsList({
   /** The market the positions are in — its price scale drives the P&L math (BTC when omitted). */
   market?: MarketDto;
 }) {
-  if (positions.length === 0) return <EmptyState>No positions in this round.</EmptyState>;
+  const t = useT();
+  if (positions.length === 0) return <EmptyState>{t("parts.noPositions")}</EmptyState>;
   const up = positions.filter((p) => p.direction === "UP");
   const down = positions.filter((p) => p.direction === "DOWN");
   return (
@@ -128,6 +131,7 @@ function StagePanel({
   referencePrice?: MarketReferenceDto | null;
   market?: MarketDto;
 }) {
+  const t = useT();
   const side = direction.toLowerCase();
   return (
     <div className={`stage__panel stage__panel--${side}`}>
@@ -138,7 +142,7 @@ function StagePanel({
         <span className="stage__heading__count">{positions.length}</span>
       </div>
       {positions.length === 0 ? (
-        <p className="stage__empty muted">No one yet</p>
+        <p className="stage__empty muted">{t("parts.noOne")}</p>
       ) : (
         <ul className="stage__list">
           {positions.map((p, index) => {
@@ -168,7 +172,7 @@ function StagePanel({
                 {value !== null && (
                   <span className={`player-chip__result ${p.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(value))}`}>
                     {formatPlayAmount(value, { sign: true })}
-                    {p.liquidated && " · liq"}
+                    {p.liquidated && ` · ${t("common.liqShort")}`}
                   </span>
                 )}
               </li>
@@ -186,9 +190,10 @@ function StagePanel({
  * dollars they were (first tester pass, D12).
  */
 export function PaperMoneyNote() {
+  const t = useT();
   return (
     <p className="paper-note faint">
-      <span className="paper-tag">PAPER $</span> Pretend dollars: the herd's paper money — not PLAY, not real.
+      <span className="paper-tag">{t("parts.paperTag")}</span> {t("parts.paperNote")}
     </p>
   );
 }
@@ -207,13 +212,14 @@ interface CrowdPositionCardProps {
 }
 
 export function CrowdPositionCard({ phase, crowd, referencePrice, market, format }: CrowdPositionCardProps) {
+  const t = useT();
   const printer = format ?? market;
   const price = (p: string) => (printer ? formatPrice(p, printer) : formatUsd(p));
   if (!crowd || (phase === "SETTLED" && "traded" in crowd && !crowd.traded)) {
     return (
       <div className="card">
-        <h3>Crowd account's position</h3>
-        <EmptyState>The crowd tied this round — no position was opened.</EmptyState>
+        <h3>{t("parts.crowdPosition")}</h3>
+        <EmptyState>{t("parts.crowdTied")}</EmptyState>
       </div>
     );
   }
@@ -231,7 +237,7 @@ export function CrowdPositionCard({ phase, crowd, referencePrice, market, format
     const pctToLiq = referencePrice ? percentToLiquidation(referencePrice.price, c.liquidationPrice) : null;
     return (
       <div className="card">
-        <h3>Crowd account's position</h3>
+        <h3>{t("parts.crowdPosition")}</h3>
         <PaperMoneyNote />
         <p>
           <DirectionGlyph direction={c.direction} /> {c.direction} · x{c.leverage}
@@ -241,13 +247,13 @@ export function CrowdPositionCard({ phase, crowd, referencePrice, market, format
             <span className={outcomeClassName(outcomeFromNet(live.toNumber()))}>
               {formatUsd(live.toNumber(), { sign: true })}
             </span>{" "}
-            <span className="net-result__secondary">unrealized</span>
+            <span className="net-result__secondary">{t("room.unrealized")}</span>
           </div>
         )}
-        {pctToLiq !== null && <p className="mono muted">{formatPercent(pctToLiq)} to liquidation</p>}
-        <p className="mono muted">Margin: {formatUsd(c.margin)}</p>
-        <p className="mono muted">Entry price: {price(c.entryPrice)}</p>
-        <p className="mono muted">Liquidation price: {price(c.liquidationPrice)}</p>
+        {pctToLiq !== null && <p className="mono muted">{t("room.toLiquidation", { pct: formatPercent(pctToLiq) })}</p>}
+        <p className="mono muted">{t("parts.margin", { value: formatUsd(c.margin) })}</p>
+        <p className="mono muted">{t("parts.entryPrice", { value: price(c.entryPrice) })}</p>
+        <p className="mono muted">{t("parts.liquidationPrice", { value: price(c.liquidationPrice) })}</p>
       </div>
     );
   }
@@ -259,9 +265,9 @@ export function CrowdPositionCard({ phase, crowd, referencePrice, market, format
   const flat = !c.liquidated && Math.round(net * 100) === 0;
   return (
     <div className="card">
-      <h3>Crowd account's position</h3>
+      <h3>{t("parts.crowdPosition")}</h3>
       <PaperMoneyNote />
-      {c.liquidated && <p className="outcome-liquidated">Crowd account liquidated this round.</p>}
+      {c.liquidated && <p className="outcome-liquidated">{t("parts.crowdLiquidated")}</p>}
       {c.direction && (
         <p>
           <DirectionGlyph direction={c.direction} /> {c.direction} · x{c.leverage}
@@ -271,11 +277,11 @@ export function CrowdPositionCard({ phase, crowd, referencePrice, market, format
         <span className={c.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(net))}>
           {formatUsd(net, { sign: true })}
         </span>
-        {flat && <span className="net-result__secondary"> flat</span>}
+        {flat && <span className="net-result__secondary"> {t("parts.flat")}</span>}
       </div>
-      {flat && <p className="muted">The price closed where it opened — neither a win nor a loss for the crowd account.</p>}
-      <p className="mono muted">Capital before: {formatUsd(c.capitalBefore)}</p>
-      <p className="mono muted">Capital after: {formatUsd(c.capitalAfter)}</p>
+      {flat && <p className="muted">{t("parts.flatNote")}</p>}
+      <p className="mono muted">{t("parts.capitalBefore", { value: formatUsd(c.capitalBefore) })}</p>
+      <p className="mono muted">{t("parts.capitalAfter", { value: formatUsd(c.capitalAfter) })}</p>
     </div>
   );
 }
@@ -292,14 +298,15 @@ export function CancellationNotice({
   /** Which market and series the round was in ("GER · 3 MIN") — a cancelled round has no hero card to say so. */
   context?: string;
 }) {
+  const t = useT();
   return (
     <div className="card">
       <RoundStatusBadge phase="CANCELLED" />
       {context && <p className="faint round-context">{context}</p>}
-      <h3 style={{ marginTop: 12 }}>This round was cancelled.</h3>
+      <h3 style={{ marginTop: 12 }}>{t("parts.cancelledTitle")}</h3>
       <p>{cancellation.reason}</p>
       <p className="muted">
-        All {cancellation.refundedBetCount} bets were refunded, including any that would have been liquidated.
+        {t("parts.refunded", { count: cancellation.refundedBetCount })}
       </p>
       <ResultsHashLine roundId={roundId} resultsHash={resultsHash} />
     </div>

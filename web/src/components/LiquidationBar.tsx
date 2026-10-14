@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { PriceStr } from "../api/contract";
 import { formatPercent, formatPrice, formatUsd, type PriceFormatMarket } from "../format";
+import { useT } from "../i18n";
 import { HEAT_VAR, liquidationZone } from "./heat";
 
 /**
@@ -39,6 +40,7 @@ export function LiquidationBar({
    *  cents; omitted → plain USD with 2 decimals, as for BTC. */
   market?: PriceFormatMarket;
 }) {
+  const t = useT();
   const price = (p: PriceStr) => (market ? formatPrice(p, market) : formatUsd(p));
   const fraction = Math.max(0, Math.min(1, percentToLiquidation / SAFE_REFERENCE));
   const { tier, className } = liquidationZone(fraction);
@@ -50,13 +52,13 @@ export function LiquidationBar({
   return (
     <div className={`liq-bar ${className}`} style={style}>
       <div className="liq-bar__labels">
-        <span>Entry ~{price(entryPrice)}</span>
-        <span>Liquidation price: {price(liquidationPrice)}</span>
+        <span>{t("liqBar.entry", { price: price(entryPrice) })}</span>
+        <span>{t("liqBar.liquidationPrice", { price: price(liquidationPrice) })}</span>
       </div>
       <div className="liq-bar__track">
         <div className="liq-bar__fill" />
       </div>
-      <p className="liq-bar__caption">{formatPercent(percentToLiquidation)} move to liquidation</p>
+      <p className="liq-bar__caption">{t("liqBar.move", { pct: formatPercent(percentToLiquidation) })}</p>
     </div>
   );
 }
@@ -79,6 +81,7 @@ export function LiveLiqBar({
   pctToLiquidation: number;
   thin?: boolean;
 }) {
+  const t = useT();
   const fraction = Math.max(0, Math.min(1, roomFraction));
   const { tier, className } = liquidationZone(fraction);
   const style = { "--fill-pct": `${Math.round(fraction * 100)}%`, "--heat-color": HEAT_VAR[tier] } as CSSProperties;
@@ -87,15 +90,15 @@ export function LiveLiqBar({
       <div
         className="liq-bar__track"
         role="meter"
-        aria-label="Room left before liquidation"
+        aria-label={t("parts.meterAria")}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(fraction * 100)}
-        aria-valuetext={`${formatPercent(pctToLiquidation)} to liquidation`}
+        aria-valuetext={t("room.toLiquidation", { pct: formatPercent(pctToLiquidation) })}
       >
         <div className="liq-bar__fill" />
       </div>
-      {!thin && <p className="liq-bar__caption">{formatPercent(pctToLiquidation)} to liquidation</p>}
+      {!thin && <p className="liq-bar__caption">{t("room.toLiquidation", { pct: formatPercent(pctToLiquidation) })}</p>}
     </div>
   );
 }
