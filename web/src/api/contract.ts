@@ -577,6 +577,10 @@ export interface PlayerAccountDto {
    *  but not yet won or lost. Optional so a `RealApi` build that predates this field still works
    *  (falls back to not showing it) — but the server should start sending it. */
   inPlay?: PlayAmountStr;
+  /** Economy stage C (Р-92, C6): what the player may withdraw, `max(0, balance - packCredited)` once the economy is
+   *  active — the starter packs stay in the game, winnings and deposits above them can leave. Optional so a server that
+   *  predates it still works (the wallet then falls back to the whole balance). */
+  withdrawable?: PlayAmountStr;
 }
 
 export interface SeasonRecordDto {
@@ -955,6 +959,34 @@ export interface HomeSummaryDto {
 }
 
 // ---------------------------------------------------------------------------
+// Supply (economy stage C, C5): the public reconciliation. The platform reserve is TREASURY and HERD together —
+// HERD alone is the platform's revenue and is never published (Р-90).
+// ---------------------------------------------------------------------------
+
+export interface SupplyDto {
+  /** False before the economy cutover: the books are not split into accounts yet. */
+  economyActive: boolean;
+  /** Everything ever issued: 100 000 000 PLAY. */
+  issued: PlayAmountStr;
+  /** The treasury coin on chain; null when the chain service cannot say. */
+  onChainTreasury: PlayAmountStr | null;
+  treasuryCoinId: string | null;
+  /** Balances plus the stakes of bets in open rounds. */
+  heldByPlayers: PlayAmountStr;
+  /** The treasury and the platform's own account, together. */
+  platformReserve: PlayAmountStr;
+  /** Withdrawals confirmed on chain. */
+  withdrawnOnChain: PlayAmountStr;
+  /** The game's books add up (internal identity). */
+  booksBalanced: boolean;
+  /** The books agree with the chain (null: the chain is unknown). */
+  chainConsistent: boolean | null;
+  /** The circuit breaker is open: new bets are limited to a lower leverage. */
+  circuitBreakerOpen: boolean;
+  atMs: EpochMs;
+}
+
+// ---------------------------------------------------------------------------
 // Server info (additive per the task's FIXED INTERFACE (1) — Р-40, Р-41, Р-46, Р-47, Р-43).
 // Lets the UI show, honestly, which mode it's talking to: a real backend always answers this
 // (`mode: "live"` outside test mode, `"replay"` inside it, Р-46), a `MockApi` build never does
@@ -1099,6 +1131,10 @@ export type ApiErrorCode =
   | "MARKET_CLOSED"
   | "PRICE_UNAVAILABLE"
   | "RATE_LIMITED"
+  /** HTTP 429 (economy stage B): more than 3 new players from one address in 24 hours. */
+  | "REGISTRATION_LIMIT"
+  /** HTTP 422 (economy stage B): the open stakes on this side of this round already reach the limit the treasury allows. */
+  | "EXPOSURE_LIMIT_EXCEEDED"
   /** HTTP 503: the server is rebuilding its state after a failure. Transient — keep what is on
    *  screen, say "the server is restarting" and retry; never treat it as "no data". */
   | "ENGINE_NOT_READY"
@@ -1240,4 +1276,8 @@ export interface Api {
    *  so every call site must handle `api.serverInfo?.()` being `undefined` as well as the
    *  promise it returns being absent from a real backend that predates this field. */
   serverInfo?(): Promise<ServerInfoDto>;
+
+  /** Economy stage C (C5, Р-90): the public supply block — optional like `serverInfo` (the mock has no chain to reconcile with,
+   *  and an older server has no such call). */
+  supply?(): Promise<SupplyDto>;
 }

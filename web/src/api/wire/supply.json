@@ -1,0 +1,17 @@
+{
+  "method": "supply",
+  "args": [],
+  "response": {
+    "economyActive": true,
+    "issued": "100000000.000",
+    "onChainTreasury": "99998100.000",
+    "treasuryCoinId": "0x4f6e8d8f5d2b0a7c9e1b3a5d7f9c2e4a6b8d0f1a3c5e7092b4d6f8a0c2e4b6d8",
+    "heldByPlayers": "31900.000",
+    "platformReserve": "99966200.000",
+    "withdrawnOnChain": "1900.000",
+    "booksBalanced": true,
+    "chainConsistent": true,
+    "circuitBreakerOpen": false,
+    "atMs": 1792059249987
+  }
+}

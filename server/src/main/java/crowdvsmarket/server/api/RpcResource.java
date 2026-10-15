@@ -226,6 +226,8 @@ public class RpcResource {
             case FEEDBACK_METHOD -> result = feedbackService.submit(requiredObj(args, 0, Feedback.SubmitRequest.class),
                     playerId, clientIp(httpRequest), now);
             case "serverInfo" -> result = serverInfoService.serverInfo();
+            // Economy stage C (C5): public, no session; the supply and where it sits, never HERD on its own (Р-90)
+            case "supply" -> result = gameService.supply(now);
             default -> throw ApiException.notFound("unknown RPC method: " + method);
         }
 

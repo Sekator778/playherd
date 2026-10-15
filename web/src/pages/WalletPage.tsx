@@ -32,8 +32,12 @@ import {
   VibrationOnIcon,
 } from "../components/icons";
 
-// The fee types of economy stage A have no label yet (stage C adds them in six languages): `ledgerLabel` makes their name readable.
 const LEDGER_LABEL: Partial<Record<LedgerEntryType, TKey>> = {
+  // Economy stage A/C: the two fees charged with a bet and their refunds (a cancelled bet or round gives both back).
+  FEE_HERD: "wallet.ledgerFeeHerd",
+  FEE_NETWORK: "wallet.ledgerFeeNetwork",
+  FEE_HERD_REFUND: "wallet.ledgerFeeHerdRefund",
+  FEE_NETWORK_REFUND: "wallet.ledgerFeeNetworkRefund",
   STARTER_PACK: "wallet.ledgerStarterPack",
   STAKE_DEBIT: "wallet.ledgerStakeDebit",
   STAKE_REFUND: "wallet.ledgerStakeRefund",
@@ -73,9 +77,13 @@ function ledgerIcon(entry: LedgerEntryDto, net: number | undefined): ReactNode {
     case "STARTER_PACK":
       return <GiftIcon />;
     case "STAKE_DEBIT":
+    case "FEE_HERD":
+    case "FEE_NETWORK":
       return <ChipIcon />;
     case "STAKE_REFUND":
     case "WITHDRAWAL_REFUND":
+    case "FEE_HERD_REFUND":
+    case "FEE_NETWORK_REFUND":
       return <RefundIcon />;
     case "DEPOSIT":
       return <ArrowDownTrayIcon />;
@@ -99,7 +107,7 @@ function ledgerIcon(entry: LedgerEntryDto, net: number | undefined): ReactNode {
  *  feedback for an incoming deposit (Р-53, `ux_spec.md` §8): once `usePoll` below picks up the
  *  resulting `DEPOSIT` ledger entry, the balance rolls and flashes on its own, no separate
  *  "deposit arrived" mechanism needed. */
-function BalanceCard({ balance }: { balance: string }) {
+function BalanceCard({ balance, withdrawable }: { balance: string; withdrawable?: string }) {
   const t = useT();
   const numeric = Number(balance);
   const prevRef = useRef(numeric);
@@ -119,6 +127,14 @@ function BalanceCard({ balance }: { balance: string }) {
       <div className="stat-tile__value" style={{ fontSize: 32 }}>
         <RollingDigits value={numeric} durationMs={500} format={rollingPlayFormat(numeric, { unit: true })} />
       </div>
+      {withdrawable !== undefined && (
+        // Economy stage C (C6): the starter pack stays in the game; what is above it can leave.
+        <div className="wallet-withdrawable">
+          <div className="stat-tile__label">{t("wallet.withdrawable")}</div>
+          <div className="mono wallet-withdrawable__value">{formatPlayAmount(withdrawable)} PLAY</div>
+          <p className="faint wallet-withdrawable__hint">{t("wallet.withdrawableHint")}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -255,7 +271,18 @@ function WithdrawalStatusRow({ w }: { w: WithdrawalRequestDto }) {
  * `WithdrawalState`) until it reaches `CONFIRMED`/`FAILED`, same polling shape as the rest of this
  * app (`usePoll`), just started per-request rather than on a fixed screen-level interval.
  */
-function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; address: string; onBalanceChange: () => void }) {
+function WithdrawCard({
+  balance,
+  withdrawable,
+  address,
+  onBalanceChange,
+}: {
+  balance: number;
+  /** What may leave (`PlayerAccountDto.withdrawable`); `undefined` from a server that does not say: the whole balance. */
+  withdrawable?: number;
+  address: string;
+  onBalanceChange: () => void;
+}) {
   const api = useApi();
   const t = useT();
   const [amount, setAmount] = useState("");
@@ -271,7 +298,10 @@ function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; 
     [],
   );
 
-  const check = checkPlayAmount(amount, balance);
+  // The starter pack cannot be withdrawn (economy stage B/C): the limit is what is above it, when the server says so.
+  const limit = withdrawable === undefined ? balance : Math.min(balance, withdrawable);
+  const packHeld = limit < balance;
+  const check = checkPlayAmount(amount, limit);
   const belowMin = check.isPositive && check.amount < Number(MIN_WITHDRAWAL_PLAY);
   const valid = check.valid && !belowMin;
 
@@ -327,7 +357,11 @@ function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; 
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0"
           />
-          <p className="field-hint">{t("wallet.balanceHint", { amount: formatPlayAmount(balance) })}</p>
+          <p className="field-hint">
+            {withdrawable === undefined
+              ? t("wallet.balanceHint", { amount: formatPlayAmount(balance) })
+              : `${t("wallet.withdrawable")}: ${formatPlayAmount(limit)} PLAY`}
+          </p>
           {amount.trim() !== "" && !check.isPositive && <p className="field-error">{t("wallet.amountPositive")}</p>}
           {check.isPositive && check.tooManyDecimals && (
             <p className="field-error">{t("wallet.decimals", { count: PLAY_DECIMALS })}</p>
@@ -337,7 +371,9 @@ function WithdrawCard({ balance, address, onBalanceChange }: { balance: number; 
           )}
           {check.overBalance && (
             <p className="field-error">
-              {t("wallet.notEnough", { have: formatPlayAmount(balance), need: formatPlayAmount(check.amount) })}
+              {packHeld
+                ? t("wallet.withdrawExceeds", { amount: formatPlayAmount(limit) })
+                : t("wallet.notEnough", { have: formatPlayAmount(balance), need: formatPlayAmount(check.amount) })}
             </p>
           )}
         </div>
@@ -493,7 +529,7 @@ export function WalletContent() {
   return (
     <div className="two-col">
       <div className="stack" style={{ gap: 16 }}>
-        <BalanceCard balance={account.balance} />
+        <BalanceCard balance={account.balance} withdrawable={account.withdrawable} />
         {error && (
           <p className="status-note" role="status">
             {t("wallet.refreshFailed")}
@@ -548,7 +584,14 @@ export function WalletContent() {
         )}
       </div>
       <div className="stack" style={{ gap: 16 }}>
-        {player && <WithdrawCard balance={Number(account.balance)} address={player.walletAddress} onBalanceChange={load} />}
+        {player && (
+          <WithdrawCard
+            balance={Number(account.balance)}
+            withdrawable={account.withdrawable === undefined ? undefined : Number(account.withdrawable)}
+            address={player.walletAddress}
+            onBalanceChange={load}
+          />
+        )}
         <DepositCard />
         <SageDepositHints />
         <SettingsCard />

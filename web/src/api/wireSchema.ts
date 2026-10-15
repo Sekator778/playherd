@@ -54,6 +54,7 @@ import type {
   SeasonRecordDto,
   SeasonReturnDto,
   ServerInfoDto,
+  SupplyDto,
 } from "./contract";
 
 /** The list of what is wrong, each entry saying where (`$.markets[3].price.price`) and what. */
@@ -273,7 +274,7 @@ export const myPosition = obj<MyPositionDto>({
   untilMs: int,
 });
 
-export const playerAccount = obj<PlayerAccountDto>({ playerId: nonEmptyStr, balance: play, currentSeason: nonEmptyStr, inPlay: opt(play) });
+export const playerAccount = obj<PlayerAccountDto>({ playerId: nonEmptyStr, balance: play, currentSeason: nonEmptyStr, inPlay: opt(play), withdrawable: opt(play) });
 
 const ledgerEntry = obj<LedgerEntryDto>({
   sequence: int,
@@ -408,6 +409,20 @@ export const markets = obj<MarketsDto>({
   serverTimeMs: int,
   categories: arr(obj<CategoryDto>({ id: lit("crypto", "politics", "sports", "stocks", "indices", "commodities"), title: nonEmptyStr, marketCount: int })),
   markets: arr(market),
+});
+
+export const supply = obj<SupplyDto>({
+  economyActive: bool,
+  issued: play,
+  onChainTreasury: nullable(play),
+  treasuryCoinId: nullable(str),
+  heldByPlayers: play,
+  platformReserve: play,
+  withdrawnOnChain: play,
+  booksBalanced: bool,
+  chainConsistent: nullable(bool),
+  circuitBreakerOpen: bool,
+  atMs: int,
 });
 
 export const serverInfo = obj<ServerInfoDto>({

@@ -18,6 +18,7 @@ import { BotBadge, EmptyState, ResultsHashLine, RoundStatusBadge } from "./Commo
 import { DirectionGlyph } from "./icons";
 import { RollingDigits } from "../fx/RollingDigits";
 import { useT } from "../i18n";
+import { useSession } from "../api/ApiContext";
 
 /** `labels` name the two series by their real length (`formatDuration(MarketSeriesDto.durationSec)`,
  *  "3 MIN" / "15 MIN"). A series with no label (a market the server lists without it) is called what it is —
@@ -132,6 +133,7 @@ function StagePanel({
   market?: MarketDto;
 }) {
   const t = useT();
+  const { player: me } = useSession();
   const side = direction.toLowerCase();
   return (
     <div className={`stage__panel stage__panel--${side}`}>
@@ -169,7 +171,9 @@ function StagePanel({
                 </Link>
                 <BotBadge isBot={p.player.isBot} />
                 <span className="player-chip__lev mono">x{p.leverage}</span>
-                {value !== null && (
+                {/* Р-90: the showcase shows winners. The player sees their own result either way; another player's result is shown
+                    only when it is a gain — no one else's loss, ruin or liquidation is listed. */}
+                {value !== null && (p.playerId === me?.playerId || (value > 0 && !p.liquidated)) && (
                   <span className={`player-chip__result ${p.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(value))}`}>
                     {formatPlayAmount(value, { sign: true })}
                     {p.liquidated && ` · ${t("common.liqShort")}`}
