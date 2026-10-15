@@ -21,10 +21,19 @@ public record SeasonRecord(
         PlayAmount withdrawn,
         int roundsPlayed,
         int directionEligibleRounds,
-        int directionCorrectRounds) {
+        int directionCorrectRounds,
+        PlayAmount starterPack) {
 
-    static SeasonRecord starting(Season season, PlayAmount baselineBalance) {
-        return new SeasonRecord(season, baselineBalance, PlayAmount.ZERO, PlayAmount.ZERO, 0, 0, 0);
+    /** A record of a season with the flat {@link LedgerBook#STARTER_PACK} (every season before economy stage B). */
+    public SeasonRecord(Season season, PlayAmount baselineBalance, PlayAmount deposited, PlayAmount withdrawn,
+            int roundsPlayed, int directionEligibleRounds, int directionCorrectRounds) {
+        this(season, baselineBalance, deposited, withdrawn, roundsPlayed, directionEligibleRounds, directionCorrectRounds,
+                LedgerBook.STARTER_PACK);
+    }
+
+    /** {@code starterPack}: what the season's pack actually credited (a top-up from the cutover on, plan B2) - the rating subtracts it. */
+    static SeasonRecord starting(Season season, PlayAmount baselineBalance, PlayAmount starterPack) {
+        return new SeasonRecord(season, baselineBalance, PlayAmount.ZERO, PlayAmount.ZERO, 0, 0, 0, starterPack);
     }
 
     /**
@@ -35,20 +44,20 @@ public record SeasonRecord(
     SeasonRecord withBaselineDelta(PlayAmount delta) {
         return new SeasonRecord(
                 season, baselineBalance.plus(delta), deposited, withdrawn, roundsPlayed,
-                directionEligibleRounds, directionCorrectRounds);
+                directionEligibleRounds, directionCorrectRounds, starterPack);
     }
 
     SeasonRecord withDeposit(PlayAmount amount) {
         return new SeasonRecord(
                 season, baselineBalance, deposited.plus(amount), withdrawn, roundsPlayed,
-                directionEligibleRounds, directionCorrectRounds);
+                directionEligibleRounds, directionCorrectRounds, starterPack);
     }
 
     /** {@code delta} is negative to reverse a withdrawal whose on-chain leg failed. */
     SeasonRecord withWithdrawalDelta(PlayAmount delta) {
         return new SeasonRecord(
                 season, baselineBalance, deposited, withdrawn.plus(delta), roundsPlayed,
-                directionEligibleRounds, directionCorrectRounds);
+                directionEligibleRounds, directionCorrectRounds, starterPack);
     }
 
     /**
@@ -59,6 +68,6 @@ public record SeasonRecord(
     SeasonRecord withRoundPlayed(Boolean directionCorrect) {
         int eligible = directionEligibleRounds + (directionCorrect != null ? 1 : 0);
         int correct = directionCorrectRounds + (Boolean.TRUE.equals(directionCorrect) ? 1 : 0);
-        return new SeasonRecord(season, baselineBalance, deposited, withdrawn, roundsPlayed + 1, eligible, correct);
+        return new SeasonRecord(season, baselineBalance, deposited, withdrawn, roundsPlayed + 1, eligible, correct, starterPack);
     }
 }

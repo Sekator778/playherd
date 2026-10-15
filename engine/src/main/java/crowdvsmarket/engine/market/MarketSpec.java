@@ -117,6 +117,15 @@ public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMargi
     }
 
     /**
+     * The spec a bet is simulated with when its own liquidation parameters were stored with it (economy stage B): the single cap
+     * {@code cap} and {@code l = kappa / cap}, whatever this market's caps and kappa are now.
+     */
+    public MarketSpec forCap(int cap, BigDecimal kappa) {
+        BigDecimal rate = kappa.divide(BigDecimal.valueOf(cap), MathContext.DECIMAL128);
+        return new MarketSpec(id, cap, rate, cap, cap, kappa, herdFeeRate);
+    }
+
+    /**
      * A market with Hyperliquid's tier-0 maintenance margin rate for {@code maxLeverage}:
      * {@code l = 1/(2*maxLeverage)} (doc section 1.4), 34 significant digits, the same expression
      * {@code MarginTable#build} evaluates.

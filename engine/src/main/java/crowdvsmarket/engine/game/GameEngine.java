@@ -13,6 +13,7 @@ import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.BetBook;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.engine.round.Position;
+import crowdvsmarket.engine.round.LiquidationParams;
 import crowdvsmarket.engine.round.PositionSimulator;
 import crowdvsmarket.engine.round.RoundPrices;
 import crowdvsmarket.engine.round.RoundWindow;
@@ -118,7 +119,8 @@ public final class GameEngine {
             Fees fees, Instant now) {
         requireOwnMarket(bettingWindow);
         EconomyRules.requireLeverageAllowed(spec, bettingWindow.interval(), leverage.value(), stake);
-        return replayBet(playerId, bettingWindow, direction, leverage, stake, fees, now);
+        return replayBet(playerId, bettingWindow, direction, leverage, stake, fees,
+                LiquidationParams.of(spec, bettingWindow.interval()), now);
     }
 
     /**
@@ -130,11 +132,22 @@ public final class GameEngine {
     public Bet replayBet(
             String playerId, RoundWindow bettingWindow, Direction direction, Leverage leverage, PlayAmount stake,
             Fees fees, Instant now) {
+        return replayBet(playerId, bettingWindow, direction, leverage, stake, fees, null, now);
+    }
+
+    /**
+     * {@link #replayBet(String, RoundWindow, Direction, Leverage, PlayAmount, Fees, Instant)} with the liquidation parameters the bet
+     * was placed with (economy stage B): the bet is settled with them whatever the market's cap and kappa are by then. {@code null}
+     * (a log written before they were stored) falls back to the market's current ones.
+     */
+    public Bet replayBet(
+            String playerId, RoundWindow bettingWindow, Direction direction, Leverage leverage, PlayAmount stake,
+            Fees fees, LiquidationParams liquidation, Instant now) {
         requireOwnMarket(bettingWindow);
         String roundId = bettingWindow.roundId();
         refundPrevious(playerId, roundId, now);
         ledger.reserveStake(playerId, roundId, stake, fees, now);
-        Bet bet = new Bet(playerId, roundId, direction, leverage, stake, fees);
+        Bet bet = new Bet(playerId, roundId, direction, leverage, stake, fees, liquidation);
         betBook.place(bet);
         return bet;
     }
@@ -205,13 +218,13 @@ public final class GameEngine {
             }
             if (!legacy) {
                 // plan A5: min(20 x stake, 0.1% of the treasury); the stake is mojo-exact, the payout in cents, so round down
-                BigDecimal cap = EconomyRules.maxPayout(bet.stake()).toMoney().setScale(2, RoundingMode.DOWN);
+                BigDecimal cap = EconomyRules.maxPayout(bet.stake(), ledger.payoutCapTreasury()).toMoney().setScale(2, RoundingMode.DOWN);
                 payout = payout.min(cap);
             }
 
             Optional<Boolean> directionCorrect = directionCorrect(bet.direction(), openPrice, closePrice);
-            ledger.settleRound(bet.playerId(), roundId, PlayAmount.fromMoney(payout), directionCorrect, settledAt);
-            outcomes.add(new PlayerRoundOutcome(bet.playerId(), bet.direction(), bet.leverage().value(), bet.stake(), liquidated, payout, bet.fees()));
+            ledger.settleRound(bet.playerId(), roundId, bet.stake(), PlayAmount.fromMoney(payout), directionCorrect, settledAt);
+            outcomes.add(new PlayerRoundOutcome(bet.playerId(), bet.direction(), bet.leverage().value(), bet.stake(), liquidated, payout, bet.fees(), bet.liquidation()));
         }
         betBook.clear(roundId);
 

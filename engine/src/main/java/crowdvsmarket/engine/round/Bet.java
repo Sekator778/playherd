@@ -13,13 +13,20 @@ import crowdvsmarket.engine.margin.Leverage;
  * marks a <b>legacy</b> bet: one placed before the economy change (or replayed from an event written before it) —
  * it was charged no fees and keeps being settled by the original rules (a liquidation pays 0, the market's single cap
  * and {@code l = 1/(2 cap)}, no payout cap), so replaying an old event log gives the old balances. Every bet placed by the
- * server now has fees (possibly zero) and follows the new rules.
+ * server now has fees (possibly zero) and follows the new rules. {@code liquidation} (economy stage B) are the cap and kappa the bet was
+ * placed with, used to settle it whatever the market's parameters are by then; {@code null} when the event did not store them.
  */
-public record Bet(String playerId, String roundId, Direction direction, Leverage leverage, PlayAmount stake, Fees fees) {
+public record Bet(String playerId, String roundId, Direction direction, Leverage leverage, PlayAmount stake, Fees fees,
+                  LiquidationParams liquidation) {
 
     /** A legacy bet (no fees, original rules). */
     public Bet(String playerId, String roundId, Direction direction, Leverage leverage, PlayAmount stake) {
-        this(playerId, roundId, direction, leverage, stake, null);
+        this(playerId, roundId, direction, leverage, stake, null, null);
+    }
+
+    /** A bet with fees whose liquidation parameters were not stored (placed by stage A before they were): the market's current ones apply. */
+    public Bet(String playerId, String roundId, Direction direction, Leverage leverage, PlayAmount stake, Fees fees) {
+        this(playerId, roundId, direction, leverage, stake, fees, null);
     }
 
     public boolean isLegacy() {
@@ -30,6 +37,15 @@ public record Bet(String playerId, String roundId, Direction direction, Leverage
      *  the one of {@code interval}'s round length otherwise. */
     public crowdvsmarket.engine.market.MarketSpec specFor(
             crowdvsmarket.engine.market.MarketSpec market, crowdvsmarket.engine.market.Interval interval) {
-        return isLegacy() ? market : market.forInterval(interval);
+        return specFor(isLegacy(), liquidation, market, interval);
+    }
+
+    /** {@link #specFor(crowdvsmarket.engine.market.MarketSpec, crowdvsmarket.engine.market.Interval)} for a bet known by its parts. */
+    public static crowdvsmarket.engine.market.MarketSpec specFor(boolean legacy, LiquidationParams liquidation,
+            crowdvsmarket.engine.market.MarketSpec market, crowdvsmarket.engine.market.Interval interval) {
+        if (legacy) {
+            return market;
+        }
+        return liquidation == null ? market.forInterval(interval) : market.forCap(liquidation.cap(), liquidation.kappa());
     }
 }

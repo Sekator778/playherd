@@ -1,5 +1,6 @@
 package crowdvsmarket.engine.ledger;
 
+import crowdvsmarket.engine.economy.EconomyRules;
 import crowdvsmarket.engine.economy.Fees;
 import crowdvsmarket.engine.season.Season;
 import java.time.Instant;
@@ -10,6 +11,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.HashSet;
 import java.util.function.UnaryOperator;
 
 /**
@@ -41,6 +45,35 @@ public final class LedgerBook {
     private long sequence = 0;
     private long requestCounter = 0;
     private long correctionCounter = 0;
+
+    // --- economy stage B (Р-92, docs/product/economy_implementation_plan.md B1-B6) ---
+    // The house accounts. Before the cutover ({@link #activateEconomy}) none of them moves except the always-tracked
+    // open stakes and the per-player counters: packs and wins are minted and lost stakes are burned, exactly as before.
+    private boolean economyActive;
+    private PlayAmount treasury = PlayAmount.ZERO;
+    private PlayAmount herd = PlayAmount.ZERO;
+    /** Stakes reserved for bets that are neither settled nor refunded yet: out of the players' balances, in no account. */
+    private PlayAmount openStakes = PlayAmount.ZERO;
+    /** What the opening of the TREASURY account made the total of all accounts: the on-chain treasury coin at the cutover. */
+    private PlayAmount openingTotal = PlayAmount.ZERO;
+    /** Money that crossed the boundary of the game (deposits in, withdrawals out, operator corrections) - ever, and at the cutover. */
+    private PlayAmount externalFlow = PlayAmount.ZERO;
+    private PlayAmount externalFlowAtCutover = PlayAmount.ZERO;
+    private PlayAmount depositedTotal = PlayAmount.ZERO;
+    private PlayAmount depositedAtCutover = PlayAmount.ZERO;
+    private PlayAmount withdrawnConfirmed = PlayAmount.ZERO;
+    private long cutoverAtMs = -1;
+    private final Map<String, PlayAmount> packCredited = new LinkedHashMap<>();
+    /** Fees a player paid (herd + network, net of the refunds) - what the daily sweep of the bots' fees is computed from. */
+    private final Map<String, PlayAmount> feesPaid = new LinkedHashMap<>();
+    private PlayAmount botFeesSwept = PlayAmount.ZERO;
+    private long lastSweepAtMs = -1;
+    private final Set<String> retired = new HashSet<>();
+    /** The highest TREASURY balance seen on each UTC day (epoch day), for the 30-day maximum of the circuit breaker (B6). */
+    private final TreeMap<Long, PlayAmount> treasuryDayMax = new TreeMap<>();
+    private static final long MILLIS_PER_DAY = 86_400_000L;
+    /** The window of the circuit breaker's maximum, in days (B6). */
+    public static final int BREAKER_WINDOW_DAYS = 30;
 
     // --- reads ---
 
@@ -130,16 +163,42 @@ public final class LedgerBook {
         }
         if (acc == null) {
             accounts.put(playerId, new PlayerAccount(playerId, PlayAmount.ZERO, season,
-                    new LinkedHashMap<>(Map.of(season, SeasonRecord.starting(season, PlayAmount.ZERO)))));
-            credit(playerId, STARTER_PACK, LedgerEntryType.STARTER_PACK, null, now);
+                    new LinkedHashMap<>(Map.of(season, SeasonRecord.starting(season, PlayAmount.ZERO, packFor(PlayAmount.ZERO))))));
+            grantPack(playerId, packFor(PlayAmount.ZERO), now);
             return accounts.get(playerId);
         }
         PlayAmount baseline = acc.balance();
+        PlayAmount pack = packFor(baseline);
         Map<Season, SeasonRecord> seasons = new LinkedHashMap<>(acc.seasons());
-        seasons.put(season, SeasonRecord.starting(season, baseline));
+        seasons.put(season, SeasonRecord.starting(season, baseline, pack));
         accounts.put(playerId, new PlayerAccount(playerId, acc.balance(), season, seasons));
-        credit(playerId, STARTER_PACK, LedgerEntryType.STARTER_PACK, null, now);
+        grantPack(playerId, pack, now);
         return accounts.get(playerId);
+    }
+
+    /**
+     * The starter pack a player with {@code balance} gets for a new season (economy stage B, plan B2). Before the cutover the pack
+     * is the flat {@link #STARTER_PACK} minted on top of the balance; from the cutover on it is a top-up to
+     * {@link #STARTER_PACK}: the difference when the balance is below it, nothing when it is not, paid from TREASURY.
+     */
+    public PlayAmount packFor(PlayAmount balance) {
+        if (!economyActive) {
+            return STARTER_PACK;
+        }
+        PlayAmount missing = STARTER_PACK.minus(balance);
+        return missing.isPositive() ? missing : PlayAmount.ZERO;
+    }
+
+    /** Credits a pack (nothing at all when it is zero), counts it in {@link #packCredited}, and - once the economy is active - pays it from TREASURY. */
+    private void grantPack(String playerId, PlayAmount pack, Instant now) {
+        if (!pack.isPositive()) {
+            return;
+        }
+        packCredited.merge(playerId, pack, PlayAmount::plus);
+        if (economyActive) {
+            moveTreasury(pack.negate(), now);
+        }
+        credit(playerId, pack, LedgerEntryType.STARTER_PACK, null, now);
     }
 
     /**
@@ -175,6 +234,7 @@ public final class LedgerBook {
                     "stake " + stake + " exceeds balance " + balance + " for player " + playerId);
         }
         debit(playerId, stake, LedgerEntryType.STAKE_DEBIT, roundId, now);
+        openStakes = openStakes.plus(stake);
     }
 
     /**
@@ -196,11 +256,17 @@ public final class LedgerBook {
                     "stake " + stake + " plus fees " + fees.total() + " exceeds balance " + balance + " for player " + playerId);
         }
         debit(playerId, stake, LedgerEntryType.STAKE_DEBIT, roundId, now);
+        openStakes = openStakes.plus(stake);
         if (fees.herd().isPositive()) {
             debit(playerId, fees.herd(), LedgerEntryType.FEE_HERD, roundId, now);
         }
         if (fees.network().isPositive()) {
             debit(playerId, fees.network(), LedgerEntryType.FEE_NETWORK, roundId, now);
+        }
+        // stage B: both fees go to HERD (before the cutover they are simply spent, as in stage A)
+        feesPaid.merge(playerId, fees.total(), PlayAmount::plus);
+        if (economyActive) {
+            herd = herd.plus(fees.total());
         }
     }
 
@@ -215,11 +281,19 @@ public final class LedgerBook {
         if (fees.network().isPositive()) {
             credit(playerId, fees.network(), LedgerEntryType.FEE_NETWORK_REFUND, roundId, now);
         }
+        feesPaid.merge(playerId, fees.total().negate(), PlayAmount::plus);
+        if (economyActive) {
+            // HERD gives the fees back; what it no longer holds (already swept to TREASURY) TREASURY gives back instead
+            PlayAmount fromHerd = herd.compareTo(fees.total()) >= 0 ? fees.total() : herd;
+            herd = herd.minus(fromHerd);
+            moveTreasury(fees.total().minus(fromHerd).negate(), now);
+        }
     }
 
     /** Returns a reserved stake because the bet was cancelled or replaced before round start (Р-13). */
     public void refundStake(String playerId, String roundId, PlayAmount stake, Instant now) {
         credit(playerId, stake, LedgerEntryType.STAKE_REFUND, roundId, now);
+        openStakes = openStakes.minus(stake);
     }
 
     /**
@@ -241,7 +315,21 @@ public final class LedgerBook {
      * counts toward the current one — counters and payout alike — as it always did.
      */
     public void settleRound(String playerId, String roundId, PlayAmount payout, Optional<Boolean> directionCorrect, Instant now) {
+        settleRound(playerId, roundId, PlayAmount.ZERO, payout, directionCorrect, now);
+    }
+
+    /**
+     * {@link #settleRound(String, String, PlayAmount, Optional, Instant)} for a bet whose reserved {@code stake} is known: the
+     * stake leaves the open stakes, and once the economy is active (stage B, plan B1) TREASURY keeps the stake and pays the
+     * payout - a lost stake stays in TREASURY, a win is paid out of it. Before the cutover the payout is minted, as ever.
+     */
+    public void settleRound(String playerId, String roundId, PlayAmount stake, PlayAmount payout,
+            Optional<Boolean> directionCorrect, Instant now) {
         ensureSeasonPack(playerId, now);
+        openStakes = openStakes.minus(stake);
+        if (economyActive) {
+            moveTreasury(stake.minus(payout), now);
+        }
         credit(playerId, payout, LedgerEntryType.SETTLEMENT, roundId, now);
         PlayerAccount acc = account(playerId);
         Season roundSeason = Season.of(now);
@@ -278,6 +366,7 @@ public final class LedgerBook {
             throw new IllegalArgumentException("withdrawal " + amount + " exceeds balance " + balance);
         }
         debit(playerId, amount, LedgerEntryType.WITHDRAWAL, null, now);
+        externalFlow = externalFlow.minus(amount);
         updateCurrentSeasonRecord(playerId, sr -> sr.withWithdrawalDelta(amount));
         String id = "w-" + (++requestCounter);
         WithdrawalRequest request = new WithdrawalRequest(id, playerId, amount, WithdrawalState.REQUESTED, now.toEpochMilli());
@@ -286,7 +375,9 @@ public final class LedgerBook {
     }
 
     public WithdrawalRequest confirmWithdrawal(String requestId) {
-        return transitionWithdrawal(requestId, WithdrawalState.CONFIRMED);
+        WithdrawalRequest confirmed = transitionWithdrawal(requestId, WithdrawalState.CONFIRMED);
+        withdrawnConfirmed = withdrawnConfirmed.plus(confirmed.amount());
+        return confirmed;
     }
 
     /** The on-chain leg failed: returns the escrowed amount to the balance and un-counts it from
@@ -294,6 +385,7 @@ public final class LedgerBook {
     public WithdrawalRequest failWithdrawal(String requestId, Instant now) {
         WithdrawalRequest updated = transitionWithdrawal(requestId, WithdrawalState.FAILED);
         credit(updated.playerId(), updated.amount(), LedgerEntryType.WITHDRAWAL_REFUND, null, now);
+        externalFlow = externalFlow.plus(updated.amount());
         updateCurrentSeasonRecord(updated.playerId(), sr -> sr.withWithdrawalDelta(updated.amount().negate()));
         return updated;
     }
@@ -359,6 +451,7 @@ public final class LedgerBook {
 
         ensureSeasonPack(playerId, now);
         applyDelta(playerId, originalAmount, LedgerEntryType.OPERATOR_CORRECTION, null, now);
+        externalFlow = externalFlow.plus(originalAmount);
         adjustSeasonWithdrawn(playerId, originalSeason, originalAmount.negate());
         restateLaterBaselines(playerId, originalSeason, originalAmount);
 
@@ -414,6 +507,7 @@ public final class LedgerBook {
         ensureSeasonPack(playerId, now);
         PlayAmount debit = originalAmount.negate();
         applyDelta(playerId, debit, LedgerEntryType.OPERATOR_CORRECTION, null, now);
+        externalFlow = externalFlow.plus(debit);
         adjustSeasonDeposited(playerId, originalSeason, debit);
         restateLaterBaselines(playerId, originalSeason, debit);
 
@@ -494,6 +588,8 @@ public final class LedgerBook {
     public void creditOnChainDeposit(String playerId, PlayAmount amount, Instant now) {
         ensureSeasonPack(playerId, now);
         credit(playerId, amount, LedgerEntryType.DEPOSIT, null, now);
+        externalFlow = externalFlow.plus(amount);
+        depositedTotal = depositedTotal.plus(amount);
         updateCurrentSeasonRecord(playerId, sr -> sr.withDeposit(amount));
     }
 
@@ -512,6 +608,8 @@ public final class LedgerBook {
     public DepositRequest confirmDeposit(String requestId, Instant now) {
         DepositRequest updated = transitionDeposit(requestId, DepositState.CONFIRMED);
         credit(updated.playerId(), updated.amount(), LedgerEntryType.DEPOSIT, null, now);
+        externalFlow = externalFlow.plus(updated.amount());
+        depositedTotal = depositedTotal.plus(updated.amount());
         updateCurrentSeasonRecord(updated.playerId(), sr -> sr.withDeposit(updated.amount()));
         return updated;
     }
@@ -531,6 +629,242 @@ public final class LedgerBook {
         DepositRequest updated = current.withState(newState);
         deposits.put(requestId, updated);
         return updated;
+    }
+
+    // --- economy stage B: the house accounts (Р-92, plan B1-B6) ---
+
+    /**
+     * The cutover (plan B1): from here on starter packs, refunds of fees and payouts come from TREASURY, lost stakes go to it,
+     * fees go to HERD. TREASURY opens with {@code openingTotal} (the treasury coin on chain) minus everything the players hold at
+     * this moment - their balances and their open stakes - so that {@code TREASURY + HERD + players + open stakes} equals
+     * {@code openingTotal} from now on (plus what crosses the boundary of the game, {@link #externalFlowSinceCutover}).
+     * Packs credited before the cutover count as {@link #packCredited}; nothing is changed retroactively.
+     *
+     * @return {@code false} (and nothing happens) when the economy is active already: the event that calls this is applied once
+     * @throws IllegalStateException when the players already hold more than {@code openingTotal}
+     */
+    public boolean activateEconomy(PlayAmount openingTotal, Instant now) {
+        if (economyActive) {
+            return false;
+        }
+        PlayAmount held = playersTotal().plus(openStakes);
+        PlayAmount opening = openingTotal.minus(held);
+        if (opening.isNegative()) {
+            throw new IllegalStateException("the players hold " + held + ", more than the opening total " + openingTotal);
+        }
+        economyActive = true;
+        this.openingTotal = openingTotal;
+        externalFlowAtCutover = externalFlow;
+        depositedAtCutover = depositedTotal;
+        cutoverAtMs = now.toEpochMilli();
+        treasury = opening;
+        herd = PlayAmount.ZERO;
+        treasuryDayMax.clear();
+        recordTreasuryDayMax(now);
+        return true;
+    }
+
+    /** Moves PLAY into (positive) or out of (negative) TREASURY; it never goes negative. */
+    private void moveTreasury(PlayAmount delta, Instant now) {
+        PlayAmount updated = treasury.plus(delta);
+        if (updated.isNegative()) {
+            throw new IllegalStateException("TREASURY would go negative: " + updated + " (" + treasury + " " + delta + ")");
+        }
+        treasury = updated;
+        recordTreasuryDayMax(now);
+    }
+
+    private void recordTreasuryDayMax(Instant now) {
+        long day = Math.floorDiv(now.toEpochMilli(), MILLIS_PER_DAY);
+        treasuryDayMax.merge(day, treasury, (a, b) -> a.compareTo(b) >= 0 ? a : b);
+        treasuryDayMax.headMap(day - 2L * BREAKER_WINDOW_DAYS).clear();
+    }
+
+    /**
+     * Daily sweep of HERD to TREASURY (plan B4): moves {@code amount} - the fees the bots paid since the last sweep - from HERD to
+     * TREASURY. Nothing else of HERD (the fees of the people) is touched.
+     *
+     * @throws IllegalStateException when the economy is not active or HERD holds less than {@code amount}
+     */
+    public void sweepHerdToTreasury(PlayAmount amount, Instant now) {
+        if (!economyActive) {
+            throw new IllegalStateException("the economy is not active: nothing to sweep");
+        }
+        if (amount.isNegative() || amount.compareTo(herd) > 0) {
+            throw new IllegalStateException("cannot sweep " + amount + " from HERD holding " + herd);
+        }
+        herd = herd.minus(amount);
+        botFeesSwept = botFeesSwept.plus(amount);
+        lastSweepAtMs = now.toEpochMilli();
+        moveTreasury(amount, now);
+    }
+
+    /**
+     * Retires a bot (plan B4): its balance goes to TREASURY, it can bet no more and is left out of the ratings. The account stays
+     * (its history is part of the log). Before the cutover only the flag is set.
+     *
+     * @return the balance swept to TREASURY
+     */
+    public PlayAmount retire(String playerId, Instant now) {
+        PlayerAccount acc = account(playerId);
+        retired.add(playerId);
+        PlayAmount swept = acc.balance();
+        if (economyActive && swept.isPositive()) {
+            applyDelta(playerId, swept.negate(), LedgerEntryType.OPERATOR_CORRECTION, null, now);
+            moveTreasury(swept, now);
+            return swept;
+        }
+        return PlayAmount.ZERO;
+    }
+
+    public boolean isRetired(String playerId) {
+        return retired.contains(playerId);
+    }
+
+    public boolean economyActive() {
+        return economyActive;
+    }
+
+    public PlayAmount treasury() {
+        return treasury;
+    }
+
+    public PlayAmount herd() {
+        return herd;
+    }
+
+    public PlayAmount openStakes() {
+        return openStakes;
+    }
+
+    /** The sum of all the players' balances (retired bots included, open stakes not). */
+    public PlayAmount playersTotal() {
+        PlayAmount total = PlayAmount.ZERO;
+        for (PlayerAccount acc : accounts.values()) {
+            total = total.plus(acc.balance());
+        }
+        return total;
+    }
+
+    public PlayAmount openingTotal() {
+        return openingTotal;
+    }
+
+    /** Deposits minus withdrawals (and operator corrections) since the cutover. */
+    public PlayAmount externalFlowSinceCutover() {
+        return externalFlow.minus(externalFlowAtCutover);
+    }
+
+    public PlayAmount depositedTotal() {
+        return depositedTotal;
+    }
+
+    /** Deposits credited since the cutover. */
+    public PlayAmount depositedSinceCutover() {
+        return depositedTotal.minus(depositedAtCutover);
+    }
+
+    public PlayAmount withdrawnConfirmed() {
+        return withdrawnConfirmed;
+    }
+
+    /** Withdrawals reserved and not yet confirmed or failed. */
+    public PlayAmount withdrawalsPending() {
+        PlayAmount total = PlayAmount.ZERO;
+        for (WithdrawalRequest w : withdrawals.values()) {
+            if (w.state() == WithdrawalState.REQUESTED) {
+                total = total.plus(w.amount());
+            }
+        }
+        return total;
+    }
+
+    public long cutoverAtMs() {
+        return cutoverAtMs;
+    }
+
+    /**
+     * {@code TREASURY + HERD + players + open stakes - (opening total + external flow since the cutover)}: zero when the books
+     * balance (plan B1). Meaningless (zero) before the cutover.
+     */
+    public PlayAmount identityDelta() {
+        if (!economyActive) {
+            return PlayAmount.ZERO;
+        }
+        return treasury.plus(herd).plus(playersTotal()).plus(openStakes)
+                .minus(openingTotal.plus(externalFlowSinceCutover()));
+    }
+
+    /** The sum of the starter packs credited to the player, ever (plan B2). */
+    public PlayAmount packCredited(String playerId) {
+        return packCredited.getOrDefault(playerId, PlayAmount.ZERO);
+    }
+
+    /**
+     * What the player may withdraw (plan B2): once the economy is active, {@code max(0, balance - packCredited)} - the packs are
+     * not withdrawable; before it, the whole balance.
+     */
+    public PlayAmount withdrawable(String playerId) {
+        PlayAmount balance = balance(playerId);
+        if (!economyActive) {
+            return balance;
+        }
+        PlayAmount free = balance.minus(packCredited(playerId));
+        return free.isPositive() ? free : PlayAmount.ZERO;
+    }
+
+    /** What the player has paid in fees, herd and network together, net of the refunds. */
+    public PlayAmount feesPaid(String playerId) {
+        return feesPaid.getOrDefault(playerId, PlayAmount.ZERO);
+    }
+
+    /** The fees of bots already moved from HERD to TREASURY by {@link #sweepHerdToTreasury}. */
+    public PlayAmount botFeesSwept() {
+        return botFeesSwept;
+    }
+
+    /** When HERD was last swept (epoch ms), -1 if never. */
+    public long lastSweepAtMs() {
+        return lastSweepAtMs;
+    }
+
+    /** The treasury the payout cap of a bet is taken from (plan A5): TREASURY once the economy is active, the on-chain fallback before. */
+    public PlayAmount payoutCapTreasury() {
+        return economyActive ? treasury : EconomyRules.TREASURY_FALLBACK;
+    }
+
+    /** The highest TREASURY balance of the last 30 days up to {@code now}, the current one included (plan B6). */
+    public PlayAmount treasuryMax30d(Instant now) {
+        long day = Math.floorDiv(now.toEpochMilli(), MILLIS_PER_DAY);
+        PlayAmount max = treasury;
+        for (PlayAmount value : treasuryDayMax.tailMap(day - (BREAKER_WINDOW_DAYS - 1), true).values()) {
+            if (value.compareTo(max) > 0) {
+                max = value;
+            }
+        }
+        return max;
+    }
+
+    /** Whether TREASURY is below 90% of its maximum of the last 30 days (plan B6). Always {@code false} before the cutover. */
+    public boolean circuitBreakerOpen(Instant now) {
+        if (!economyActive) {
+            return false;
+        }
+        long lhs = Math.multiplyExact(treasury.mojos(), 10L);
+        long rhs = Math.multiplyExact(treasuryMax30d(now).mojos(), 9L);
+        return lhs < rhs;
+    }
+
+    /**
+     * Whether a pack is due and how big it would be if it were granted at {@code now} (zero when none is due or the top-up has
+     * nothing to add): what the sign-in tells the player.
+     */
+    public PlayAmount seasonPackAmount(String playerId, Instant now) {
+        PlayerAccount acc = accounts.get(playerId);
+        if (!packDue(acc, Season.of(now))) {
+            return PlayAmount.ZERO;
+        }
+        return packFor(acc == null ? PlayAmount.ZERO : acc.balance());
     }
 
     // --- primitives ---

@@ -56,6 +56,9 @@ public final class RatingBook {
     public List<RichEntry> richList(Season season, Map<String, PlayerIdentity> identities) {
         List<RichEntry> entries = new ArrayList<>();
         for (String playerId : ledger.playerIds()) {
+            if (ledger.isRetired(playerId)) {
+                continue; // a retired bot is in no list (economy stage B4)
+            }
             Optional<SeasonRecord> maybe = ledger.seasonRecord(playerId, season);
             if (maybe.isEmpty() || maybe.get().roundsPlayed() < roundsThreshold) {
                 continue;
@@ -63,7 +66,7 @@ public final class RatingBook {
             SeasonRecord sr = maybe.get();
             PlayAmount balanceAtSeasonEnd = ledger.seasonEndBalance(playerId, season);
             PlayAmount growth = balanceAtSeasonEnd.plus(sr.withdrawn()).minus(sr.deposited())
-                    .minus(sr.baselineBalance().plus(LedgerBook.STARTER_PACK));
+                    .minus(sr.baselineBalance().plus(sr.starterPack()));
             entries.add(new RichEntry(playerId, displayName(playerId, identities), growth, sr.roundsPlayed()));
         }
         entries.sort(Comparator.comparing(RichEntry::growth).reversed());
@@ -80,6 +83,9 @@ public final class RatingBook {
     public List<ProphetEntry> prophetList(Season season, Map<String, PlayerIdentity> identities) {
         List<ProphetEntry> entries = new ArrayList<>();
         for (String playerId : ledger.playerIds()) {
+            if (ledger.isRetired(playerId)) {
+                continue; // a retired bot is in no list (economy stage B4)
+            }
             Optional<SeasonRecord> maybe = ledger.seasonRecord(playerId, season);
             if (maybe.isEmpty()) {
                 continue;

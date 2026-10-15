@@ -38,8 +38,9 @@ public final class EconomyRules {
     /** A bet pays at most this many times its stake. */
     public static final int PAYOUT_MULTIPLE = 20;
     /**
-     * TODO(stage B): replace by the TREASURY ledger balance. The treasury coin on chain, 99 998 100 PLAY
-     * (docs/product/economy_implementation_plan.md, "Факт для всех этапов", checked 2026-10-15).
+     * The treasury of the payout cap before the economy cutover (stage B): the treasury coin on chain, 99 998 100 PLAY
+     * (docs/product/economy_implementation_plan.md, "Факт для всех этапов", checked 2026-10-15). After it the cap follows the
+     * TREASURY balance ({@code LedgerBook#payoutCapTreasury}).
      */
     public static final PlayAmount TREASURY_FALLBACK = PlayAmount.ofWholePlay(99_998_100);
     /** The share of the treasury one bet may pay out at most: 0.1%. */
@@ -91,8 +92,13 @@ public final class EconomyRules {
 
     /** The most a bet of {@code stake} can be paid back in total (A5): {@code min(20 * stake, 0.1% of the treasury)}. */
     public static PlayAmount maxPayout(PlayAmount stake) {
+        return maxPayout(stake, TREASURY_FALLBACK);
+    }
+
+    /** {@link #maxPayout(PlayAmount)} against the TREASURY balance (stage B; {@code LedgerBook#payoutCapTreasury}). */
+    public static PlayAmount maxPayout(PlayAmount stake, PlayAmount treasury) {
         long byStake = Math.multiplyExact(stake.mojos(), (long) PAYOUT_MULTIPLE);
-        long byTreasury = TREASURY_FALLBACK.mojos() / 1000L * TREASURY_PAYOUT_PER_MILLE;
+        long byTreasury = treasury.mojos() / 1000L * TREASURY_PAYOUT_PER_MILLE;
         return new PlayAmount(Math.min(byStake, byTreasury));
     }
 }
