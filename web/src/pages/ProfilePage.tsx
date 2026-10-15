@@ -104,6 +104,14 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
     );
   }
 
+  // Р-90: another player's profile shows their wins only - never a lost or liquidated round, and no balance
+  // change (it would be computed from the wins alone). The player's own profile is complete. The server filters
+  // the same way; this keeps an older server or the mock from showing more.
+  const isOwn = mine || profile.player.playerId === player?.playerId;
+  const history = isOwn
+    ? profile.history
+    : profile.history.filter((h) => !h.liquidated && netFromPayoutAndStake(h.payout, h.stake) > 0);
+
   return (
     <div className="stack" style={{ gap: 20 }}>
       <h1 style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -129,21 +137,23 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
                 : "—"}
             </div>
           </div>
-          <div className="stat-tile">
-            <div className="stat-tile__label">{t("profile.balanceChange")}</div>
-            <div className="stat-tile__value">
-              {formatPlayAmount(seasonBalanceChange(profile).toFixed(3), { sign: true })} PLAY
+          {isOwn && (
+            <div className="stat-tile">
+              <div className="stat-tile__label">{t("profile.balanceChange")}</div>
+              <div className="stat-tile__value">
+                {formatPlayAmount(seasonBalanceChange(profile).toFixed(3), { sign: true })} PLAY
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
       <h2>{t("profile.roundHistory")}</h2>
-      {profile.history.length === 0 ? (
+      {history.length === 0 ? (
         <p className="muted">{t("profile.noRounds")}</p>
       ) : (
         <div className="result-tiles">
-          {profile.history.map((h) => (
+          {history.map((h) => (
             // Net result (>0 won, <0 lost, =0 even), never `payout > 0` alone — the bug Alex
             // reported (2026-09-25): a losing round that still returned some equity (e.g. 80.15
             // PLAY back on a 100 PLAY stake) showed as "Won" here. `ProfileRoundEntryDto`

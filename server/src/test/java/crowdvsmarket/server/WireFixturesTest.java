@@ -272,7 +272,7 @@ class WireFixturesTest extends LiveRpcTestBase {
         capture("crowdAccount", null, "crowdAccount", story.perp().id());
         capture("crowdOverview", null, "crowdOverview");
         capture("ratings", null, "ratings", (Object) null);
-        capture("publicProfile", null, "publicProfile", story.aliceId());
+        capture("publicProfile", alice, "publicProfile", story.aliceId()); // as herself: the complete view; anyone else sees only the wins (Р-90)
         capture("cancellations", null, "cancellations", (Object) null);
         capture("unseenResults", alice, "unseenResults");
         capture("priceSeries", null, "priceSeries", story.perp().id(), null);

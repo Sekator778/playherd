@@ -470,8 +470,11 @@ describe("Profile — a player's round history", () => {
     expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(profile.player.displayName);
     await settle(300);
     const tiles = document.querySelectorAll<HTMLElement>(".result-tile");
-    expect(tiles).toHaveLength(profile.history.length);
-    for (const [i, entry] of profile.history.entries()) {
+    // the fixture is the player's own, complete view; a visitor sees the wins only (Р-90)
+    const shown = profile.history.filter((h) => !h.liquidated && Number(h.payout) > Number(h.stake));
+    expect(tiles).toHaveLength(shown.length);
+    expect(shown.length).toBeLessThan(profile.history.length);
+    for (const [i, entry] of shown.entries()) {
       const tile = tiles[i];
       expect(tile.querySelector(".result-tile__title")).toHaveTextContent(entry.asset);
       const net = entry.liquidated ? -Number(entry.stake) : Number(entry.payout) - Number(entry.stake);
@@ -480,9 +483,9 @@ describe("Profile — a player's round history", () => {
     expectCleanPage("profile");
   });
 
-  it("an unknown player is 'Player not found.' — by the server's code", async () => {
+  it("an unknown player is 'Player not found, or no longer playing.' — by the server's code", async () => {
     renderApp("/profile/nobody", { signedIn: false, overrides: { publicProfile: () => ({ status: 404, body: { error: { code: "NOT_FOUND", message: "unknown player nobody" } } }) } });
-    expect(await screen.findByText("Player not found.")).toBeInTheDocument();
+    expect(await screen.findByText("Player not found, or no longer playing.")).toBeInTheDocument();
   });
 });
 

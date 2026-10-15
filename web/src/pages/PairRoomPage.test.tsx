@@ -415,7 +415,7 @@ describe("Room — a position in the running round", () => {
     const own = publicPosition({ playerId: TEST_PLAYER.playerId, player: { ...TEST_PLAYER }, liquidated: true, stake: "250.000" });
     renderRoom("/play/BTC", { running: (id) => runningRoundOf(id, "BTC", { positions: [own] }) }, true);
     expect(await screen.findByText(/-250 PLAY · liquidated/)).toBeInTheDocument();
-    expect(screen.getByText("You lost your whole stake.")).toBeInTheDocument();
+    expect(screen.getByText("You lost most of your stake.")).toBeInTheDocument();
   });
 });
 

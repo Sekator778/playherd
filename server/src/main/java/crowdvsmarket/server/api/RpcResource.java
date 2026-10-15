@@ -197,10 +197,10 @@ public class RpcResource {
             }
             case "crowdAccount" -> result = gameService.crowdAccount(str(args, 0));
             case "ratings" -> result = gameService.ratings(str(args, 0));
-            case "publicProfile" -> result = gameService.publicProfile(str(args, 0));
+            case "publicProfile" -> result = gameService.publicProfile(str(args, 0), playerId);
             case "myProfile" -> {
                 requireSignedIn(playerId);
-                result = gameService.publicProfile(playerId);
+                result = gameService.publicProfile(playerId, playerId);
             }
             // Р-62 "while you were away" — RPC method names match contract.ts's `Api.unseenResults`/
             // `Api.acknowledgeResults` exactly (web already wrote+wired these against MockApi; the

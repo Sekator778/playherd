@@ -170,6 +170,27 @@ class ProfileRpcTest extends LiveRpcTestBase {
     }
 
     @Test
+    void anotherPlayersProfileShowsOnlyTheirWinsTheirOwnShowsEverything() throws Exception {
+        Market market = market("T_PF_WINSONLY");
+        Session me = signIn("winsonly");
+        RoundWindow won = win(market, me.playerId());
+        loss(market, me.playerId());
+        liquidation(market, me.playerId());
+        flat(market, me.playerId());
+
+        JsonNode own = ok(me, "myProfile");
+        assertThat(own.path("history")).as("the player's own profile is complete").hasSize(4);
+        assertThat(ok(me, "publicProfile", me.playerId()).path("history")).as("looking at oneself is the full view").hasSize(4);
+
+        for (Session viewer : new Session[] {null, signIn("looker")}) {
+            JsonNode seen = ok(viewer, "publicProfile", me.playerId());
+            assertThat(seen.path("history")).hasSize(1);
+            assertThat(seen.path("history").get(0).path("roundId").asText()).isEqualTo(won.roundId());
+            assertThat(seen.path("history").get(0).path("liquidated").asBoolean()).isFalse();
+        }
+    }
+
+    @Test
     void historyEntriesAndUnseenResultsCarryTheRealLengthOfTheRound() throws Exception {
         Market market = market("T_PF_LEN");
         Session me = signIn("length");

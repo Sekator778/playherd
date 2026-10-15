@@ -2092,6 +2092,24 @@ public class GameService implements MarketListener {
 
     private static final int PROFILE_HISTORY_LIMIT = 100; // предложение — contract.ts leaves this unpaginated/uncapped
 
+    /**
+     * The profile as {@code viewerId} (null: not signed in) may see it (Р-90): the player's own profile is complete; anyone else's shows only
+     * the wins (net above the stake, not liquidated) - never a loss, a liquidation or a flat round. A retired bot is not found at all.
+     */
+    public Identity.PublicProfileDto publicProfile(String playerId, String viewerId) {
+        Identity.PublicProfileDto full = publicProfile(playerId);
+        if (playerId.equals(viewerId)) {
+            return full;
+        }
+        if (players.byId(playerId).map(PlayerDirectory.Row::isRetired).orElse(false)) {
+            throw ApiException.notFound("unknown player " + playerId);
+        }
+        List<Identity.ProfileRoundEntryDto> wins = full.history().stream()
+                .filter(h -> !h.liquidated() && new BigDecimal(h.payout()).compareTo(new BigDecimal(h.stake())) > 0)
+                .toList();
+        return new Identity.PublicProfileDto(full.player(), full.seasonRecord(), wins, full.streak());
+    }
+
     public Identity.PublicProfileDto publicProfile(String playerId) {
         ensurePlayerKnown(playerId);
         Identity.PlayerSummaryDto player = summary(playerId);

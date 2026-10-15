@@ -290,6 +290,55 @@ describe("previewLiquidation — per market, with the market's leverage cap", ()
   it("an unknown market is MARKET_NOT_FOUND", async () => {
     await expectApiError(mockApi.previewLiquidation({ marketId: "NOPE", direction: "UP", leverage: 5, stake: "100.000" }), "MARKET_NOT_FOUND");
   });
+
+  it("with an interval it carries the fees, the total debit and the leverage the stake allows (economy A3, A4); without one, the answer of old", async () => {
+    const base = { marketId: "ETH", direction: "UP" as const, leverage: 10, referencePrice: "2694.40" };
+    const old = await mockApi.previewLiquidation({ ...base, stake: "500.000" });
+    expect(old.feeHerd).toBeUndefined();
+    const res = await mockApi.previewLiquidation({ ...base, stake: "500.000", interval: "HOURLY" });
+    // fee_herd = 500 * min(1 %, 1 bp * 10) = 0.5; fee_net = 0.1
+    expect(res).toMatchObject({ feeHerd: "0.500", feeNetwork: "0.100", totalDebit: "500.600", maxLeverageForStake: 12 });
+    // up to 250 PLAY the cap itself, over 1 200 a tenth of it (at least 2)
+    expect((await mockApi.previewLiquidation({ ...base, stake: "250.000", interval: "HOURLY" })).maxLeverageForStake).toBe(25);
+    expect((await mockApi.previewLiquidation({ ...base, stake: "2000.000", leverage: 2, interval: "HOURLY" })).maxLeverageForStake).toBe(2);
+  });
+
+  it("a leverage above what the stake allows is INVALID_LEVERAGE naming the maximum", async () => {
+    await expectApiError(
+      mockApi.previewLiquidation({ marketId: "ETH", direction: "UP", leverage: 20, stake: "500.000", interval: "HOURLY" }),
+      "INVALID_LEVERAGE",
+    );
+  });
+});
+
+describe("the account and the markets say what the economy adds (plan A4, B2, C1)", () => {
+  beforeEach(signIn);
+
+  it("a bet is charged its stake and both fees; cancelling it before the round returns all three", async () => {
+    const eth = await bettingRoundOf("ETH");
+    const bet = await mockApi.placeBet({ roundId: eth.roundId, direction: "UP", leverage: 10, stake: "500.000" });
+    expect(bet).toMatchObject({ feeHerd: "0.500", feeNetwork: "0.100", maxLeverageForStake: 12 });
+    expect((await mockApi.myAccount()).balance).toBe("9499.400");
+    const types = (await mockApi.myLedger()).items.map((e) => e.type);
+    expect(types).toEqual(expect.arrayContaining(["STAKE_DEBIT", "FEE_HERD", "FEE_NETWORK"]));
+
+    await mockApi.cancelBet(eth.roundId);
+    expect((await mockApi.myAccount()).balance).toBe("10000.000");
+    expect((await mockApi.myLedger()).items.map((e) => e.type)).toEqual(expect.arrayContaining(["FEE_HERD_REFUND", "FEE_NETWORK_REFUND"]));
+  });
+
+  it("a bet above what the stake allows is rejected; the fees count against the balance", async () => {
+    const eth = await bettingRoundOf("ETH");
+    await expectApiError(mockApi.placeBet({ roundId: eth.roundId, direction: "UP", leverage: 25, stake: "500.000" }), "INVALID_LEVERAGE");
+    await expectApiError(mockApi.placeBet({ roundId: eth.roundId, direction: "UP", leverage: 2, stake: "10000.000" }), "INSUFFICIENT_BALANCE");
+  });
+
+  it("the series carry the cap and the herd-fee rate; the account says what is withdrawable (the balance above the starter pack)", async () => {
+    const markets = await mockApi.markets();
+    const eth = markets.markets.find((m) => m.id === "ETH")!;
+    expect(eth.series[0]).toMatchObject({ maxLeverage: 25, herdFeeBp: "1.0" });
+    expect((await mockApi.myAccount()).withdrawable).toBe("0.000");
+  });
 });
 
 describe("referencePrice / priceSeries — one price per instant", () => {
@@ -377,7 +426,7 @@ describe("placeBet and the player's positions across markets", () => {
     const gold = await bettingRoundOf("xyz_GOLD", "DAILY");
     await mockApi.placeBet({ roundId: eth.roundId, direction: "UP", leverage: 5, stake: "200.000" });
     await mockApi.placeBet({ roundId: sol.roundId, direction: "DOWN", leverage: 8, stake: "300.000" });
-    await mockApi.placeBet({ roundId: gold.roundId, direction: "UP", leverage: 20, stake: "400.000" });
+    await mockApi.placeBet({ roundId: gold.roundId, direction: "UP", leverage: 10, stake: "400.000" });
 
     const positions = await mockApi.myPositions();
     expect(positions).toHaveLength(3);
@@ -402,7 +451,7 @@ describe("placeBet and the player's positions across markets", () => {
 
     const account = await mockApi.myAccount();
     expect(account.inPlay).toBe("900.000");
-    expect(account.balance).toBe("9100.000");
+    expect(account.balance).toBe("9098.960" /* 900 staked + 1.04 in fees */);
     // the betting round of each market shows the player's own bet
     expect(((await mockApi.rounds("HOURLY", "ETH")).betting as RoundBetting).myBet).toMatchObject({ stake: "200.000" });
     expect(((await mockApi.rounds("HOURLY", "SOL")).betting as RoundBetting).myBet).toMatchObject({ stake: "300.000" });
@@ -471,12 +520,12 @@ describe("settling the player's own bets, in any market", () => {
     expect(ledger[0]).toMatchObject({ type: "SETTLEMENT", roundId: eth.roundId, delta: unseen[0].payout });
     expect(await mockApi.myPositions()).toEqual([]);
     expect((await mockApi.myAccount()).inPlay).toBe("0.000");
-    expect(Number((await mockApi.myAccount()).balance)).toBeCloseTo(9500 + Number(unseen[0].payout), 3);
+    expect(Number((await mockApi.myAccount()).balance)).toBeCloseTo(9499.4 + Number(unseen[0].payout), 3);
   });
 
   it("the position is RUNNING with its entry and liquidation price once the round starts", async () => {
     const sol = await bettingRoundOf("SOL");
-    await mockApi.placeBet({ roundId: sol.roundId, direction: "DOWN", leverage: 20, stake: "300.000" });
+    await mockApi.placeBet({ roundId: sol.roundId, direction: "DOWN", leverage: 10, stake: "300.000" });
     await advanceSimClockTo(sol.window.startMs + 10 * 60_000);
     const [position] = await mockApi.myPositions();
     expect(position).toMatchObject({ marketId: "SOL", phase: "RUNNING", untilMs: sol.window.endMs });
@@ -589,7 +638,7 @@ describe("the market that closes during a session (Т-10)", () => {
     const d = await bettingRoundOf(CLOSING.id, "DAILY");
     await mockApi.placeBet({ roundId: h.roundId, direction: "UP", leverage: 5, stake: "300.000" });
     await mockApi.placeBet({ roundId: d.roundId, direction: "DOWN", leverage: 7, stake: "200.000" });
-    expect((await mockApi.myAccount()).balance).toBe("9500.000");
+    expect((await mockApi.myAccount()).balance).toBe("9499.510"); // 500 staked, 0.49 in fees (0.15 + 0.14 herd, 2 x 0.1 network)
     expect((await mockApi.myPositions()).map((p) => p.marketId)).toEqual([CLOSING.id, CLOSING.id]);
 
     await advanceSimClockTo(MOCK_CLOSING_AT_MS + 60_000);
@@ -925,7 +974,7 @@ describe("the player's own positions and history carry their round's real length
     const eth = await bettingRoundOf("ETH");
     const gold = await bettingRoundOf("xyz_GOLD", "DAILY");
     await mockApi.placeBet({ roundId: eth.roundId, direction: "UP", leverage: 10, stake: "500.000" });
-    await mockApi.placeBet({ roundId: gold.roundId, direction: "DOWN", leverage: 20, stake: "300.000" });
+    await mockApi.placeBet({ roundId: gold.roundId, direction: "DOWN", leverage: 10, stake: "300.000" });
 
     const waiting = await mockApi.myPositions();
     expect(waiting.find((p) => p.marketId === "ETH")).toMatchObject({ phase: "BETTING", interval: "HOURLY", durationSec: 3600, size: null });

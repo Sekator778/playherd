@@ -152,6 +152,12 @@ const PRICE_SERIES_MAX_POINTS = 600;
 
 const INTERVALS: readonly Interval[] = ["HOURLY", "DAILY"];
 
+/** Economy plan A4: the mock's herd-fee rate `r_m` in basis points of the notional (every mock market), the flat network fee, and
+ *  the cap on the herd fee (1 % of the stake). */
+const MOCK_HERD_FEE_BP = "1.0";
+const MOCK_NETWORK_FEE = 0.1;
+const MOCK_HERD_FEE_CAP = 0.01;
+
 type WithdrawalRecord = WithdrawalRequestDto;
 
 /** A feedback message as the mock keeps it (Р-81): what `submitFeedback` was given (the message trimmed, as the server
@@ -202,8 +208,7 @@ class MockApi implements Api {
       if (isCancelledByClose(spec, window, now)) {
         // The market closed while this round was still open or running: the round is cancelled
         // and the bet refunded in full (Т-10; Р-23: liquidation-proof — everything comes back).
-        this.appendLedger("STAKE_REFUND", Number(bet.stake), roundId);
-        this.balance += Number(bet.stake);
+        this.refundBet(bet, roundId);
         this.settledRoundIds.add(roundId);
         this.refundedRoundIds.add(roundId);
         this.myBets.delete(roundId);
@@ -242,6 +247,20 @@ class MockApi implements Api {
       roundId,
       atMs: simNowMs(),
     });
+  }
+
+  /** A cancelled/replaced/closed-market bet returns the stake and both fees (economy plan A4). */
+  private refundBet(bet: BetDto, roundId: string): void {
+    this.appendLedger("STAKE_REFUND", Number(bet.stake), roundId);
+    this.balance += Number(bet.stake);
+    if (bet.feeHerd) {
+      this.appendLedger("FEE_HERD_REFUND", Number(bet.feeHerd), roundId);
+      this.balance += Number(bet.feeHerd);
+    }
+    if (bet.feeNetwork) {
+      this.appendLedger("FEE_NETWORK_REFUND", Number(bet.feeNetwork), roundId);
+      this.balance += Number(bet.feeNetwork);
+    }
   }
 
   private requireSignedIn(): PlayerSummaryDto {
@@ -415,6 +434,8 @@ class MockApi implements Api {
       upStake: sumStake("UP").toFixed(3),
       downStake: sumStake("DOWN").toFixed(3),
       majorityDirection: majorityDirection(bets),
+      maxLeverage: spec.maxLeverage,
+      herdFeeBp: MOCK_HERD_FEE_BP,
     };
   }
 
@@ -556,6 +577,7 @@ class MockApi implements Api {
   async previewLiquidation(req: LiquidationPreviewRequest): Promise<LiquidationPreviewDto> {
     const spec = requireMarket(req.marketId ?? MOCK_BTC.id);
     requireValidLeverage(req.leverage, spec);
+    if (req.interval) requireLeverageForStake(req.leverage, req.stake, spec);
     const entryPriceUsed = req.referencePrice ?? priceStrAt(spec, simNowMs());
     const side: Side = req.direction === "UP" ? LONG : SHORT;
     const size = sizeForMargin(req.stake, req.leverage, entryPriceUsed, spec);
@@ -564,6 +586,7 @@ class MockApi implements Api {
       entryPriceUsed,
       liquidationPrice: priceStr(liqPrice, spec),
       percentToLiquidation: percentToLiquidation(entryPriceUsed, liqPrice),
+      ...(req.interval ? mockCosts(req.stake, req.leverage, spec) : {}),
     };
   }
 
@@ -586,29 +609,35 @@ class MockApi implements Api {
     if (stakeNum < Number(MIN_STAKE_PLAY)) {
       throw new ApiRequestError("STAKE_BELOW_MINIMUM", "Minimum stake is 100 PLAY.");
     }
+    requireLeverageForStake(req.leverage, req.stake, spec);
+    const costs = mockCosts(req.stake, req.leverage, spec);
+    const debit = Number(costs.totalDebit);
     // GameEngine.placeBet always refunds any prior bet on this round before reserving the new
     // one (round_engine_design.md §4.9) — so an increased stake against the freed balance isn't
     // wrongly rejected.
     const old = this.myBets.get(req.roundId);
-    const balanceAfterRefund = this.balance + (old ? Number(old.stake) : 0);
-    if (stakeNum > balanceAfterRefund) {
+    const balanceAfterRefund =
+      this.balance + (old ? Number(old.stake) + Number(old.feeHerd ?? 0) + Number(old.feeNetwork ?? 0) : 0);
+    if (debit > balanceAfterRefund) {
       throw new ApiRequestError(
         "INSUFFICIENT_BALANCE",
-        `Not enough PLAY — you have ${balanceAfterRefund.toFixed(3)} PLAY, this bet needs ${stakeNum.toFixed(3)} PLAY.`,
+        `Not enough PLAY — you have ${balanceAfterRefund.toFixed(3)} PLAY, this bet needs ${debit.toFixed(3)} PLAY.`,
       );
     }
-    if (old) {
-      this.appendLedger("STAKE_REFUND", Number(old.stake), req.roundId);
-      this.balance += Number(old.stake);
-    }
+    if (old) this.refundBet(old, req.roundId);
     this.appendLedger("STAKE_DEBIT", -stakeNum, req.roundId);
-    this.balance -= stakeNum;
+    this.appendLedger("FEE_HERD", -Number(costs.feeHerd), req.roundId);
+    this.appendLedger("FEE_NETWORK", -Number(costs.feeNetwork), req.roundId);
+    this.balance -= debit;
     const bet: BetDto = {
       playerId: player.playerId,
       roundId: req.roundId,
       direction: req.direction,
       leverage: req.leverage,
       stake: stakeNum.toFixed(3),
+      feeHerd: costs.feeHerd,
+      feeNetwork: costs.feeNetwork,
+      maxLeverageForStake: costs.maxLeverageForStake,
     };
     this.myBets.set(req.roundId, bet);
     return bet;
@@ -627,8 +656,7 @@ class MockApi implements Api {
     if (!stillBetting) {
       throw new ApiRequestError("ROUND_NOT_OPEN_FOR_BETTING", "Betting already closed for this round.");
     }
-    this.appendLedger("STAKE_REFUND", Number(bet.stake), roundId);
-    this.balance += Number(bet.stake);
+    this.refundBet(bet, roundId);
     this.myBets.delete(roundId);
   }
 
@@ -648,6 +676,8 @@ class MockApi implements Api {
       balance: this.balance.toFixed(3),
       currentSeason: CURRENT_SEASON,
       inPlay: inPlay.toFixed(3),
+      // the starter pack stays in the game (economy plan B2): only what is above it can leave
+      withdrawable: Math.max(0, this.balance - Number(STARTER_PACK_PLAY)).toFixed(3),
     };
   }
 
@@ -937,6 +967,36 @@ function requireValidLeverage(leverage: number, spec: MockMarketSpec): void {
       `Leverage must be between ${LEVERAGE_MIN} and ${spec.maxLeverage} on ${spec.symbol}.`,
     );
   }
+}
+
+/** Plan A3: the leverage a stake allows: the market's cap up to 250 PLAY, cap/2 to 500, cap/5 to 1 200, cap/10 above (at least 2). */
+function maxLeverageForStake(stake: string, spec: MockMarketSpec): number {
+  const n = Number(stake);
+  const divisor = n <= 250 ? 1 : n <= 500 ? 2 : n <= 1200 ? 5 : 10;
+  return Math.max(LEVERAGE_MIN, Math.floor(spec.maxLeverage / divisor));
+}
+
+function requireLeverageForStake(leverage: number, stake: string, spec: MockMarketSpec): void {
+  const allowed = maxLeverageForStake(stake, spec);
+  if (leverage > allowed) {
+    throw new ApiRequestError(
+      "INVALID_LEVERAGE",
+      `A stake of ${Number(stake).toFixed(3)} PLAY allows leverage up to ${allowed} on ${spec.symbol}.`,
+    );
+  }
+}
+
+/** Plan A4: `fee_herd = stake * min(1 %, r_m * L)` and the flat network fee, each rounded UP to 0.001 PLAY (herd fee at least 0.001). */
+function mockCosts(stake: string, leverage: number, spec: MockMarketSpec) {
+  const up = (x: number) => Math.ceil(Math.round(x * 1e6) / 1e3) / 1e3;
+  const herd = Math.max(0.001, up(Number(stake) * Math.min(MOCK_HERD_FEE_CAP, Number(MOCK_HERD_FEE_BP) * 1e-4 * leverage)));
+  const network = up(MOCK_NETWORK_FEE);
+  return {
+    feeHerd: herd.toFixed(3),
+    feeNetwork: network.toFixed(3),
+    totalDebit: (Number(stake) + herd + network).toFixed(3),
+    maxLeverageForStake: maxLeverageForStake(stake, spec),
+  };
 }
 
 /** A round of a market that has closed by `now` is cancelled when it had not ended by the closing

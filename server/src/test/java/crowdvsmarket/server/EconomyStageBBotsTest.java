@@ -86,6 +86,20 @@ class EconomyStageBBotsTest extends LiveGameTestBase {
     }
 
     @Test
+    void aRetiredBotsProfileIsNotFoundForOthers() {
+        PlayerDirectory.Row broke = liveBots().get(0);
+        PlayerDirectory.Row healthy = liveBots().get(1);
+        assertThat(gameService.publicProfile(broke.playerId(), null).player().playerId()).isEqualTo(broke.playerId());
+        drain(broke.playerId(), 50);
+        gameService.retireBotsBelowThreshold(System.currentTimeMillis());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> gameService.publicProfile(broke.playerId(), healthy.playerId()))
+                .isInstanceOf(crowdvsmarket.server.dto.ApiException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> gameService.publicProfile(broke.playerId(), null))
+                .isInstanceOf(crowdvsmarket.server.dto.ApiException.class);
+    }
+
+    @Test
     void aBotThatRanOutRetiresAndANewOneWithANewNameComesAnHourLater() {
         PlayerDirectory.Row broke = liveBots().get(0);
         PlayerDirectory.Row healthy = liveBots().get(1);

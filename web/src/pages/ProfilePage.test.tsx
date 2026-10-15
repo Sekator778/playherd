@@ -24,7 +24,8 @@ const entry = (over: Partial<ProfileRoundEntryDto> = {}): ProfileRoundEntryDto =
 
 function profile(over: Partial<PublicProfileDto> = {}): PublicProfileDto {
   return {
-    player: { playerId: "npc-1", nickname: "rival", walletAddress: "txch1rival", displayName: "rival (txch1r…ival)" },
+    // the signed-in player's own profile (TEST_PLAYER): complete; another player's is `otherPlayersProfile`
+    player: { ...TEST_PLAYER, displayName: "p1 (txch1p…1)" },
     seasonRecord: null,
     history: [],
     ...over,
@@ -177,9 +178,9 @@ describe("Profile — 'player not found' is the server's code (404 NOT_FOUND), n
     );
   }
 
-  it("the real server's 404 — whatever its message says — is 'Player not found.'", async () => {
+  it("the real server's 404 — whatever its message says — is 'Player not found, or no longer playing.'", async () => {
     renderFailing(new ApiRequestError("NOT_FOUND", "unknown player nobody"));
-    expect(await screen.findByText("Player not found.")).toBeInTheDocument();
+    expect(await screen.findByText("Player not found, or no longer playing.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 
@@ -232,5 +233,52 @@ describe("Profile — a server that is restarting (503 ENGINE_NOT_READY)", () =>
     act(() => reportEngineReady(Date.now() + 1));
     expect(await screen.findByText("Round history")).toBeInTheDocument();
     expect(publicProfile).toHaveBeenCalledTimes(2);
+  });
+});
+
+
+describe("Profile — another player's profile shows wins only (Р-90)", () => {
+  const rival = { playerId: "npc-1", nickname: "rival", walletAddress: "txch1rival", displayName: "rival (txch1r…ival)" };
+  const record = { season: "2026-10", baselineBalance: "10000.000", deposited: "0.000", withdrawn: "0.000", roundsPlayed: 4, directionEligibleRounds: 4, directionCorrectRounds: 2 };
+  const mixed = [
+    entry({ roundId: "w", payout: "150.000" }),
+    entry({ roundId: "l", payout: "0.000" }),
+    entry({ roundId: "q", liquidated: true, payout: "7.000" }),
+    entry({ roundId: "f", payout: "100.000" }),
+  ];
+
+  it("lists the wins, not the lost, liquidated or flat rounds, and no balance change", async () => {
+    renderProfile(profile({ player: rival, history: mixed, seasonRecord: record }));
+    const rows = await screen.findAllByRole("link", { name: /PLAY/ });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute("href", "/round/w");
+    expect(screen.queryByText("LIQ")).not.toBeInTheDocument();
+    expect(screen.queryByText("Balance change this season")).not.toBeInTheDocument();
+    expect(screen.getByText("Rounds played")).toBeInTheDocument();
+  });
+
+  it("the player's own profile stays complete, with the balance change", async () => {
+    renderProfile(profile({ history: mixed, seasonRecord: record }));
+    expect(await screen.findAllByRole("link", { name: /PLAY/ })).toHaveLength(4);
+    expect(screen.getByText("Balance change this season")).toBeInTheDocument();
+  });
+
+  it("a profile that is not found (a retired bot) is a neutral page without balance or history", async () => {
+    const api = fakeApi({
+      publicProfile: vi.fn(async () => {
+        throw new ApiRequestError("NOT_FOUND", "unknown player npc-1");
+      }),
+      markets: vi.fn(async () => marketsOf(catalogue())),
+    });
+    render(
+      <MemoryRouter initialEntries={["/profile/npc-1"]}>
+        <Routes>
+          <Route path="/profile/:playerId" element={<ProfilePage />} />
+        </Routes>
+      </MemoryRouter>,
+      { wrapper: apiWrapper(api, TEST_PLAYER) },
+    );
+    expect(await screen.findByText("Player not found, or no longer playing.")).toBeInTheDocument();
+    expect(screen.queryByText("Round history")).not.toBeInTheDocument();
   });
 });

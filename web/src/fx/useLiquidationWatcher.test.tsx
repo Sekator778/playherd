@@ -213,7 +213,7 @@ describe("the mid-round liquidation moment", () => {
     expect(stampText()).toBe("LIQUIDATED");
     expect(titleText()).toBe("-100 PLAY");
     const note = document.querySelector(".result-card__note");
-    expect(note).toHaveTextContent("Your whole stake is lost. The round is still running — if it is cancelled, every bet in it is refunded.");
+    expect(note).toHaveTextContent("You lose most of your stake. The round is still running — if it is cancelled, every bet in it is refunded.");
     expect(screen.getByText(/stake 100 PLAY · x25 · 3 MIN round/)).toBeInTheDocument();
   });
 

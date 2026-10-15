@@ -123,7 +123,7 @@ describe("BetSlip — leverage up to x100, and 'High leverage' behind a question
     const question = await screen.findByRole("group", { name: "Unlock high leverage?" });
     // x1200: 0.9 / 1200 = 0.075% against the bet loses the stake
     await waitFor(() =>
-      expect(question).toHaveTextContent("At x1200, a move of 0.075% against you liquidates this bet and the whole stake is lost."),
+      expect(question).toHaveTextContent("At x1200, a move of 0.075% against you liquidates this bet — you lose most of your stake."),
     );
     expect(slider()).toHaveAttribute("max", "100"); // still locked
     expect(screen.getByRole("switch", { name: "High leverage" })).toHaveAttribute("aria-checked", "false");

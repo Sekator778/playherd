@@ -119,7 +119,7 @@ describe("ResultMomentHost — a queue of moments", () => {
     });
     await act(async () => {});
     expect(document.querySelector(".result-card__venue")).toBeNull();
-    expect(document.querySelector(".result-card__note")).toHaveTextContent("Your whole stake is lost.");
+    expect(document.querySelector(".result-card__note")).toHaveTextContent("You lose most of your stake.");
   });
 
   it("a card dismissed by a tap is followed by the next, which is also its own card", async () => {

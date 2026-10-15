@@ -129,7 +129,7 @@ describe("Round page — the player's own position", () => {
   it("liquidated: the whole stake, stated plainly", async () => {
     renderRound(settled({ positions: [publicPosition({ ...me, stake: "100.000", payout: "0.000", liquidated: true })] }), true);
     expect(await screen.findByText(/-100 PLAY · liquidated/)).toBeInTheDocument();
-    expect(screen.getByText("You lost your whole stake.")).toBeInTheDocument();
+    expect(screen.getByText("You lost most of your stake.")).toBeInTheDocument();
   });
 
   it("liquidated: says at which price, and that the price reached it DURING the round — the round may close well clear of it (first tester pass, D6)", async () => {
@@ -142,7 +142,7 @@ describe("Round page — the player's own position", () => {
       true,
     );
     const card = (await screen.findByText(/-100 PLAY · liquidated/)).closest(".card") as HTMLElement;
-    expect(within(card).getByText("You lost your whole stake.")).toBeInTheDocument();
+    expect(within(card).getByText("You lost most of your stake.")).toBeInTheDocument();
     expect(within(card).getByText(/Entry \$100\.00 · Liquidation price \$90\.50/)).toBeInTheDocument();
     expect(card).toHaveTextContent(
       "The price reached $90.50 during the round, so the position was liquidated at that moment. Liquidation is checked all through the round, not only at its close (this round closed at $99.20).",

@@ -65,7 +65,7 @@ describe("/lab/states — the designed states are all drawn", () => {
       renderLab();
       await user.click(screen.getByRole("button", { name: "Fire: liquidated mid-round" }));
       expect(document.querySelector(".result-card__stamp")).toHaveTextContent("LIQUIDATED");
-      expect(document.querySelector(".result-card__note")).toHaveTextContent(/Your whole stake is lost\. The round is still running/);
+      expect(document.querySelector(".result-card__note")).toHaveTextContent(/You lose most of your stake\. The round is still running/);
       await act(async () => {
         await user.click(screen.getByRole("button", { name: "Fire: the quiet summary at settlement" }));
       });

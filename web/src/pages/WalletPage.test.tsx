@@ -17,6 +17,14 @@ beforeAll(async () => {
   await mockApi.setNickname("walletTester");
 });
 
+// The mock's account now says what is withdrawable (balance above the starter pack, economy plan B2), which is nothing for a fresh
+// player. These tests are about the withdrawal form itself, so they run as against a server that sends no `withdrawable` (the whole
+// balance may leave); `WalletPage.economy.test.tsx` covers the limit.
+const realMyAccount = mockApi.myAccount.bind(mockApi);
+beforeEach(() => {
+  vi.spyOn(mockApi, "myAccount").mockImplementation(async () => ({ ...(await realMyAccount()), withdrawable: undefined }));
+});
+
 function renderWallet() {
   return render(
     <MemoryRouter>

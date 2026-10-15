@@ -350,7 +350,7 @@ export function LabStatesPage() {
       <section className="lab-section">
         <h2>A liquidated bet whose round was cancelled — the stake is refunded</h2>
         <p className="faint">
-          The moment said "your whole stake is lost… if it is cancelled, every bet in it is refunded". When that happens the position just
+          The moment said "you lose most of your stake… if it is cancelled, every bet in it is refunded". When that happens the position just
           leaves the strip and the balance goes up — so one quiet line says it (and a player who was away is told when the app opens).
         </p>
         <div className="lab-row">
