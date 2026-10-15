@@ -1,6 +1,8 @@
 package crowdvsmarket.engine.game;
 
 import crowdvsmarket.engine.crowd.CrowdAccount;
+import crowdvsmarket.engine.economy.EconomyRules;
+import crowdvsmarket.engine.economy.Fees;
 import crowdvsmarket.engine.ledger.LedgerBook;
 import crowdvsmarket.engine.ledger.PlayAmount;
 import crowdvsmarket.engine.margin.Leverage;
@@ -93,19 +95,69 @@ public final class GameEngine {
                     + "] for " + spec.id() + ", got " + leverage.value());
         }
         String roundId = bettingWindow.roundId();
-        betBook.cancel(roundId, playerId)
-                .ifPresent(previous -> ledger.refundStake(playerId, roundId, previous.stake(), now));
+        refundPrevious(playerId, roundId, now);
         ledger.reserveStake(playerId, roundId, stake, now);
         Bet bet = new Bet(playerId, roundId, direction, leverage, stake);
         betBook.place(bet);
         return bet;
     }
 
-    /** Cancels {@code playerId}'s bet on {@code bettingWindow}, if any, refunding its stake (Р-13). */
-    public void cancelBet(String playerId, RoundWindow bettingWindow, Instant now) {
+    /**
+     * Economy stage A (Р-92, plan A2-A4): places (or replaces) {@code playerId}'s bet under the new rules. The leverage must
+     * be within the market's cap for this round's length <b>and</b> the tier of the stake
+     * ({@link EconomyRules#requireLeverageAllowed}); the balance is debited {@code stake + fees.herd + fees.network}, and
+     * a replaced bet is refunded with its fees. The bet is settled by the new rules ({@link #runRound}). {@code fees} is
+     * what {@link EconomyRules#fees} computed (the server stores it in the event, so a replay charges the same amounts
+     * whatever the formula is later).
+     *
+     * @throws IllegalArgumentException as {@link #placeBet(String, RoundWindow, Direction, Leverage, PlayAmount, Instant)},
+     *                                  naming the allowed maximum for the stake when the leverage is too high
+     */
+    public Bet placeBet(
+            String playerId, RoundWindow bettingWindow, Direction direction, Leverage leverage, PlayAmount stake,
+            Fees fees, Instant now) {
+        requireOwnMarket(bettingWindow);
+        EconomyRules.requireLeverageAllowed(spec, bettingWindow.interval(), leverage.value(), stake);
+        return replayBet(playerId, bettingWindow, direction, leverage, stake, fees, now);
+    }
+
+    /**
+     * {@link #placeBet(String, RoundWindow, Direction, Leverage, PlayAmount, Fees, Instant)} without the cap and stake-tier
+     * check, for restoring a bet from the event log: the event is the record of a bet that passed the check when it was
+     * placed, and a later change of a market's cap (the weekly recalculation lowers caps) must not make the log unreadable.
+     * The ledger rules (minimum stake, balance covering stake and fees) still apply.
+     */
+    public Bet replayBet(
+            String playerId, RoundWindow bettingWindow, Direction direction, Leverage leverage, PlayAmount stake,
+            Fees fees, Instant now) {
+        requireOwnMarket(bettingWindow);
         String roundId = bettingWindow.roundId();
-        betBook.cancel(roundId, playerId)
-                .ifPresent(previous -> ledger.refundStake(playerId, roundId, previous.stake(), now));
+        refundPrevious(playerId, roundId, now);
+        ledger.reserveStake(playerId, roundId, stake, fees, now);
+        Bet bet = new Bet(playerId, roundId, direction, leverage, stake, fees);
+        betBook.place(bet);
+        return bet;
+    }
+
+    /** Cancels {@code playerId}'s bet on {@code bettingWindow}, if any, refunding its stake (Р-13) and its fees (plan A4). */
+    public void cancelBet(String playerId, RoundWindow bettingWindow, Instant now) {
+        refundPrevious(playerId, bettingWindow.roundId(), now);
+    }
+
+    /** Takes {@code playerId}'s bet on {@code roundId} out of the book, if there is one, and refunds its stake and fees. */
+    private void refundPrevious(String playerId, String roundId, Instant now) {
+        betBook.cancel(roundId, playerId).ifPresent(previous -> refundBet(previous, now));
+    }
+
+    /**
+     * Returns a bet's stake and, for a bet placed under the new rules, its fees (plan A4: a cancellation and a cancelled round
+     * refund both; a tie does not, it settles). Does not touch the bet book.
+     */
+    public void refundBet(Bet bet, Instant now) {
+        ledger.refundStake(bet.playerId(), bet.roundId(), bet.stake(), now);
+        if (!bet.isLegacy()) {
+            ledger.refundFees(bet.playerId(), bet.roundId(), bet.fees(), now);
+        }
     }
 
     /**
@@ -130,29 +182,45 @@ public final class GameEngine {
 
         List<PlayerRoundOutcome> outcomes = new ArrayList<>();
         for (Bet bet : bets) {
+            boolean legacy = bet.isLegacy();
+            // legacy bets keep the original single cap and l = 1/(2 cap); new ones use the round length's cap and l = kappa / cap
+            MarketSpec positionSpec = bet.specFor(spec, window.interval());
             Position position = Position.openFromMargin(
-                    bet.playerId(), roundId, bet.direction(), bet.leverage(), bet.stake().toMoney(), openPrice, spec);
+                    bet.playerId(), roundId, bet.direction(), bet.leverage(), bet.stake().toMoney(), openPrice, positionSpec);
             PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, path);
             boolean liquidated = outcome instanceof PositionSimulator.Outcome.Liquidated;
 
             BigDecimal payout;
-            if (liquidated) {
+            if (liquidated && legacy) {
                 payout = ZERO_MONEY; // Р-7: full stake lost
+            } else if (liquidated) {
+                // plan A1: the remainder at the extreme of the candle that triggered the liquidation, 0 on a gap through the margin
+                BigDecimal extreme = ((PositionSimulator.Outcome.Liquidated) outcome).extremePrice();
+                payout = LiquidationCalculator.payoutAtCandleExtreme(
+                        position.size(), position.entryPrice(), position.leverage(), position.direction().toSide(), extreme);
             } else {
                 BigDecimal initialMargin = LiquidationCalculator.initialMargin(position.size(), position.entryPrice(), position.leverage());
                 BigDecimal pnl = ((PositionSimulator.Outcome.Settled) outcome).pnl();
                 payout = initialMargin.add(pnl).max(ZERO_MONEY);
             }
+            if (!legacy) {
+                // plan A5: min(20 x stake, 0.1% of the treasury); the stake is mojo-exact, the payout in cents, so round down
+                BigDecimal cap = EconomyRules.maxPayout(bet.stake()).toMoney().setScale(2, RoundingMode.DOWN);
+                payout = payout.min(cap);
+            }
 
             Optional<Boolean> directionCorrect = directionCorrect(bet.direction(), openPrice, closePrice);
             ledger.settleRound(bet.playerId(), roundId, PlayAmount.fromMoney(payout), directionCorrect, settledAt);
-            outcomes.add(new PlayerRoundOutcome(bet.playerId(), bet.direction(), bet.leverage().value(), bet.stake(), liquidated, payout));
+            outcomes.add(new PlayerRoundOutcome(bet.playerId(), bet.direction(), bet.leverage().value(), bet.stake(), liquidated, payout, bet.fees()));
         }
         betBook.clear(roundId);
 
-        CrowdAccount.RoundResult crowdResult = crowdAccount.processRound(roundId, bets, openPrice, path);
+        boolean anyNewRules = bets.stream().anyMatch(b -> !b.isLegacy());
+        CrowdAccount.RoundResult crowdResult = anyNewRules
+                ? crowdAccount.processRound(roundId, bets, openPrice, path, window.interval())
+                : crowdAccount.processRound(roundId, bets, openPrice, path);
 
-        return new RoundReport(window, openPrice, closePrice, outcomes, crowdResult);
+        return new RoundReport(window, openPrice, closePrice, outcomes, crowdResult, anyNewRules);
     }
 
     private void requireOwnMarket(RoundWindow window) {

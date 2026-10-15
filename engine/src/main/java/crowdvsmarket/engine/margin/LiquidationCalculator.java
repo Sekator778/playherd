@@ -127,6 +127,18 @@ public final class LiquidationCalculator {
     }
 
     /**
+     * Economy stage A (Р-92, plan A1), replacing {@link #payoutOnLiquidation} for bets placed under the new rules: the
+     * liquidated position is paid its remainder at the extreme of the candle on which the liquidation triggered —
+     * {@code round2( max(0, isolated_margin + side * Q * (P_ext - P0)) )}, {@code P_ext} being that candle's low for a
+     * long and its high for a short. A gap through the margin (the extreme beyond the point where the margin is gone)
+     * pays 0. No penalty.
+     */
+    public static BigDecimal payoutAtCandleExtreme(
+            BigDecimal size, BigDecimal entryPrice, Leverage leverage, Side side, BigDecimal extremePrice) {
+        return payoutAtRoundClose(size, entryPrice, leverage, side, extremePrice);
+    }
+
+    /**
      * {@code equityAt(price) / maintenance_margin_required} — not itself a spec formula, a derived
      * ratio (1.0 exactly at the liquidation price) useful for display/diagnostics. BTC rate
      * {@link #MAINTENANCE_MARGIN_RATE}.

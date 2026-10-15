@@ -3,7 +3,9 @@ package crowdvsmarket.engine.crowd;
 import crowdvsmarket.engine.execution.ExecutionAdapter;
 import crowdvsmarket.engine.execution.PaperTradingAdapter;
 import crowdvsmarket.engine.margin.Leverage;
+import crowdvsmarket.engine.margin.LiquidationCalculator;
 import crowdvsmarket.engine.market.Candle;
+import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.Direction;
@@ -114,6 +116,18 @@ public final class CrowdAccount {
      * (including zero bets on both sides) makes no trade.
      */
     public RoundResult processRound(String roundId, Collection<Bet> bets, BigDecimal openPrice, List<Candle> path) {
+        return processRound(roundId, bets, openPrice, path, null);
+    }
+
+    /**
+     * Economy stage A: {@link #processRound(String, Collection, BigDecimal, List)} under the new rules of {@code interval}'s
+     * round length — the stake-weighted leverage is clamped to the market's cap for that length, the position is opened with
+     * {@code l = κ / cap}, and a liquidated crowd position keeps the remainder at the candle extreme (plan A1) instead of
+     * losing the whole margin. A {@code null} {@code interval} is the original behaviour.
+     */
+    public RoundResult processRound(String roundId, Collection<Bet> bets, BigDecimal openPrice, List<Candle> path,
+            Interval interval) {
+        MarketSpec spec = interval == null ? this.spec : this.spec.forInterval(interval);
         BigDecimal capitalBefore = capital;
         Majority majority = majoritySide(bets);
         if (majority == null) {
@@ -133,9 +147,17 @@ public final class CrowdAccount {
         PositionSimulator.Outcome outcome = executionAdapter.closePosition(position, path);
 
         boolean liquidated = outcome instanceof PositionSimulator.Outcome.Liquidated;
-        BigDecimal capitalAfter = liquidated
-                ? capitalBefore.subtract(margin)
-                : capitalBefore.add(((PositionSimulator.Outcome.Settled) outcome).pnl());
+        BigDecimal capitalAfter;
+        if (!liquidated) {
+            capitalAfter = capitalBefore.add(((PositionSimulator.Outcome.Settled) outcome).pnl());
+        } else if (interval == null) {
+            capitalAfter = capitalBefore.subtract(margin);
+        } else {
+            BigDecimal remainder = LiquidationCalculator.payoutAtCandleExtreme(position.size(), position.entryPrice(),
+                    position.leverage(), position.direction().toSide(),
+                    ((PositionSimulator.Outcome.Liquidated) outcome).extremePrice());
+            capitalAfter = capitalBefore.subtract(margin).add(remainder);
+        }
         capital = capitalAfter;
 
         RoundResult result = new RoundResult(

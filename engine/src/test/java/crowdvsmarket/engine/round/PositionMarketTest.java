@@ -20,7 +20,7 @@ class PositionMarketTest {
 
     @Test
     void theOverloadsWithoutASpecAreTheBtcCase() {
-        for (int value = Leverage.MIN; value <= Leverage.MAX; value++) {
+        for (int value = Leverage.MIN; value <= 40; value++) {
             Leverage leverage = new Leverage(value);
             for (Direction direction : Direction.values()) {
                 BigDecimal size = new BigDecimal("0.10000");

@@ -61,7 +61,7 @@ class MarketSpecTest {
     @Test
     void rateIsComputedExactlyTheWayMarginTableBuildsIt() {
         // Same value AND same scale (isEqualTo, not isEqualByComparingTo) for every legal cap.
-        for (int maxLeverage = Leverage.MIN; maxLeverage <= Leverage.MAX; maxLeverage++) {
+        for (int maxLeverage = Leverage.MIN; maxLeverage <= 40; maxLeverage++) {
             BigDecimal fromTable = MarginTable.build(List.of(new MarginTable.TierSpec(new BigDecimal("0.0"), maxLeverage)))
                     .tier(0).maintenanceMarginRate();
 
@@ -104,8 +104,8 @@ class MarketSpecTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = {Integer.MIN_VALUE, -40, -1, 0, 1, 41, 100, Integer.MAX_VALUE})
-    void maxLeverageOutsideTwoToFortyIsRejectedBothWays(int maxLeverage) {
+    @ValueSource(ints = {Integer.MIN_VALUE, -40, -1, 0, 1, 10_001, 20_000, Integer.MAX_VALUE})
+    void maxLeverageOutsideTwoToTenThousandIsRejectedBothWays(int maxLeverage) {
         // of() must fail as a bad argument even for 0, where the rate formula would divide by zero.
         assertThatThrownBy(() -> MarketSpec.of("X", maxLeverage))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -232,7 +232,7 @@ class MarketSpecTest {
         for (int value = -5; value <= 60; value++) {
             assertThat(MarketSpec.BTC.clampLeverage(value))
                     .as("value %d", value)
-                    .isEqualTo(Math.max(Leverage.MIN, Math.min(Leverage.MAX, value)));
+                    .isEqualTo(Math.max(Leverage.MIN, Math.min(40, value)));
         }
     }
 

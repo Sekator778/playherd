@@ -30,8 +30,17 @@ public final class PositionSimulator {
     /** Sealed outcome of replaying a position through its round's candle path. */
     public sealed interface Outcome {
 
-        /** The position was liquidated inside {@code candle.openTimeMs()}; {@code loss} is USD lost (>= 0). */
-        record Liquidated(long candleOpenTimeMs, BigDecimal loss) implements Outcome {
+        /**
+         * The position was liquidated inside {@code candle.openTimeMs()}; {@code loss} is USD lost (>= 0) under the
+         * original rule (the whole margin, Р-7). {@code extremePrice} is the low (long) or high (short) of that candle:
+         * the price the economy-stage-A remainder is computed at (plan A1,
+         * {@code LiquidationCalculator#payoutAtCandleExtreme}); {@code null} only for an outcome built by hand.
+         */
+        record Liquidated(long candleOpenTimeMs, BigDecimal loss, BigDecimal extremePrice) implements Outcome {
+
+            public Liquidated(long candleOpenTimeMs, BigDecimal loss) {
+                this(candleOpenTimeMs, loss, null);
+            }
         }
 
         /** The round closed without liquidation; {@code pnl} may be negative (but payout floors at 0). */
@@ -60,7 +69,8 @@ public final class PositionSimulator {
                         position.size(), position.entryPrice(), position.leverage());
                 BigDecimal payout = LiquidationCalculator.payoutOnLiquidation(position.size(), position.entryPrice());
                 BigDecimal loss = initialMargin.subtract(payout);
-                return new Outcome.Liquidated(candle.openTimeMs(), loss);
+                BigDecimal extreme = side == Side.LONG ? candle.low() : candle.high();
+                return new Outcome.Liquidated(candle.openTimeMs(), loss, extreme);
             }
         }
 

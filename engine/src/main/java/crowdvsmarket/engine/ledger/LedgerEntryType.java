@@ -14,8 +14,17 @@ public enum LedgerEntryType {
     STAKE_DEBIT,
     /** A reserved stake returned because the bet was cancelled/replaced before round start (Р-13) — a credit. */
     STAKE_REFUND,
-    /** A round's payout (Р-3, Р-7): 0 on liquidation (full stake lost), {@code max(0, margin+pnl)} otherwise — a credit. */
+    /** A round's payout (Р-3, Р-7): {@code max(0, margin+pnl)} — a credit. A liquidated bet pays 0 if placed before economy stage A,
+     *  its remainder at the candle extreme after it (Р-92, plan A1); a bet placed after it is also capped (plan A5). */
     SETTLEMENT,
+    /** Economy stage A (plan A4): the herd fee charged with a bet, {@code stake * min(1%, r_m * L)} — a debit. Stage B routes it to HERD. */
+    FEE_HERD,
+    /** Economy stage A (plan A4): the flat network fee charged with a bet (0.1 PLAY) — a debit. Stage B routes it to HERD. */
+    FEE_NETWORK,
+    /** The herd fee returned with the stake when a bet is cancelled/replaced before the round or its round is cancelled — a credit. */
+    FEE_HERD_REFUND,
+    /** The network fee returned with the stake in the same cases as {@link #FEE_HERD_REFUND} — a credit. */
+    FEE_NETWORK_REFUND,
     /** An on-chain deposit confirmed (Р-6) — a credit, from outside the in-game ledger. */
     DEPOSIT,
     /** A withdrawal reserved pending on-chain confirmation (Р-6) — a debit. */

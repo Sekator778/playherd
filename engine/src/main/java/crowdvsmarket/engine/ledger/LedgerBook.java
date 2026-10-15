@@ -1,5 +1,6 @@
 package crowdvsmarket.engine.ledger;
 
+import crowdvsmarket.engine.economy.Fees;
 import crowdvsmarket.engine.season.Season;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -174,6 +175,46 @@ public final class LedgerBook {
                     "stake " + stake + " exceeds balance " + balance + " for player " + playerId);
         }
         debit(playerId, stake, LedgerEntryType.STAKE_DEBIT, roundId, now);
+    }
+
+    /**
+     * Economy stage A (plan A4): reserves {@code stake} <b>and</b> {@code fees} for a bet — the balance must cover the sum.
+     * Records the stake as {@link LedgerEntryType#STAKE_DEBIT}, then the herd fee as {@link LedgerEntryType#FEE_HERD} and the
+     * network fee as {@link LedgerEntryType#FEE_NETWORK} (each with the round id, none when it is zero), so stage B can route
+     * the fees to their accounts.
+     */
+    public void reserveStake(String playerId, String roundId, PlayAmount stake, Fees fees, Instant now) {
+        stake.requirePositive("stake");
+        ensureSeasonPack(playerId, now);
+        if (stake.compareTo(MIN_STAKE) < 0) {
+            throw new IllegalArgumentException("stake below minimum " + MIN_STAKE + ": " + stake);
+        }
+        PlayAmount total = stake.plus(fees.total());
+        PlayAmount balance = balance(playerId);
+        if (total.compareTo(balance) > 0) {
+            throw new IllegalArgumentException(
+                    "stake " + stake + " plus fees " + fees.total() + " exceeds balance " + balance + " for player " + playerId);
+        }
+        debit(playerId, stake, LedgerEntryType.STAKE_DEBIT, roundId, now);
+        if (fees.herd().isPositive()) {
+            debit(playerId, fees.herd(), LedgerEntryType.FEE_HERD, roundId, now);
+        }
+        if (fees.network().isPositive()) {
+            debit(playerId, fees.network(), LedgerEntryType.FEE_NETWORK, roundId, now);
+        }
+    }
+
+    /**
+     * Returns the fees of a bet that was cancelled, replaced or whose round was cancelled (plan A4: a cancellation refunds the
+     * stake and both fees; a tie refunds the stake only, through the settlement, and never calls this).
+     */
+    public void refundFees(String playerId, String roundId, Fees fees, Instant now) {
+        if (fees.herd().isPositive()) {
+            credit(playerId, fees.herd(), LedgerEntryType.FEE_HERD_REFUND, roundId, now);
+        }
+        if (fees.network().isPositive()) {
+            credit(playerId, fees.network(), LedgerEntryType.FEE_NETWORK_REFUND, roundId, now);
+        }
     }
 
     /** Returns a reserved stake because the bet was cancelled or replaced before round start (Р-13). */

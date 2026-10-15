@@ -68,7 +68,7 @@ class MonthLongHourlySimulationTest {
 
     private static Strategy always40x() {
         return (rng, previous) -> new Decision(
-                rng.nextBoolean() ? Direction.UP : Direction.DOWN, Leverage.MAX, PlayAmount.ofWholePlay(100));
+                rng.nextBoolean() ? Direction.UP : Direction.DOWN, 40, PlayAmount.ofWholePlay(100));
     }
 
     private static Strategy contrarian() {
@@ -87,7 +87,7 @@ class MonthLongHourlySimulationTest {
                 return null; // sits this round out
             }
             Direction direction = rng.nextBoolean() ? Direction.UP : Direction.DOWN;
-            int leverage = Leverage.MIN + rng.nextInt(Leverage.MAX - Leverage.MIN + 1);
+            int leverage = Leverage.MIN + rng.nextInt(40 - Leverage.MIN + 1);
             long stakePlay = 100 + rng.nextInt(9) * 100L; // 100..900 PLAY
             return new Decision(direction, leverage, PlayAmount.ofWholePlay(stakePlay));
         };
@@ -175,7 +175,7 @@ class MonthLongHourlySimulationTest {
             totalStake = totalStake.add(stake);
         }
         int expectedLeverage = weightedSum.divide(totalStake, MathContext.DECIMAL128).setScale(0, RoundingMode.HALF_UP).intValueExact();
-        expectedLeverage = Math.max(Leverage.MIN, Math.min(Leverage.MAX, expectedLeverage));
+        expectedLeverage = Math.max(Leverage.MIN, Math.min(40, expectedLeverage));
         assertThat(report.crowdResult().leverage()).as("round %s", report.window().roundId()).isEqualTo(expectedLeverage);
     }
 

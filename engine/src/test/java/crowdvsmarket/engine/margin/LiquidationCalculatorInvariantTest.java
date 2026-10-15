@@ -24,7 +24,7 @@ class LiquidationCalculatorInvariantTest {
     @ValueSource(strings = {"83451.00", "50000.00", "11574.80", "121615.00", "1000.00"})
     void longLiqPriceBelowEntryBelowShortLiqPrice(String entryPriceStr) {
         BigDecimal entryPrice = new BigDecimal(entryPriceStr);
-        for (int leverage = Leverage.MIN; leverage <= Leverage.MAX; leverage++) {
+        for (int leverage = Leverage.MIN; leverage <= 40; leverage++) {
             Leverage lev = new Leverage(leverage);
             BigDecimal longLiq = LiquidationCalculator.liquidationPrice(SIZE, entryPrice, lev, Side.LONG);
             BigDecimal shortLiq = LiquidationCalculator.liquidationPrice(SIZE, entryPrice, lev, Side.SHORT);
@@ -43,7 +43,7 @@ class LiquidationCalculatorInvariantTest {
         BigDecimal entryPrice = new BigDecimal(entryPriceStr);
         BigDecimal previousLong = null;
         BigDecimal previousShort = null;
-        for (int leverage = Leverage.MIN; leverage <= Leverage.MAX; leverage++) {
+        for (int leverage = Leverage.MIN; leverage <= 40; leverage++) {
             Leverage lev = new Leverage(leverage);
             BigDecimal longLiq = LiquidationCalculator.liquidationPrice(SIZE, entryPrice, lev, Side.LONG);
             BigDecimal shortLiq = LiquidationCalculator.liquidationPrice(SIZE, entryPrice, lev, Side.SHORT);
@@ -79,7 +79,7 @@ class LiquidationCalculatorInvariantTest {
     @ValueSource(strings = {"83451.00", "50000.00", "11574.80", "121615.00"})
     void equityAtLiquidationPriceEqualsDynamicMaintenanceMarginAtThatPrice(String entryPriceStr) {
         BigDecimal entryPrice = new BigDecimal(entryPriceStr);
-        for (int leverage = Leverage.MIN; leverage <= Leverage.MAX; leverage++) {
+        for (int leverage = Leverage.MIN; leverage <= 40; leverage++) {
             Leverage lev = new Leverage(leverage);
             for (Side side : Side.values()) {
                 BigDecimal liqPrice = LiquidationCalculator.liquidationPrice(SIZE, entryPrice, lev, side);
@@ -108,8 +108,8 @@ class LiquidationCalculatorInvariantTest {
 
     @Test
     void leverageAboveMaximumIsRejected() {
-        assertThatIllegalArgument(() -> new Leverage(41));
-        assertThatIllegalArgument(() -> new Leverage(100));
+        assertThatIllegalArgument(() -> new Leverage(10_001));
+        assertThatIllegalArgument(() -> new Leverage(20_000));
     }
 
     @Test

@@ -20,7 +20,7 @@ import java.math.BigDecimal;
 public record Leverage(int value) {
 
     public static final int MIN = 2;
-    public static final int MAX = 40;
+    public static final int MAX = 10_000;
 
     public Leverage {
         if (value < MIN || value > MAX) {

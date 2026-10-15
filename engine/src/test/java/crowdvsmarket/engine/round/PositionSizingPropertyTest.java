@@ -56,7 +56,7 @@ class PositionSizingPropertyTest {
         Random random = new Random(SEED ^ price.hashCode());
         for (int i = 0; i < SAMPLES_PER_PRICE; i++) {
             BigDecimal margin = randomMargin(random);
-            Leverage leverage = new Leverage(2 + random.nextInt(Leverage.MAX - Leverage.MIN + 1));
+            Leverage leverage = new Leverage(2 + random.nextInt(40 - Leverage.MIN + 1));
 
             BigDecimal size = PositionSizing.sizeForMargin(margin, leverage, price);
             BigDecimal recoveredMargin = LiquidationCalculator.initialMargin(size, price, leverage);

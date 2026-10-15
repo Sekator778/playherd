@@ -35,19 +35,40 @@ import java.util.regex.Pattern;
  * whatever scale-2 number the caller supplies (a "lot price"); the server scales a raw price by a
  * power of ten before it reaches the engine, so {@code Candle}, {@code PositionSizing} and the
  * liquidation formulas stay exactly as they were for BTC (see engine/README.md, "Markets").
+ *
+ * <p><b>Economy, stage A (Р-92, docs/product/economy_implementation_plan.md):</b> besides the original
+ * single-cap fields (which are what every bet placed before the economy change keeps being settled
+ * with, so a replayed history is unchanged), a spec carries the new per-round-length caps
+ * ({@link #capFor}, {@code HOURLY} = the short round, 3 min in the server's configuration, {@code DAILY}
+ * = the long round, 15 min), the maintenance constant {@code κ} ({@link #kappa}; {@code l = κ / cap},
+ * {@link #maintenanceRateFor}) and the herd-fee rate {@code r_m} as a fraction of notional
+ * ({@link #herdFeeRate}, 1 bp = 0.0001). {@link #forInterval} is the spec a bet of one round length is
+ * simulated with. The three-argument constructor keeps both caps at {@code maxLeverage} and the defaults
+ * {@code κ = 0.1}, {@code r_m = 1 bp}.
  */
-public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMarginRate) {
+public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMarginRate,
+                         int capHourly, int capDaily, BigDecimal kappa, BigDecimal herdFeeRate) {
 
     // Declared before BTC on purpose: BTC's initializer runs the compact constructor, which reads
     // these two (static fields initialize in textual order).
     private static final Pattern ID_PATTERN = Pattern.compile("[A-Za-z0-9_]{1,32}");
     private static final BigDecimal RATE_UPPER_BOUND = new BigDecimal("0.5");
 
+    /** Default maintenance constant: {@code l = 0.1 / cap} (plan A1). */
+    public static final BigDecimal DEFAULT_KAPPA = new BigDecimal("0.1");
+    /** Default herd-fee rate {@code r_m}: 1.0 bp of notional (plan A4). */
+    public static final BigDecimal DEFAULT_HERD_FEE_RATE = new BigDecimal("0.0001");
+
     /** The legacy market id. A {@code RoundWindow} of this market keeps the pre-markets round id. */
     public static final String BTC_ID = "BTC";
 
     /** Hyperliquid BTC tier 0: 40x, {@code l = 1/80 = 0.0125} (doc section 1.4). */
-    public static final MarketSpec BTC = MarketSpec.of(BTC_ID, 40);
+    public static final MarketSpec BTC = MarketSpec.of(BTC_ID, 40)
+            .withEconomy(1200, 500, DEFAULT_KAPPA, new BigDecimal("0.000092"));
+
+    public MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMarginRate) {
+        this(id, maxLeverage, maintenanceMarginRate, maxLeverage, maxLeverage, DEFAULT_KAPPA, DEFAULT_HERD_FEE_RATE);
+    }
 
     public MarketSpec {
         requireValidId(id);
@@ -61,6 +82,38 @@ public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMargi
             throw new IllegalArgumentException("maintenanceMarginRate must be below 1/maxLeverage (1/" + maxLeverage
                     + "), or a liquidation price falls on the wrong side of the entry, got " + maintenanceMarginRate);
         }
+        requireMaxLeverage(capHourly);
+        requireMaxLeverage(capDaily);
+        if (kappa == null || kappa.signum() <= 0 || kappa.compareTo(BigDecimal.ONE) >= 0) {
+            throw new IllegalArgumentException("kappa must be in (0, 1), got " + kappa);
+        }
+        if (herdFeeRate == null || herdFeeRate.signum() <= 0 || herdFeeRate.compareTo(new BigDecimal("0.01")) > 0) {
+            throw new IllegalArgumentException("herdFeeRate must be in (0, 0.01], got " + herdFeeRate);
+        }
+    }
+
+    /** This market with the stage-A economy parameters: the caps of the two round lengths, {@code κ} and {@code r_m} (a fraction). */
+    public MarketSpec withEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDecimal herdFeeRate) {
+        return new MarketSpec(id, maxLeverage, maintenanceMarginRate, capHourly, capDaily, kappa, herdFeeRate);
+    }
+
+    /** The leverage cap of one round length (plan A2). */
+    public int capFor(Interval interval) {
+        return interval == Interval.HOURLY ? capHourly : capDaily;
+    }
+
+    /** The maintenance margin rate of one round length: {@code l = κ / cap(market, interval)} (plan A1). */
+    public BigDecimal maintenanceRateFor(Interval interval) {
+        return kappa.divide(BigDecimal.valueOf(capFor(interval)), MathContext.DECIMAL128);
+    }
+
+    /**
+     * The spec a stage-A bet of {@code interval}'s round length is opened and simulated with: its single cap is
+     * {@link #capFor}, its maintenance rate {@link #maintenanceRateFor}. Idempotent.
+     */
+    public MarketSpec forInterval(Interval interval) {
+        int cap = capFor(interval);
+        return new MarketSpec(id, cap, maintenanceRateFor(interval), cap, cap, kappa, herdFeeRate);
     }
 
     /**

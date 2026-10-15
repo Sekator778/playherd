@@ -140,7 +140,7 @@ class HistoricalScenarioTest {
         assertThat(candle.low()).as("low").isEqualByComparingTo(scenario.low());
         assertThat(candle.close()).as("close").isEqualByComparingTo(scenario.close());
 
-        for (int leverageValue = Leverage.MIN; leverageValue <= Leverage.MAX; leverageValue++) {
+        for (int leverageValue = Leverage.MIN; leverageValue <= 40; leverageValue++) {
             Leverage leverage = new Leverage(leverageValue);
             for (Direction direction : Direction.values()) {
                 Position position = Position.open(
