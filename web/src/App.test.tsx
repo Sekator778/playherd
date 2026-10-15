@@ -183,11 +183,11 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
   it("Р-63: the Lobby and Pair room carry no top DEMO/replay banner", async () => {
     renderApp("/");
     await screen.findAllByRole("article");
-    expect(screen.queryByText(/DEMO on Chia testnet11/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/PLAY is a real token \(a Chia CAT\) minted on Chia testnet11/)).not.toBeInTheDocument();
 
     renderApp("/play/BTC");
     await screen.findByText("BTC/USD");
-    expect(screen.queryByText(/DEMO on Chia testnet11/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/PLAY is a real token \(a Chia CAT\) minted on Chia testnet11/)).not.toBeInTheDocument();
   });
 
   it("keeps the honest 'PLAY is test money' fact reachable on Wallet and How it works", () => {
