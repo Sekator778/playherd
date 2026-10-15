@@ -74,4 +74,47 @@ class BotStrategyTest {
         }
         assertThat(sawAbove25).isTrue();
     }
+
+    @Test
+    void theMixPutsMostBetsAtALowLeverageAndAFewAtTheTop() {
+        // plan B4: 70% of the draws are bounded by cap/10, 25% by cap/4, 5% by the allowed maximum (the stage-A draw was uniform:
+        // 90% of the bets above cap/10)
+        Random random = new Random(42);
+        int allowed = 600;
+        int n = 20_000;
+        int upToTenth = 0;
+        int upToQuarter = 0;
+        int above = 0;
+        for (int i = 0; i < n; i++) {
+            int leverage = BotStrategy.RANDOM.chooseLeverage(random, allowed);
+            assertThat(leverage).isBetween(2, allowed);
+            if (leverage <= allowed / 10) {
+                upToTenth++;
+            } else if (leverage <= allowed / 4) {
+                upToQuarter++;
+            } else {
+                above++;
+            }
+        }
+        // each draw is uniform inside its band, so the bands overlap: the expected shares of the final leverage are about 80% / 16% / 3.8%
+        assertThat(upToTenth / (double) n).as("at most cap/10").isBetween(0.78, 0.83);
+        assertThat(upToQuarter / (double) n).as("between cap/10 and cap/4").isBetween(0.14, 0.18);
+        assertThat(above / (double) n).as("above cap/4").isBetween(0.03, 0.045);
+        for (BotStrategy strategy : new BotStrategy[] {BotStrategy.CONTRARIAN, BotStrategy.FOLLOW_MAJORITY}) {
+            int low = 0;
+            for (int i = 0; i < n; i++) {
+                low += strategy.chooseLeverage(random, allowed) <= allowed / 10 ? 1 : 0;
+            }
+            assertThat(low / (double) n).as(strategy.name()).isGreaterThan(0.68);
+        }
+    }
+
+    @Test
+    void theCautiousAndTheMaximalistKeepTheirNatures() {
+        Random random = new Random(9);
+        for (int i = 0; i < 500; i++) {
+            assertThat(BotStrategy.CAUTIOUS_LOW_LEVERAGE.chooseLeverage(random, 1200)).isBetween(2, 5);
+        }
+        assertThat(BotStrategy.ALWAYS_MAX_LEVERAGE.chooseLeverage(random, 1200)).isEqualTo(1200);
+    }
 }

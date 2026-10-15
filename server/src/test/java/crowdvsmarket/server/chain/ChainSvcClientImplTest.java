@@ -277,6 +277,24 @@ class ChainSvcClientImplTest {
     }
 
     @Test
+    void playTreasurySendsBearerTokenAndMapsTheCoin() {
+        when(rest.playTreasury(any())).thenReturn(new ChainSvcRestClient.PlayTreasuryResponse("0xtreasury", 99_998_100_000L));
+
+        ChainSvcClient.PlayTreasury treasury = impl.playTreasury();
+
+        verify(rest).playTreasury(eq("Bearer " + TOKEN));
+        assertThat(treasury.coinId()).isEqualTo("0xtreasury");
+        assertThat(treasury.amountMojos()).isEqualTo(99_998_100_000L);
+    }
+
+    @Test
+    void playTreasuryIsNullWhenChainsvcIsUnreachable() {
+        when(rest.playTreasury(any())).thenThrow(new RuntimeException("timeout"));
+
+        assertThat(impl.playTreasury()).isNull();
+    }
+
+    @Test
     void healthNeverSendsAToken() {
         when(rest.health()).thenReturn(new ChainSvcRestClient.HealthResponse(true));
 

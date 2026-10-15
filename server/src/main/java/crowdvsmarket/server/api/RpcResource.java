@@ -118,7 +118,7 @@ public class RpcResource {
             }
             case "authVerify" -> {
                 Auth.AuthVerifyRequest req = requiredObj(args, 0, Auth.AuthVerifyRequest.class);
-                AuthService.VerifyResult vr = authService.verify(req);
+                AuthService.VerifyResult vr = authService.verify(req, clientIp(httpRequest));
                 result = vr.session();
                 setCookie = sessionCookie(vr.sessionId());
             }

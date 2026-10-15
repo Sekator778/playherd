@@ -41,7 +41,7 @@ class ApiErrorCodeContractTest {
     private static final Set<String> SERVER_ONLY = Set.of(
             "UNAUTHORIZED", "BAD_REQUEST", "INVALID_AMOUNT",
             "DEPOSIT_VERIFICATION_UNAVAILABLE", "WITHDRAWAL_UNAVAILABLE", "WITHDRAWAL_BELOW_MINIMUM",
-            "CHAIN_SERVICE_UNAVAILABLE");
+            "CHAIN_SERVICE_UNAVAILABLE", "REGISTRATION_LIMIT", "EXPOSURE_LIMIT_EXCEEDED");
 
     /** The string literals of {@code export type ApiErrorCode = | "A" | "B" …;} in contract.ts, in order. */
     static Set<String> unionInContract() throws IOException {

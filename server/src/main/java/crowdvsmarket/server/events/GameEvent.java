@@ -58,11 +58,19 @@ public sealed interface GameEvent {
      * {@code EventApplier} then places a <b>legacy</b> bet: no fees, the original settlement rules — so an old log replays to
      * the balances it always did. Still no schema bump ({@code EventStore.CURRENT_SCHEMA_VERSION} stays 1); the fees are
      * stored, never recomputed, so a later change of a rate cannot move a replayed balance.
+     *
+     * <p>{@code liqCap} / {@code liqKappa} (economy stage B) are the liquidation parameters of the bet - the leverage cap of its market
+     * and round length and the maintenance constant kappa, {@code l = kappa / cap} - stored for the same reason: replay settles the
+     * bet with them and never with the market's row of the day (the weekly recalculation of stage D changes caps). They are written
+     * only for a bet with fees, and a row of stage A without them is settled with the market's current ones (stage A was never
+     * on a public stand, so no such row exists in production).
      */
     record BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
                        int leverage, long stakeMojos, long atMs, String market,
                        @JsonInclude(JsonInclude.Include.NON_NULL) Long feeHerdMojos,
-                       @JsonInclude(JsonInclude.Include.NON_NULL) Long feeNetMojos) implements GameEvent {
+                       @JsonInclude(JsonInclude.Include.NON_NULL) Long feeNetMojos,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) Integer liqCap,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String liqKappa) implements GameEvent {
 
         public BetPlaced {
             market = marketOrBtc(market);
@@ -72,23 +80,42 @@ public sealed interface GameEvent {
             if ((feeHerdMojos != null && feeHerdMojos < 0) || (feeNetMojos != null && feeNetMojos < 0)) {
                 throw new IllegalArgumentException("fees must not be negative");
             }
+            if ((liqCap == null) != (liqKappa == null)) {
+                throw new IllegalArgumentException("liqCap and liqKappa are both set or both absent");
+            }
+            if (liqCap != null && feeHerdMojos == null) {
+                throw new IllegalArgumentException("liquidation parameters belong to a bet placed under the economy rules (with fees)");
+            }
+        }
+
+        /** Stage-A shape: fees, but no stored liquidation parameters (replayed with the market's current cap and kappa). */
+        public BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
+                           int leverage, long stakeMojos, long atMs, String market, Long feeHerdMojos, Long feeNetMojos) {
+            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, market, feeHerdMojos,
+                    feeNetMojos, null, null);
         }
 
         /** Pre-economy shape with a market: a legacy bet (no fees). */
         public BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
                            int leverage, long stakeMojos, long atMs, String market) {
-            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, market, null, null);
+            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, market, null, null, null, null);
         }
 
         /** Pre-markets shape: a bet on BTC. */
         public BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
                            int leverage, long stakeMojos, long atMs) {
-            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, null, null, null);
+            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, null, null, null, null, null);
         }
 
         /** Whether the bet was placed under the economy-stage-A rules (it carries its fees). */
         public boolean hasFees() {
             return feeHerdMojos != null;
+        }
+
+        /** The cap and kappa the bet was placed with, or {@code null} when the event did not store them. */
+        public crowdvsmarket.engine.round.LiquidationParams liquidation() {
+            return liqCap == null ? null
+                    : new crowdvsmarket.engine.round.LiquidationParams(liqCap, new java.math.BigDecimal(liqKappa));
         }
     }
 
@@ -148,6 +175,30 @@ public sealed interface GameEvent {
         public RoundCancelled(Interval interval, long windowStart, long windowEnd, String reason, long atMs) {
             this(interval, windowStart, windowEnd, reason, atMs, null);
         }
+    }
+
+    /**
+     * Economy stage B (plan B1): the cutover to the house accounts, written once. {@code openingTotalMojos} is the total the accounts
+     * must add up to - the treasury coin on chain, configured at the time ({@code herd.economy.treasury-opening-play}); it is
+     * stored in the event, so a replay opens TREASURY with the same number whatever the configuration is by then. TREASURY opens with it
+     * minus what the players hold when the event is applied (balances and open stakes), HERD with 0. Events before it replay as they
+     * always did (packs and wins minted, lost stakes burned).
+     */
+    record EconomyCutover(long openingTotalMojos, long atMs) implements GameEvent {
+    }
+
+    /**
+     * Economy stage B (plan B4): a bot retires - its balance goes to TREASURY, it bets no more and is in no list. Internal: no screen
+     * and no public endpoint shows it. The bot that replaces it (an ordinary {@link PlayerRegistered}) comes at least an hour later.
+     */
+    record BotRetired(String playerId, long atMs) implements GameEvent {
+    }
+
+    /**
+     * Economy stage B (plan B4): the daily move of the fees the bots paid from HERD to TREASURY. The amount is decided when the event
+     * is written and stored, so a replay moves the same amount.
+     */
+    record HerdSweptToTreasury(long amountMojos, long atMs) implements GameEvent {
     }
 
     /** No {@code requestId} field on purpose: {@code LedgerBook.requestWithdrawal} assigns its own

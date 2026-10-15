@@ -49,8 +49,22 @@ public final class PlayerDirectory {
 
     private volatile Maps maps = new Maps();
 
+    /**
+     * {@code retiredAtMs}: when a bot retired (economy stage B4), {@code null} for everyone else; {@code replaced}: a new bot has taken
+     * the place of a retired one. A retired bot is in no list.
+     */
     public record Row(String playerId, String walletAddress, String nickname, boolean isBot, String botStrategy,
-                        int playerIndex, long createdAtMs) {
+                        int playerIndex, long createdAtMs, Long retiredAtMs, boolean replaced) {
+
+        public Row(String playerId, String walletAddress, String nickname, boolean isBot, String botStrategy,
+                   int playerIndex, long createdAtMs) {
+            this(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, createdAtMs, null, false);
+        }
+
+        public boolean isRetired() {
+            return retiredAtMs != null;
+        }
+
         public PlayerIdentity identity() {
             return new PlayerIdentity(playerId, nickname == null ? shortWallet(walletAddress) : nickname,
                     walletAddress);
@@ -66,11 +80,11 @@ public final class PlayerDirectory {
      *  these ids already resolving to a wallet address for display purposes. */
     public synchronized void reload() {
         List<Row> rows = db.read(c -> db.queryList(c,
-                "SELECT player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, created_at_ms "
-                        + "FROM players",
+                "SELECT player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, created_at_ms, "
+                        + "retired_at_ms, replaced FROM players",
                 rs -> new Row(rs.getString("player_id"), rs.getString("wallet_address"), rs.getString("nickname"),
                         rs.getBoolean("is_bot"), rs.getString("bot_strategy"), rs.getInt("player_index"),
-                        rs.getLong("created_at_ms"))));
+                        rs.getLong("created_at_ms"), (Long) rs.getObject("retired_at_ms"), rs.getBoolean("replaced"))));
         Maps fresh = new Maps();
         for (Row row : rows) {
             fresh.put(row);
@@ -128,7 +142,30 @@ public final class PlayerDirectory {
     public void cacheNickname(String playerId, String nickname) {
         Maps current = maps;
         current.byId.computeIfPresent(playerId, (id, prev) -> new Row(prev.playerId(), prev.walletAddress(), nickname,
-                prev.isBot(), prev.botStrategy(), prev.playerIndex(), prev.createdAtMs()));
+                prev.isBot(), prev.botStrategy(), prev.playerIndex(), prev.createdAtMs(), prev.retiredAtMs(),
+                prev.replaced()));
+    }
+
+    /** Writes the retirement of a bot within the caller's transaction ({@link #cacheRetired} after the commit). */
+    public void updateRetired(Connection c, String playerId, long atMs) throws SQLException {
+        db.update(c, "UPDATE players SET retired_at_ms = ? WHERE player_id = ?", atMs, playerId);
+    }
+
+    /** The cache's side of {@link #updateRetired}, after the commit. */
+    public void cacheRetired(String playerId, long atMs) {
+        maps.byId.computeIfPresent(playerId, (id, prev) -> new Row(prev.playerId(), prev.walletAddress(), prev.nickname(),
+                prev.isBot(), prev.botStrategy(), prev.playerIndex(), prev.createdAtMs(), atMs, prev.replaced()));
+    }
+
+    /** Writes that a new bot has taken the place of the retired {@code playerId}, within the caller's transaction. */
+    public void updateReplaced(Connection c, String playerId) throws SQLException {
+        db.update(c, "UPDATE players SET replaced = TRUE WHERE player_id = ?", playerId);
+    }
+
+    /** The cache's side of {@link #updateReplaced}, after the commit. */
+    public void cacheReplaced(String playerId) {
+        maps.byId.computeIfPresent(playerId, (id, prev) -> new Row(prev.playerId(), prev.walletAddress(), prev.nickname(),
+                prev.isBot(), prev.botStrategy(), prev.playerIndex(), prev.createdAtMs(), prev.retiredAtMs(), true));
     }
 
     public Map<String, PlayerIdentity> identitiesById() {

@@ -236,13 +236,13 @@ public class DbMarketRegistry implements MarketRegistry {
         db.update(c, """
                 INSERT INTO markets (id, kind, category, symbol, title, subtitle, icon_url, source, source_ref,
                     source_meta, max_leverage, lot_exp, oracle_index, status, listed_at_ms, ends_at_ms,
-                    cap_hourly, cap_daily, kappa, herd_fee_bp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?)
+                    cap_hourly, cap_daily, kappa, herd_fee_bp, stress_move)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 spec.id(), spec.kind().name(), spec.category(), spec.symbol(), spec.title(), spec.subtitle(),
                 spec.iconUrl(), spec.source(), spec.sourceRef(), Db.jsonb(meta), spec.maxLeverage(), spec.lotExp(),
                 nextIndex, nowMs, spec.endsAtMs(), economy.capHourly(), economy.capDaily(), economy.kappa(),
-                economy.herdFeeBp());
+                economy.herdFeeBp(), economy.stressMove());
         // Read the row back: what the caller gets is exactly what a reload will give (jsonb
         // normalizes the text of sourceMeta).
         return new Inserted(db.queryOne(c, "SELECT * FROM markets WHERE id = ?", this::toMarket, spec.id()), true);
@@ -251,9 +251,9 @@ public class DbMarketRegistry implements MarketRegistry {
     private List<Market> loadAll(Connection c) throws SQLException {
         db.update(c, """
                 INSERT INTO markets (id, kind, category, symbol, title, source, source_ref, max_leverage, lot_exp,
-                    oracle_index, status, listed_at_ms, cap_hourly, cap_daily, kappa, herd_fee_bp)
+                    oracle_index, status, listed_at_ms, cap_hourly, cap_daily, kappa, herd_fee_bp, stress_move)
                 VALUES ('BTC', 'PERP', 'crypto', 'BTC', 'Bitcoin', 'hyperliquid', 'BTC', 40, 0, 0, 'ACTIVE', 0,
-                    1200, 500, 0.1, 0.92)
+                    1200, 500, 0.1, 0.92, 0.00817)
                 ON CONFLICT (id) DO NOTHING
                 """);
         return db.queryList(c, "SELECT * FROM markets ORDER BY oracle_index ASC", this::toMarket);

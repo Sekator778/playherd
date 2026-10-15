@@ -37,6 +37,26 @@ public class GameConfig {
     @ConfigProperty(name = "herd.scheduler.tick-ms")
     long tickMs;
 
+    /**
+     * Economy stage B (plan B1): the total the house accounts add up to at the cutover, in whole PLAY - the treasury coin on chain,
+     * 99 998 100 PLAY (checked on chain 2026-10-15, docs/product/economy_implementation_plan.md). TREASURY opens with it minus what the
+     * players hold. {@code 0} switches the economy off: no cutover event is written (a stand that must keep the old rules).
+     */
+    @ConfigProperty(name = "herd.economy.treasury-opening-play", defaultValue = "99998100")
+    long economyTreasuryOpeningPlay;
+
+    /** Plan B3: how many new players one IP address may register in 24 hours. */
+    @ConfigProperty(name = "herd.registration.max-per-ip-per-day", defaultValue = "3")
+    int registrationMaxPerIpPerDay;
+
+    /** Plan B4: a bot whose balance is below this many PLAY retires. */
+    @ConfigProperty(name = "herd.bots.retire-below-play", defaultValue = "100")
+    long botsRetireBelowPlay;
+
+    /** Plan B4: how long after a bot retired its replacement is created (milliseconds). */
+    @ConfigProperty(name = "herd.bots.respawn-delay-ms", defaultValue = "3600000")
+    long botsRespawnDelayMs;
+
     @ConfigProperty(name = "herd.operator.token")
     String operatorToken;
 
@@ -168,6 +188,22 @@ public class GameConfig {
 
     public long tickMs() {
         return tickMs;
+    }
+
+    public long economyTreasuryOpeningPlay() {
+        return economyTreasuryOpeningPlay;
+    }
+
+    public int registrationMaxPerIpPerDay() {
+        return registrationMaxPerIpPerDay;
+    }
+
+    public long botsRetireBelowPlay() {
+        return botsRetireBelowPlay;
+    }
+
+    public long botsRespawnDelayMs() {
+        return botsRespawnDelayMs;
     }
 
     public String operatorToken() {

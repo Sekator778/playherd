@@ -201,6 +201,15 @@ public interface ChainSvcClient {
      *  tick with the same {@code sinceHeight} (never advances the cursor without a real response). */
     PlayDepositsResult playDeposits(long sinceHeight);
 
+    /** The PLAY treasury coin the chain service tracks (economy stage B, plan B7: the reconciliation). */
+    record PlayTreasury(String coinId, long amountMojos) {
+    }
+
+    /** The treasury coin on chain, {@code null} when the chain service cannot say (down, or an older one without the endpoint). */
+    default PlayTreasury playTreasury() {
+        return null;
+    }
+
     AuthVerifyResult authVerify(String address, String publicKey, String message, String signature);
 
     OracleRecordsResult oracleRecords(List<OracleRecord> records);

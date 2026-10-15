@@ -68,6 +68,11 @@ public class AuthService {
      *  challenge must then still work (it used to be burned first — the retry got 401 {@code
      *  CHALLENGE_EXPIRED_OR_UNKNOWN} and the player a second Sage prompt, review of the core, finding 6). */
     public VerifyResult verify(Auth.AuthVerifyRequest req) {
+        return verify(req, null);
+    }
+
+    /** {@link #verify(Auth.AuthVerifyRequest)} from a known client address: a NEW player is limited per address (economy stage B, plan B3). */
+    public VerifyResult verify(Auth.AuthVerifyRequest req, String clientIp) {
         gameService.requireEngineReady();
         AuthChallengeRepository.Row row = challenges.find(req.nonce())
                 .orElseThrow(ApiException::challengeExpiredOrUnknown);
@@ -98,7 +103,7 @@ public class AuthService {
             throw ApiException.signatureInvalid(result.reason());
         }
 
-        GameService.PlayerTouchResult touch = gameService.registerOrTouchPlayer(req.address(), now);
+        GameService.PlayerTouchResult touch = gameService.registerOrTouchPlayer(req.address(), now, clientIp);
         String sessionId = sessions.create(touch.player().playerId(), now);
         return new VerifyResult(new Auth.AuthSessionDto(touch.player(), touch.isNewPlayer(), touch.starterPackGranted()), sessionId);
     }

@@ -19,6 +19,7 @@ import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.player.PlayerIdentity;
 import crowdvsmarket.engine.rating.RatingBook;
 import crowdvsmarket.engine.round.Bet;
+import crowdvsmarket.engine.round.LiquidationParams;
 import crowdvsmarket.engine.round.Position;
 import crowdvsmarket.engine.round.PositionSimulator;
 import crowdvsmarket.engine.round.RoundClock;
@@ -35,6 +36,7 @@ import crowdvsmarket.server.domain.WinStreak;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Crowd;
+import crowdvsmarket.server.dto.Economy;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Home;
 import crowdvsmarket.server.dto.Identity;
@@ -187,6 +189,13 @@ public class GameService implements MarketListener {
     crowdvsmarket.server.domain.BetFeed betFeedStore;
     @Inject
     EngineRebuildService rebuildService;
+    @Inject
+    crowdvsmarket.server.persistence.RegistrationIpRepository registrationIps;
+
+    /** Everything that was ever issued: 100 000 000 PLAY (docs/product/economy_implementation_plan.md, "Факт для всех этапов"). */
+    static final PlayAmount ISSUED = PlayAmount.ofWholePlay(100_000_000);
+    /** The circuit breaker's last reported state, to say a change once (plan B6). */
+    private volatile boolean breakerWasOpen;
 
     private static final BigDecimal ZERO_MONEY = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final Logger LOG = Logger.getLogger(GameService.class);
@@ -364,6 +373,16 @@ public class GameService implements MarketListener {
     }
 
     public PlayerTouchResult registerOrTouchPlayer(String walletAddress, long nowMs) {
+        return registerOrTouchPlayer(walletAddress, nowMs, null);
+    }
+
+    /**
+     * {@link #registerOrTouchPlayer(String, long)} from a known client address (economy stage B, plan B3): a NEW player is refused
+     * ({@code 429 REGISTRATION_LIMIT}) when that address has already registered {@code herd.registration.max-per-ip-per-day} new players
+     * in the last 24 hours. Players that exist already sign in as ever. The address is kept only as a salted hash
+     * ({@code RegistrationIpRepository}). {@code null} or {@code "unknown"} (no peer address could be read) is not limited.
+     */
+    public PlayerTouchResult registerOrTouchPlayer(String walletAddress, long nowMs, String clientIp) {
         lockWrite();
         try {
             Optional<String> existing = players.playerIdForWallet(walletAddress);
@@ -372,20 +391,33 @@ public class GameService implements MarketListener {
             boolean packGranted = false;
             Instant now = Instant.ofEpochMilli(nowMs);
             if (isNew) {
+                String ipHash = null;
+                if (clientIp != null && !clientIp.isBlank() && !"unknown".equals(clientIp)) {
+                    ipHash = registrationIps.hash(clientIp);
+                    int perDay = config.registrationMaxPerIpPerDay();
+                    if (registrationIps.countInWindow(ipHash, nowMs) >= perDay) {
+                        throw ApiException.registrationLimit("this network has already registered " + perDay
+                                + " new player" + (perDay == 1 ? "" : "s") + " in the last 24 hours - no more new players can sign "
+                                + "up from it until then (a player who already signed up can still sign in)");
+                    }
+                }
                 playerId = UUID.randomUUID().toString();
                 String finalPlayerId = playerId;
                 int playerIndex = serverMeta.reserveNextPlayerIndex();
                 // The directory's cache gets the row only after the commit (PlayerDirectory's javadoc).
                 players.cache(db.tx(c -> players.insert(c, finalPlayerId, walletAddress, null, false, null,
                         playerIndex, nowMs)));
-                packGranted = hub.ledger().seasonPackDue(playerId, now); // a player nobody has seen: the first pack
+                packGranted = hub.ledger().seasonPackAmount(playerId, now).isPositive(); // a player nobody has seen: the first pack
+                if (ipHash != null) {
+                    registrationIps.record(ipHash, nowMs);
+                }
                 appendPlayerRegistered(playerId, nowMs);
             } else {
                 playerId = existing.get();
                 Season season = Season.of(now);
                 boolean seasonAlreadyTouched = hub.ledger().seasonRecord(playerId, season).isPresent();
                 if (!seasonAlreadyTouched) {
-                    packGranted = hub.ledger().seasonPackDue(playerId, now);
+                    packGranted = hub.ledger().seasonPackAmount(playerId, now).isPositive(); // a top-up of nothing is no pack
                     appendPlayerRegistered(playerId, nowMs);
                 }
             }
@@ -408,13 +440,30 @@ public class GameService implements MarketListener {
      *  {@code isBot=false}) by nothing else — bots skip the wallet-signature flow entirely, they
      *  are server-side only. */
     public Identity.PlayerSummaryDto createBotPlayer(String nickname, String strategy, long nowMs) {
+        return createBotPlayer(nickname, strategy, nowMs, null);
+    }
+
+    /**
+     * {@link #createBotPlayer(String, String, long)} that takes the place of the retired bot {@code replacesPlayerId} (economy stage B,
+     * plan B4): in the same transaction the retired bot's row is marked replaced, so one retired bot is replaced once. The new bot's pack
+     * comes from TREASURY, like any pack.
+     */
+    public Identity.PlayerSummaryDto createBotPlayer(String nickname, String strategy, long nowMs, String replacesPlayerId) {
         lockWrite();
         try {
             String playerId = "bot-" + strategy.toLowerCase(java.util.Locale.ROOT) + "-" + UUID.randomUUID();
             String walletAddress = "txbot1" + playerId.replace("-", "").substring(0, Math.min(40, playerId.length()));
             int playerIndex = serverMeta.reserveNextPlayerIndex();
-            players.cache(db.tx(c -> players.insert(c, playerId, walletAddress, nickname, true, strategy,
-                    playerIndex, nowMs)));
+            players.cache(db.tx(c -> {
+                PlayerDirectory.Row row = players.insert(c, playerId, walletAddress, nickname, true, strategy, playerIndex, nowMs);
+                if (replacesPlayerId != null) {
+                    players.updateReplaced(c, replacesPlayerId);
+                }
+                return row;
+            }));
+            if (replacesPlayerId != null) {
+                players.cacheReplaced(replacesPlayerId);
+            }
             appendPlayerRegistered(playerId, nowMs);
             return summary(playerId);
         } finally {
@@ -740,6 +789,21 @@ public class GameService implements MarketListener {
 
             LedgerBook ledger = hub.ledger();
             Instant now = Instant.ofEpochMilli(nowMs);
+            if (ledger.isRetired(playerId)) {
+                throw ApiException.badRequest("player " + playerId + " is retired");
+            }
+            // Economy stage B (plan B6): with TREASURY more than 10% below its 30-day maximum a new bet takes at most cap/4
+            boolean breaker = ledger.circuitBreakerOpen(now);
+            noteBreaker(breaker, ledger, now);
+            if (breaker) {
+                int allowedNow = Math.min(EconomyRules.maxLeverage(spec, ref.interval(), stake),
+                        EconomyLimits.breakerMaxLeverage(spec.capFor(ref.interval())));
+                if (req.leverage() > allowedNow) {
+                    throw ApiException.invalidLeverage("leverage must be in [" + Leverage.MIN + ", " + allowedNow + "] for now on "
+                            + spec.id() + ": the treasury is below 90% of its 30-day maximum, new bets take at most a quarter of the "
+                            + "usual cap while it recovers (bets already open are paid as ever), got " + req.leverage());
+                }
+            }
             ledger.ensureSeasonPack(playerId, now); // idempotent — also happens inside the event replay below
 
             if (stake.compareTo(LedgerBook.MIN_STAKE) < 0) {
@@ -759,9 +823,12 @@ public class GameService implements MarketListener {
                         + " exceeds balance " + effectiveBalance);
             }
 
+            requireExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), req.leverage(), stake);
+            LiquidationParams liquidation = LiquidationParams.of(spec, ref.interval());
             GameEvent.BetPlaced event = new GameEvent.BetPlaced(playerId, ref.interval(), bettingWindow.startMs(),
                     bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs,
-                    market.id(), fees.herd().mojos(), fees.network().mojos());
+                    market.id(), fees.herd().mojos(), fees.network().mojos(), liquidation.cap(),
+                    liquidation.kappa().toPlainString());
             persist(event, nowMs);
             eventApplier.apply(event);
             return betDto(playerId, bettingWindow.roundId(), req.direction(), req.leverage(), stake, fees, spec,
@@ -922,7 +989,7 @@ public class GameService implements MarketListener {
             Position position = Position.openFromMargin(outcome.playerId(), window.roundId(),
                     toEngine(toDto(outcome.direction())), new Leverage(outcome.leverage()),
                     outcome.stake().toMoney(), entryPrice,
-                    outcome.fees() == null ? spec : spec.forInterval(window.interval()));
+                    crowdvsmarket.engine.round.Bet.specFor(outcome.fees() == null, outcome.liquidation(), spec, window.interval()));
             BigDecimal pnl = outcome.payout().subtract(outcome.stake().toMoney());
             Boolean directionCorrect = directionCorrect(outcome.direction(), report.openPrice(), report.closePrice());
 
@@ -1597,6 +1664,13 @@ public class GameService implements MarketListener {
             if (amt.compareTo(balance) > 0) {
                 throw ApiException.withdrawalExceedsBalance("withdrawal " + amt + " exceeds balance " + balance);
             }
+            // Economy stage B (plan B2): the starter packs are play money and cannot leave the game; only what is above them
+            PlayAmount withdrawable = hub.ledger().withdrawable(playerId);
+            if (amt.compareTo(withdrawable) > 0) {
+                throw ApiException.withdrawalExceedsBalance("withdrawal " + amt + " exceeds the amount you can withdraw, "
+                        + withdrawable + ": starter packs (" + hub.ledger().packCredited(playerId) + " credited to you so far) "
+                        + "stay in the game, only winnings and deposits above them can be withdrawn");
+            }
             toAddress = players.byId(playerId)
                     .orElseThrow(() -> ApiException.notFound("unknown player " + playerId))
                     .walletAddress();
@@ -2063,6 +2137,284 @@ public class GameService implements MarketListener {
 
     public Paging.Page<Rounds.CancellationDto> cancellations(Paging.PageParams params) {
         return roundResults.listCancellations(params);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Economy stage B (Р-92, docs/product/economy_implementation_plan.md B1-B7)
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * B1: writes the {@link GameEvent.EconomyCutover} event once, when the log has none and {@code herd.economy.treasury-opening-play}
+     * is set (greater than 0). The event stores the opening total, so a replay opens TREASURY with the same number. On the stand's
+     * first start with this version: TREASURY = 99 998 100 PLAY minus everything the players hold (balances and open stakes) at that
+     * moment, HERD = 0; every bet placed before keeps its original rules.
+     *
+     * @return whether the event was written now
+     * @throws IllegalStateException when the players hold more than the opening total (nothing is written)
+     */
+    public boolean ensureEconomyCutover(long nowMs) {
+        long openingPlay = config.economyTreasuryOpeningPlay();
+        if (openingPlay <= 0) {
+            return false;
+        }
+        lockWrite();
+        try {
+            LedgerBook ledger = hub.ledger();
+            if (ledger.economyActive()) {
+                return false;
+            }
+            PlayAmount opening = PlayAmount.ofWholePlay(openingPlay);
+            PlayAmount held = ledger.playersTotal().plus(ledger.openStakes());
+            if (held.compareTo(opening) > 0) {
+                throw new IllegalStateException("the economy cutover is refused: the players hold " + held
+                        + ", more than the opening total " + opening + " (herd.economy.treasury-opening-play)");
+            }
+            GameEvent.EconomyCutover event = new GameEvent.EconomyCutover(opening.mojos(), nowMs);
+            persist(event, nowMs);
+            eventApplier.apply(event);
+            LOG.infof("economy cutover: opening total %s, players hold %s (balances %s, open stakes %s) -> TREASURY %s, HERD 0",
+                    opening, held, ledger.playersTotal(), ledger.openStakes(), ledger.treasury());
+            return true;
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
+    /** Whether the economy has been cut over (the TREASURY and HERD accounts exist). */
+    public boolean economyActive() {
+        lockRead();
+        try {
+            return hub.ledger().economyActive();
+        } finally {
+            engineLock.readLock().unlock();
+        }
+    }
+
+    /** B6: whether TREASURY is below 90% of its 30-day maximum now. Said in the log when it changes. */
+    public boolean circuitBreakerOpen(long nowMs) {
+        lockRead();
+        try {
+            LedgerBook ledger = hub.ledger();
+            boolean open = ledger.circuitBreakerOpen(Instant.ofEpochMilli(nowMs));
+            noteBreaker(open, ledger, Instant.ofEpochMilli(nowMs));
+            return open;
+        } finally {
+            engineLock.readLock().unlock();
+        }
+    }
+
+    /** Logs the circuit breaker opening and closing, once each (the numbers stay in the log, the status shows the flag only). */
+    private void noteBreaker(boolean open, LedgerBook ledger, Instant now) {
+        if (open == breakerWasOpen) {
+            return;
+        }
+        breakerWasOpen = open;
+        if (open) {
+            LOG.warnf("CIRCUIT BREAKER OPEN: TREASURY %s is below 90%% of its 30-day maximum %s - new bets take at most "
+                    + "a quarter of the usual leverage cap until it recovers", ledger.treasury(), ledger.treasuryMax30d(now));
+        } else {
+            LOG.infof("circuit breaker closed: TREASURY %s is back above 90%% of its 30-day maximum %s",
+                    ledger.treasury(), ledger.treasuryMax30d(now));
+        }
+    }
+
+    /**
+     * B5: the bet must fit under the treasury limits - the open notional of its side of its round of its market, and (crypto) the
+     * bucket of all crypto markets. Nothing is checked before the cutover. The rejection names the room that is left.
+     */
+    private void requireExposureRoom(Market market, Interval interval, RoundWindow window, String playerId,
+                                     crowdvsmarket.engine.round.Direction direction, int leverage, PlayAmount stake) {
+        LedgerBook ledger = hub.ledger();
+        if (!ledger.economyActive()) {
+            return;
+        }
+        BigDecimal newNotional = stake.toMoney().multiply(BigDecimal.valueOf(leverage));
+        BigDecimal stress = market.economy().stressFor(interval, market.kind());
+        boolean crypto = Category.CRYPTO.equals(market.category());
+        BigDecimal open = openNotional(market.id(), interval, window, direction, playerId);
+        BigDecimal bucketRisk = null;
+        if (crypto) {
+            bucketRisk = BigDecimal.ZERO;
+            for (Market other : marketRegistry.active()) {
+                if (!Category.CRYPTO.equals(other.category()) || hub.findMarket(other.id()).isEmpty()) {
+                    continue;
+                }
+                BigDecimal notional = other.id().equals(market.id()) ? open
+                        : openNotional(other.id(), interval, window, direction, null);
+                bucketRisk = bucketRisk.add(notional.multiply(other.economy().stressFor(interval, other.kind())));
+            }
+        }
+        EconomyLimits.Exposure exposure = EconomyLimits.checkExposure(ledger.treasury(), stress, open, newNotional, bucketRisk);
+        if (!exposure.ok()) {
+            BigDecimal maxStake = leverage > 0
+                    ? exposure.roomNotional().divide(BigDecimal.valueOf(leverage), 3, RoundingMode.DOWN) : BigDecimal.ZERO;
+            throw ApiException.exposureLimitExceeded("this bet is over the limit the treasury sets on " + market.id() + " "
+                    + (direction == crowdvsmarket.engine.round.Direction.UP ? "UP" : "DOWN") + " in this round"
+                    + (exposure.bucketLimited() ? " (the crypto markets share one limit)" : "") + ": the notional of your bet is "
+                    + newNotional.stripTrailingZeros().toPlainString() + " PLAY (stake x leverage), the room left is "
+                    + exposure.roomNotional().stripTrailingZeros().toPlainString() + " PLAY of notional - at x" + leverage
+                    + " a stake of at most " + maxStake.stripTrailingZeros().toPlainString() + " PLAY. Try a lower leverage, a "
+                    + "smaller stake or the other side.");
+        }
+    }
+
+    /** The notional (stake x leverage, PLAY) open on one side of a round of a market, without {@code exceptPlayer}'s bet. */
+    private BigDecimal openNotional(String marketId, Interval interval, RoundWindow window,
+                                    crowdvsmarket.engine.round.Direction direction, String exceptPlayer) {
+        String roundId = new RoundWindow(marketId, interval, window.startMs(), window.endMs()).roundId();
+        BigDecimal total = BigDecimal.ZERO;
+        for (Bet bet : hub.engine(marketId, interval).betBook().betsFor(roundId)) {
+            if (bet.direction() == direction && !bet.playerId().equals(exceptPlayer)) {
+                total = total.add(bet.stake().toMoney().multiply(BigDecimal.valueOf(bet.leverage().value())));
+            }
+        }
+        return total;
+    }
+
+    /**
+     * B4: retires every live bot whose balance is below {@code herd.bots.retire-below-play} and that has no open bet (its stakes would
+     * come back to an account that no longer plays). Each retirement is a {@link GameEvent.BotRetired} (balance to TREASURY) and the
+     * {@code players} row's {@code retired_at_ms}, in one transaction. Nothing is said anywhere public. Only once the economy is active.
+     *
+     * @return the ids of the bots retired now
+     */
+    public List<String> retireBotsBelowThreshold(long nowMs) {
+        lockWrite();
+        try {
+            LedgerBook ledger = hub.ledger();
+            if (!ledger.economyActive()) {
+                return List.of();
+            }
+            PlayAmount threshold = PlayAmount.ofWholePlay(config.botsRetireBelowPlay());
+            List<String> retired = new ArrayList<>();
+            for (PlayerDirectory.Row bot : players.bots()) {
+                if (bot.isRetired() || ledger.isRetired(bot.playerId())) {
+                    continue;
+                }
+                PlayAmount balance;
+                try {
+                    balance = ledger.balance(bot.playerId());
+                } catch (java.util.NoSuchElementException e) {
+                    continue;
+                }
+                if (balance.compareTo(threshold) >= 0 || openBets.stake(bot.playerId()).isPositive()) {
+                    continue;
+                }
+                GameEvent.BotRetired event = new GameEvent.BotRetired(bot.playerId(), nowMs);
+                db.tx(c -> {
+                    eventStore.append(c, event, nowMs);
+                    players.updateRetired(c, bot.playerId(), nowMs);
+                    return null;
+                });
+                eventApplier.apply(event);
+                players.cacheRetired(bot.playerId(), nowMs);
+                retired.add(bot.playerId());
+                LOG.debugf("bot %s retired with %s", bot.playerId(), balance);
+            }
+            return retired;
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * B4: once a UTC day, moves the fees the bots paid since the last sweep from HERD to TREASURY ({@link GameEvent.HerdSweptToTreasury}).
+     * The fees of the people stay in HERD. Nothing is written when the day has already been swept or there is nothing to move.
+     *
+     * @return the amount moved (zero when nothing was)
+     */
+    public PlayAmount sweepBotFeesIfDue(long nowMs) {
+        lockWrite();
+        try {
+            LedgerBook ledger = hub.ledger();
+            if (!ledger.economyActive()) {
+                return PlayAmount.ZERO;
+            }
+            long today = Math.floorDiv(nowMs, 86_400_000L);
+            if (ledger.lastSweepAtMs() >= 0 && today <= Math.floorDiv(ledger.lastSweepAtMs(), 86_400_000L)) {
+                return PlayAmount.ZERO;
+            }
+            PlayAmount botFees = PlayAmount.ZERO;
+            for (PlayerDirectory.Row bot : players.bots()) {
+                botFees = botFees.plus(ledger.feesPaid(bot.playerId()));
+            }
+            PlayAmount amount = botFees.minus(ledger.botFeesSwept());
+            if (amount.compareTo(ledger.herd()) > 0) {
+                amount = ledger.herd();
+            }
+            if (!amount.isPositive()) {
+                return PlayAmount.ZERO;
+            }
+            GameEvent.HerdSweptToTreasury event = new GameEvent.HerdSweptToTreasury(amount.mojos(), nowMs);
+            persist(event, nowMs);
+            eventApplier.apply(event);
+            LOG.infof("the fees the bots paid, %s, moved from HERD to TREASURY", amount);
+            return amount;
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
+    /** The nicknames in use, bots included, retired ones too: a generated name must be new. */
+    public java.util.Set<String> nicknamesInUse() {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (PlayerDirectory.Row row : players.all()) {
+            if (row.nickname() != null) {
+                names.add(row.nickname());
+            }
+        }
+        return names;
+    }
+
+    /**
+     * B7: the books against the chain. Says WARN in the log when they do not agree: when {@code TREASURY + HERD + players + open
+     * stakes} is not the opening total plus the deposits minus the withdrawals since the cutover, or when it is further from the treasury
+     * coin on chain than pending withdrawals and fresh deposits explain. Needs the chain service for {@code onChainTreasury} only.
+     */
+    public Economy.ReconciliationDto reconciliation(long nowMs) {
+        crowdvsmarket.server.chain.ChainSvcClient.PlayTreasury chain = null;
+        try {
+            chain = chainSvc.playTreasury();
+        } catch (RuntimeException e) {
+            LOG.debugf(e, "the treasury coin could not be read from the chain service");
+        }
+        lockRead();
+        try {
+            LedgerBook ledger = hub.ledger();
+            PlayAmount ledgerTotal = ledger.treasury().plus(ledger.herd()).plus(ledger.playersTotal()).plus(ledger.openStakes());
+            PlayAmount expected = ledger.openingTotal().plus(ledger.externalFlowSinceCutover());
+            PlayAmount bookDelta = ledgerTotal.minus(expected);
+            boolean active = ledger.economyActive();
+            boolean booksBalanced = !active || bookDelta.mojos() == 0;
+            PlayAmount onChain = chain == null ? null : new PlayAmount(chain.amountMojos());
+            PlayAmount chainDelta = onChain == null || !active ? null : ledgerTotal.minus(onChain);
+            Boolean chainConsistent = chainDelta == null ? null
+                    : chainDelta.compareTo(ledger.withdrawalsPending().negate()) >= 0
+                            && chainDelta.compareTo(ledger.depositedSinceCutover()) <= 0;
+            boolean breaker = ledger.circuitBreakerOpen(Instant.ofEpochMilli(nowMs));
+            if (!booksBalanced) {
+                LOG.warnf("RECONCILIATION MISMATCH: TREASURY %s + HERD %s + players %s + open stakes %s = %s, expected %s "
+                        + "(opening %s + deposits minus withdrawals since the cutover %s): off by %s", ledger.treasury(), ledger.herd(),
+                        ledger.playersTotal(), ledger.openStakes(), ledgerTotal, expected, ledger.openingTotal(),
+                        ledger.externalFlowSinceCutover(), bookDelta);
+            }
+            if (Boolean.FALSE.equals(chainConsistent)) {
+                LOG.warnf("RECONCILIATION MISMATCH: the books hold %s, the treasury coin on chain %s: the difference %s is outside "
+                        + "[-pending withdrawals %s, +deposits since the cutover %s]", ledgerTotal, onChain, chainDelta,
+                        ledger.withdrawalsPending(), ledger.depositedSinceCutover());
+            }
+            return new Economy.ReconciliationDto(active, money(ISSUED), onChain == null ? null : money(onChain),
+                    money(ledger.treasury()), money(ledger.herd()), money(ledger.playersTotal()), money(ledger.openStakes()),
+                    money(ledger.withdrawnConfirmed()), money(ledger.withdrawalsPending()), money(ledger.depositedTotal()),
+                    money(ledger.openingTotal()), money(expected), money(ledgerTotal), money(bookDelta),
+                    chainDelta == null ? null : money(chainDelta), booksBalanced, chainConsistent, breaker, nowMs);
+        } finally {
+            engineLock.readLock().unlock();
+        }
+    }
+
+    private static String money(PlayAmount amount) {
+        return amount.toMoney().toPlainString();
     }
 
     // ---------------------------------------------------------------------------------------

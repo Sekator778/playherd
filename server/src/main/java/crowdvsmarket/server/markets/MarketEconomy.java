@@ -28,22 +28,32 @@ public record MarketEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDe
     public static final BigDecimal DEFAULT_FEE_BP = new BigDecimal("1.0");
 
     /** Plan A2/A4 starting values by symbol: short-round cap, long-round cap, {@code r_m} in bp. Kept equal to V11. */
-    private record Row(int capHourly, int capDaily, String feeBp) {
+    private record Row(int capHourly, int capDaily, String feeBp, String stress) {
     }
 
+    /**
+     * The stress move of the 15-minute round relative to the 3-minute one: the median sigma(15 min) / sigma(3 min) of the twelve markets,
+     * 2.0-2.4 in docs/research/game_economy_math.md section 1 (an inference: the 99.9th percentile is taken to scale like sigma).
+     */
+    public static final BigDecimal LONG_ROUND_STRESS_FACTOR = new BigDecimal("2.2");
+    /** The stress move of a price market the plan has no figure for: the largest of the twelve (SOL, 160.1 bp). */
+    public static final BigDecimal DEFAULT_PRICE_STRESS = new BigDecimal("0.016");
+    /** The stress move of an odds market: UNVERIFIED, a first-pass proposal (no candle data for odds markets). */
+    public static final BigDecimal DEFAULT_ODDS_STRESS = new BigDecimal("0.20");
+
     private static final Map<String, Row> PRICE_MARKETS = Map.ofEntries(
-            Map.entry("BTC", new Row(1200, 500, "0.92")),
-            Map.entry("ETH", new Row(1000, 400, "1.0")),
-            Map.entry("SOL", new Row(600, 300, "1.0")),
-            Map.entry("DOGE", new Row(600, 300, "1.0")),
-            Map.entry("XRP", new Row(600, 300, "1.0")),
-            Map.entry("HYPE", new Row(600, 250, "1.0")),
-            Map.entry("NVDA", new Row(1500, 800, "0.75")),
-            Map.entry("TSLA", new Row(1500, 1000, "0.70")),
-            Map.entry("BRENTOIL", new Row(1000, 500, "0.83")),
-            Map.entry("GOLD", new Row(2000, 1200, "0.48")),
-            Map.entry("XYZ100", new Row(2000, 1500, "0.45")),
-            Map.entry("SP500", new Row(4000, 2000, "0.24")));
+            Map.entry("BTC", new Row(1200, 500, "0.92", "0.00817")),
+            Map.entry("ETH", new Row(1000, 400, "1.0", "0.01308")),
+            Map.entry("SOL", new Row(600, 300, "1.0", "0.01601")),
+            Map.entry("DOGE", new Row(600, 300, "1.0", "0.01456")),
+            Map.entry("XRP", new Row(600, 300, "1.0", "0.01478")),
+            Map.entry("HYPE", new Row(600, 250, "1.0", "0.01271")),
+            Map.entry("NVDA", new Row(1500, 800, "0.75", "0.00527")),
+            Map.entry("TSLA", new Row(1500, 1000, "0.70", "0.00758")),
+            Map.entry("BRENTOIL", new Row(1000, 500, "0.83", "0.0043")),
+            Map.entry("GOLD", new Row(2000, 1200, "0.48", "0.00438")),
+            Map.entry("XYZ100", new Row(2000, 1500, "0.45", "0.00325")),
+            Map.entry("SP500", new Row(4000, 2000, "0.24", "0.00161")));
 
     public MarketEconomy {
         // 0.1000 from the database is the same number as 0.1 in the code: one spelling, so records and specs compare equal
@@ -58,13 +68,25 @@ public record MarketEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDe
      */
     public static MarketEconomy defaultsFor(MarketKind kind, String symbol, int maxLeverage) {
         if (kind == MarketKind.ODDS) {
-            return new MarketEconomy(maxLeverage, maxLeverage, ODDS_KAPPA, DEFAULT_FEE_BP, null);
+            return new MarketEconomy(maxLeverage, maxLeverage, ODDS_KAPPA, DEFAULT_FEE_BP, DEFAULT_ODDS_STRESS);
         }
         Row row = PRICE_MARKETS.get(symbol);
         if (row == null) {
-            return new MarketEconomy(maxLeverage, maxLeverage, PRICE_KAPPA, DEFAULT_FEE_BP, null);
+            return new MarketEconomy(maxLeverage, maxLeverage, PRICE_KAPPA, DEFAULT_FEE_BP, DEFAULT_PRICE_STRESS);
         }
-        return new MarketEconomy(row.capHourly(), row.capDaily(), PRICE_KAPPA, new BigDecimal(row.feeBp()), null);
+        return new MarketEconomy(row.capHourly(), row.capDaily(), PRICE_KAPPA, new BigDecimal(row.feeBp()),
+                new BigDecimal(row.stress()));
+    }
+
+    /**
+     * The stress move of a round of {@code interval} as a fraction of price (plan B5): {@link #stressMove} for the short round,
+     * {@link #LONG_ROUND_STRESS_FACTOR} times it for the long one. A market with no stored value (a row of before V12 that the
+     * migration did not reach) gets the default of its kind.
+     */
+    public BigDecimal stressFor(crowdvsmarket.engine.market.Interval interval, MarketKind kind) {
+        BigDecimal base = stressMove != null ? stressMove
+                : kind == MarketKind.ODDS ? DEFAULT_ODDS_STRESS : DEFAULT_PRICE_STRESS;
+        return interval == crowdvsmarket.engine.market.Interval.HOURLY ? base : base.multiply(LONG_ROUND_STRESS_FACTOR);
     }
 
     /** The leverage cap of one round length. */

@@ -140,6 +140,12 @@ public class EngineRebuildService {
     /** {@link #rebuild()} as of {@code nowMs} — for a test that drives the clock. */
     public void rebuild(long nowMs) {
         gameService.runExclusively(() -> rebuildStateLocked(nowMs));
+        // economy stage B (plan B1): the cutover event, once, on the first start that has none in its log; the bots then get their packs from TREASURY
+        try {
+            gameService.ensureEconomyCutover(nowMs);
+        } catch (RuntimeException e) {
+            LOG.error("the economy cutover could not be written - the game runs on the old rules until it can", e);
+        }
         botService.ensureBotsExist(nowMs);
     }
 

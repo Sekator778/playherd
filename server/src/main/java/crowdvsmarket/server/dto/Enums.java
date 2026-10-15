@@ -133,6 +133,12 @@ public final class Enums {
         /** The engine is being rebuilt from the event log after a failed settlement and does not
          *  answer until that has succeeded (contract.ts names it: the web client keeps what is on
          *  screen and retries). 503, nothing was changed. */
-        ENGINE_NOT_READY
+        ENGINE_NOT_READY,
+        /** Economy stage B (plan B3): the IP address already registered the most new players a day allows. 429. Additive: the web
+         *  client reads it as {@code OTHER} and shows the server's message. */
+        REGISTRATION_LIMIT,
+        /** Economy stage B (plan B5): the bet would take the open notional of its (market, side, round), or of the crypto bucket,
+         *  over the treasury limit; the message names the room that is left. 422. Additive, like {@link #REGISTRATION_LIMIT}. */
+        EXPOSURE_LIMIT_EXCEEDED
     }
 }

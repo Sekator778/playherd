@@ -66,7 +66,7 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
     private static final String TRUNCATE_SQL = "TRUNCATE TABLE game_events, players, round_results, "
             + "player_round_history, withdrawal_requests, deposit_requests, auth_challenges, sessions, "
             + "oracle_records, player_deposit_addresses, deposit_confirmations, price_snapshots, round_venues, "
-            + "feedback RESTART IDENTITY CASCADE";
+            + "feedback, registration_ips RESTART IDENTITY CASCADE";
 
     /** V7's {@code markets} table: every market a test listed goes, but BTC's row (id 0, created by the
      *  migration, always present) stays — back to ACTIVE in case a test closed it. */
@@ -117,6 +117,8 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
         });
         // ... and BotService#ensureBotsExist then creates exactly this class's own configured bot count
         // (outside the engine lock, like EngineRebuildService#rebuild: it takes the BotService monitor).
+        // economy stage B: a profile with herd.economy.treasury-opening-play > 0 starts its (emptied) game with the cutover, as a first start does
+        gameService.ensureEconomyCutover(System.currentTimeMillis());
         Arc.container().instance(BotService.class).get().ensureBotsExist(System.currentTimeMillis());
     }
 }

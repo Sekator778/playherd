@@ -72,7 +72,10 @@ class EventStoreGoldenFixturesTest {
                 new Fixture("DepositConfirmedOnChain", new GameEvent.DepositConfirmedOnChain("p-golden-1", 7,
                         250000L, "0xgoldencoin1", 4735705L, 1700000008000L)),
                 new Fixture("WithdrawalConfirmedOnChain", new GameEvent.WithdrawalConfirmedOnChain("w-golden-3",
-                        "0xgoldencoin2", 4735706L, 1700000009000L)));
+                        "0xgoldencoin2", 4735706L, 1700000009000L)),
+                new Fixture("EconomyCutover", new GameEvent.EconomyCutover(99_998_100_000L, 1700000010000L)),
+                new Fixture("BotRetired", new GameEvent.BotRetired("bot-golden-1", 1700000011000L)),
+                new Fixture("HerdSweptToTreasury", new GameEvent.HerdSweptToTreasury(2100L, 1700000012000L)));
     }
 
     /** Every {@link GameEvent} record must have exactly one fixture above — catches "added a new

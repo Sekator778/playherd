@@ -167,6 +167,17 @@ public class ChainSvcClientImpl implements ChainSvcClient {
     }
 
     @Override
+    public PlayTreasury playTreasury() {
+        try {
+            ChainSvcRestClient.PlayTreasuryResponse r = rest.playTreasury(bearerToken());
+            return new PlayTreasury(r.coinId(), r.amountMojos());
+        } catch (Exception e) {
+            LOG.debugf(e, "chainsvc /v1/play/treasury unreachable");
+            return null;
+        }
+    }
+
+    @Override
     public boolean health() {
         try {
             return rest.health().ok();

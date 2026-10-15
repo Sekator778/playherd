@@ -78,7 +78,8 @@ class ChainSvcContractFixturesTest {
             Map.entry("WithdrawalStatusResponse_failed", ChainSvcRestClient.PlayWithdrawalStatusResponse.class),
             Map.entry("DepositAddressRequestDto", ChainSvcRestClient.PlayDepositAddressRequest.class),
             Map.entry("DepositAddressResponse", ChainSvcRestClient.PlayDepositAddressResponse.class),
-            Map.entry("DepositsResponse", ChainSvcRestClient.PlayDepositsResponse.class));
+            Map.entry("DepositsResponse", ChainSvcRestClient.PlayDepositsResponse.class),
+            Map.entry("TreasuryResponse", ChainSvcRestClient.PlayTreasuryResponse.class));
 
     @Inject
     ObjectMapper mapper;
@@ -123,7 +124,7 @@ class ChainSvcContractFixturesTest {
         assertThat(onDisk)
                 .as("the fixtures chain/c2-svc writes and the DTOs this class knows must be the same set")
                 .containsExactlyInAnyOrderElementsOf(DTO_OF.keySet());
-        assertThat(onDisk).hasSize(17);
+        assertThat(onDisk).hasSize(18);
 
         for (Map.Entry<String, Class<?>> entry : new TreeMap<>(DTO_OF).entrySet()) {
             JsonNode fixture = readFixture(entry.getKey());
@@ -430,6 +431,16 @@ class ChainSvcContractFixturesTest {
         assertThat(deposit.playerIndex()).isEqualTo(7);
         assertThat(deposit.amountMojos()).isEqualTo(250_000L);
         assertThat(deposit.height()).isEqualTo(4_737_640L);
+        assertThat(mapper.readTree(mapper.writeValueAsString(dto))).isEqualTo(json);
+    }
+
+    @Test
+    void treasuryResponseFixtureRoundTrips() throws IOException {
+        JsonNode json = readFixture("TreasuryResponse");
+        ChainSvcRestClient.PlayTreasuryResponse dto = mapper.treeToValue(json, ChainSvcRestClient.PlayTreasuryResponse.class);
+
+        assertThat(dto.coinId()).isEqualTo(json.get("coinId").asText());
+        assertThat(dto.amountMojos()).isEqualTo(99_998_100_000L);
         assertThat(mapper.readTree(mapper.writeValueAsString(dto))).isEqualTo(json);
     }
 }

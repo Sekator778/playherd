@@ -149,6 +149,15 @@ public interface ChainSvcRestClient {
     PlayDepositsResponse playDeposits(@HeaderParam("Authorization") String authorization,
                                         @QueryParam("sinceHeight") long sinceHeight);
 
+    /** {@code GET /v1/play/treasury} (economy stage B, plan B7): the PLAY treasury coin the chain service tracks. */
+    record PlayTreasuryResponse(String coinId, long amountMojos) {
+    }
+
+    @GET
+    @Path("/v1/play/treasury")
+    @Produces(MediaType.APPLICATION_JSON)
+    PlayTreasuryResponse playTreasury(@HeaderParam("Authorization") String authorization);
+
     record HealthResponse(boolean ok) {
     }
 

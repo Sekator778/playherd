@@ -74,4 +74,24 @@ class EventStoreEconomyFixturesTest {
     void theSchemaVersionIsStillOne() {
         assertThat(EventStore.CURRENT_SCHEMA_VERSION).isEqualTo(1);
     }
+
+    @Test
+    void aFixtureWithTheStoredLiquidationParametersDecodesToThemAndAStageARowWithoutThemStillDecodes() throws Exception {
+        String json = Files.readString(Path.of("src/test/resources/events/golden-economy-b/BetPlaced.json"));
+
+        GameEvent decoded = eventStore.decode(-1L, "BetPlaced", json, 1);
+
+        assertThat(decoded).isEqualTo(new GameEvent.BetPlaced("p-golden-1", Interval.HOURLY, 1700000000000L, 1700000180000L,
+                Direction.UP, 500, 100000L, 1700000000500L, "spot_BTC", 5000L, 100L, 1200, "0.1"));
+        GameEvent.BetPlaced placed = (GameEvent.BetPlaced) decoded;
+        assertThat(placed.liquidation().cap()).isEqualTo(1200);
+        assertThat(placed.liquidation().kappa()).isEqualByComparingTo("0.1");
+        // the stage-A fixture (fees, no liquidation parameters) has none and is settled with the market's row of the day
+        String stageA = Files.readString(Path.of("src/test/resources/events/golden-economy/BetPlaced.json"));
+        assertThat(((GameEvent.BetPlaced) eventStore.decode(-1L, "BetPlaced", stageA, 1)).liquidation()).isNull();
+        // a bet written without parameters carries no keys for them
+        assertThat(db.json().writeValueAsString(new GameEvent.BetPlaced("p", Interval.HOURLY, 1L, 2L, Direction.UP, 10, 100000L, 1L,
+                "ETH", 7L, 100L))).doesNotContain("liq");
+        assertThat(db.json().writeValueAsString(placed)).contains("\"liqCap\":1200").contains("\"liqKappa\":\"0.1\"");
+    }
 }

@@ -114,6 +114,16 @@ public final class ApiException extends RuntimeException {
                 "could not reach the chain service to derive a deposit address — please try again shortly");
     }
 
+    /** Economy stage B (plan B3): too many new players from one IP address in 24 hours. */
+    public static ApiException registrationLimit(String message) {
+        return new ApiException(Enums.ApiErrorCode.REGISTRATION_LIMIT, 429, message);
+    }
+
+    /** Economy stage B (plan B5): the bet is over the treasury exposure limit; {@code message} names the room left. */
+    public static ApiException exposureLimitExceeded(String message) {
+        return new ApiException(Enums.ApiErrorCode.EXPOSURE_LIMIT_EXCEEDED, 422, message);
+    }
+
     public static ApiException rateLimited() {
         return new ApiException(Enums.ApiErrorCode.RATE_LIMITED, 429,
                 "too many requests — please slow down and try again shortly");

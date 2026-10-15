@@ -22,7 +22,7 @@ public enum BotStrategy {
     CONTRARIAN("Contrarian"),
     /** Bets with the previous round's crowd majority, if known. */
     FOLLOW_MAJORITY("Trend Follower"),
-    /** Direction, leverage and stake all uniformly random within the valid ranges. */
+    /** Direction and stake uniformly random; the leverage follows the realistic mix of {@link #realisticMix}. */
     RANDOM("Wildcard"),
     /** Always bets a low leverage (2..5) and the minimum-ish stake. */
     CAUTIOUS_LOW_LEVERAGE("Cautious");
@@ -58,8 +58,24 @@ public enum BotStrategy {
         return switch (this) {
             case ALWAYS_MAX_LEVERAGE -> cap;
             case CAUTIOUS_LOW_LEVERAGE -> Math.min(cap, 2 + random.nextInt(4)); // 2..5
-            default -> Leverage.MIN + random.nextInt(cap - Leverage.MIN + 1);
+            default -> realisticMix(random, cap);
         };
+    }
+
+    /** Economy stage B (plan B4, the fix of stage A): the share of bets that sit at a low, a medium and a high leverage. */
+    public static final double LOW_SHARE = 0.70;
+    public static final double MEDIUM_SHARE = 0.25;
+
+    /**
+     * A realistic spread instead of a uniform draw up to {@code allowed} (which put most bets at an extreme leverage): 70% of the bets take
+     * a leverage of at most {@code allowed / 10}, 25% of at most {@code allowed / 4}, the last 5% anything up to {@code allowed}; each
+     * uniform in {@code [Leverage.MIN, bound]}.
+     */
+    static int realisticMix(Random random, int allowed) {
+        double u = random.nextDouble();
+        int bound = u < LOW_SHARE ? allowed / 10 : u < LOW_SHARE + MEDIUM_SHARE ? allowed / 4 : allowed;
+        bound = Math.max(Leverage.MIN, Math.min(allowed, bound));
+        return Leverage.MIN + random.nextInt(bound - Leverage.MIN + 1);
     }
 
     public BigDecimal chooseStake(Random random) {

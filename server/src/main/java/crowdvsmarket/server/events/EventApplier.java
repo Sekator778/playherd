@@ -80,7 +80,7 @@ public final class EventApplier {
                     market.engine(e.interval()).replayBet(e.playerId(), window, e.direction(),
                             new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()),
                             new Fees(new PlayAmount(e.feeHerdMojos()), new PlayAmount(e.feeNetMojos())),
-                            Instant.ofEpochMilli(e.atMs()));
+                            e.liquidation(), Instant.ofEpochMilli(e.atMs()));
                 } else { // written before the economy change: a legacy bet, no fees, the original rules
                     market.engine(e.interval()).placeBet(e.playerId(), window, e.direction(),
                             new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()), Instant.ofEpochMilli(e.atMs()));
@@ -155,6 +155,18 @@ public final class EventApplier {
             }
             case GameEvent.WithdrawalConfirmedOnChain e -> {
                 hub.ledger().confirmWithdrawal(e.requestId());
+                yield null;
+            }
+            case GameEvent.EconomyCutover e -> {
+                hub.ledger().activateEconomy(new PlayAmount(e.openingTotalMojos()), Instant.ofEpochMilli(e.atMs()));
+                yield null;
+            }
+            case GameEvent.BotRetired e -> {
+                hub.ledger().retire(e.playerId(), Instant.ofEpochMilli(e.atMs()));
+                yield null;
+            }
+            case GameEvent.HerdSweptToTreasury e -> {
+                hub.ledger().sweepHerdToTreasury(new PlayAmount(e.amountMojos()), Instant.ofEpochMilli(e.atMs()));
                 yield null;
             }
         };

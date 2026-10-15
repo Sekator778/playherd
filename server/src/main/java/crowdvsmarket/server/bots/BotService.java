@@ -90,17 +90,76 @@ public class BotService {
      *  one per bot. */
     private final Map<String, Optional<Direction>> previousMajority = new HashMap<>();
 
+    /**
+     * Keeps {@code herd.bots.count} LIVE bots (economy stage B, plan B4): a bot that retired is not live. A retired bot is replaced
+     * {@code herd.bots.respawn-delay-ms} (1 hour) after it retired, by a bot of the same strategy under a new generated name; a missing
+     * bot that no retirement explains (a first start, a raised count) is created at once. Idempotent.
+     */
     public synchronized void ensureBotsExist(long nowMs) {
-        int existing = players.bots().size();
-        int target = config.botsCount();
-        for (int i = existing; i < target; i++) {
-            BotStrategy strategy = STRATEGIES[i % STRATEGIES.length];
-            String nickname = "Bot " + (i + 1) + " (" + strategy.label() + ")";
+        List<PlayerDirectory.Row> all = players.bots();
+        int live = (int) all.stream().filter(b -> !b.isRetired()).count();
+        int missing = config.botsCount() - live;
+        if (missing <= 0) {
+            return;
+        }
+        List<PlayerDirectory.Row> pending = all.stream().filter(b -> b.isRetired() && !b.replaced())
+                .sorted(java.util.Comparator.comparingLong(PlayerDirectory.Row::retiredAtMs)).toList();
+        int serve = Math.min(pending.size(), missing);
+        int immediate = missing - serve;
+        for (int i = 0; i < immediate; i++) {
+            BotStrategy strategy = STRATEGIES[(live + i) % STRATEGIES.length];
+            String nickname = "Bot " + (all.size() + i + 1) + " (" + strategy.label() + ")";
             gameService.createBotPlayer(nickname, strategy.name(), nowMs);
+        }
+        java.util.Set<String> taken = null;
+        for (int i = 0; i < serve; i++) {
+            PlayerDirectory.Row retired = pending.get(i);
+            if (retired.retiredAtMs() + config.botsRespawnDelayMs() > nowMs) {
+                break; // the oldest is not an hour old yet, none after it is
+            }
+            BotStrategy strategy = BotStrategy.valueOf(retired.botStrategy());
+            if (taken == null) {
+                taken = new java.util.HashSet<>(gameService.nicknamesInUse());
+            }
+            String nickname = BotNames.next(random, taken, strategy.label());
+            taken.add(nickname);
+            gameService.createBotPlayer(nickname, strategy.name(), nowMs, retired.playerId());
+        }
+    }
+
+    /** How often the bots' economy housekeeping (retire, replace, sweep) looks, in ms: it is cheap but takes the engine's write lock. */
+    private static final long HOUSEKEEPING_EVERY_MS = 5_000L;
+    private static final long RECONCILE_EVERY_MS = 3_600_000L;
+    private long lastHousekeepingMs = Long.MIN_VALUE / 2;
+    private long lastReconcileMs = Long.MIN_VALUE / 2;
+
+    /**
+     * Economy stage B (plan B4): retires the bots that ran out of PLAY (below {@code herd.bots.retire-below-play}, nothing said in public),
+     * creates the replacements that are due, moves the day's bot fees from HERD to TREASURY, and once an hour checks the books against the
+     * chain (a mismatch is a WARN in the log). Failures are logged and retried at the next look.
+     */
+    void housekeeping(long nowMs) {
+        if (nowMs - lastHousekeepingMs < HOUSEKEEPING_EVERY_MS) {
+            return;
+        }
+        lastHousekeepingMs = nowMs;
+        try {
+            gameService.retireBotsBelowThreshold(nowMs);
+            ensureBotsExist(nowMs);
+            gameService.sweepBotFeesIfDue(nowMs);
+            if (nowMs - lastReconcileMs >= RECONCILE_EVERY_MS) {
+                lastReconcileMs = nowMs;
+                gameService.reconciliation(nowMs);
+            }
+        } catch (ApiException e) {
+            LOG.debugf("bot housekeeping skipped: %s", e.getMessage());
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "bot housekeeping failed (will look again)");
         }
     }
 
     public synchronized void tick(long nowMs) {
+        housekeeping(nowMs);
         List<Market> running = gameService.runningMarkets();
         for (Interval interval : Interval.values()) {
             planBettingWindows(interval, running, nowMs);
@@ -136,6 +195,9 @@ public class BotService {
     private void scheduleBots(Interval interval, List<RoundWindow> windows) {
         int perBot = Math.min(Math.max(0, config.botsMarketsPerRound()), windows.size());
         for (PlayerDirectory.Row bot : players.bots()) {
+            if (bot.isRetired()) {
+                continue; // retired: out of the game, in no list (economy stage B)
+            }
             List<RoundWindow> picks = new ArrayList<>(windows);
             Collections.shuffle(picks, random);
             for (RoundWindow window : picks.subList(0, perBot)) {
@@ -170,7 +232,7 @@ public class BotService {
         try {
             PlayerDirectory.Row bot = players.byId(shot.botId()).orElse(null);
             Market market = marketRegistry.byId(shot.marketId()).orElse(null);
-            if (bot == null || market == null || !market.isActive() || !hasFreshPrice(market)) {
+            if (bot == null || bot.isRetired() || market == null || !market.isActive() || !hasFreshPrice(market)) {
                 return; // reset since planning, closed, or its price went away
             }
             BotStrategy strategy = BotStrategy.valueOf(bot.botStrategy());

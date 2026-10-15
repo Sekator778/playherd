@@ -150,7 +150,29 @@ public class AdminResource {
                 throw e;
             }
         }
-        return new AdminStatusDto(info, cancellations, corrections, priceFeeds());
+        // Economy stage B (plan B6): the flag only, no amounts; null while the engine cannot say (and before the cutover it is false)
+        Boolean breaker = null;
+        try {
+            breaker = gameService.circuitBreakerOpen(System.currentTimeMillis());
+        } catch (ApiException e) {
+            if (e.code() != Enums.ApiErrorCode.ENGINE_NOT_READY) {
+                throw e;
+            }
+        }
+        return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker);
+    }
+
+    /**
+     * Economy stage B (plan B7): the books against the chain - what was issued (100 000 000 PLAY), the PLAY treasury coin on chain, TREASURY,
+     * HERD, what the players hold, what was withdrawn - and whether they agree ({@code booksBalanced}, {@code chainConsistent}); a mismatch is
+     * also a WARN in the log. Operator only: it shows HERD, the platform's revenue, which no public screen does (Р-90).
+     */
+    @GET
+    @Path("/reconciliation")
+    @Produces(MediaType.APPLICATION_JSON)
+    public crowdvsmarket.server.dto.Economy.ReconciliationDto reconciliation(@HeaderParam("Authorization") String auth) {
+        requireOperator(auth);
+        return gameService.reconciliation(System.currentTimeMillis());
     }
 
     /**
@@ -210,6 +232,12 @@ public class AdminResource {
      *  because the stream had no quote). Not part of {@code contract.ts}: the operator's own page. */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                                    java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
-                                   java.util.List<PriceSource.FeedStatus> priceFeeds) {
+                                   java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen) {
+
+        public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
+                              java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
+                              java.util.List<PriceSource.FeedStatus> priceFeeds) {
+            this(server, recentCancellations, recentLedgerCorrections, priceFeeds, null);
+        }
     }
 }
