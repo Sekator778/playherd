@@ -195,6 +195,6 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     expect(screen.getByText(/PLAY is a real token minted on Chia testnet11\. It can be withdrawn/)).toBeInTheDocument();
 
     renderApp("/how-it-works");
-    expect(screen.getByRole("heading", { name: "PLAY is not real money" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "PLAY is a real token on Chia" })).toBeInTheDocument();
   });
 });

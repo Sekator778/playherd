@@ -337,7 +337,7 @@ describe("Connect-wallet modal — a pack credited by THIS sign-in is told, to a
   it("the first sign-in of a new month (the server says it credited a pack): the dialog, with the pack named as what it is — on top of the balance", async () => {
     const { dialog } = await signInWithTestWallet(returningPlayerApi("Tester_One", undefined, true));
     expect(await within(dialog).findByRole("heading", { name: "New season: +10,000 PLAY" })).toBeInTheDocument();
-    expect(within(dialog).getByText(/a new starter pack was added to your balance/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/your balance was topped up to 10,000 PLAY/)).toBeInTheDocument();
     // not the first-pack wording: "You've got 10,000 PLAY" would be wrong over a balance that has the old PLAY in it too
     expect(screen.queryByText(/You've got/)).not.toBeInTheDocument();
   });

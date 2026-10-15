@@ -249,7 +249,7 @@ services:
       HERD_DEPOSIT_ENABLED: "true"
       # Economy (plan B1, B3): the server defaults when unset - opening of TREASURY in PLAY, registrations per address per day.
       HERD_ECONOMY_TREASURY_OPENING_PLAY: "${HERD_ECONOMY_TREASURY_OPENING_PLAY:-99998100}"
-      HERD_REGISTRATION_MAX_PER_IP_PER_DAY: "${HERD_REGISTRATION_MAX_PER_IP_PER_DAY:-3}"
+      HERD_REGISTRATION_MAX_PER_IP_PER_DAY: "${HERD_REGISTRATION_MAX_PER_IP_PER_DAY:-20}"
       HERD_BOTS_RESPAWN_DELAY_MS: "${HERD_BOTS_RESPAWN_DELAY_MS:-3600000}"
     depends_on:
       db:
