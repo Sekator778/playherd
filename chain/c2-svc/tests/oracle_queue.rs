@@ -2492,6 +2492,93 @@ async fn a_confirming_spend_that_cannot_be_read_is_not_guessed_at_for_a_bundle_w
     Ok(())
 }
 
+/// Incident F3 (`docs/research/chain_service.md` §20, 2026-10-14): the bundle was replaced, the
+/// chain took one version, and the coin index lost that block's removals -- the successor coin
+/// exists (created at H), the singleton coin shows unspent, no spend can be read through the index.
+/// The block itself answers at H (the successor is created in the block that spends the singleton):
+/// the bundle is settled from that spend -- the records it announced confirmed, the others back
+/// in `pending`, the oracle state on the successor.
+#[tokio::test]
+async fn a_replaced_bundle_is_settled_from_the_successors_creation_block_when_the_index_lost_the_spend() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.enqueue(vec![record(1), record(2)]).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
+    });
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 2, accepted: false });
+    let first = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    let first_spend = first
+        .bundle
+        .coin_spends
+        .iter()
+        .find(|spend| spend.coin == first.spent_coin)
+        .expect("the bundle spends the singleton coin")
+        .clone();
+
+    // Another record arrives; the rebuilt (second) version carries 1, 2 and 3.
+    fx.publisher.enqueue(vec![record(3)]).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+    assert!(matches!(fx.publisher.tick().await?, TickOutcome::Rebuilt { .. }));
+    let rebuilt = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    assert_eq!(rebuilt.superseded.len(), 1);
+    assert_eq!(rebuilt.records.len(), 3);
+    assert_eq!(rebuilt.next_coin, first.next_coin, "every version of a singleton spend has the same successor");
+
+    // The index: the successor exists at 4_823_849, the singleton coin unspent, no spend through the
+    // index. The block 4_823_849: the first version's spend (records 1 and 2 only).
+    fx.publisher.chain.set_confirmed(rebuilt.spent_coin.coin_id(), 4_823_000);
+    fx.publisher.chain.set_confirmed(rebuilt.next_coin.coin_id(), 4_823_849);
+    fx.publisher.chain.set_block_spend(rebuilt.spent_coin.coin_id(), 4_823_849, first_spend);
+    let pushes_so_far = fx.publisher.chain.push_call_count();
+
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Confirmed { records: 2 });
+    assert_eq!(fx.publisher.chain.push_call_count(), pushes_so_far, "nothing is pushed");
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.in_flight.is_none());
+    assert_eq!(queue.confirmed.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
+    assert_eq!(queue.confirmed.get(&1).unwrap().height, Some(4_823_849));
+    assert_eq!(
+        queue.pending.iter().map(|r| r.seq).collect::<Vec<_>>(),
+        vec![3],
+        "the record the spend did not announce is pending again"
+    );
+    let oracle_state = c2_svc::state_file::load_oracle_state(&fx.publisher.data_dir, "operator")?;
+    assert_eq!(oracle_state.current_coin, rebuilt.next_coin, "the oracle state is on the successor");
+    Ok(())
+}
+
+/// The same situation, but the block cannot be read at the successor's creation height either: the
+/// publisher still does not guess which records were published.
+#[tokio::test]
+async fn a_replaced_bundle_still_waits_when_the_successors_creation_block_gives_no_spend() -> Result<()> {
+    let fx = set_up(Duration::from_secs(0))?;
+    fx.publisher.enqueue(vec![record(1), record(2)]).await?;
+    fx.publisher.chain.set_push_outcome(PushOutcome {
+        accepted: false,
+        status: None,
+        error: Some("Failed to include transaction 0xabc, error INVALID_FEE_TOO_CLOSE_TO_ZERO".to_string()),
+    });
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::Broadcast { records: 2, accepted: false });
+    fx.publisher.chain.set_push_outcome(PushOutcome { accepted: true, status: Some("SUCCESS".into()), error: None });
+    assert!(matches!(fx.publisher.tick().await?, TickOutcome::Rebuilt { .. }));
+    let rebuilt = QueueFile::load(&fx.publisher.data_dir, "operator")?.in_flight.expect("in flight");
+    assert_eq!(rebuilt.superseded.len(), 1);
+
+    fx.publisher.chain.set_confirmed(rebuilt.spent_coin.coin_id(), 4_823_000);
+    fx.publisher.chain.set_confirmed(rebuilt.next_coin.coin_id(), 4_823_849);
+    // The spend is registered at another height only: "not found" at 4_823_849, as on the stand.
+    let spend = rebuilt.bundle.coin_spends.iter().find(|s| s.coin == rebuilt.spent_coin).unwrap().clone();
+    fx.publisher.chain.set_block_spend(rebuilt.spent_coin.coin_id(), 4_823_850, spend);
+
+    assert_eq!(fx.publisher.tick().await?, TickOutcome::WaitingForConfirmation);
+    let queue = QueueFile::load(&fx.publisher.data_dir, "operator")?;
+    assert!(queue.in_flight.is_some(), "nothing is concluded");
+    assert!(queue.confirmed.is_empty(), "no record is marked confirmed on a guess");
+    Ok(())
+}
+
 // --- a collision is visible: `conflictSeqs` and the held content (`docs/research/chain_service.md` §18.2) -------
 
 /// `GET /v1/oracle/records/{seq}` carries the content of the record the service holds.

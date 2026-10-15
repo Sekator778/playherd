@@ -161,6 +161,15 @@ fn now_unix() -> i64 {
 /// `C2_ORACLE_RETAIN_CONFIRMED_SECS` plus at most these ten minutes. **предложение**.
 const RETENTION_EVERY_SECS: i64 = 600;
 
+/// Where `settle_from_block_spend` got the spend from (only the log text differs).
+#[derive(Clone, Copy)]
+enum SpendSource {
+    /// Found by walking the blocks (`scan_blocks_for_spends`).
+    StaleIndexScan,
+    /// Read at the height the successor coin was created (`settle_confirmed_in_flight`).
+    SuccessorBlock,
+}
+
 /// Heights the stale-index scan (`Publisher::scan_blocks_for_spends`) reads per tick: one or two
 /// `get_puzzle_and_solution` calls each, under `queue_lock`. A spend is normally a few blocks past
 /// the coin's creation, so one tick finds it; a long backlog is read at this pace. **предложение**.
@@ -1114,7 +1123,12 @@ impl<C: ChainClient> Publisher<C> {
     /// * a bundle that was never replaced or rebuilt is taken to be the one that confirmed, as it
     ///   always was (every record confirmed at `confirmed_height`);
     /// * a bundle with earlier versions is **not** guessed at -- the records of the version that
-    ///   lost must not be marked confirmed -- it waits until the chain can be read.
+    ///   lost must not be marked confirmed. The spend is first read from the block that created
+    ///   the successor coin (`confirmed_height`; a singleton's successor is created in the block
+    ///   that spends it): the coin index can lose a block's removals (F3, §20) while
+    ///   `get_puzzle_and_solution` at that height still answers, and the bundle is then settled
+    ///   from that spend (`settle_from_block_spend`). Only when that block cannot be read either
+    ///   does it wait until the chain can be read.
     async fn settle_confirmed_in_flight(
         &self,
         queue: &mut QueueFile,
@@ -1135,6 +1149,21 @@ impl<C: ChainClient> Publisher<C> {
             if outcome.changed() {
                 self.save_queue(queue)
                     .context("persisting chain-reconciled queue while waiting for the confirming spend")?;
+            }
+            // The singleton's successor is created in the very block that spends the singleton coin,
+            // so the successor's creation height is the spend height. A coin index that lost that
+            // block's removals (F3, §20) shows the singleton coin unspent, but the block itself
+            // answers `get_puzzle_and_solution` at that height.
+            if let Some(height) = confirmed_height
+                && let Some(spend) = self
+                    .chain
+                    .puzzle_and_solution(in_flight.spent_coin.coin_id(), Some(height))
+                    .await
+                    .with_context(|| format!("reading block {height} for the spend of the in-flight singleton coin"))?
+            {
+                return self
+                    .settle_from_block_spend(queue, &in_flight, spend, height, SpendSource::SuccessorBlock)
+                    .await;
             }
             tracing::warn!(
                 bundle_id = %in_flight.bundle_id,
@@ -1306,7 +1335,10 @@ impl<C: ChainClient> Publisher<C> {
                 self.fee_allocator.exclude_spent(coin.coin_id());
             }
             if let Some(spend) = singleton_spend {
-                return self.settle_from_block_spend(queue, in_flight, spend, height).await.map(Some);
+                return self
+                    .settle_from_block_spend(queue, in_flight, spend, height, SpendSource::StaleIndexScan)
+                    .await
+                    .map(Some);
             }
             if fee_spent && let Some(coin) = fee_coin {
                 tracing::warn!(
@@ -1342,6 +1374,7 @@ impl<C: ChainClient> Publisher<C> {
         in_flight: &InFlightSpend,
         spend: CoinSpend,
         height: u32,
+        source: SpendSource,
     ) -> Result<TickOutcome> {
         let oracle_state = load_oracle_state(&self.data_dir, &self.operator_name)
             .context("loading oracle state to settle a spend found in the blocks")?;
@@ -1359,13 +1392,22 @@ impl<C: ChainClient> Publisher<C> {
             return Ok(TickOutcome::WaitingForConfirmation);
         }
         self.save_queue(queue).context("persisting the queue settled from a spend found in the blocks")?;
-        tracing::warn!(
-            bundle_id = %in_flight.bundle_id,
-            height,
-            successor = %in_flight.next_coin.coin_id(),
-            "the in-flight bundle's singleton coin is spent in a block the coin index does not show -- settled from \
-             the block itself (docs/research/chain_service.md §20)"
-        );
+        match source {
+            SpendSource::StaleIndexScan => tracing::warn!(
+                bundle_id = %in_flight.bundle_id,
+                height,
+                successor = %in_flight.next_coin.coin_id(),
+                "the in-flight bundle's singleton coin is spent in a block the coin index does not show -- settled from \
+                 the block itself (docs/research/chain_service.md §20)"
+            ),
+            SpendSource::SuccessorBlock => tracing::warn!(
+                bundle_id = %in_flight.bundle_id,
+                height,
+                successor = %in_flight.next_coin.coin_id(),
+                "the in-flight bundle's singleton coin shows unspent in the coin index although its successor exists -- \
+                 settled from the spend read in the successor's creation block (docs/research/chain_service.md §20)"
+            ),
+        }
         Ok(match &outcome.resolved_in_flight {
             Some(resolved) if resolved.ours => TickOutcome::Confirmed { records: resolved.confirmed.len() },
             _ => TickOutcome::WaitingForConfirmation,
