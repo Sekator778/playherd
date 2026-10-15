@@ -174,6 +174,15 @@ pub struct DepositAddressResponse {
     pub cat_puzzle_hash: String,
 }
 
+/// `GET /v1/play/treasury` (economy stage B, plan B7): the PLAY treasury coin this service tracks (the cached state the withdrawal publisher
+/// spends from and keeps in step with the chain every tick) -- what the game server reconciles its books against.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TreasuryResponse {
+    pub coin_id: String,
+    pub amount_mojos: u64,
+}
+
 /// One element of `GET /v1/play/deposits`'s `deposits` array.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

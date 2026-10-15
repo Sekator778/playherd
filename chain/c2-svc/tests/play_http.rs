@@ -137,3 +137,65 @@ async fn the_http_answer_to_a_reused_request_id_is_409_with_the_contract_body() 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     Ok(())
 }
+
+async fn get(router: &axum::Router, uri: &str) -> (StatusCode, Value) {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .header("authorization", format!("Bearer {TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+/// Economy stage B (plan B7): `GET /v1/play/treasury` is the coin of the cached PLAY state -- its id and amount -- in the shape of
+/// the contract fixture `TreasuryResponse.json`; without a cached state it is an error, not a made-up zero.
+#[tokio::test]
+async fn the_treasury_route_reports_the_cached_coin() -> Result<()> {
+    use c2_cli::state::PlayCoinState;
+    use chia_protocol::{Bytes32, Coin};
+    use chia_puzzle_types::LineageProof;
+
+    let tmp = tempfile::tempdir()?;
+    let router = router(tmp.path());
+
+    let (status, body) = get(&router, "/v1/play/treasury").await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(body["error"].as_str().is_some(), "{body}");
+
+    let coin = Coin::new(Bytes32::from([9u8; 32]), Bytes32::from([8u8; 32]), 99_998_100_000);
+    c2_svc::play_state_file::save_play_state_atomic(
+        tmp.path(),
+        "operator",
+        &PlayCoinState::new(
+            Bytes32::from([7u8; 32]),
+            coin,
+            LineageProof {
+                parent_parent_coin_info: Bytes32::from([0u8; 32]),
+                parent_inner_puzzle_hash: Bytes32::from([0u8; 32]),
+                parent_amount: 1,
+            },
+        ),
+    )?;
+    let (status, body) = get(&router, "/v1/play/treasury").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["amountMojos"], 99_998_100_000u64);
+    assert_eq!(body["coinId"], format!("0x{}", hex::encode(coin.coin_id())));
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/contract/TreasuryResponse.json"),
+    )?)?;
+    let mut keys: Vec<_> = body.as_object().unwrap().keys().cloned().collect();
+    let mut fixture_keys: Vec<_> = fixture.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    fixture_keys.sort();
+    assert_eq!(keys, fixture_keys, "the body has the keys of the contract fixture");
+    Ok(())
+}

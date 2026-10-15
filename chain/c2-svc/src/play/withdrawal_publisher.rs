@@ -236,6 +236,14 @@ impl<C: PlayChainClient> WithdrawalPublisher<C> {
         Ok(accepted)
     }
 
+    /// `GET /v1/play/treasury`'s handler: the PLAY treasury coin of the cached state (`load_play_state`), a plain file read like
+    /// `status` -- the amount the publisher would spend from next. Fails when no state was ever cached (`c2 issue-play` not run).
+    pub fn treasury_snapshot(&self) -> Result<(String, u64)> {
+        let state: PlayCoinState = load_play_state(&self.data_dir, &self.operator_name)
+            .context("no cached PLAY treasury state for this operator -- run `c2 issue-play` first")?;
+        Ok((format!("0x{}", hex::encode(state.coin.coin_id().as_ref())), state.coin.amount))
+    }
+
     /// `GET /v1/play/withdrawals/{requestId}`'s handler -- a plain, unlocked
     /// read of the queue's current persisted state (same eventual-
     /// consistency reasoning as `oracle::publisher::Publisher::status`).

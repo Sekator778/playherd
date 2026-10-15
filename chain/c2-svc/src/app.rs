@@ -25,7 +25,7 @@ use crate::oracle::types::{
 use crate::play::chain_client::PlayChainClient;
 use crate::play::deposit::DepositService;
 use crate::play::types::{
-    DepositAddressRequestDto, DepositAddressResponse, DepositsResponse, RequestIdConflict, WithdrawalAcceptedResponse,
+    DepositAddressRequestDto, DepositAddressResponse, DepositsResponse, RequestIdConflict, TreasuryResponse, WithdrawalAcceptedResponse,
     WithdrawalConflictResponse, WithdrawalRequest, WithdrawalRequestDto, WithdrawalStatusResponse,
 };
 use crate::play::withdrawal_publisher::WithdrawalPublisher;
@@ -95,6 +95,7 @@ where
         .route("/v1/play/withdrawals/:request_id", get(play_withdrawal_status::<C>))
         .route("/v1/play/deposit-address", post(play_deposit_address::<C>))
         .route("/v1/play/deposits", get(play_deposits::<C>))
+        .route("/v1/play/treasury", get(play_treasury::<C>))
         .with_state(play_state);
     let protected = oracle_routes
         .merge(play_routes)
@@ -277,6 +278,14 @@ async fn play_deposit_address<C: PlayChainClient>(
     Json(req): Json<DepositAddressRequestDto>,
 ) -> Result<Json<DepositAddressResponse>, AppError> {
     Ok(Json(state.deposits.issue_address(req.player_index).await?))
+}
+
+/// `GET /v1/play/treasury` -> `{coinId, amountMojos}` (economy stage B, plan B7).
+async fn play_treasury<C: PlayChainClient>(
+    State(state): State<PlayState<C>>,
+) -> Result<Json<TreasuryResponse>, AppError> {
+    let (coin_id, amount_mojos) = state.withdrawals.treasury_snapshot()?;
+    Ok(Json(TreasuryResponse { coin_id, amount_mojos }))
 }
 
 #[derive(Deserialize)]

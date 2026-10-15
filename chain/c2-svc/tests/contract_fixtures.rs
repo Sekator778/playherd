@@ -27,7 +27,7 @@ use c2_svc::oracle::types::{
 use c2_svc::play::deposit::deposit_address;
 use c2_svc::play::types::{
     ConflictKind, DepositAddressRequestDto, DepositAddressResponse, DepositDto, DepositsResponse, RequestIdConflict,
-    WithdrawalAcceptedResponse, WithdrawalConflictResponse, WithdrawalRequestDto, WithdrawalStatusResponse,
+    TreasuryResponse, WithdrawalAcceptedResponse, WithdrawalConflictResponse, WithdrawalRequestDto, WithdrawalStatusResponse,
 };
 use chia_bls::SecretKey;
 use chia_protocol::Bytes32;
@@ -243,5 +243,10 @@ fn write_contract_fixtures() {
             }],
             tip_height: 4_737_650,
         },
+    );
+
+    write_fixture(
+        "TreasuryResponse",
+        &TreasuryResponse { coin_id: format!("0x{}", "34".repeat(32)), amount_mojos: 99_998_100_000 },
     );
 }
