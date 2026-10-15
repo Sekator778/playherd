@@ -82,7 +82,7 @@ function appMetadata() {
   const origin = typeof window !== "undefined" ? window.location.origin : "https://herd.invalid";
   return {
     name: "Herd",
-    description: "Herd — up/down rounds on toy money · Chia testnet11",
+    description: "Herd — call real prices UP or DOWN · Chia testnet11",
     url: origin,
     icons: [`${origin}/icons/icon-192.png`],
   };

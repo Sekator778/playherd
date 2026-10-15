@@ -633,9 +633,9 @@ describe("Lobby — a poll that fails after a good load", () => {
 describe("Lobby — the intro line is off: Р-63 took such lines away on Alex's word, so it is his decision to bring one back (first tester pass, D10)", () => {
   it("a visitor who has not signed in sees the lobby as it was: no line above the ribbon, while the cards load and after", async () => {
     renderLobbyAs({});
-    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Call real prices UP or DOWN/i)).not.toBeInTheDocument();
     await screen.findAllByRole("article");
-    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Call real prices UP or DOWN/i)).not.toBeInTheDocument();
     expect(document.querySelector(".lobby-intro")).toBeNull();
     // the lobby's first things are still the heading and the ribbon of panels
     const root = document.querySelector(".lobby-root") as HTMLElement;
@@ -646,37 +646,37 @@ describe("Lobby — the intro line is off: Р-63 took such lines away on Alex's 
   it("the flag is false unless a caller says otherwise — the route in App.tsx renders <LobbyPage /> and nothing more", async () => {
     renderLobbyAs({}, false);
     await screen.findAllByRole("article");
-    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Call real prices UP or DOWN/i)).not.toBeInTheDocument();
   });
 });
 
 describe("Lobby — the intro line, when its flag is on: says what this is, once, to a visitor who has not signed in (first tester pass, D10)", () => {
-  it("one small line above the markets: a toy-money game, bet UP or DOWN on real prices with leverage", async () => {
+  it("one small line above the markets: call real prices UP or DOWN, up to x40, the result in 3 minutes", async () => {
     renderLobbyAs({}, true);
-    const intro = screen.getByText("A toy-money game:").closest("p") as HTMLElement;
-    expect(intro).toHaveTextContent("A toy-money game: bet UP or DOWN on real prices, with leverage. How it works");
+    const intro = screen.getByText("Call real prices UP or DOWN:").closest("p") as HTMLElement;
+    expect(intro).toHaveTextContent("Call real prices UP or DOWN: up to x40, the result in 3 minutes. How it works");
     expect(within(intro).getByRole("link", { name: "How it works" })).toHaveAttribute("href", "/how-it-works");
     await screen.findAllByRole("article");
     // above the ribbon of panels, which stays the lobby's first control
     expect(intro.compareDocumentPosition(screen.getByRole("tablist", { name: "Market categories" }))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(screen.getAllByText(/toy-money game/i)).toHaveLength(1);
+    expect(screen.getAllByText(/Call real prices UP or DOWN/i)).toHaveLength(1);
   });
 
   it("is also there while the first cards load", () => {
     renderLobbyAs({}, true);
     expect(screen.queryAllByRole("article")).toHaveLength(0);
-    expect(screen.getByText(/toy-money game/i)).toBeInTheDocument();
+    expect(screen.getByText(/Call real prices UP or DOWN/i)).toBeInTheDocument();
   });
 
   it("a signed-in player does not get it", async () => {
     renderLobbyAs({ player: TEST_PLAYER }, true);
     await screen.findAllByRole("article");
-    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Call real prices UP or DOWN/i)).not.toBeInTheDocument();
   });
 
   it("nor does a session that is still being read, so a returning player never sees it flash", async () => {
     renderLobbyAs({ loading: true }, true);
     await screen.findAllByRole("article");
-    expect(screen.queryByText(/toy-money game/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Call real prices UP or DOWN/i)).not.toBeInTheDocument();
   });
 });

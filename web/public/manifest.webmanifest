@@ -1,7 +1,7 @@
 {
   "name": "Herd",
   "short_name": "Herd",
-  "description": "Herd — bet up or down with the crowd, against the market. Toy-money demo on Chia testnet11.",
+  "description": "Herd — call real prices UP or DOWN, with the crowd or against it. Rounds of 3 or 15 minutes, recorded on Chia testnet11.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
