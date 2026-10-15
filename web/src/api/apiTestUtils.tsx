@@ -15,7 +15,7 @@ export const TEST_PLAYER: PlayerSummaryDto = {
 };
 
 /** The methods `Api` declares optional: absent on a fake unless the test gives them, as on a server that predates them. */
-const OPTIONAL_METHODS = new Set<string>(["betFeed", "unseenResults", "acknowledgeResults", "serverInfo"]);
+const OPTIONAL_METHODS = new Set<string>(["betFeed", "unseenResults", "acknowledgeResults", "serverInfo", "supply"]);
 
 /** A fake `Api` with only the methods a test implements; calling any other required one throws. */
 export function fakeApi(methods: Partial<Api>): Api {

@@ -21,6 +21,7 @@ import { join } from "node:path";
  *  `error.*` files carry the error envelope and its HTTP `status`. */
 export const WIRE_NAMES = [
   "serverInfo",
+  "supply",
   "markets",
   "rounds.hourly",
   "round.betting",
@@ -164,6 +165,7 @@ function marketById(id: unknown): MarketLike | undefined {
 function defaultReply(method: string, args: unknown[]): WireReply {
   switch (method) {
     case "serverInfo":
+    case "supply":
     case "markets":
     case "betFeed":
     case "myPositions":

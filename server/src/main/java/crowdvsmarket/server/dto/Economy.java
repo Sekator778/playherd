@@ -27,4 +27,21 @@ public final class Economy {
                                     String bookDelta, String chainDelta, boolean booksBalanced, Boolean chainConsistent,
                                     boolean circuitBreakerOpen, long atMs) {
     }
+
+    /**
+     * Economy stage C (C5, Р-90): the public cut of the reconciliation. It shows the supply and where it sits, never HERD (the platform's
+     * revenue): {@code platformReserve} is TREASURY and HERD together. All amounts in PLAY as exact decimal strings.
+     *
+     * <ul>
+     *   <li>{@code issued}: 100 000 000 PLAY ever issued;
+     *   <li>{@code onChainTreasury}, {@code treasuryCoinId}: the treasury coin on chain, {@code null} when the chain service cannot say;
+     *   <li>{@code heldByPlayers}: balances plus the stakes of open bets; {@code platformReserve}: TREASURY + HERD;
+     *   <li>{@code withdrawnOnChain}: confirmed withdrawals;
+     *   <li>{@code booksBalanced}, {@code chainConsistent} ({@code null} when the chain is unknown), {@code circuitBreakerOpen}.
+     * </ul>
+     */
+    public record SupplyDto(boolean economyActive, String issued, String onChainTreasury, String treasuryCoinId, String heldByPlayers,
+                            String platformReserve, String withdrawnOnChain, boolean booksBalanced, Boolean chainConsistent,
+                            boolean circuitBreakerOpen, long atMs) {
+    }
 }

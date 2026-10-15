@@ -7,6 +7,7 @@
  *   A normal, transient state — a polled read keeps what is on screen and tries again, a button says "the server is
  *   restarting — try again in a moment" instead of a raw error (`contract.ts`, `ApiErrorCode`).
  * - `RATE_LIMITED` (HTTP 429): the server's own message is a developer's sentence; the player gets a plain one.
+ * - `REGISTRATION_LIMIT` (429) and `EXPOSURE_LIMIT_EXCEEDED` (422), economy stage B: the same, each with its own plain sentence.
  */
 import { ApiRequestError, type ApiErrorCode } from "./contract";
 import { tEn, type TFn } from "../i18n";
@@ -39,6 +40,9 @@ export function mutationErrorText(err: unknown, fallback: string, t: TFn = tEn):
   const code = apiErrorCode(err);
   if (code === "ENGINE_NOT_READY") return t("errors.engineRestarting");
   if (code === "RATE_LIMITED") return t("errors.rateLimited");
+  // Economy stage B codes: the server's sentence is a developer's (amounts, addresses); the player gets a plain one.
+  if (code === "REGISTRATION_LIMIT") return t("errors.registrationLimit");
+  if (code === "EXPOSURE_LIMIT_EXCEEDED") return t("errors.exposureLimit");
   if (err instanceof Error && err.message) return err.message;
   return fallback;
 }

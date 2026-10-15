@@ -257,6 +257,7 @@ class WireFixturesTest extends LiveRpcTestBase {
         marketView.invalidate();
 
         capture("serverInfo", null, "serverInfo");
+        capture("supply", null, "supply");
         capture("markets", null, "markets");
         capture("rounds.hourly", alice, "rounds", "HOURLY", story.perp().id());
         capture("round.betting", alice, "round", betting.roundId());

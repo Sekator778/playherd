@@ -28,6 +28,13 @@ describe("apiErrors — a failed call, told the same way on every screen", () =>
       expect(mutationErrorText(new ApiRequestError("RATE_LIMITED", "too many requests — please slow down"), "fallback")).toBe(RATE_LIMITED_TEXT);
     });
 
+    it("the registration limit and the exposure limit (economy stage B) have plain sentences, not the server's developer wording", () => {
+      const registration = mutationErrorText(new ApiRequestError("REGISTRATION_LIMIT", "too many new players from this address in 24 hours (limit 3)"), "fallback");
+      expect(registration).toBe("Too many new players have joined from your network in the last 24 hours (3 per address). Try again tomorrow.");
+      const exposure = mutationErrorText(new ApiRequestError("EXPOSURE_LIMIT_EXCEEDED", "open notional on UP of SOL would exceed 123.456 (remaining 12.3)"), "fallback");
+      expect(exposure).toBe("This side of the round is full — the platform caps how much can ride on one side. Try a smaller stake, a lower leverage or the other side.");
+    });
+
     it("any other server code keeps the server's own sentence (it is written for the player)", () => {
       expect(mutationErrorText(new ApiRequestError("INVALID_NICKNAME", "nickname must be 3-24 characters"), "fallback")).toBe("nickname must be 3-24 characters");
       expect(mutationErrorText(new ApiRequestError("OTHER", "stake must be a decimal string"), "fallback")).toBe("stake must be a decimal string");

@@ -5,7 +5,8 @@
  * product (`docs/product/decisions.md` Р-43: "публичная страница статуса — последняя публикация оракула, казна
  * PLAY, журнал отмен"; Р-71: the extras that earn trust).
  *
- * Four sections, each with its own loading / empty / error state so one failing source never blanks the page:
+ * Five sections (the supply block, `supply()`, comes after the oracle: issued, treasury coin, held by players, platform reserve,
+ * withdrawn, books balanced — never the platform's revenue on its own, Р-90), each with its own loading / empty / error state so one failing source never blanks the page:
  * - mode and price source (`serverInfo()`: `mode`, `priceSource`, `replay`, `bots`, `roundDurationsSec`, `engineReady`);
  * - the markets, one row each: source (and the backup exchange of a crypto market, Р-76), last price — marked when it is
  *   the backup's — how old it is, stale / no price / closed (`markets()`); above them one row per source (Coinbase,
@@ -23,7 +24,7 @@
 import { useCallback, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi } from "../api/ApiContext";
-import type { CancellationDto } from "../api/contract";
+import type { CancellationDto, SupplyDto } from "../api/contract";
 import { loadOlder, refreshNewest, type PagedList } from "../api/paging";
 import { useMarkets } from "../api/useMarkets";
 import { usePoll } from "../api/usePoll";
@@ -32,7 +33,7 @@ import { CopyButton, ErrorState, Skeleton } from "../components/Common";
 import { MarketIcon } from "../components/MarketIcon";
 import { backupPriceOf } from "../components/marketModel";
 import { useServerNow } from "../components/useServerNow";
-import { formatDateTime, formatPrice } from "../format";
+import { formatDateTime, formatPlayAmount, formatPrice } from "../format";
 import { useT } from "../i18n";
 import { Rich } from "../i18n/Rich";
 import {
@@ -321,6 +322,105 @@ function OracleSection() {
 }
 
 // ---------------------------------------------------------------------------
+// Supply (economy stage C, C5)
+// ---------------------------------------------------------------------------
+
+/**
+ * The public reconciliation: what was issued, the treasury coin on chain (with its id, to look it up), what the players hold, the
+ * platform's reserve, what has left on chain, and whether the books balance. The reserve is the treasury and the platform's own
+ * account together — the platform's revenue is never shown on its own (Р-90). A mock build has no such call.
+ */
+function SupplySection() {
+  const api = useApi();
+  const t = useT();
+  const supported = typeof api.supply === "function";
+  const [supply, setSupply] = useState<SupplyDto | null>(null);
+  const [failed, setFailed] = useState(false);
+  const load = useCallback(() => {
+    if (typeof api.supply !== "function") return;
+    api
+      .supply()
+      .then((next) => {
+        setSupply(next);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
+  }, [api]);
+  usePoll(load, 30_000, [load]);
+  const play = (amount: string) => `${formatPlayAmount(amount, { decimals: 3 })} PLAY`;
+  return (
+    <section className="card status-card" aria-labelledby="status-supply-title">
+      <h2 id="status-supply-title" className="section-title">
+        {t("status.supplyTitle")}
+      </h2>
+      {!supported && <p className="muted">{t("status.supplyDemo")}</p>}
+      {supported && !supply && failed && <ErrorState message={t("status.supplyFail")} onRetry={load} />}
+      {supported && !supply && !failed && <Skeleton height={140} />}
+      {supported && supply && (
+        <>
+          <p className="muted status-lead">{t("status.supplyLead")}</p>
+          <dl className="status-facts">
+            <Fact label={t("status.factIssued")}>
+              <span className="mono">{play(supply.issued)}</span>
+            </Fact>
+            {supply.onChainTreasury !== null && (
+              <Fact label={t("status.factTreasuryOnChain")}>
+                <span className="mono">{play(supply.onChainTreasury)}</span>
+                {supply.treasuryCoinId && (
+                  <span className="status-id">
+                    <code className="mono status-id__value" aria-label={t("status.coinAria")}>
+                      {supply.treasuryCoinId}
+                    </code>
+                    <CopyButton value={supply.treasuryCoinId} className="btn btn--secondary status-id__copy" />
+                  </span>
+                )}
+              </Fact>
+            )}
+            {supply.economyActive && (
+              <>
+                <Fact label={t("status.factHeld")}>
+                  <span className="mono">{play(supply.heldByPlayers)}</span>
+                  <span className="faint status-hint">{t("status.factHeldHint")}</span>
+                </Fact>
+                <Fact label={t("status.factReserve")}>
+                  <span className="mono">{play(supply.platformReserve)}</span>
+                  <span className="faint status-hint">{t("status.factReserveHint")}</span>
+                </Fact>
+              </>
+            )}
+            <Fact label={t("status.factWithdrawn")}>
+              <span className="mono">{play(supply.withdrawnOnChain)}</span>
+            </Fact>
+            <Fact label={t("status.factBooks")}>
+              <span className={`status-chip ${supply.booksBalanced ? "status-chip--fresh" : "status-chip--stale"}`}>
+                {supply.booksBalanced ? t("status.booksBalanced") : t("status.booksOff")}
+              </span>{" "}
+              <span className="faint status-hint">
+                {supply.chainConsistent === null
+                  ? t("status.chainUnknown")
+                  : supply.chainConsistent
+                    ? t("status.chainAgrees")
+                    : t("status.chainDiffers")}
+              </span>
+            </Fact>
+          </dl>
+          {supply.circuitBreakerOpen && (
+            <p className="status-note" role="status">
+              {t("status.breakerOpen")}
+            </p>
+          )}
+          {failed && (
+            <p className="status-note" role="status">
+              {t("status.refreshLast")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Cancellations log
 // ---------------------------------------------------------------------------
 
@@ -453,6 +553,7 @@ export function StatusPage() {
       <ServerSection />
       <MarketsSection />
       <OracleSection />
+      <SupplySection />
       <CancellationsSection />
       <p>
         <Link to="/how-it-works">{t("status.howLink")}</Link>

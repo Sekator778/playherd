@@ -1517,8 +1517,14 @@ public class GameService implements MarketListener {
             } catch (java.util.NoSuchElementException e) {
                 balance = PlayAmount.ZERO;
             }
+            PlayAmount withdrawable;
+            try {
+                withdrawable = ledger.withdrawable(playerId);
+            } catch (java.util.NoSuchElementException e) {
+                withdrawable = PlayAmount.ZERO;
+            }
             return new Ledger.PlayerAccountDto(playerId, balance.toMoney().toPlainString(), Season.of(Instant.now()).id(),
-                    inPlayStake(playerId).toMoney().toPlainString());
+                    inPlayStake(playerId).toMoney().toPlainString(), withdrawable.toMoney().toPlainString());
         } finally {
             engineLock.readLock().unlock();
         }
@@ -2411,6 +2417,35 @@ public class GameService implements MarketListener {
         } finally {
             engineLock.readLock().unlock();
         }
+    }
+
+    private static final long SUPPLY_CACHE_MS = 10_000;
+    private volatile Economy.SupplyDto supplyCache;
+
+    /**
+     * C5: the public supply block (HERD never on its own, Р-90). Cached for {@value #SUPPLY_CACHE_MS} ms: it is public, so a poll must not
+     * hit the chain service or repeat the reconciliation WARN each time.
+     */
+    public Economy.SupplyDto supply(long nowMs) {
+        Economy.SupplyDto cached = supplyCache;
+        if (cached != null && nowMs >= cached.atMs() && nowMs - cached.atMs() < SUPPLY_CACHE_MS) {
+            return cached;
+        }
+        String coinId = null;
+        try {
+            crowdvsmarket.server.chain.ChainSvcClient.PlayTreasury chain = chainSvc.playTreasury();
+            coinId = chain == null ? null : chain.coinId();
+        } catch (RuntimeException e) {
+            LOG.debugf(e, "the treasury coin could not be read from the chain service");
+        }
+        Economy.ReconciliationDto r = reconciliation(nowMs);
+        java.math.BigDecimal held = new java.math.BigDecimal(r.players()).add(new java.math.BigDecimal(r.openStakes()));
+        java.math.BigDecimal reserve = new java.math.BigDecimal(r.treasury()).add(new java.math.BigDecimal(r.herd()));
+        Economy.SupplyDto dto = new Economy.SupplyDto(r.economyActive(), r.issued(), r.onChainTreasury(), coinId,
+                held.toPlainString(), reserve.toPlainString(), r.withdrawnConfirmed(), r.booksBalanced(), r.chainConsistent(),
+                r.circuitBreakerOpen(), nowMs);
+        supplyCache = dto;
+        return dto;
     }
 
     private static String money(PlayAmount amount) {

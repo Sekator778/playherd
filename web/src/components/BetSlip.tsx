@@ -6,21 +6,23 @@ import { nextRoundId } from "../api/clock";
 import { useEngineEpoch } from "../api/engineState";
 import {
   LEVERAGE_MAX,
-  LEVERAGE_MIN,
   MIN_STAKE_PLAY,
   type Direction,
   type LiquidationPreviewDto,
   type MarketDto,
-  type MarketId,
   type RoundBetting,
 } from "../api/contract";
 import { useMarket } from "../api/useMarkets";
 import { formatDuration, formatPlayAmount } from "../format";
 import { DirectionGlyph } from "./icons";
-import { LeverageDial } from "./LeverageDial";
+import { LeverageControl } from "./LeverageControl";
 import { LiquidationBar } from "./LiquidationBar";
+import { DEFAULT_LEVERAGE_LIMIT, effectiveLeverage } from "./leverageScale";
+import { useLiquidationPreview } from "./useLiquidationPreview";
 import {
   defaultLeverage,
+  formatFeePercent,
+  maxAffordableStake,
   DEFAULT_STAKE_DISPLAY,
   STAKE_CHIPS,
   STAKE_STEP,
@@ -71,37 +73,6 @@ const SAVED_PATIENCE_MS = 20_000;
 
 type NoticeKind = "placed" | "updated" | "cancelled";
 
-/** The liquidation preview of the bet being composed (Р-7, Р-33: shown BEFORE the bet) — debounced, and
- *  an answer that arrives after a newer question was asked is dropped, not shown. */
-function useLiquidationPreview(marketId: MarketId, direction: Direction, leverage: number, stake: string): LiquidationPreviewDto | null {
-  const api = useApi();
-  const [preview, setPreview] = useState<LiquidationPreviewDto | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const stakeNum = Number(stake);
-    const validStake = stake !== "" && Number.isFinite(stakeNum) && stakeNum > 0;
-    const timer = window.setTimeout(() => {
-      if (!validStake) {
-        setPreview(null);
-        return;
-      }
-      api
-        .previewLiquidation({ marketId, direction, leverage, stake: stakeNum.toFixed(3) })
-        .then((p) => {
-          if (!cancelled) setPreview(p);
-        })
-        .catch(() => {
-          if (!cancelled) setPreview(null);
-        });
-    }, 150);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [api, marketId, direction, leverage, stake]);
-  return preview;
-}
-
 /** Bet slip (`ux_spec.md` §11) — used embedded on Home and full-size on the Round page, always
  *  the same component so every state/validation rule lives in exactly one place. */
 export function BetSlip({
@@ -118,7 +89,9 @@ export function BetSlip({
   // The market's own leverage cap (Т-4) bounds the dial; until the market list arrives the
   // platform-wide cap stands, as it did before markets.
   const { market } = useMarket(round.marketId);
-  const maxLeverage = market?.maxLeverage ?? LEVERAGE_MAX;
+  // Economy stage A/C: the cap belongs to the market AND the round length (up to x4000); the older single cap is the fallback.
+  const interval = round.window.interval;
+  const maxLeverage = market?.series?.find((s) => s.interval === interval)?.maxLeverage ?? market?.maxLeverage ?? LEVERAGE_MAX;
 
   const bettingClosed = nowMs >= round.window.startMs;
   if (bettingClosed) {
@@ -256,13 +229,16 @@ function StakeField({
   value,
   onChange,
   balance,
+  maxStake,
 }: {
   inputId: string;
   label: string;
   value: string;
   onChange: (next: string) => void;
-  /** The most the player could stake; `undefined` (a signed-out preview) hides the available line and the chips. */
+  /** What the player holds (free PLAY); `undefined` (a signed-out preview) hides the available line and the chips. */
   balance?: number;
+  /** The biggest stake whose fees still fit in `balance` (the MAX chip); omitted → the whole balance. */
+  maxStake?: number;
 }) {
   const t = useT();
   const current = Number(value) || 0;
@@ -302,7 +278,7 @@ function StakeField({
           </p>
           <div className="stake-chips">
             {STAKE_CHIPS.map((chip) => {
-              const chipValue = stakeForFraction(balance, chip.fraction);
+              const chipValue = stakeForFraction(chip.fraction >= 1 ? Math.min(balance, maxStake ?? balance) : balance, chip.fraction);
               return (
                 <button
                   key={chip.label}
@@ -354,6 +330,51 @@ function LiquidationPreviewHead({ open, onToggle }: { open: boolean; onToggle: (
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * What the bet costs, before it is confirmed (economy stage C, C1; Р-92): the Herd fee and the network fee, each in PLAY and as a share
+ * of the stake, the total that leaves the balance (stake + both fees), and the highest leverage the stake allows. Shown only when the
+ * server's preview names them (it does once the preview was asked for the round's length); a cancelled bet gives both fees back.
+ */
+function FeeBreakdown({ preview, stake }: { preview: LiquidationPreviewDto; stake: number }) {
+  const t = useT();
+  if (preview.feeHerd == null || preview.feeNetwork == null || preview.totalDebit == null) return null;
+  const herd = Number(preview.feeHerd);
+  const net = Number(preview.feeNetwork);
+  return (
+    <div className="card card--tight bet-fees" aria-label={t("betSlip.feeTitle")}>
+      <p className="section-title" style={{ marginBottom: 6 }}>
+        {t("betSlip.feeTitle")}
+      </p>
+      <dl className="bet-fees__rows">
+        <div>
+          <dt>{t("betSlip.feeHerd")}</dt>
+          <dd className="mono">
+            {formatPlayAmount(herd, { decimals: 3 })} PLAY <span className="faint">({formatFeePercent(herd, stake)})</span>
+          </dd>
+        </div>
+        <div>
+          <dt>{t("betSlip.feeNetwork")}</dt>
+          <dd className="mono">
+            {formatPlayAmount(net, { decimals: 3 })} PLAY <span className="faint">({formatFeePercent(net, stake)})</span>
+          </dd>
+        </div>
+        <div className="bet-fees__total">
+          <dt>{t("betSlip.feeTotal")}</dt>
+          <dd className="mono">
+            <strong>{formatPlayAmount(preview.totalDebit, { decimals: 3 })} PLAY</strong>
+          </dd>
+        </div>
+      </dl>
+      {preview.maxLeverageForStake != null && (
+        <p className="bet-fees__max">
+          <Rich text={t("betSlip.maxForStake", { max: preview.maxLeverageForStake })} />
+        </p>
+      )}
+      <p className="faint bet-fees__note">{t("betSlip.feeRefund")}</p>
+    </div>
   );
 }
 
@@ -423,9 +444,11 @@ function BetSlipPreview({
   // `null`: the dial has not been touched, so it sits on the market's default — which follows the cap once the market
   // list has arrived (`defaultLeverage`), instead of being fixed by whatever cap was assumed before it did.
   const [leverageChoice, setLeverage] = useState<number | null>(null);
-  const leverage = Math.min(leverageChoice ?? defaultLeverage(maxLeverage), maxLeverage);
+  const [high, setHigh] = useState(false);
   const [stake, setStake] = useState<string>(DEFAULT_STAKE_DISPLAY);
-  const preview = useLiquidationPreview(round.marketId, direction, leverage, stake);
+  const wantedLeverage = effectiveLeverage(leverageChoice, defaultLeverage(maxLeverage), maxLeverage, high, null);
+  const { preview, stakeMax } = useLiquidationPreview(round.marketId, direction, wantedLeverage, stake, round.window.interval);
+  const leverage = effectiveLeverage(leverageChoice, defaultLeverage(maxLeverage), maxLeverage, high, stakeMax);
   const [explainOpen, setExplainOpen] = useState(false);
 
   return (
@@ -439,7 +462,19 @@ function BetSlipPreview({
         <label htmlFor="preview-leverage-input" className="visually-hidden">
           {t("betSlip.leverage")}
         </label>
-        <LeverageDial id="preview-leverage-input" value={leverage} min={LEVERAGE_MIN} max={maxLeverage} onChange={setLeverage} />
+        <LeverageControl
+          id="preview-leverage-input"
+          value={leverage}
+          onChange={setLeverage}
+          cap={maxLeverage}
+          stakeMax={stakeMax}
+          high={high}
+          onHighChange={setHigh}
+          marketId={round.marketId}
+          direction={direction}
+          stake={stake}
+          interval={round.window.interval}
+        />
       </div>
 
       {/* Distinct accessible name from the signed-in slip's "Stake (PLAY)" (`BetSlipForm` below) —
@@ -447,6 +482,8 @@ function BetSlipPreview({
        *  accessibility tree while sign-in state settles, and this is the label a screen reader (or
        *  `findByLabelText` in tests) would otherwise have to disambiguate by timing alone. */}
       <StakeField inputId="preview-stake-input" label={t("betSlip.previewStake")} value={stake} onChange={setStake} />
+
+      {preview && <FeeBreakdown preview={preview} stake={Number(stake) || 0} />}
 
       {preview && (
         <div className="card card--tight liquidation-preview">
@@ -497,8 +534,14 @@ function BetSlipForm({
   const [leverageChoice, setLeverage] = useState<number | null>(existing?.leverage ?? null);
   // Never above this market's own cap, even if the market list arrives after the player touched the dial; an untouched
   // dial is on the market's default (`defaultLeverage`: x10 as always — x3 where x10 would be the market's cap).
-  const leverage = Math.min(leverageChoice ?? defaultLeverage(maxLeverage), maxLeverage);
+  // "High leverage" (above x100) is on from the start when the bet being edited already is above it.
+  const [high, setHigh] = useState((existing?.leverage ?? 0) > DEFAULT_LEVERAGE_LIMIT);
   const [stake, setStake] = useState<string>(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
+  // The preview names the economy's numbers (fees, the total debit, the highest leverage for this stake), and the dial stays within
+  // that highest leverage: the leverage in use is the choice within the cap, x100 unless "High leverage" is on, and the stake's tier.
+  const wantedLeverage = effectiveLeverage(leverageChoice, defaultLeverage(maxLeverage), maxLeverage, high, null);
+  const { preview, stakeMax } = useLiquidationPreview(round.marketId, direction, wantedLeverage, stake, round.window.interval);
+  const leverage = effectiveLeverage(leverageChoice, defaultLeverage(maxLeverage), maxLeverage, high, stakeMax);
   // What happened to the player's own bet, said in the slip's status line: first that the server has the change and the page has
   // not shown it yet (`saved`), then — once the page does — what it was, for a few seconds (`notice`). First tester pass, D4:
   // an UPDATE left the form open with the same button and not a word of it, and a cancel only made the card vanish.
@@ -519,6 +562,7 @@ function BetSlipForm({
     setShowCancelConfirm(false);
     setInternalDirection(existing?.direction ?? "UP");
     setLeverage(existing?.leverage ?? null);
+    setHigh((existing?.leverage ?? 0) > DEFAULT_LEVERAGE_LIMIT);
     setStake(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
   }
   // The page shows what the server was told — the bet as it was sent, or none after a cancel: only now is the change said to have
@@ -556,7 +600,6 @@ function BetSlipForm({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
-  const preview = useLiquidationPreview(round.marketId, direction, leverage, stake);
   const [explainOpen, setExplainOpen] = useState(false);
 
   // Reads the balance on every new round, after the player's own bet changes (placing or editing one moves it) and
@@ -662,6 +705,7 @@ function BetSlipForm({
     setErrorMessage(null);
     setDirection(bet.direction);
     setLeverage(bet.leverage);
+    setHigh(bet.leverage > DEFAULT_LEVERAGE_LIMIT);
     setStake(stakeDisplay(bet.stake));
   };
 
@@ -757,8 +801,17 @@ function BetSlipForm({
   const belowMin = stakeNum < Number(MIN_STAKE_PLAY);
   // The slip may spend what is free plus what it already has on this round (an edit refunds it first). Only a KNOWN
   // balance can say "not enough": while it is unknown the server stays the judge of the bet.
-  const effectiveBalance = (balance ?? 0) + (existing ? Number(existing.stake) : 0);
-  const overBalance = balance !== null && stakeNum > effectiveBalance;
+  // An edit refunds the old bet's stake AND its fees (a cancelled bet gives both back), and the new bet costs its stake plus its
+  // fees (economy stage C, C1): what has to be free is the preview's total debit, the bare stake while there is no preview.
+  const existingCost = existing ? Number(existing.stake) + Number(existing.feeHerd ?? 0) + Number(existing.feeNetwork ?? 0) : 0;
+  const effectiveBalance = (balance ?? 0) + existingCost;
+  const feeHerd = preview?.feeHerd != null ? Number(preview.feeHerd) : null;
+  const feeNetwork = preview?.feeNetwork != null ? Number(preview.feeNetwork) : null;
+  const totalDebit = preview?.totalDebit != null ? Number(preview.totalDebit) : null;
+  const neededPlay = totalDebit ?? stakeNum;
+  const overBalance = balance !== null && neededPlay > effectiveBalance;
+  // The MAX chip leaves room for the fees of the bet it makes.
+  const maxStake = maxAffordableStake(effectiveBalance, totalDebit === null ? null : totalDebit - (feeHerd ?? 0) - (feeNetwork ?? 0), feeHerd, feeNetwork);
   // Not again while the server's answer is on its way to the page: that bet is already placed.
   const disabled = submitting || saved !== null || !stake || belowMin || overBalance;
 
@@ -799,10 +852,29 @@ function BetSlipForm({
           <label htmlFor="leverage-input" className="visually-hidden">
             {t("betSlip.leverage")}
           </label>
-          <LeverageDial id="leverage-input" value={leverage} min={LEVERAGE_MIN} max={maxLeverage} onChange={setLeverage} />
+          <LeverageControl
+            id="leverage-input"
+            value={leverage}
+            onChange={setLeverage}
+            cap={maxLeverage}
+            stakeMax={stakeMax}
+            high={high}
+            onHighChange={setHigh}
+            marketId={round.marketId}
+            direction={direction}
+            stake={stake}
+            interval={round.window.interval}
+          />
         </div>
 
-        <StakeField inputId="stake-input" label={t("betSlip.stake")} value={stake} onChange={setStake} balance={balance === null ? undefined : effectiveBalance} />
+        <StakeField
+          inputId="stake-input"
+          label={t("betSlip.stake")}
+          value={stake}
+          onChange={setStake}
+          balance={balance === null ? undefined : effectiveBalance}
+          maxStake={maxStake}
+        />
         {belowMin && <p className="field-error">{t("betSlip.minStake")}</p>}
         {balance === null && balanceFailed && (
           <div className="stack" style={{ gap: 8 }} role="status">
@@ -816,9 +888,11 @@ function BetSlipForm({
         )}
         {!belowMin && overBalance && (
           <p className="field-error">
-            {t("betSlip.notEnough", { have: formatPlayAmount(effectiveBalance), need: formatPlayAmount(stakeNum) })}
+            {t("betSlip.notEnough", { have: formatPlayAmount(effectiveBalance), need: formatPlayAmount(neededPlay) })}
           </p>
         )}
+
+        {preview && <FeeBreakdown preview={preview} stake={stakeNum} />}
 
         {preview && (
           <div className="card card--tight liquidation-preview">

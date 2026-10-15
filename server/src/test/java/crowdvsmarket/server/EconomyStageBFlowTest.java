@@ -388,4 +388,41 @@ class EconomyStageBFlowTest extends LiveGameTestBase {
         // the numbers need the operator token
         assertThat(given().get("/api/admin/reconciliation").statusCode()).isEqualTo(401);
     }
+
+    // --- Stage C: the public supply block and the withdrawable field ---
+
+    @Test
+    void thePublicSupplyNeedsNoSessionAndNeverShowsHerdOnItsOwn() {
+        String p = signUp("supply");
+        Market sol = listPriced("T_ECOC_SUPPLY", "SOL");
+        RoundWindow betting = roundProgress.bettingWindow(sol.id(), HOURLY);
+        gameService.placeBet(p, bet(betting, Enums.Direction.UP, 100, "200.000"), betting.startMs() - 1);
+        PlayAmount booksTotal = ledger().treasury().plus(ledger().herd()).plus(ledger().playersTotal()).plus(ledger().openStakes());
+        when(chainSvcClient.playTreasury()).thenReturn(new ChainSvcClient.PlayTreasury("0xcoinid", booksTotal.mojos()));
+
+        Response r = given().contentType(ContentType.JSON).body("[]").post("/api/rpc/supply");
+
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(r.jsonPath().getString("issued")).isEqualTo("100000000.000");
+        assertThat(r.jsonPath().getString("treasuryCoinId")).isEqualTo("0xcoinid");
+        assertThat(r.jsonPath().getString("onChainTreasury")).isEqualTo(booksTotal.toMoney().toPlainString());
+        assertThat(r.jsonPath().getString("heldByPlayers"))
+                .isEqualTo(ledger().playersTotal().plus(ledger().openStakes()).toMoney().toPlainString());
+        assertThat(r.jsonPath().getString("platformReserve"))
+                .isEqualTo(ledger().treasury().plus(ledger().herd()).toMoney().toPlainString());
+        assertThat(r.jsonPath().getBoolean("booksBalanced")).isTrue();
+        assertThat(r.jsonPath().getBoolean("circuitBreakerOpen")).isFalse();
+        // HERD (the platform's revenue, Р-90) is only ever part of the reserve: no field of its own, no fees
+        assertThat(r.asString()).doesNotContainIgnoringCase("herd").doesNotContainIgnoringCase("fee");
+    }
+
+    @Test
+    void myAccountSaysWhatCanBeWithdrawn() {
+        String p = signUp("withdrawable");
+        assertThat(gameService.account(p).withdrawable()).isEqualTo("0.000");
+        gameService.creditOnChainDeposit(p, 1, PlayAmount.ofWholePlay(1_000), "0x" + UUID.randomUUID().toString().replace("-", ""),
+                1L, System.currentTimeMillis());
+        assertThat(gameService.account(p).withdrawable()).isEqualTo("1000.000");
+        assertThat(gameService.account(p).balance()).isEqualTo("11000.000");
+    }
 }

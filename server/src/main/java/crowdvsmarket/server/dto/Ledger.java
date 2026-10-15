@@ -9,7 +9,8 @@ public final class Ledger {
      *  that have not settled yet (the BETTING and RUNNING rounds of both series, Р-19: at most one
      *  bet per player per round, Р-13) — money already debited from {@code balance} but not yet
      *  won or lost. */
-    public record PlayerAccountDto(String playerId, String balance, String currentSeason, String inPlay) {
+    public record PlayerAccountDto(String playerId, String balance, String currentSeason, String inPlay,
+                                 String withdrawable) {
     }
 
     public record SeasonRecordDto(String season, String baselineBalance, String deposited, String withdrawn,

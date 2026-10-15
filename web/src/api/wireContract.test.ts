@@ -26,6 +26,7 @@ const orUndefined = <T>(v: unknown) => (v === null || v === undefined ? undefine
 
 const CASES: Record<Exclude<WireName, `error.${string}`>, Case> = {
   serverInfo: { call: (api) => api.serverInfo!(), check: schema.serverInfo },
+  supply: { call: (api) => api.supply!(), check: schema.supply },
   markets: { call: (api) => api.markets(), check: schema.markets },
   "rounds.hourly": { call: (api, a) => api.rounds(a[0] as Interval, orUndefined<string>(a[1])), check: schema.roundsPair },
   "round.betting": { call: (api, a) => api.round(a[0] as string), check: schema.round },

@@ -1380,6 +1380,130 @@ ol {
   margin-top: 6px;
 }
 
+/* Economy stage C: the wallet's "withdrawable" line under the balance. */
+.wallet-withdrawable {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.wallet-withdrawable__value {
+  font-size: 18px;
+}
+.wallet-withdrawable__hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+/* Economy stage C: what the bet costs (the fees, the total, the highest leverage for the stake) ... */
+.bet-fees {
+  margin: 12px 0;
+}
+.bet-fees__rows {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+.bet-fees__rows > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.bet-fees__rows dt {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.bet-fees__rows dd {
+  margin: 0;
+  text-align: right;
+  font-size: 14px;
+}
+.bet-fees__total {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.bet-fees__max {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+.bet-fees__note {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+/* ... and the "High leverage" switch, with the question it asks before it lifts the x100 limit. */
+.high-leverage {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.high-leverage__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.high-leverage__knob {
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--border);
+  position: relative;
+  flex: none;
+}
+.high-leverage__knob::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.15s;
+}
+.high-leverage__switch--on {
+  border-color: var(--heat-5);
+}
+.high-leverage__switch--on .high-leverage__knob {
+  background: var(--heat-5);
+}
+.high-leverage__switch--on .high-leverage__knob::after {
+  transform: translateX(12px);
+}
+.high-leverage__state {
+  font-size: 12px;
+}
+.high-leverage__confirm {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--heat-5);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+}
+.high-leverage__confirm p {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+@media (prefers-reduced-motion: reduce) {
+  .high-leverage__knob::after {
+    transition: none;
+  }
+}
+
 /* What just happened to the player's bet ("Bet updated.", "Bet cancelled — … is back in your balance.", and "Saved, refreshing…"
    until the page shows it): a short line with its own glyph, so the meaning is never the colour alone. The slip's status line is
    always in the DOM (a live region is read when its text changes); with nothing to say it is `.visually-hidden`. It takes focus

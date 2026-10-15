@@ -95,3 +95,38 @@ export function savedChangeIsShown(saved: SavedChange, shown: BetDto | null): bo
   if (saved.kind === "cancelled") return shown === null;
   return shown !== null && shown.direction === saved.direction && shown.leverage === saved.leverage && Number(shown.stake) === Number(saved.stake);
 }
+
+// ---------------------------------------------------------------------------
+// Fees (economy stage C, C1)
+// ---------------------------------------------------------------------------
+
+/** A fee as a share of the stake, in percent: "0.92%", "<0.01%" for a fee that rounds to nothing, "—" when there is no stake. */
+export function formatFeePercent(fee: number, stake: number): string {
+  if (!(stake > 0) || !Number.isFinite(fee)) return "—";
+  const pct = (fee / stake) * 100;
+  if (pct > 0 && pct < 0.01) return "<0.01%";
+  return `${pct.toFixed(2)}%`;
+}
+
+/**
+ * The move against the bet that liquidates it, as the confirmation words it ("0.083%", "2.4%", "12%"): two significant digits,
+ * because at x1000 the move is a fraction of a percent and "0.1%" or "0.0%" would be wrong by half.
+ */
+export function formatMovePercent(fraction: number): string {
+  if (!Number.isFinite(fraction) || fraction <= 0) return "—";
+  const pct = fraction * 100;
+  if (pct >= 10) return `${Math.round(pct)}%`;
+  return `${Number(pct.toPrecision(2))}%`;
+}
+
+/**
+ * The biggest stake that still leaves room for its own fees: `stake + stake * herdRate + networkFee <= balance`, with the herd
+ * rate read off a preview (`feeHerd / stake`). Rounded down to 0.001 PLAY, and one step lower for the herd fee's own rounding up.
+ * Without a preview (no fee known) the whole balance, as before.
+ */
+export function maxAffordableStake(balance: number, previewStake: number | null, feeHerd: number | null, feeNetwork: number | null): number {
+  if (previewStake === null || !(previewStake > 0) || feeHerd === null || feeNetwork === null) return balance;
+  const rate = feeHerd / previewStake;
+  const stake = Math.floor(((balance - feeNetwork) / (1 + rate)) * 1000) / 1000 - 0.001;
+  return Math.max(0, stake);
+}

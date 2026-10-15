@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import type { PriceStr } from "../api/contract";
 import { formatPercent, formatPrice, formatUsd, type PriceFormatMarket } from "../format";
 import { useT } from "../i18n";
+import { formatMovePercent } from "./betSlipModel";
 import { HEAT_VAR, liquidationZone } from "./heat";
 
 /**
@@ -58,7 +59,7 @@ export function LiquidationBar({
       <div className="liq-bar__track">
         <div className="liq-bar__fill" />
       </div>
-      <p className="liq-bar__caption">{t("liqBar.move", { pct: formatPercent(percentToLiquidation) })}</p>
+      <p className="liq-bar__caption">{t("liqBar.move", { pct: percentToLiquidation < 0.01 ? formatMovePercent(percentToLiquidation) : formatPercent(percentToLiquidation) })}</p>
     </div>
   );
 }

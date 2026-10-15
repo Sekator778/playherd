@@ -5,6 +5,7 @@ import { usePrefersReducedMotion } from "../fx/reducedMotion";
 import { HEAT_VAR, leverageHeatTier, type HeatTier } from "./heat";
 import { useT, type TKey } from "../i18n";
 import { Rich } from "../i18n/Rich";
+import { DEFAULT_LEVERAGE_LIMIT, SLIDER_STEPS, leverageAfterMove, leverageToPosition, usesLogScale } from "./leverageScale";
 
 /**
  * "Power dial" leverage control (`docs/product/design/live-round.md` §1) — replaces the unstyled
@@ -44,8 +45,12 @@ export function LeverageDial({
   onChange: (value: number) => void;
 }) {
   const t = useT();
-  const tier = leverageHeatTier(value, max);
-  const pct = ((value - min) / (max - min)) * 100;
+  // The zones are fractions of the dial's range up to x100; above x100 every value is Flame (x100 is no longer "calm" on a x1200 cap).
+  const tier = leverageHeatTier(value, Math.min(max, DEFAULT_LEVERAGE_LIMIT));
+  // Above x100 the track is logarithmic (`leverageScale.ts`): the input's value is a position, not the leverage itself.
+  const logScale = usesLogScale(max);
+  const position = logScale ? leverageToPosition(value, min, max) : value;
+  const pct = logScale ? (position / SLIDER_STEPS) * 100 : ((value - min) / (max - min)) * 100;
   const style = {
     "--fill-pct": `${pct}%`,
     "--heat-color": HEAT_VAR[tier],
@@ -69,14 +74,14 @@ export function LeverageDial({
         const el = trackRef.current;
         if (!el) return null;
         const rect = el.getBoundingClientRect();
-        const p = (el.valueAsNumber - min) / (max - min);
+        const p = logScale ? el.valueAsNumber / SLIDER_STEPS : (el.valueAsNumber - min) / (max - min);
         return new DOMRect(rect.left + p * rect.width - 4, rect.top + rect.height / 2 - 4, 8, 8);
       },
       "spark",
       rate,
     );
     return stop;
-  }, [tier, reducedMotion, min, max]);
+  }, [tier, reducedMotion, min, max, logScale]);
 
   const handleChange = (next: number) => {
     const crossedIntoHotter = next > prevValueRef.current && leverageHeatTier(next, max) > prevTierRef.current;
@@ -106,11 +111,12 @@ export function LeverageDial({
         ref={trackRef}
         id={id}
         type="range"
-        min={min}
-        max={max}
+        min={logScale ? 0 : min}
+        max={logScale ? SLIDER_STEPS : max}
         step={1}
-        value={value}
-        onChange={(e) => handleChange(Number(e.target.value))}
+        value={position}
+        aria-valuetext={`x${value}`}
+        onChange={(e) => handleChange(logScale ? leverageAfterMove(Number(e.target.value), value, min, max) : Number(e.target.value))}
         aria-describedby={`${id}-zone`}
       />
       <div className="leverage-dial__foot">

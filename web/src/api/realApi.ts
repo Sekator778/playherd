@@ -65,6 +65,7 @@ import {
   type SeasonId,
   type SeasonRecordDto,
   type ServerInfoDto,
+  type SupplyDto,
   type WithdrawalRequestDto,
 } from "./contract";
 
@@ -83,6 +84,8 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<Exclude<ApiErrorCode, "OT
   "MARKET_CLOSED",
   "PRICE_UNAVAILABLE",
   "RATE_LIMITED",
+  "REGISTRATION_LIMIT",
+  "EXPOSURE_LIMIT_EXCEEDED",
   "ENGINE_NOT_READY",
   "NOT_FOUND",
   "INVALID_NICKNAME",
@@ -105,6 +108,7 @@ const ENGINE_READS: ReadonlySet<string> = new Set([
   "myProfile",
   "home",
   "betFeed",
+  "supply",
 ]);
 
 interface RpcErrorBody {
@@ -270,6 +274,11 @@ class RealApi implements Api {
   // --- server info (additive, task's FIXED INTERFACE (1)) ---
   serverInfo(): Promise<ServerInfoDto> {
     return rpc("serverInfo", []);
+  }
+
+  // --- supply (economy stage C, C5): public ---
+  supply(): Promise<SupplyDto> {
+    return rpc("supply", []);
   }
 
   // --- feedback (Р-81): open to everyone, no session needed; a 429 is RATE_LIMITED like any other call's ---
