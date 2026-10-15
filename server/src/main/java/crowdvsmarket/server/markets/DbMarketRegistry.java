@@ -232,14 +232,17 @@ public class DbMarketRegistry implements MarketRegistry {
                 rs -> (Integer) rs.getObject("m"));
         int nextIndex = Math.max(1, (max == null ? 0 : max) + 1);
         JsonNode meta = parseMeta(spec.sourceMeta());
+        MarketEconomy economy = MarketEconomy.defaultsFor(spec.kind(), spec.symbol(), spec.maxLeverage());
         db.update(c, """
                 INSERT INTO markets (id, kind, category, symbol, title, subtitle, icon_url, source, source_ref,
-                    source_meta, max_leverage, lot_exp, oracle_index, status, listed_at_ms, ends_at_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+                    source_meta, max_leverage, lot_exp, oracle_index, status, listed_at_ms, ends_at_ms,
+                    cap_hourly, cap_daily, kappa, herd_fee_bp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?)
                 """,
                 spec.id(), spec.kind().name(), spec.category(), spec.symbol(), spec.title(), spec.subtitle(),
                 spec.iconUrl(), spec.source(), spec.sourceRef(), Db.jsonb(meta), spec.maxLeverage(), spec.lotExp(),
-                nextIndex, nowMs, spec.endsAtMs());
+                nextIndex, nowMs, spec.endsAtMs(), economy.capHourly(), economy.capDaily(), economy.kappa(),
+                economy.herdFeeBp());
         // Read the row back: what the caller gets is exactly what a reload will give (jsonb
         // normalizes the text of sourceMeta).
         return new Inserted(db.queryOne(c, "SELECT * FROM markets WHERE id = ?", this::toMarket, spec.id()), true);
@@ -248,8 +251,9 @@ public class DbMarketRegistry implements MarketRegistry {
     private List<Market> loadAll(Connection c) throws SQLException {
         db.update(c, """
                 INSERT INTO markets (id, kind, category, symbol, title, source, source_ref, max_leverage, lot_exp,
-                    oracle_index, status, listed_at_ms)
-                VALUES ('BTC', 'PERP', 'crypto', 'BTC', 'Bitcoin', 'hyperliquid', 'BTC', 40, 0, 0, 'ACTIVE', 0)
+                    oracle_index, status, listed_at_ms, cap_hourly, cap_daily, kappa, herd_fee_bp)
+                VALUES ('BTC', 'PERP', 'crypto', 'BTC', 'Bitcoin', 'hyperliquid', 'BTC', 40, 0, 0, 'ACTIVE', 0,
+                    1200, 500, 0.1, 0.92)
                 ON CONFLICT (id) DO NOTHING
                 """);
         return db.queryList(c, "SELECT * FROM markets ORDER BY oracle_index ASC", this::toMarket);
@@ -262,7 +266,9 @@ public class DbMarketRegistry implements MarketRegistry {
                 rs.getInt("max_leverage"), rs.getInt("lot_exp"), rs.getInt("oracle_index"),
                 MarketStatus.valueOf(rs.getString("status")), rs.getLong("listed_at_ms"),
                 (Long) rs.getObject("closed_at_ms"), rs.getString("close_reason"),
-                (Long) rs.getObject("ends_at_ms"));
+                (Long) rs.getObject("ends_at_ms"),
+                new MarketEconomy(rs.getInt("cap_hourly"), rs.getInt("cap_daily"), rs.getBigDecimal("kappa"),
+                        rs.getBigDecimal("herd_fee_bp"), rs.getBigDecimal("stress_move")));
     }
 
     private JsonNode parseMeta(String sourceMeta) {
@@ -279,6 +285,9 @@ public class DbMarketRegistry implements MarketRegistry {
     /** What a catalog may hand over: everything {@code Market} documents, checked once here so a bad
      *  listing fails before it touches the table (the engine would reject the id/leverage later, at
      *  a worse moment). */
+    /** The highest single cap a catalog may list a market with (Т-4). */
+    static final int MAX_LISTED_LEVERAGE = 40;
+
     private static void validate(NewMarket spec) {
         MarketSpec.requireValidId(spec.id());
         if (MarketSpec.BTC_ID.equals(spec.id())) {
@@ -295,6 +304,12 @@ public class DbMarketRegistry implements MarketRegistry {
         if (spec.lotExp() < 0 || spec.lotExp() > Market.MAX_LOT_EXP) {
             throw new IllegalArgumentException("lotExp must be in [0, " + Market.MAX_LOT_EXP + "], got "
                     + spec.lotExp());
+        }
+        if (spec.maxLeverage() > MAX_LISTED_LEVERAGE) {
+            // the market's own single cap (what bets placed before the economy change are settled with); the per-round-length
+            // caps of economy stage A are the MarketEconomy columns and go up to Leverage.MAX
+            throw new IllegalArgumentException(
+                    "maxLeverage must be in [2, " + MAX_LISTED_LEVERAGE + "], got " + spec.maxLeverage());
         }
         MarketSpec.of(spec.id(), spec.maxLeverage()); // validates the leverage cap (2..40) and the rate
     }

@@ -170,7 +170,7 @@ export const playerSummary = obj<PlayerSummaryDto>({ playerId: nonEmptyStr, nick
 /** `starterPackGranted` is optional in the contract (the mock and an older server leave it out), but a server of this repo sends it: `wireContract.test.ts` says so. */
 export const authSession = obj<AuthSessionDto>({ player: playerSummary, isNewPlayer: bool, starterPackGranted: opt(bool) });
 
-const bet = obj<BetDto>({ playerId: nonEmptyStr, roundId: nonEmptyStr, direction, leverage: int, stake: play });
+const bet = obj<BetDto>({ playerId: nonEmptyStr, roundId: nonEmptyStr, direction, leverage: int, stake: play, feeHerd: opt(play), feeNetwork: opt(play), maxLeverageForStake: opt(int) });
 
 const window_ = obj<RoundWindowDto>({ interval, startMs: int, endMs: int });
 
@@ -277,7 +277,7 @@ export const playerAccount = obj<PlayerAccountDto>({ playerId: nonEmptyStr, bala
 
 const ledgerEntry = obj<LedgerEntryDto>({
   sequence: int,
-  type: lit("STARTER_PACK", "STAKE_DEBIT", "STAKE_REFUND", "SETTLEMENT", "DEPOSIT", "WITHDRAWAL", "WITHDRAWAL_REFUND", "OPERATOR_CORRECTION"),
+  type: lit("STARTER_PACK", "STAKE_DEBIT", "STAKE_REFUND", "SETTLEMENT", "FEE_HERD", "FEE_NETWORK", "FEE_HERD_REFUND", "FEE_NETWORK_REFUND", "DEPOSIT", "WITHDRAWAL", "WITHDRAWAL_REFUND", "OPERATOR_CORRECTION"),
   delta: play,
   roundId: nullable(nonEmptyStr),
   atMs: int,
@@ -349,7 +349,7 @@ export const publicProfile = obj<PublicProfileDto>({
 
 export const priceSeries = obj<PriceSeriesDto>({ marketId: nonEmptyStr, priceDecimals: int, ticks: arr(obj<PriceTickDto>({ atMs: int, price })) });
 export const marketReference = obj<MarketReferenceDto>({ price, asOfMs: int });
-export const liquidationPreview = obj<LiquidationPreviewDto>({ entryPriceUsed: price, liquidationPrice: price, percentToLiquidation: num });
+export const liquidationPreview = obj<LiquidationPreviewDto>({ entryPriceUsed: price, liquidationPrice: price, percentToLiquidation: num, feeHerd: opt(play), feeNetwork: opt(play), totalDebit: opt(play), maxLeverageForStake: opt(int) });
 
 export const home = obj<HomeSummaryDto>({
   hourly: roundsPair,
@@ -370,6 +370,8 @@ const marketSeries = obj<MarketSeriesDto>({
   upStake: play,
   downStake: play,
   majorityDirection: nullable(direction),
+  maxLeverage: opt(int),
+  herdFeeBp: opt(decimal()),
 });
 const marketCrowd = obj<MarketCrowdBriefDto>({
   capital: usd,

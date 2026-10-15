@@ -101,7 +101,7 @@ class LiveServerWithBotsEndToEndTest extends LiveServerTestBase {
         }
         assertThat(profile.path("history")).hasSize(2);
         assertThat(money(account, "inPlay")).isEqualByComparingTo("0.000");
-        assertThat(money(account, "balance").add(money(account, "inPlay"))).isEqualByComparingTo(starter.add(net));
+        assertThat(money(account, "balance").add(money(account, "inPlay"))).isEqualByComparingTo(starter.add(net).add(feesNet(me)));
 
         // --- the crowd has traded somewhere, and its accounts say so ---
         await().atMost(Duration.ofSeconds(20)).pollInterval(POLL).untilAsserted(() -> {

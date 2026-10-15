@@ -23,7 +23,17 @@ public final class Rounds {
     public record RoundWindowDto(Enums.Interval interval, long startMs, long endMs) {
     }
 
-    public record BetDto(String playerId, String roundId, Enums.Direction direction, int leverage, String stake) {
+    /**
+     * {@code feeHerd}, {@code feeNetwork}, {@code maxLeverageForStake}: economy stage A (Р-92) — the two fees charged on top
+     * of {@code stake} when the bet was placed (PLAY, scale 3) and the highest leverage the market allows for this stake in
+     * this round length (cap, lowered by the stake tier). All {@code null} for a bet placed before the economy change.
+     */
+    public record BetDto(String playerId, String roundId, Enums.Direction direction, int leverage, String stake,
+                           String feeHerd, String feeNetwork, Integer maxLeverageForStake) {
+
+        public BetDto(String playerId, String roundId, Enums.Direction direction, int leverage, String stake) {
+            this(playerId, roundId, direction, leverage, stake, null, null, null);
+        }
     }
 
     public record PositionDto(String playerId, String roundId, Enums.Direction direction, int leverage,

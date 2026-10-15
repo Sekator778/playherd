@@ -83,14 +83,14 @@ class AtomicSettlementTest extends LiveGameTestBase {
         RoundWindow running = roundProgress.next(market.id(), Interval.HOURLY);
         RoundWindow betting = roundProgress.bettingWindow(market.id(), Interval.HOURLY);
         String p = signUp("atomic");
-        gameService.placeBet(p, bet(betting, Enums.Direction.DOWN, 20, "300.000"), betting.startMs() - 1);
+        gameService.placeBet(p, bet(betting, Enums.Direction.DOWN, 10, "300.000"), betting.startMs() - 1);
         scheduler.tick(running.endMs());   // `running` settles empty; `betting` is the running round now
         prices.script(market, betting, "2500.000", "2400.000", "2400.000", "2510.000");
 
         Snapshot before = snapshot(p, market, betting);
         long seqBefore = oracleSeq();
         assertThat(before.pendingBets()).isEqualTo(1);
-        assertThat(before.balance()).isEqualTo("9700.000");
+        assertThat(before.balance()).isEqualTo("9699.600"); // 300 staked + herd fee 300 * 10 bp = 0.3 + network fee 0.1
         assertThat(before.inPlay()).isEqualTo("300.000");
 
         // The settlement's oracle insert fails — AFTER the RoundResolved event was appended and applied
@@ -106,7 +106,7 @@ class AtomicSettlementTest extends LiveGameTestBase {
 
         // the failure really came after the engine had been changed: the bet had been settled and paid
         assertThat(atFailure.get().pendingBets()).isZero();
-        assertThat(atFailure.get().balance()).isEqualTo("10240.000");   // 9700 + 540 (20x short, -4%)
+        assertThat(atFailure.get().balance()).isEqualTo("10119.600");   // 9699.6 + 420 (10x short, -4%)
         assertThat(atFailure.get().crowdHistory()).isEqualTo(before.crowdHistory() + 1);
         // ... and yet nothing of it survived: no event, no result, no oracle record, no burned seq
         assertThat(resolvedEvents(market, betting)).isZero();
@@ -131,12 +131,12 @@ class AtomicSettlementTest extends LiveGameTestBase {
         assertThat(count("SELECT COUNT(*) AS n FROM oracle_records WHERE round_id = ?", betting.roundId()))
                 .isEqualTo(1);
         assertThat(oracleSeq()).isEqualTo(seqBefore + 1);
-        assertThat(gameService.account(p).balance()).isEqualTo("10240.000");
+        assertThat(gameService.account(p).balance()).isEqualTo("10119.600");
         assertThat(gameService.account(p).inPlay()).isEqualTo("0.000");
         // and a second attempt at an already settled round does nothing at all (re-checked under the lock)
         assertThat(gameService.resolveRound(betting, betting.endMs())).isNull();
         assertThat(resolvedEvents(market, betting)).isEqualTo(1);
-        assertThat(gameService.account(p).balance()).isEqualTo("10240.000");
+        assertThat(gameService.account(p).balance()).isEqualTo("10119.600");
     }
 
     @Test
@@ -180,7 +180,7 @@ class AtomicSettlementTest extends LiveGameTestBase {
         String p = signUp("atomic3");
         gameService.placeBet(p, bet(betting, Enums.Direction.UP, 5, "250.000"), betting.startMs() - 1);
         Snapshot before = snapshot(p, market, betting);
-        assertThat(before.balance()).isEqualTo("9750.000");
+        assertThat(before.balance()).isEqualTo("9749.775"); // 250 staked + herd fee 250 * 5 bp = 0.125 + network fee 0.1
         doThrow(new IllegalStateException("injected cancel failure")).when(roundResultsSpy).insertCancelled(
                 any(Connection.class), anyString(), anyString(), any(Interval.class), anyLong(), anyLong(),
                 anyString(), anyLong(), anyInt(), anyString(), anyString(), any());

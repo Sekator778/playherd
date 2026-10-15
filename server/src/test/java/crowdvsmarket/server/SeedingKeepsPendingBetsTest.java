@@ -56,7 +56,7 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
         String p = signUp("strand");
         gameService.placeBet(p, bet(w1, Enums.Direction.UP, 5, "100.000"), w1.startMs() - 1);
         prices.script(market, w1, "100.00", "110.00", "100.00", "110.00");
-        assertThat(gameService.account(p).balance()).isEqualTo("9900.000");
+        assertThat(gameService.account(p).balance()).isEqualTo("9899.850");
 
         // the process was down across the end of w1 and restarts a moment after it
         long restartAt = w1.endMs() + 5_000L;
@@ -78,7 +78,7 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
             assertThat(pos.playerId()).isEqualTo(p);
             assertThat(pos.payout()).isEqualTo("150.000");
         });
-        assertThat(gameService.account(p).balance()).isEqualTo("10050.000");
+        assertThat(gameService.account(p).balance()).isEqualTo("10049.850");
         assertThat(gameService.account(p).inPlay()).isEqualTo("0.000");
         assertThat(gameService.hasPendingBets(w1)).isFalse();
         assertThat(roundProgress.next(market.id(), HOURLY).startMs()).isGreaterThanOrEqualTo(w1.endMs());
@@ -102,7 +102,7 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
         assertThat(roundResults.exists(w1.roundId())).isTrue();
         assertThat(settled(w1.roundId()).positions()).singleElement()
                 .satisfies(pos -> assertThat(pos.payout()).isEqualTo("220.000"));
-        assertThat(gameService.account(p).balance()).isEqualTo("10020.000");
+        assertThat(gameService.account(p).balance()).isEqualTo("10019.700");
         assertThat(roundProgress.next(market.id(), HOURLY))
                 .isEqualTo(calendar.windowContaining(market.id(), HOURLY, restartAt));
     }
@@ -159,7 +159,7 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
                 .isTrue();
         assertThat(settled(bettingWindow.roundId()).positions()).singleElement()
                 .satisfies(pos -> assertThat(pos.payout()).isEqualTo("125.000"));
-        assertThat(gameService.account(p).balance()).isEqualTo("10025.000");
+        assertThat(gameService.account(p).balance()).isEqualTo("10024.850");
         assertThat(gameService.account(p).inPlay()).isEqualTo("0.000");
         assertThat(roundProgress.next(market.id(), HOURLY))
                 .isEqualTo(calendar.windowContaining(market.id(), HOURLY, later));

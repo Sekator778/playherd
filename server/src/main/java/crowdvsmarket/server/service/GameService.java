@@ -1,6 +1,8 @@
 package crowdvsmarket.server.service;
 
 import crowdvsmarket.engine.crowd.CrowdAccount;
+import crowdvsmarket.engine.economy.EconomyRules;
+import crowdvsmarket.engine.economy.Fees;
 import crowdvsmarket.engine.game.GameEngine;
 import crowdvsmarket.engine.game.PlayerRoundOutcome;
 import crowdvsmarket.engine.game.RoundReport;
@@ -712,12 +714,6 @@ public class GameService implements MarketListener {
             if (players.byId(playerId).isEmpty()) {
                 throw ApiException.notFound("unknown player " + playerId);
             }
-            Leverage leverage;
-            try {
-                leverage = market.spec().leverage(req.leverage()); // 2..the market's cap (Т-4)
-            } catch (IllegalArgumentException e) {
-                throw ApiException.invalidLeverage(e.getMessage());
-            }
             BigDecimal stakeDecimal;
             try {
                 stakeDecimal = new BigDecimal(req.stake());
@@ -730,6 +726,17 @@ public class GameService implements MarketListener {
             } catch (IllegalArgumentException e) {
                 throw ApiException.badRequest(e.getMessage());
             }
+            // Economy stage A (Р-92): 2..the cap of this market for this round length (plan A2), lowered by the size of the
+            // stake (plan A3); the message names the highest leverage allowed for this stake. The fees follow the leverage (A4).
+            MarketSpec spec = market.spec();
+            Leverage leverage;
+            try {
+                EconomyRules.requireLeverageAllowed(spec, ref.interval(), req.leverage(), stake);
+                leverage = new Leverage(req.leverage());
+            } catch (IllegalArgumentException e) {
+                throw ApiException.invalidLeverage(e.getMessage());
+            }
+            Fees fees = EconomyRules.fees(spec, req.leverage(), stake);
 
             LedgerBook ledger = hub.ledger();
             Instant now = Instant.ofEpochMilli(nowMs);
@@ -742,21 +749,36 @@ public class GameService implements MarketListener {
             PlayAmount currentBalance = ledger.balance(playerId);
             Optional<Bet> existing = engine.betBook().betsFor(bettingWindow.roundId()).stream()
                     .filter(b -> b.playerId().equals(playerId)).findFirst();
-            PlayAmount effectiveBalance = existing.map(b -> currentBalance.plus(b.stake())).orElse(currentBalance);
-            if (stake.compareTo(effectiveBalance) > 0) {
-                throw ApiException.insufficientBalance("stake " + stake + " exceeds balance " + effectiveBalance);
+            // a bet being replaced is refunded first, its fees too (a legacy bet has none)
+            PlayAmount effectiveBalance = existing
+                    .map(b -> currentBalance.plus(b.stake()).plus(b.isLegacy() ? PlayAmount.ZERO : b.fees().total()))
+                    .orElse(currentBalance);
+            PlayAmount totalDebit = stake.plus(fees.total());
+            if (totalDebit.compareTo(effectiveBalance) > 0) {
+                throw ApiException.insufficientBalance("stake " + stake + " plus fees " + fees.total()
+                        + " exceeds balance " + effectiveBalance);
             }
 
             GameEvent.BetPlaced event = new GameEvent.BetPlaced(playerId, ref.interval(), bettingWindow.startMs(),
                     bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs,
-                    market.id());
+                    market.id(), fees.herd().mojos(), fees.network().mojos());
             persist(event, nowMs);
             eventApplier.apply(event);
-            return new Rounds.BetDto(playerId, bettingWindow.roundId(), req.direction(), req.leverage(),
-                    stake.toMoney().toPlainString());
+            return betDto(playerId, bettingWindow.roundId(), req.direction(), req.leverage(), stake, fees, spec,
+                    ref.interval());
         } finally {
             engineLock.writeLock().unlock();
         }
+    }
+
+    /** A bet as the client sees it: with the fees charged and the highest leverage allowed for its stake when it was
+     *  placed under the economy rules ({@code fees} {@code null} for a legacy bet: those fields are then {@code null}). */
+    private static Rounds.BetDto betDto(String playerId, String roundId, Enums.Direction direction, int leverage,
+                                        PlayAmount stake, Fees fees, MarketSpec spec, Interval interval) {
+        return new Rounds.BetDto(playerId, roundId, direction, leverage, stake.toMoney().toPlainString(),
+                fees == null ? null : fees.herd().toMoney().toPlainString(),
+                fees == null ? null : fees.network().toMoney().toPlainString(),
+                fees == null ? null : EconomyRules.maxLeverage(spec, interval, stake));
     }
 
     /** Р-13: cancels the player's bet on a round open for betting and refunds it; no bet — nothing persisted (§4 п.18). */
@@ -899,7 +921,8 @@ public class GameService implements MarketListener {
                     : summary(outcome.playerId());
             Position position = Position.openFromMargin(outcome.playerId(), window.roundId(),
                     toEngine(toDto(outcome.direction())), new Leverage(outcome.leverage()),
-                    outcome.stake().toMoney(), entryPrice, spec);
+                    outcome.stake().toMoney(), entryPrice,
+                    outcome.fees() == null ? spec : spec.forInterval(window.interval()));
             BigDecimal pnl = outcome.payout().subtract(outcome.stake().toMoney());
             Boolean directionCorrect = directionCorrect(outcome.direction(), report.openPrice(), report.closePrice());
 
@@ -1088,10 +1111,10 @@ public class GameService implements MarketListener {
         Rounds.BetDto myBet = viewerPlayerIdOrNull == null ? null : bets.stream()
                 .filter(b -> b.playerId().equals(viewerPlayerIdOrNull))
                 .findFirst()
-                .map(b -> new Rounds.BetDto(b.playerId(), window.roundId(), toDto(b.direction()), b.leverage().value(),
-                        b.stake().toMoney().toPlainString()))
+                .map(b -> betDto(b.playerId(), window.roundId(), toDto(b.direction()), b.leverage().value(), b.stake(),
+                        b.fees(), market.spec(), window.interval()))
                 .orElse(null);
-        LiveSplit split = buildLiveSplit(bets, market.spec());
+        LiveSplit split = buildLiveSplit(bets, market.spec(), window.interval());
         List<Rounds.LiveBetDto> recentBets = betFeedStore.latest(window.roundId(), RECENT_BETS_LIMIT).stream()
                 .map(e -> new Rounds.LiveBetDto(summaryOrFallback(e.playerId()), e.direction(), e.leverage(),
                         e.stake(), e.atMs()))
@@ -1120,7 +1143,9 @@ public class GameService implements MarketListener {
      *  actual settlement), just computed one phase earlier, straight from the bets still pending in
      *  {@code BetBook} (no entry price exists yet, so no margin/liquidation preview here — only the
      *  split and the majority side's direction/leverage). */
-    private LiveSplit buildLiveSplit(List<Bet> bets, MarketSpec spec) {
+    private LiveSplit buildLiveSplit(List<Bet> bets, MarketSpec marketSpec, Interval interval) {
+        // under the economy-stage-A rules the crowd leverage is clamped to the cap of this round length
+        MarketSpec spec = bets.stream().anyMatch(b -> !b.isLegacy()) ? marketSpec.forInterval(interval) : marketSpec;
         BigDecimal upStake = PlayAmount.ZERO.toMoney();
         BigDecimal downStake = PlayAmount.ZERO.toMoney();
         int upCount = 0;
@@ -1187,7 +1212,7 @@ public class GameService implements MarketListener {
         List<Bet> downBets = new ArrayList<>();
         for (Bet bet : bets) {
             Position position = Position.openFromMargin(bet.playerId(), window.roundId(), bet.direction(),
-                    bet.leverage(), bet.stake().toMoney(), openPrice, spec);
+                    bet.leverage(), bet.stake().toMoney(), openPrice, bet.specFor(spec, window.interval()));
             PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, pathSoFar);
             boolean liquidatedSoFar = outcome instanceof PositionSimulator.Outcome.Liquidated;
             BigDecimal pnl = liquidatedSoFar ? null
@@ -1216,12 +1241,14 @@ public class GameService implements MarketListener {
             crowdvsmarket.engine.round.Direction majorityDirection = cmp > 0
                     ? crowdvsmarket.engine.round.Direction.UP : crowdvsmarket.engine.round.Direction.DOWN;
             List<Bet> majorityBets = cmp > 0 ? upBets : downBets;
-            int leverage = weightedLeverage(majorityBets, spec);
+            // the crowd account runs under the economy rules of the round length when any bet of the round does
+            MarketSpec crowdSpec = bets.stream().anyMatch(b -> !b.isLegacy()) ? spec.forInterval(window.interval()) : spec;
+            int leverage = weightedLeverage(majorityBets, crowdSpec);
             BigDecimal margin = hub.crowdAccount(market.id()).capital()
                     .multiply(CrowdAccount.MARGIN_SHARE_OF_CAPITAL, MathContext.DECIMAL128)
                     .setScale(2, RoundingMode.HALF_UP);
             Position crowdPosition = Position.openFromMargin("crowd", window.roundId(), majorityDirection,
-                    new Leverage(leverage), margin, openPrice, spec);
+                    new Leverage(leverage), margin, openPrice, crowdSpec);
             crowdPreview = new Rounds.CrowdRoundPositionDto(window.roundId(), toDto(majorityDirection), leverage,
                     margin.toPlainString(), openRaw, market.rawString(crowdPosition.liquidationPrice()));
         }
@@ -1353,17 +1380,24 @@ public class GameService implements MarketListener {
 
     public Betting.LiquidationPreviewDto previewLiquidation(Betting.LiquidationPreviewRequest req) {
         Market market = requireMarket(req.marketId());
-        Leverage leverage;
-        try {
-            leverage = market.spec().leverage(req.leverage());
-        } catch (IllegalArgumentException e) {
-            throw ApiException.invalidLeverage(e.getMessage());
-        }
+        MarketSpec spec = market.spec();
+        Interval interval = req.interval() == null ? null : Interval.valueOf(req.interval().name());
         BigDecimal stakeMoney;
         try {
             stakeMoney = PlayAmount.fromMoney(new BigDecimal(req.stake())).toMoney();
         } catch (Exception e) {
             throw ApiException.badRequest("invalid stake: " + req.stake());
+        }
+        Leverage leverage;
+        try {
+            if (interval == null) {
+                leverage = spec.leverage(req.leverage()); // no round length named: the original single-cap preview
+            } else {
+                EconomyRules.requireLeverageAllowed(spec, interval, req.leverage(), PlayAmount.fromMoney(stakeMoney));
+                leverage = new Leverage(req.leverage());
+            }
+        } catch (IllegalArgumentException e) {
+            throw ApiException.invalidLeverage(e.getMessage());
         }
         BigDecimal rawEntry;
         if (req.referencePrice() != null) {
@@ -1380,11 +1414,18 @@ public class GameService implements MarketListener {
             throw ApiException.badRequest("referencePrice must be positive: " + req.referencePrice());
         }
         Position position = Position.openFromMargin("preview", "preview", toEngine(req.direction()), leverage,
-                stakeMoney, entryPrice, market.spec());
+                stakeMoney, entryPrice, interval == null ? spec : spec.forInterval(interval));
         BigDecimal liqPrice = position.liquidationPrice();
         double pct = liqPrice.subtract(entryPrice).abs()
                 .divide(entryPrice, MathContext.DECIMAL128).doubleValue();
-        return new Betting.LiquidationPreviewDto(market.rawString(entryPrice), market.rawString(liqPrice), pct);
+        if (interval == null) {
+            return new Betting.LiquidationPreviewDto(market.rawString(entryPrice), market.rawString(liqPrice), pct);
+        }
+        PlayAmount stake = PlayAmount.fromMoney(stakeMoney);
+        Fees fees = EconomyRules.fees(spec, req.leverage(), stake);
+        return new Betting.LiquidationPreviewDto(market.rawString(entryPrice), market.rawString(liqPrice), pct,
+                fees.herd().toMoney().toPlainString(), fees.network().toMoney().toPlainString(),
+                stake.plus(fees.total()).toMoney().toPlainString(), EconomyRules.maxLeverage(spec, interval, stake));
     }
 
     // ---------------------------------------------------------------------------------------

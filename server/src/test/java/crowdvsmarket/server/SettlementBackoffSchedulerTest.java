@@ -137,7 +137,7 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         verify(eventStoreSpy, Mockito.times(5)).loadAll(); // one rebuild per failed attempt: the failures touched memory
         assertThat(rebuild.isReady()).as("every failure was recovered from").isTrue();
         assertThat(roundResults.exists(f.betting().roundId())).isFalse();
-        assertThat(gameService.account(f.player()).balance()).isEqualTo("9700.000");
+        assertThat(gameService.account(f.player()).balance()).isEqualTo("9699.840");
         assertThat(gameService.hasPendingBets(f.betting())).isTrue();
     }
 
@@ -155,7 +155,7 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         scheduler.tick(t0 + 2_000L);
         assertThat(roundResults.exists(f.betting().roundId())).as("due: settled").isTrue();
         assertThat(roundResults.findRoundDto(f.betting().roundId()).orElseThrow()).isInstanceOf(Rounds.RoundSettled.class);
-        assertThat(gameService.account(f.player()).balance()).isEqualTo("10060.000"); // +20 % of 300 on a 2x long... paid once
+        assertThat(gameService.account(f.player()).balance()).isEqualTo("10059.840"); // +20 % of 300 on a 2x long... paid once
         assertThat(count("SELECT COUNT(*) AS n FROM game_events WHERE event_type = 'RoundResolved' "
                 + "AND payload->>'market' = ? AND (payload->>'windowStart')::bigint = ?", f.market().id(),
                 f.betting().startMs())).isEqualTo(1);
@@ -215,14 +215,14 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         verify(eventStoreSpy, never()).loadAll();
         assertThat(rebuild.isReady()).as("nothing was applied, so there is nothing to be unsure of").isTrue();
         assertThat(hub.ledger()).as("and the engine was not rebuilt").isSameAs(ledgerBefore);
-        assertThat(gameService.account(f.player()).balance()).as("the game goes on serving").isEqualTo("9700.000");
+        assertThat(gameService.account(f.player()).balance()).as("the game goes on serving").isEqualTo("9699.840");
         assertThat(gameService.hasPendingBets(f.betting())).isTrue();
 
         Mockito.reset(eventStoreSpy);   // the database answers again
         scheduler.tick(t0 + 14_000L);
 
         assertThat(roundResults.exists(f.betting().roundId())).isTrue();
-        assertThat(gameService.account(f.player()).balance()).isEqualTo("10060.000");
+        assertThat(gameService.account(f.player()).balance()).isEqualTo("10059.840");
     }
 
     @Test

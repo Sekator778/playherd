@@ -133,6 +133,21 @@ public abstract class LiveServerTestBase {
         return new BigDecimal(node.path(field).asText());
     }
 
+    /**
+     * What the player's ledger has booked as fees so far (economy stage A): the sum of the signed {@code FEE_*} entries, so a
+     * negative number (fees paid, less the fees refunded with a cancelled bet). The books of a player balance as
+     * {@code balance + inPlay == starter pack + Σ(payout − stake) + feesNet}.
+     */
+    protected static BigDecimal feesNet(Session session) throws Exception {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (JsonNode entry : ok(session, "myLedger", (Object) null).path("items")) {
+            if (entry.path("type").asText().startsWith("FEE_")) {
+                sum = sum.add(money(entry, "delta"));
+            }
+        }
+        return sum;
+    }
+
     /** The settled round, as soon as the scheduler has settled it. */
     protected JsonNode awaitSettled(Session viewer, String roundId) {
         JsonNode[] settled = new JsonNode[1];

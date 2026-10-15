@@ -77,7 +77,7 @@ public class EngineStateBuilder {
         BetFeed betFeed = new BetFeed();
         EventApplier applier = EventApplier.over(hub, betFeed, players);
         for (Market market : markets) {
-            hub.ensureMarket(market);
+            hub.install(market); // a fresh hub: BTC's engines are rebuilt from the registry row, like every other market's
         }
         List<GameEvent> events = eventStore.loadAll();
         for (GameEvent event : events) {

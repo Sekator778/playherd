@@ -56,7 +56,7 @@ class CancelBetWithoutABetTest extends LiveGameTestBase {
         RoundWindow betting = roundProgress.bettingWindow(market.id(), Interval.HOURLY);
         String player = signUp("cbbet");
         gameService.placeBet(player, bet(betting, Enums.Direction.DOWN, 4, "250.000"), betting.startMs() - 1);
-        assertThat(gameService.account(player).balance()).isEqualTo("9750.000");
+        assertThat(gameService.account(player).balance()).isEqualTo("9749.800"); // 250 staked + herd fee 250 * 4 bp = 0.1 + network fee 0.1
         long events = cancelEvents();
 
         gameService.cancelBet(player, betting.roundId(), betting.startMs() - 1);

@@ -208,7 +208,7 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
         RoundWindow running = roundProgress.next(settling.id(), HOURLY);   // the window containing the real "now"
         RoundWindow betting = roundProgress.bettingWindow(settling.id(), HOURLY);
         String bettor = signUp("lcsettle");
-        gameService.placeBet(bettor, bet(betting, Enums.Direction.DOWN, 20, "300.000"), betting.startMs() - 1);
+        gameService.placeBet(bettor, bet(betting, Enums.Direction.DOWN, 10, "300.000"), betting.startMs() - 1);
         scheduler.tick(running.endMs());
         prices.script(settling, betting, "2500.000", "2400.000", "2400.000", "2510.000");
         // a market that will close meanwhile, with a bet; and a price for every market the bots may bet on

@@ -91,7 +91,9 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         gameService.placeBet(p1, bet(ethBet, Enums.Direction.DOWN, 20, "300.000"), nowMs);
         gameService.placeBet(p1, bet(oddsBet, Enums.Direction.UP, 10, "200.000"), nowMs);
         gameService.placeBet(p2, bet(btcBet, Enums.Direction.DOWN, 5, "100.000"), nowMs);
-        assertThat(gameService.account(p1).balance()).isEqualTo("9000.000");
+        // 10 000 - 1000 staked - fees: BTC 500 * 5 * 0.92 bp = 0.23 + 0.1, ETH 300 * 20 * 1 bp = 0.6 + 0.1,
+        // odds 200 * 10 * 1 bp = 0.2 + 0.1 (economy stage A)
+        assertThat(gameService.account(p1).balance()).isEqualTo("8998.670");
         assertThat(gameService.account(p1).inPlay()).isEqualTo("1000.000");
 
         // the betting DTO of a market names it and shows only that market's split
@@ -133,7 +135,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         assertThat(btcRound.closePrice()).isEqualTo("51000.00");
         Rounds.PublicPositionDto btcPosition = positionOf(btcRound, p1);
         assertThat(btcPosition.entryPrice()).isEqualTo("50000.00");
-        assertThat(btcPosition.liquidationPrice()).isEqualTo("40506.33");
+        assertThat(btcPosition.liquidationPrice()).isEqualTo("40003.33");   // l = 0.1 / 1200 on the short round
         assertThat(btcPosition.size()).isEqualTo("0.05000000");
         assertThat(btcPosition.payout()).isEqualTo("550.000");
         assertThat(btcPosition.pnl()).isEqualTo("50.000");
@@ -147,7 +149,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         assertThat(ethRound.closePrice()).isEqualTo("2400.000");
         Rounds.PublicPositionDto ethPosition = positionOf(ethRound, p1);
         assertThat(ethPosition.entryPrice()).isEqualTo("2500.000");
-        assertThat(ethPosition.liquidationPrice()).isEqualTo("2573.529");   // 25735.29 lot price
+        assertThat(ethPosition.liquidationPrice()).isEqualTo("2624.738");   // 26247.38 lot price, l = 0.1 / 1000
         assertThat(ethPosition.size()).isEqualTo("0.24000000");
         assertThat(ethPosition.payout()).isEqualTo("540.000");
         assertThat(ethPosition.pnl()).isEqualTo("240.000");
@@ -166,10 +168,10 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         assertThat(oddsPosition.payout()).isEqualTo("400.000");
         assertThat(oddsRound.crowd().entryPrice()).isEqualTo("0.400000");
 
-        // --- ONE balance: 10000 - 1000 staked + 550 + 540 + 400 paid out; p2 lost 10 on BTC ---
-        assertThat(gameService.account(p1).balance()).isEqualTo("10490.000");
+        // --- ONE balance: 10000 - 1000 staked - 1.33 fees + 550 + 540 + 400 paid out; p2 lost 10 on BTC and paid 0.146 ---
+        assertThat(gameService.account(p1).balance()).isEqualTo("10488.670");
         assertThat(gameService.account(p1).inPlay()).isEqualTo("0.000");
-        assertThat(gameService.account(p2).balance()).isEqualTo("9990.000");
+        assertThat(gameService.account(p2).balance()).isEqualTo("9989.854");
 
         // --- one crowd account per market: own capital, own chart, own comparison lines ---
         Crowd.CrowdAccountDto btcCrowd = gameService.crowdAccount(null);          // omitted -> BTC
@@ -190,7 +192,8 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         Crowd.CrowdHistoryPointDto ethPoint = ethCrowd.history().get(ethCrowd.history().size() - 1);
         assertThat(ethPoint.crowdCapital()).isEqualTo("108000.00");
         assertThat(ethPoint.holdCapital()).isEqualTo("96000.00");        // 4 lots bought at 25000, now 24000
-        assertThat(ethPoint.antiCrowdCapital()).isEqualTo("90000.00");   // the opposite 20x long is liquidated
+        // the opposite 20x long is no longer liquidated: l = 0.1 / 1000, so its liquidation price is 5% down, the low only 4%
+        assertThat(ethPoint.antiCrowdCapital()).isEqualTo("92000.00");
         Crowd.CrowdHistoryPointDto btcPoint = btcCrowd.history().get(btcCrowd.history().size() - 1);
         assertThat(btcPoint.holdCapital()).isEqualTo("102000.00");
         assertThat(btcPoint.antiCrowdCapital()).isEqualTo("99000.00");
@@ -255,15 +258,15 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         String btcCapital = gameService.crowdAccount("BTC").capital();
         int ethPoints = gameService.crowdAccount(eth.id()).history().size();
         rebuild.rebuild(btcBet.endMs());   // restarted at the instant the test's clock stands at, not at the real one
-        assertThat(gameService.account(p1).balance()).isEqualTo("10490.000");
-        assertThat(gameService.account(p2).balance()).isEqualTo("9990.000");
+        assertThat(gameService.account(p1).balance()).isEqualTo("10488.670");
+        assertThat(gameService.account(p2).balance()).isEqualTo("9989.854");
         assertThat(gameService.crowdAccount("BTC").capital()).isEqualTo(btcCapital);
         assertThat(gameService.crowdAccount(eth.id()).capital()).isEqualTo("108000.00");
         assertThat(gameService.crowdAccount(odds.id()).capital()).isEqualTo("110000.00");
         assertThat(gameService.crowdAccount(eth.id()).history()).hasSize(ethPoints);
         Crowd.CrowdHistoryPointDto ethPointAfter = gameService.crowdAccount(eth.id()).history().get(ethPoints - 1);
         assertThat(ethPointAfter.holdCapital()).isEqualTo("96000.00");
-        assertThat(ethPointAfter.antiCrowdCapital()).isEqualTo("90000.00");
+        assertThat(ethPointAfter.antiCrowdCapital()).isEqualTo("92000.00");
         // every series resumes right after its last settled round
         assertThat(roundProgress.next(eth.id(), HOURLY)).isEqualTo(RoundClock.next(ethBet));
         assertThat(roundProgress.next("BTC", HOURLY)).isEqualTo(RoundClock.next(btcBet));
@@ -742,7 +745,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         RoundWindow running = roundProgress.next(market.id(), HOURLY);
         RoundWindow betting = roundProgress.bettingWindow(market.id(), HOURLY);
         String p = signUp("running");
-        gameService.placeBet(p, bet(betting, Enums.Direction.UP, 20, "300.000"), betting.startMs() - 1);
+        gameService.placeBet(p, bet(betting, Enums.Direction.UP, 10, "300.000"), betting.startMs() - 1);
         // `betting` becomes the running round — without the window before it having been settled: nothing closed where
         // it starts, so nothing is known about its open (once a round has closed there, its close is the open, whatever
         // the price source knows: BoundaryContinuityTest)
@@ -766,16 +769,16 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         assertThat(live.openPrice()).isEqualTo("2500.000");
         assertThat(live.positions()).singleElement().satisfies(pos -> {
             assertThat(pos.entryPrice()).isEqualTo("2500.000");
-            assertThat(pos.liquidationPrice()).isEqualTo("2423.469");  // long 20x, l = 1/50: 24234.69 lot price
+            assertThat(pos.liquidationPrice()).isEqualTo("2259.036");  // long 10x, l = 0.1 / 25: 22590.36 lot price
             assertThat(pos.liquidated()).isFalse();
-            assertThat(pos.pnl()).isEqualTo("48.00");                   // 0.24 lots * (25200 - 25000)
+            assertThat(pos.pnl()).isEqualTo("24.00");                   // 0.12 lots * (25200 - 25000)
             assertThat(pos.payout()).isNull();
         });
         assertThat(live.crowd().entryPrice()).isEqualTo("2500.000");
-        assertThat(live.crowd().liquidationPrice()).isEqualTo("2423.469");
-        assertThat(live.crowd().leverage()).isEqualTo(20);
+        assertThat(live.crowd().liquidationPrice()).isEqualTo("2259.036");
+        assertThat(live.crowd().leverage()).isEqualTo(10);
         // a path that already touched the liquidation price shows it
-        prices.setSoFar(market, "2500.000", "2300.000");
+        prices.setSoFar(market, "2500.000", "2200.000");
         assertThat(((Rounds.RoundRunning) gameService.round(betting.roundId(), p)).positions().get(0).liquidated())
                 .isTrue();
     }

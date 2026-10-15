@@ -32,7 +32,8 @@ import {
   VibrationOnIcon,
 } from "../components/icons";
 
-const LEDGER_LABEL: Record<LedgerEntryType, TKey> = {
+// The fee types of economy stage A have no label yet (stage C adds them in six languages): `ledgerLabel` makes their name readable.
+const LEDGER_LABEL: Partial<Record<LedgerEntryType, TKey>> = {
   STARTER_PACK: "wallet.ledgerStarterPack",
   STAKE_DEBIT: "wallet.ledgerStakeDebit",
   STAKE_REFUND: "wallet.ledgerStakeRefund",
@@ -47,7 +48,7 @@ const LEDGER_LABEL: Record<LedgerEntryType, TKey> = {
 /** The row's label: the table's, else — a type this build has not heard of yet — the server's word made readable
  *  ("SOME_NEW_TYPE" → "Some new type"), never a row with an amount and no name. */
 function ledgerLabel(type: string, t: TFn): string {
-  const known: Record<string, TKey> = LEDGER_LABEL;
+  const known: Record<string, TKey | undefined> = LEDGER_LABEL;
   if (known[type]) return t(known[type]);
   const words = type.toLowerCase().replace(/_/g, " ").trim();
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : t("wallet.ledgerFallback");

@@ -79,7 +79,7 @@ class CursorAdvanceCompareAndSetTest extends LiveGameTestBase {
         assertThat(roundResults.exists(w2.roundId())).as("w2 holds a bet: it was not skipped").isTrue();
         Rounds.RoundDto dto = roundResults.findRoundDto(w2.roundId()).orElseThrow();
         assertThat(dto).isInstanceOf(Rounds.RoundSettled.class);
-        assertThat(gameService.account(late).balance()).as("paid: +10% on a 5x long of 300").isEqualTo("10150.000");
+        assertThat(gameService.account(late).balance()).as("paid: +10% on a 5x long of 300, less the fees 0.15 + 0.1").isEqualTo("10149.750");
         assertThat(gameService.account(late).inPlay()).isEqualTo("0.000");
         assertThat(gameService.hasPendingBets(w2)).isFalse();
         assertThat(roundProgress.next(market.id(), HOURLY)).as("and the series is at the window running now")

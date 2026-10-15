@@ -1,8 +1,8 @@
 package crowdvsmarket.server.events;
 
+import crowdvsmarket.engine.economy.Fees;
 import crowdvsmarket.engine.game.GameEngine;
 import crowdvsmarket.engine.game.RoundReport;
-import crowdvsmarket.engine.ledger.LedgerBook;
 import crowdvsmarket.engine.ledger.PlayAmount;
 import crowdvsmarket.engine.margin.Leverage;
 import crowdvsmarket.engine.market.Candle;
@@ -76,8 +76,15 @@ public final class EventApplier {
             case GameEvent.BetPlaced e -> {
                 EngineHub.MarketEngines market = marketOf(e, e.market());
                 RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
-                market.engine(e.interval()).placeBet(e.playerId(), window, e.direction(),
-                        new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()), Instant.ofEpochMilli(e.atMs()));
+                if (e.hasFees()) {
+                    market.engine(e.interval()).replayBet(e.playerId(), window, e.direction(),
+                            new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()),
+                            new Fees(new PlayAmount(e.feeHerdMojos()), new PlayAmount(e.feeNetMojos())),
+                            Instant.ofEpochMilli(e.atMs()));
+                } else { // written before the economy change: a legacy bet, no fees, the original rules
+                    market.engine(e.interval()).placeBet(e.playerId(), window, e.direction(),
+                            new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()), Instant.ofEpochMilli(e.atMs()));
+                }
                 recordBetFeedEntry(window.roundId(), e);
                 hub.betWindows().placed(window);
                 yield null;
@@ -164,13 +171,12 @@ public final class EventApplier {
     /** Refunds every bet still pending on {@code window} and clears it — the operator/automatic
      *  cancellation operation (Р-23, Р-32); {@code GameEngine} has no such method itself, this is
      *  built from its public {@code ledger()}/{@code betBook()} accessors, same primitives
-     *  {@code LedgerBook.refundStake} already used for a plain bet edit/cancel (Р-13). */
+     *  {@code GameEngine.refundBet} (stake and fees) already used for a plain bet edit/cancel (Р-13). */
     public static int refundAndClear(GameEngine engine, RoundWindow window, Instant now) {
         String roundId = window.roundId();
-        LedgerBook ledger = engine.ledger();
         List<Bet> bets = new ArrayList<>(engine.betBook().betsFor(roundId));
         for (Bet bet : bets) {
-            ledger.refundStake(bet.playerId(), roundId, bet.stake(), now);
+            engine.refundBet(bet, now); // the stake, and the fees of a bet placed under the economy rules
         }
         engine.betBook().clear(roundId);
         return bets.size();

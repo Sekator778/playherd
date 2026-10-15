@@ -1,6 +1,7 @@
 package crowdvsmarket.server.bots;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -10,7 +11,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import crowdvsmarket.engine.economy.EconomyRules;
+import crowdvsmarket.engine.ledger.PlayAmount;
 import crowdvsmarket.engine.market.Interval;
+import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.config.GameMode;
@@ -218,9 +222,33 @@ class BotServiceTest {
         ArgumentCaptor<Betting.PlaceBetRequest> request = ArgumentCaptor.forClass(Betting.PlaceBetRequest.class);
         verify(gameService, atLeastOnce()).placeBet(anyString(), request.capture(), anyLong());
         assertThat(request.getAllValues()).hasSize(botRows.size() * 2 * 4 * 3);
+        boolean sawAStakeAboveTheFirstTier = false;
         for (Betting.PlaceBetRequest r : request.getAllValues()) {
-            int cap = markets.get(RoundWindow.parseRoundId(r.roundId()).market()).maxLeverage();
-            assertThat(r.leverage()).as(r.roundId()).isBetween(2, cap);
+            RoundWindow.RoundRef ref = RoundWindow.parseRoundId(r.roundId());
+            PlayAmount stake = PlayAmount.fromMoney(new BigDecimal(r.stake()));
+            // economy stage A (Р-92): the market's cap for the round length, lowered by the tier of the stake
+            int allowed = EconomyRules.maxLeverage(markets.get(ref.market()).spec(), ref.interval(), stake);
+            assertThat(r.leverage()).as("%s stake %s", r.roundId(), r.stake()).isBetween(2, allowed);
+            sawAStakeAboveTheFirstTier |= stake.compareTo(PlayAmount.ofWholePlay(250)) > 0;
+        }
+        assertThat(sawAStakeAboveTheFirstTier).as("the tiers were exercised").isTrue();
+    }
+
+    @Test
+    void aBotsBetPassesTheSameLeverageValidationAsAPlayers() {
+        // cap for the round length, lowered by the stake tier: what GameService.placeBet enforces
+        run(market("BTC", 40), market("SP500", 40), market("ETH", 25), market("HYPE", 5));
+        when(config.botsMarketsPerRound()).thenReturn(4);
+
+        playOneRound();
+
+        ArgumentCaptor<Betting.PlaceBetRequest> request = ArgumentCaptor.forClass(Betting.PlaceBetRequest.class);
+        verify(gameService, atLeastOnce()).placeBet(anyString(), request.capture(), anyLong());
+        for (Betting.PlaceBetRequest r : request.getAllValues()) {
+            RoundWindow.RoundRef ref = RoundWindow.parseRoundId(r.roundId());
+            MarketSpec spec = markets.get(ref.market()).spec();
+            assertThatCode(() -> EconomyRules.requireLeverageAllowed(spec, ref.interval(), r.leverage(),
+                    PlayAmount.fromMoney(new BigDecimal(r.stake())))).as(r.roundId()).doesNotThrowAnyException();
         }
     }
 

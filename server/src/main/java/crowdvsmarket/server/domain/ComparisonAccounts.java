@@ -5,6 +5,7 @@ import crowdvsmarket.engine.execution.ExecutionAdapter;
 import crowdvsmarket.engine.execution.PaperTradingAdapter;
 import crowdvsmarket.engine.game.RoundReport;
 import crowdvsmarket.engine.margin.Leverage;
+import crowdvsmarket.engine.margin.LiquidationCalculator;
 import crowdvsmarket.engine.market.Candle;
 import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.Direction;
@@ -82,11 +83,18 @@ public final class ComparisonAccounts {
             BigDecimal margin = antiCrowdCapital
                     .multiply(CrowdAccount.MARGIN_SHARE_OF_CAPITAL, MathContext.DECIMAL128)
                     .setScale(2, RoundingMode.HALF_UP);
-            Position position = executionAdapter.openPosition(spec, ANTI_CROWD_USER_ID, report.window().roundId(),
+            // the line follows the crowd account's rules: under the economy-stage-A ones the round length's cap and
+            // l = kappa / cap, and a liquidated position keeps the remainder at the candle extreme
+            MarketSpec positionSpec = report.economyRules() ? spec.forInterval(report.window().interval()) : spec;
+            Position position = executionAdapter.openPosition(positionSpec, ANTI_CROWD_USER_ID, report.window().roundId(),
                     antiDirection, new Leverage(crowd.leverage()), margin, openPrice);
             PositionSimulator.Outcome outcome = executionAdapter.closePosition(position, path);
-            if (outcome instanceof PositionSimulator.Outcome.Liquidated) {
-                antiCrowdCapital = antiCrowdCapital.subtract(margin);
+            if (outcome instanceof PositionSimulator.Outcome.Liquidated liquidated) {
+                BigDecimal remainder = report.economyRules()
+                        ? LiquidationCalculator.payoutAtCandleExtreme(position.size(), position.entryPrice(),
+                                position.leverage(), position.direction().toSide(), liquidated.extremePrice())
+                        : BigDecimal.ZERO;
+                antiCrowdCapital = antiCrowdCapital.subtract(margin).add(remainder);
             } else {
                 antiCrowdCapital = antiCrowdCapital.add(((PositionSimulator.Outcome.Settled) outcome).pnl());
             }

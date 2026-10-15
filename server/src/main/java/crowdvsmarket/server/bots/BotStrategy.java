@@ -45,13 +45,14 @@ public enum BotStrategy {
         };
     }
 
-    /** BTC's range, 2..40 — the pre-markets shape. */
+    /** BTC's original range, 2..40 — the pre-markets shape. */
     public int chooseLeverage(Random random) {
-        return chooseLeverage(random, Leverage.MAX);
+        return chooseLeverage(random, 40);
     }
 
-    /** Leverage within {@code [Leverage.MIN, maxLeverage]}, the market's cap (Т-4, Т-8): "always
-     *  maximum" bets the cap itself, the cautious bot stays within 2..5 (or the cap if lower). */
+    /** Leverage within {@code [Leverage.MIN, maxLeverage]} — the highest leverage allowed for the bot's stake on its market
+     *  in its round length (the cap lowered by the stake tier, {@code EconomyRules#maxLeverage}; Т-4, Т-8, Р-92): "always
+     *  maximum" bets that maximum itself, the cautious bot stays within 2..5 (or the maximum if lower). */
     public int chooseLeverage(Random random, int maxLeverage) {
         int cap = Math.max(Leverage.MIN, Math.min(Leverage.MAX, maxLeverage));
         return switch (this) {

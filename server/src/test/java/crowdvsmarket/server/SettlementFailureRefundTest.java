@@ -133,7 +133,7 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
 
         assertThat(rebuild.isReady()).as("every failure was recovered from").isTrue();
         assertThat(roundResults.exists(f.betting().roundId())).isFalse();
-        assertThat(gameService.account(f.player()).balance()).isEqualTo("9700.000");
+        assertThat(gameService.account(f.player()).balance()).isEqualTo("9699.840");
         assertThat(gameService.hasPendingBets(f.betting())).isTrue();
         assertRefundedOnceAnHourAfterTheEnd(f, SETTLEMENT_FAILED);
         assertThat(count("SELECT COUNT(*) AS n FROM oracle_records WHERE round_id = ?", f.betting().roundId()))
@@ -214,6 +214,6 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
 
         assertThat(roundResults.findRoundDto(f.betting().roundId()).orElseThrow())
                 .isInstanceOf(Rounds.RoundSettled.class);
-        assertThat(gameService.account(f.player()).balance()).isEqualTo("10000.000");
+        assertThat(gameService.account(f.player()).balance()).isEqualTo("9999.840");
     }
 }

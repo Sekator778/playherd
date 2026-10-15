@@ -23,6 +23,8 @@ import java.math.RoundingMode;
  * @param sourceRef   Hyperliquid coin name ("BTC", "xyz:NVDA") or spot pair name ("@107": {@code sourceMeta} says
  *                    {@code "spot":true}), Coinbase product id ("BTC-USD"), or Polymarket CLOB token id
  * @param sourceMeta  JSON with whatever the source's catalog needs later (may be null)
+ * @param economy     the economy-stage-A parameters (caps per round length, κ, r_m); a market built without them gets
+ *                    {@link MarketEconomy#defaultsFor}
  * @param oracleIndex append-only index published on chain as the record's asset; the migration's BTC row is 0 (when
  *                    BTC's price moved to another source that row was closed and the new market has its own index)
  */
@@ -44,7 +46,18 @@ public record Market(
         long listedAtMs,
         Long closedAtMs,
         String closeReason,
-        Long endsAtMs) {
+        Long endsAtMs,
+        MarketEconomy economy) {
+
+    /** A market with the default economy parameters of its kind and symbol ({@link MarketEconomy#defaultsFor}). */
+    public Market(String id, MarketKind kind, String category, String symbol, String title, String subtitle,
+                  String iconUrl, String source, String sourceRef, String sourceMeta, int maxLeverage, int lotExp,
+                  int oracleIndex, MarketStatus status, long listedAtMs, Long closedAtMs, String closeReason,
+                  Long endsAtMs) {
+        this(id, kind, category, symbol, title, subtitle, iconUrl, source, sourceRef, sourceMeta, maxLeverage, lotExp,
+                oracleIndex, status, listedAtMs, closedAtMs, closeReason, endsAtMs,
+                MarketEconomy.defaultsFor(kind, symbol, maxLeverage));
+    }
 
     public static final String BTC_ID = MarketSpec.BTC_ID;
     /** Lot exponent of every {@code ODDS} market: probability × 10^4, e.g. 0.5230 → 5230.00. */
@@ -55,9 +68,13 @@ public record Market(
         return status == MarketStatus.ACTIVE;
     }
 
-    /** The engine-side parameters; BTC returns the engine's own constant. */
+    /**
+     * The engine-side parameters: the market's single original cap and its rate (what every bet placed before the economy
+     * change is still settled with) plus the stage-A caps per round length, κ and r_m of {@link #economy}.
+     */
     public MarketSpec spec() {
-        return BTC_ID.equals(id) ? MarketSpec.BTC : MarketSpec.of(id, maxLeverage);
+        return MarketSpec.of(id, maxLeverage)
+                .withEconomy(economy.capHourly(), economy.capDaily(), economy.kappa(), economy.herdFeeRate());
     }
 
     /** Fractional digits of every raw price string of this market. */
@@ -91,6 +108,6 @@ public record Market(
 
     public Market closed(long atMs, String reason) {
         return new Market(id, kind, category, symbol, title, subtitle, iconUrl, source, sourceRef, sourceMeta,
-                maxLeverage, lotExp, oracleIndex, MarketStatus.CLOSED, listedAtMs, atMs, reason, endsAtMs);
+                maxLeverage, lotExp, oracleIndex, MarketStatus.CLOSED, listedAtMs, atMs, reason, endsAtMs, economy);
     }
 }

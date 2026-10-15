@@ -34,12 +34,22 @@ public final class Markets {
         }
     }
 
-    /** One round series of a market. {@code upStake}/{@code downStake}: PLAY staked on each side of the
+    /** One round series of a market. {@code maxLeverage}: the market's leverage cap for this round length (economy stage A, Р-92;
+     *  a bigger stake lowers it, see {@code BetDto.maxLeverageForStake}); {@code herdFeeBp}: {@code r_m}, the herd fee in basis
+     *  points of the stake per unit of leverage ({@code fee = stake * min(1%, r_m * leverage)}). {@code upStake}/{@code downStake}: PLAY staked on each side of the
      *  round open for betting; {@code majorityDirection}: {@code null} for a tie, 0 vs 0 included. */
     public record MarketSeriesDto(Enums.Interval interval, long durationSec, String bettingRoundId,
                                     long bettingClosesAtMs, String runningRoundId, long runningEndsAtMs,
                                     int participantCount, String upStake, String downStake,
-                                    Enums.Direction majorityDirection) {
+                                    Enums.Direction majorityDirection, Integer maxLeverage, String herdFeeBp) {
+
+        public MarketSeriesDto(Enums.Interval interval, long durationSec, String bettingRoundId,
+                                 long bettingClosesAtMs, String runningRoundId, long runningEndsAtMs,
+                                 int participantCount, String upStake, String downStake,
+                                 Enums.Direction majorityDirection) {
+            this(interval, durationSec, bettingRoundId, bettingClosesAtMs, runningRoundId, runningEndsAtMs,
+                    participantCount, upStake, downStake, majorityDirection, null, null);
+        }
     }
 
     /** A market's own crowd account in card form. {@code returnPct = capital / 100000 - 1};

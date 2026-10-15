@@ -5,11 +5,11 @@
     "hourly": {
       "interval": "HOURLY",
       "running": {
-        "roundId": "1h-1790919120000",
+        "roundId": "1h-1792058820000",
         "window": {
           "interval": "HOURLY",
-          "startMs": 1790919120000,
-          "endMs": 1790919180000
+          "startMs": 1792058820000,
+          "endMs": 1792058880000
         },
         "marketId": "BTC",
         "asset": "BTC",
@@ -20,17 +20,17 @@
         "openPrice": "84000.50",
         "positions": [
           {
-            "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
-            "roundId": "1h-1790919120000",
+            "playerId": "4494220a-da20-40a8-9a2f-b95edf3714ab",
+            "roundId": "1h-1792058820000",
             "direction": "UP",
             "leverage": 5,
             "size": "0.01488086",
             "entryPrice": "84000.50",
-            "liquidationPrice": "68051.03",
+            "liquidationPrice": "67206.00",
             "pnl": "1.78",
             "stake": "250.000",
             "player": {
-              "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
+              "playerId": "4494220a-da20-40a8-9a2f-b95edf3714ab",
               "nickname": "Alice_Wire",
               "walletAddress": "txch1alice0wire0player0000000000000000000000000000000000000q2k7ar",
               "displayName": "Alice_Wire (txch1a…k7ar)",
@@ -41,17 +41,17 @@
             "directionCorrect": null
           },
           {
-            "playerId": "b34ff01c-81fe-45b6-8bde-ab95ed06d9d5",
-            "roundId": "1h-1790919120000",
+            "playerId": "7da2f1b2-588c-4ce1-8612-36585ffef8bf",
+            "roundId": "1h-1792058820000",
             "direction": "DOWN",
             "leverage": 4,
             "size": "0.00476188",
             "entryPrice": "84000.50",
-            "liquidationPrice": "103704.31",
+            "liquidationPrice": "104991.86",
             "pnl": "-0.57",
             "stake": "100.000",
             "player": {
-              "playerId": "b34ff01c-81fe-45b6-8bde-ab95ed06d9d5",
+              "playerId": "7da2f1b2-588c-4ce1-8612-36585ffef8bf",
               "nickname": "Bob_Wire",
               "walletAddress": "txch1bob0wire0player000000000000000000000000000000000000000q5h3xm",
               "displayName": "Bob_Wire (txch1b…h3xm)",
@@ -63,20 +63,20 @@
           }
         ],
         "crowd": {
-          "roundId": "1h-1790919120000",
+          "roundId": "1h-1792058820000",
           "direction": "UP",
           "leverage": 5,
           "margin": "10000.00",
           "entryPrice": "84000.50",
-          "liquidationPrice": "68051.04"
+          "liquidationPrice": "67206.00"
         }
       },
       "betting": {
-        "roundId": "1h-1790919180000",
+        "roundId": "1h-1792058880000",
         "window": {
           "interval": "HOURLY",
-          "startMs": 1790919180000,
-          "endMs": 1790919240000
+          "startMs": 1792058880000,
+          "endMs": 1792058940000
         },
         "marketId": "BTC",
         "asset": "BTC",
@@ -86,11 +86,14 @@
         "phase": "BETTING",
         "participantCount": 1,
         "myBet": {
-          "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
-          "roundId": "1h-1790919180000",
+          "playerId": "4494220a-da20-40a8-9a2f-b95edf3714ab",
+          "roundId": "1h-1792058880000",
           "direction": "UP",
           "leverage": 5,
-          "stake": "250.000"
+          "stake": "250.000",
+          "feeHerd": "0.115",
+          "feeNetwork": "0.100",
+          "maxLeverageForStake": 1200
         },
         "upStake": "250.000",
         "downStake": "0.000",
@@ -101,7 +104,7 @@
         "recentBets": [
           {
             "player": {
-              "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
+              "playerId": "4494220a-da20-40a8-9a2f-b95edf3714ab",
               "nickname": "Alice_Wire",
               "walletAddress": "txch1alice0wire0player0000000000000000000000000000000000000q2k7ar",
               "displayName": "Alice_Wire (txch1a…k7ar)",
@@ -110,7 +113,7 @@
             "direction": "UP",
             "leverage": 5,
             "stake": "250.000",
-            "atMs": 1790919179999
+            "atMs": 1792058879999
           }
         ]
       }
@@ -118,11 +121,11 @@
     "daily": {
       "interval": "DAILY",
       "running": {
-        "roundId": "1d-1790919120000",
+        "roundId": "1d-1792058760000",
         "window": {
           "interval": "DAILY",
-          "startMs": 1790919120000,
-          "endMs": 1790919240000
+          "startMs": 1792058760000,
+          "endMs": 1792058880000
         },
         "marketId": "BTC",
         "asset": "BTC",
@@ -135,11 +138,11 @@
         "crowd": null
       },
       "betting": {
-        "roundId": "1d-1790919240000",
+        "roundId": "1d-1792058880000",
         "window": {
           "interval": "DAILY",
-          "startMs": 1790919240000,
-          "endMs": 1790919360000
+          "startMs": 1792058880000,
+          "endMs": 1792059000000
         },
         "marketId": "BTC",
         "asset": "BTC",
@@ -164,160 +167,152 @@
       "capital": "100000.00",
       "history": [
         {
-          "roundId": "1d-1790918280000",
-          "atMs": 1790918399999,
+          "roundId": "1h-1792058040000",
+          "atMs": 1792058099999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918340000",
-          "atMs": 1790918399999,
+          "roundId": "1d-1792058040000",
+          "atMs": 1792058159999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918400000",
-          "atMs": 1790918459999,
+          "roundId": "1h-1792058100000",
+          "atMs": 1792058159999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1d-1790918400000",
-          "atMs": 1790918519999,
+          "roundId": "1h-1792058160000",
+          "atMs": 1792058219999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918460000",
-          "atMs": 1790918519999,
+          "roundId": "1d-1792058160000",
+          "atMs": 1792058279999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918520000",
-          "atMs": 1790918579999,
+          "roundId": "1h-1792058220000",
+          "atMs": 1792058279999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1d-1790918520000",
-          "atMs": 1790918639999,
+          "roundId": "1h-1792058280000",
+          "atMs": 1792058339999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918580000",
-          "atMs": 1790918639999,
+          "roundId": "1d-1792058280000",
+          "atMs": 1792058399999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918640000",
-          "atMs": 1790918699999,
+          "roundId": "1h-1792058340000",
+          "atMs": 1792058399999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1d-1790918640000",
-          "atMs": 1790918759999,
+          "roundId": "1h-1792058400000",
+          "atMs": 1792058459999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918700000",
-          "atMs": 1790918759999,
+          "roundId": "1d-1792058400000",
+          "atMs": 1792058519999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918760000",
-          "atMs": 1790918819999,
+          "roundId": "1h-1792058460000",
+          "atMs": 1792058519999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1d-1790918760000",
-          "atMs": 1790918879999,
+          "roundId": "1h-1792058520000",
+          "atMs": 1792058579999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918820000",
-          "atMs": 1790918879999,
+          "roundId": "1d-1792058520000",
+          "atMs": 1792058639999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918880000",
-          "atMs": 1790918939999,
+          "roundId": "1h-1792058580000",
+          "atMs": 1792058639999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1d-1790918880000",
-          "atMs": 1790918999999,
+          "roundId": "1h-1792058640000",
+          "atMs": 1792058699999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790918940000",
-          "atMs": 1790918999999,
+          "roundId": "1d-1792058640000",
+          "atMs": 1792058759999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1h-1790919000000",
-          "atMs": 1790919059999,
+          "roundId": "1h-1792058700000",
+          "atMs": 1792058759999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
           "antiCrowdCapital": "100000.00"
         },
         {
-          "roundId": "1d-1790919000000",
-          "atMs": 1790919119999,
-          "seasonBoundary": null,
-          "crowdCapital": "100000.00",
-          "holdCapital": "100000.00",
-          "antiCrowdCapital": "100000.00"
-        },
-        {
-          "roundId": "1h-1790919060000",
-          "atMs": 1790919119999,
+          "roundId": "1h-1792058760000",
+          "atMs": 1792058819999,
           "seasonBoundary": null,
           "crowdCapital": "100000.00",
           "holdCapital": "100000.00",
@@ -335,13 +330,13 @@
       {
         "rank": 1,
         "player": {
-          "playerId": "46bae30d-4ac7-47ae-93ec-5d1b14975000",
+          "playerId": "107827e4-285e-46f3-9fca-cbcb38ca6eba",
           "nickname": "Vera_Wire",
           "walletAddress": "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn",
           "displayName": "Vera_Wire (txch1v…d4wn)",
           "isBot": false
         },
-        "growth": "-516.030",
+        "growth": "-517.598",
         "roundsPlayed": 10
       }
     ],
@@ -349,7 +344,7 @@
       {
         "rank": 1,
         "player": {
-          "playerId": "46bae30d-4ac7-47ae-93ec-5d1b14975000",
+          "playerId": "107827e4-285e-46f3-9fca-cbcb38ca6eba",
           "nickname": "Vera_Wire",
           "walletAddress": "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn",
           "displayName": "Vera_Wire (txch1v…d4wn)",

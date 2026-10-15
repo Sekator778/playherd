@@ -9,160 +9,152 @@
     "capital": "90809.23",
     "history": [
       {
-        "roundId": "T_WIRE_PERP-1d-1790918280000",
-        "atMs": 1790918399999,
+        "roundId": "T_WIRE_PERP-1h-1792058040000",
+        "atMs": 1792058099999,
         "seasonBoundary": null,
         "crowdCapital": "100000.00",
         "holdCapital": "100000.00",
         "antiCrowdCapital": "100000.00"
       },
       {
-        "roundId": "T_WIRE_PERP-1h-1790918340000",
-        "atMs": 1790918399999,
+        "roundId": "T_WIRE_PERP-1d-1792058040000",
+        "atMs": 1792058159999,
         "seasonBoundary": null,
         "crowdCapital": "100000.00",
-        "holdCapital": "100000.00",
+        "holdCapital": "100200.00",
         "antiCrowdCapital": "100000.00"
       },
       {
-        "roundId": "T_WIRE_PERP-1h-1790918400000",
-        "atMs": 1790918459999,
+        "roundId": "T_WIRE_PERP-1h-1792058100000",
+        "atMs": 1792058159999,
         "seasonBoundary": null,
         "crowdCapital": "100040.00",
         "holdCapital": "100200.00",
         "antiCrowdCapital": "99960.00"
       },
       {
-        "roundId": "T_WIRE_PERP-1d-1790918400000",
-        "atMs": 1790918519999,
-        "seasonBoundary": null,
-        "crowdCapital": "100040.00",
-        "holdCapital": "100400.00",
-        "antiCrowdCapital": "99960.00"
-      },
-      {
-        "roundId": "T_WIRE_PERP-1h-1790918460000",
-        "atMs": 1790918519999,
+        "roundId": "T_WIRE_PERP-1h-1792058160000",
+        "atMs": 1792058219999,
         "seasonBoundary": null,
         "crowdCapital": "100079.94",
         "holdCapital": "100400.00",
         "antiCrowdCapital": "99920.10"
       },
       {
-        "roundId": "T_WIRE_PERP-1h-1790918520000",
-        "atMs": 1790918579999,
+        "roundId": "T_WIRE_PERP-1d-1792058160000",
+        "atMs": 1792058279999,
+        "seasonBoundary": null,
+        "crowdCapital": "100079.94",
+        "holdCapital": "100600.00",
+        "antiCrowdCapital": "99920.10"
+      },
+      {
+        "roundId": "T_WIRE_PERP-1h-1792058220000",
+        "atMs": 1792058279999,
         "seasonBoundary": null,
         "crowdCapital": "100119.81",
         "holdCapital": "100600.00",
         "antiCrowdCapital": "99880.29"
       },
       {
-        "roundId": "T_WIRE_PERP-1d-1790918520000",
-        "atMs": 1790918639999,
-        "seasonBoundary": null,
-        "crowdCapital": "100119.81",
-        "holdCapital": "100800.00",
-        "antiCrowdCapital": "99880.29"
-      },
-      {
-        "roundId": "T_WIRE_PERP-1h-1790918580000",
-        "atMs": 1790918639999,
+        "roundId": "T_WIRE_PERP-1h-1792058280000",
+        "atMs": 1792058339999,
         "seasonBoundary": null,
         "crowdCapital": "100159.62",
         "holdCapital": "100800.00",
         "antiCrowdCapital": "99840.58"
       },
       {
-        "roundId": "T_WIRE_PERP-1h-1790918640000",
-        "atMs": 1790918699999,
+        "roundId": "T_WIRE_PERP-1d-1792058280000",
+        "atMs": 1792058399999,
+        "seasonBoundary": null,
+        "crowdCapital": "100159.62",
+        "holdCapital": "101000.00",
+        "antiCrowdCapital": "99840.58"
+      },
+      {
+        "roundId": "T_WIRE_PERP-1h-1792058340000",
+        "atMs": 1792058399999,
         "seasonBoundary": null,
         "crowdCapital": "100199.37",
         "holdCapital": "101000.00",
         "antiCrowdCapital": "99800.96"
       },
       {
-        "roundId": "T_WIRE_PERP-1d-1790918640000",
-        "atMs": 1790918759999,
-        "seasonBoundary": null,
-        "crowdCapital": "100199.37",
-        "holdCapital": "101200.00",
-        "antiCrowdCapital": "99800.96"
-      },
-      {
-        "roundId": "T_WIRE_PERP-1h-1790918700000",
-        "atMs": 1790918759999,
+        "roundId": "T_WIRE_PERP-1h-1792058400000",
+        "atMs": 1792058459999,
         "seasonBoundary": null,
         "crowdCapital": "100239.05",
         "holdCapital": "101200.00",
         "antiCrowdCapital": "99761.43"
       },
       {
-        "roundId": "T_WIRE_PERP-1h-1790918760000",
-        "atMs": 1790918819999,
+        "roundId": "T_WIRE_PERP-1d-1792058400000",
+        "atMs": 1792058519999,
+        "seasonBoundary": null,
+        "crowdCapital": "100239.05",
+        "holdCapital": "101400.00",
+        "antiCrowdCapital": "99761.43"
+      },
+      {
+        "roundId": "T_WIRE_PERP-1h-1792058460000",
+        "atMs": 1792058519999,
         "seasonBoundary": null,
         "crowdCapital": "100278.67",
         "holdCapital": "101400.00",
         "antiCrowdCapital": "99722.00"
       },
       {
-        "roundId": "T_WIRE_PERP-1d-1790918760000",
-        "atMs": 1790918879999,
-        "seasonBoundary": null,
-        "crowdCapital": "100278.67",
-        "holdCapital": "101600.00",
-        "antiCrowdCapital": "99722.00"
-      },
-      {
-        "roundId": "T_WIRE_PERP-1h-1790918820000",
-        "atMs": 1790918879999,
+        "roundId": "T_WIRE_PERP-1h-1792058520000",
+        "atMs": 1792058579999,
         "seasonBoundary": null,
         "crowdCapital": "100318.23",
         "holdCapital": "101600.00",
         "antiCrowdCapital": "99682.66"
       },
       {
-        "roundId": "T_WIRE_PERP-1h-1790918880000",
-        "atMs": 1790918939999,
+        "roundId": "T_WIRE_PERP-1d-1792058520000",
+        "atMs": 1792058639999,
+        "seasonBoundary": null,
+        "crowdCapital": "100318.23",
+        "holdCapital": "101800.00",
+        "antiCrowdCapital": "99682.66"
+      },
+      {
+        "roundId": "T_WIRE_PERP-1h-1792058580000",
+        "atMs": 1792058639999,
         "seasonBoundary": null,
         "crowdCapital": "100357.73",
         "holdCapital": "101800.00",
         "antiCrowdCapital": "99643.41"
       },
       {
-        "roundId": "T_WIRE_PERP-1d-1790918880000",
-        "atMs": 1790918999999,
-        "seasonBoundary": null,
-        "crowdCapital": "100357.73",
-        "holdCapital": "102000.00",
-        "antiCrowdCapital": "99643.41"
-      },
-      {
-        "roundId": "T_WIRE_PERP-1h-1790918940000",
-        "atMs": 1790918999999,
+        "roundId": "T_WIRE_PERP-1h-1792058640000",
+        "atMs": 1792058699999,
         "seasonBoundary": null,
         "crowdCapital": "100397.16",
         "holdCapital": "102000.00",
         "antiCrowdCapital": "99604.26"
       },
       {
-        "roundId": "T_WIRE_PERP-1h-1790919000000",
-        "atMs": 1790919059999,
+        "roundId": "T_WIRE_PERP-1d-1792058640000",
+        "atMs": 1792058759999,
+        "seasonBoundary": null,
+        "crowdCapital": "100397.16",
+        "holdCapital": "96000.00",
+        "antiCrowdCapital": "99604.26"
+      },
+      {
+        "roundId": "T_WIRE_PERP-1h-1792058700000",
+        "atMs": 1792058759999,
         "seasonBoundary": null,
         "crowdCapital": "90357.44",
         "holdCapital": "96000.00",
         "antiCrowdCapital": "114251.95"
       },
       {
-        "roundId": "T_WIRE_PERP-1d-1790919000000",
-        "atMs": 1790919119999,
-        "seasonBoundary": null,
-        "crowdCapital": "90357.44",
-        "holdCapital": "96480.00",
-        "antiCrowdCapital": "114251.95"
-      },
-      {
-        "roundId": "T_WIRE_PERP-1h-1790919060000",
-        "atMs": 1790919119999,
+        "roundId": "T_WIRE_PERP-1h-1792058760000",
+        "atMs": 1792058819999,
         "seasonBoundary": null,
         "crowdCapital": "90809.23",
         "holdCapital": "96480.00",

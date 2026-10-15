@@ -45,8 +45,8 @@ public final class Enums {
     /** contract.ts `LedgerEntryType` — mirrors {@code crowdvsmarket.engine.ledger.LedgerEntryType}.
      *  {@code OPERATOR_CORRECTION} (wave-2 security fix): a signed correction booked by the operator. */
     public enum LedgerEntryType {
-        STARTER_PACK, STAKE_DEBIT, STAKE_REFUND, SETTLEMENT, DEPOSIT, WITHDRAWAL, WITHDRAWAL_REFUND,
-        OPERATOR_CORRECTION
+        STARTER_PACK, STAKE_DEBIT, STAKE_REFUND, SETTLEMENT, FEE_HERD, FEE_NETWORK, FEE_HERD_REFUND,
+        FEE_NETWORK_REFUND, DEPOSIT, WITHDRAWAL, WITHDRAWAL_REFUND, OPERATOR_CORRECTION
     }
 
     /** contract.ts `WithdrawalState`. */

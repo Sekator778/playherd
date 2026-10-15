@@ -91,7 +91,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
                             int feedEntries, int knownPlayers) {
     }
 
-    /** A 25x market, its running window already settled (empty), a 300 PLAY bet DOWN 20x on the window
+    /** A 25x market, its running window already settled (empty), a 300 PLAY bet DOWN 10x on the window
      *  that ends next, and that window's price scripted as -4% — everything a settlement needs. */
     private Fixture settlementDue(String id, String label) {
         Market market = list(id, MarketKind.PERP, Category.CRYPTO, label.toUpperCase().substring(0, 3), 25, 1);
@@ -100,7 +100,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
         RoundWindow running = roundProgress.next(market.id(), HOURLY);
         RoundWindow betting = roundProgress.bettingWindow(market.id(), HOURLY);
         String player = signUp(label);
-        gameService.placeBet(player, bet(betting, Enums.Direction.DOWN, 20, "300.000"), betting.startMs() - 1);
+        gameService.placeBet(player, bet(betting, Enums.Direction.DOWN, 10, "300.000"), betting.startMs() - 1);
         scheduler.tick(running.endMs());
         prices.script(market, betting, "2500.000", "2400.000", "2400.000", "2510.000");
         return new Fixture(market, running, betting, player);
@@ -217,7 +217,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
         Snapshot before = snapshot(f);
         long seqBefore = oracleSeq();
         assertThat(before.pendingBets()).isEqualTo(1);
-        assertThat(before.balance()).isEqualTo("9700.000");
+        assertThat(before.balance()).isEqualTo("9699.600"); // 300 staked + herd fee 300 * 10 bp = 0.3 + network fee 0.1
         failTheSettlementAfterItsEventWasApplied();
         injectRebuildFailure.run();
 
@@ -235,7 +235,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
         assertThat(hub.ledger().playerIds()).contains(f.player());
         assertThat(hub.ledger().balance(f.player()).toMoney().toPlainString())
                 .as("memory is where it was left: ahead of the database, which is why nothing is served from it")
-                .isEqualTo("10240.000");
+                .isEqualTo("10119.600");
 
         // --- the scheduler keeps trying while the failure lasts, and does nothing else ---
         scheduler.tick(f.betting().endMs());
@@ -261,7 +261,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
         assertThat(oracleSeq()).as("the failed settlement burned no seq").isEqualTo(maxSeq);
         assertThat(count("SELECT COUNT(*) AS n FROM oracle_records WHERE seq > ?", seqBefore))
                 .as("and left no hole in the sequence").isEqualTo(maxSeq - seqBefore);
-        assertThat(gameService.account(f.player()).balance()).as("paid out once: 9700 + 540").isEqualTo("10240.000");
+        assertThat(gameService.account(f.player()).balance()).as("paid out once: 9699.6 + 420").isEqualTo("10119.600");
         assertThat(gameService.account(f.player()).inPlay()).isEqualTo("0.000");
         assertThat(roundProgress.next(f.market().id(), HOURLY).startMs()).isGreaterThanOrEqualTo(f.betting().endMs());
         // ... and what is in memory now is what a restart would give
@@ -383,6 +383,6 @@ class FailStopRecoveryTest extends LiveGameTestBase {
         assertThat(roundProgress.isSeeded(doomed.id(), HOURLY)).isFalse();
         // and the settlement that had failed went through
         assertThat(roundResults.exists(f.betting().roundId())).isTrue();
-        assertThat(gameService.account(f.player()).balance()).isEqualTo("10240.000");
+        assertThat(gameService.account(f.player()).balance()).isEqualTo("10119.600");
     }
 }

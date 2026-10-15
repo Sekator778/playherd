@@ -2,7 +2,7 @@
   "method": "markets",
   "args": [],
   "response": {
-    "serverTimeMs": 1791031747667,
+    "serverTimeMs": 1792059250001,
     "categories": [
       {
         "id": "crypto",
@@ -36,7 +36,7 @@
         "backupSource": null,
         "price": {
           "price": "84000.50",
-          "asOfMs": 1791031746819,
+          "asOfMs": 1792059249016,
           "change24h": null,
           "stale": false,
           "venue": null
@@ -45,26 +45,30 @@
           {
             "interval": "HOURLY",
             "durationSec": 60,
-            "bettingRoundId": "1h-1791031380000",
-            "bettingClosesAtMs": 1791031380000,
-            "runningRoundId": "1h-1791031320000",
-            "runningEndsAtMs": 1791031380000,
+            "bettingRoundId": "1h-1792058880000",
+            "bettingClosesAtMs": 1792058880000,
+            "runningRoundId": "1h-1792058820000",
+            "runningEndsAtMs": 1792058880000,
             "participantCount": 1,
             "upStake": "250.000",
             "downStake": "0.000",
-            "majorityDirection": "UP"
+            "majorityDirection": "UP",
+            "maxLeverage": 1200,
+            "herdFeeBp": "0.92"
           },
           {
             "interval": "DAILY",
             "durationSec": 120,
-            "bettingRoundId": "1d-1791031440000",
-            "bettingClosesAtMs": 1791031440000,
-            "runningRoundId": "1d-1791031320000",
-            "runningEndsAtMs": 1791031440000,
+            "bettingRoundId": "1d-1792058880000",
+            "bettingClosesAtMs": 1792058880000,
+            "runningRoundId": "1d-1792058760000",
+            "runningEndsAtMs": 1792058880000,
             "participantCount": 0,
             "upStake": "0.000",
             "downStake": "0.000",
-            "majorityDirection": null
+            "majorityDirection": null,
+            "maxLeverage": 500,
+            "herdFeeBp": "0.92"
           }
         ],
         "crowd": {
@@ -95,7 +99,7 @@
         "backupSource": "kraken",
         "price": {
           "price": "2412.000",
-          "asOfMs": 1791031747246,
+          "asOfMs": 1792059249575,
           "change24h": 0.0123,
           "stale": false,
           "venue": "kraken"
@@ -104,26 +108,30 @@
           {
             "interval": "HOURLY",
             "durationSec": 60,
-            "bettingRoundId": "T_WIRE_PERP-1h-1791031380000",
-            "bettingClosesAtMs": 1791031380000,
-            "runningRoundId": "T_WIRE_PERP-1h-1791031320000",
-            "runningEndsAtMs": 1791031380000,
+            "bettingRoundId": "T_WIRE_PERP-1h-1792058880000",
+            "bettingClosesAtMs": 1792058880000,
+            "runningRoundId": "T_WIRE_PERP-1h-1792058820000",
+            "runningEndsAtMs": 1792058880000,
             "participantCount": 2,
             "upStake": "150.000",
             "downStake": "400.000",
-            "majorityDirection": "DOWN"
+            "majorityDirection": "DOWN",
+            "maxLeverage": 25,
+            "herdFeeBp": "1"
           },
           {
             "interval": "DAILY",
             "durationSec": 120,
-            "bettingRoundId": "T_WIRE_PERP-1d-1791031440000",
-            "bettingClosesAtMs": 1791031440000,
-            "runningRoundId": "T_WIRE_PERP-1d-1791031320000",
-            "runningEndsAtMs": 1791031440000,
+            "bettingRoundId": "T_WIRE_PERP-1d-1792058880000",
+            "bettingClosesAtMs": 1792058880000,
+            "runningRoundId": "T_WIRE_PERP-1d-1792058760000",
+            "runningEndsAtMs": 1792058880000,
             "participantCount": 0,
             "upStake": "0.000",
             "downStake": "0.000",
-            "majorityDirection": null
+            "majorityDirection": null,
+            "maxLeverage": 25,
+            "herdFeeBp": "1"
           }
         ],
         "crowd": {
@@ -145,7 +153,7 @@
         "maxLeverage": 10,
         "priceDecimals": 6,
         "status": "ACTIVE",
-        "endsAtMs": 1793623746798,
+        "endsAtMs": 1794651248995,
         "eventStartsAtMs": null,
         "closedAtMs": null,
         "closeReason": null,
@@ -154,7 +162,7 @@
         "backupSource": null,
         "price": {
           "price": "0.523000",
-          "asOfMs": 1791031746298,
+          "asOfMs": 1792059248495,
           "change24h": 0.0098,
           "stale": false,
           "venue": null
@@ -163,26 +171,30 @@
           {
             "interval": "HOURLY",
             "durationSec": 60,
-            "bettingRoundId": "T_WIRE_ODDS-1h-1791031380000",
-            "bettingClosesAtMs": 1791031380000,
-            "runningRoundId": "T_WIRE_ODDS-1h-1791031320000",
-            "runningEndsAtMs": 1791031380000,
+            "bettingRoundId": "T_WIRE_ODDS-1h-1792058880000",
+            "bettingClosesAtMs": 1792058880000,
+            "runningRoundId": "T_WIRE_ODDS-1h-1792058820000",
+            "runningEndsAtMs": 1792058880000,
             "participantCount": 1,
             "upStake": "250.000",
             "downStake": "0.000",
-            "majorityDirection": "UP"
+            "majorityDirection": "UP",
+            "maxLeverage": 10,
+            "herdFeeBp": "1"
           },
           {
             "interval": "DAILY",
             "durationSec": 120,
-            "bettingRoundId": "T_WIRE_ODDS-1d-1791031440000",
-            "bettingClosesAtMs": 1791031440000,
-            "runningRoundId": "T_WIRE_ODDS-1d-1791031320000",
-            "runningEndsAtMs": 1791031440000,
+            "bettingRoundId": "T_WIRE_ODDS-1d-1792058880000",
+            "bettingClosesAtMs": 1792058880000,
+            "runningRoundId": "T_WIRE_ODDS-1d-1792058760000",
+            "runningEndsAtMs": 1792058880000,
             "participantCount": 0,
             "upStake": "0.000",
             "downStake": "0.000",
-            "majorityDirection": null
+            "majorityDirection": null,
+            "maxLeverage": 10,
+            "herdFeeBp": "1"
           }
         ],
         "crowd": {
@@ -206,14 +218,14 @@
         "status": "CLOSED",
         "endsAtMs": null,
         "eventStartsAtMs": 1791053100000,
-        "closedAtMs": 1791031747639,
+        "closedAtMs": 1792059249964,
         "closeReason": "The source market ended",
         "oracleIndex": 3,
         "source": "polymarket",
         "backupSource": null,
         "price": {
           "price": "0.410000",
-          "asOfMs": 1791031746298,
+          "asOfMs": 1792059248495,
           "change24h": -0.012,
           "stale": false,
           "venue": null

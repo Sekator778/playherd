@@ -2,6 +2,11 @@ package crowdvsmarket.server.bots;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import crowdvsmarket.engine.economy.EconomyRules;
+import crowdvsmarket.engine.ledger.PlayAmount;
+import crowdvsmarket.engine.market.Interval;
+import crowdvsmarket.engine.market.MarketSpec;
+import java.math.BigDecimal;
 import java.util.Random;
 import org.junit.jupiter.api.Test;
 
@@ -36,6 +41,25 @@ class BotStrategyTest {
         for (int i = 0; i < 500; i++) {
             assertThat(BotStrategy.CAUTIOUS_LOW_LEVERAGE.chooseLeverage(random, 40)).isBetween(2, 5);
             assertThat(BotStrategy.CAUTIOUS_LOW_LEVERAGE.chooseLeverage(random, 3)).isBetween(2, 3);
+        }
+    }
+
+    @Test
+    void everyStrategyStaysWithinTheLeverageTheStakeAllowsOnEveryMarketAndRoundLength() {
+        Random random = new Random(11);
+        MarketSpec[] specs = {MarketSpec.BTC, MarketSpec.of("ODDS", 5)};
+        for (BotStrategy strategy : BotStrategy.values()) {
+            for (MarketSpec spec : specs) {
+                for (Interval interval : Interval.values()) {
+                    for (int i = 0; i < 300; i++) {
+                        BigDecimal stake = strategy.chooseStake(random);
+                        int allowed = EconomyRules.maxLeverage(spec, interval, PlayAmount.fromMoney(stake));
+                        int leverage = strategy.chooseLeverage(random, allowed);
+                        assertThat(leverage).as("%s %s %s stake %s", strategy, spec.id(), interval, stake)
+                                .isBetween(2, allowed);
+                    }
+                }
+            }
         }
     }
 

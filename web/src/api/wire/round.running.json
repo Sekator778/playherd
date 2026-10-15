@@ -1,14 +1,14 @@
 {
   "method": "round",
   "args": [
-    "T_WIRE_PERP-1h-1791031320000"
+    "T_WIRE_PERP-1h-1792058820000"
   ],
   "response": {
-    "roundId": "T_WIRE_PERP-1h-1791031320000",
+    "roundId": "T_WIRE_PERP-1h-1792058820000",
     "window": {
       "interval": "HOURLY",
-      "startMs": 1791031320000,
-      "endMs": 1791031380000
+      "startMs": 1792058820000,
+      "endMs": 1792058880000
     },
     "marketId": "T_WIRE_PERP",
     "asset": "WPR",
@@ -19,17 +19,17 @@
     "openPrice": "2412.000",
     "positions": [
       {
-        "playerId": "c1df0341-77f6-45d1-92e1-ad80710ea466",
-        "roundId": "T_WIRE_PERP-1h-1791031320000",
+        "playerId": "7da2f1b2-588c-4ce1-8612-36585ffef8bf",
+        "roundId": "T_WIRE_PERP-1h-1792058820000",
         "direction": "DOWN",
         "leverage": 10,
         "size": "0.08291874",
         "entryPrice": "2412.000",
-        "liquidationPrice": "2601.176",
+        "liquidationPrice": "2642.629",
         "pnl": "-5.39",
         "stake": "200.000",
         "player": {
-          "playerId": "c1df0341-77f6-45d1-92e1-ad80710ea466",
+          "playerId": "7da2f1b2-588c-4ce1-8612-36585ffef8bf",
           "nickname": "Bob_Wire",
           "walletAddress": "txch1bob0wire0player000000000000000000000000000000000000000q5h3xm",
           "displayName": "Bob_Wire (txch1b…h3xm)",
@@ -40,17 +40,17 @@
         "directionCorrect": null
       },
       {
-        "playerId": "0331b792-91c2-4e79-98ad-d8c68b6bb266",
-        "roundId": "T_WIRE_PERP-1h-1791031320000",
+        "playerId": "107827e4-285e-46f3-9fca-cbcb38ca6eba",
+        "roundId": "T_WIRE_PERP-1h-1792058820000",
         "direction": "UP",
         "leverage": 4,
         "size": "0.01990050",
         "entryPrice": "2412.000",
-        "liquidationPrice": "1845.918",
+        "liquidationPrice": "1816.265",
         "pnl": "1.29",
         "stake": "120.000",
         "player": {
-          "playerId": "0331b792-91c2-4e79-98ad-d8c68b6bb266",
+          "playerId": "107827e4-285e-46f3-9fca-cbcb38ca6eba",
           "nickname": "Vera_Wire",
           "walletAddress": "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn",
           "displayName": "Vera_Wire (txch1v…d4wn)",
@@ -62,12 +62,12 @@
       }
     ],
     "crowd": {
-      "roundId": "T_WIRE_PERP-1h-1791031320000",
+      "roundId": "T_WIRE_PERP-1h-1792058820000",
       "direction": "DOWN",
       "leverage": 10,
       "margin": "9080.92",
       "entryPrice": "2412.000",
-      "liquidationPrice": "2601.176"
+      "liquidationPrice": "2642.629"
     }
   }
 }

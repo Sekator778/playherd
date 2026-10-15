@@ -1,5 +1,7 @@
 package crowdvsmarket.server.bots;
 
+import crowdvsmarket.engine.economy.EconomyRules;
+import crowdvsmarket.engine.ledger.PlayAmount;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.engine.round.RoundClock;
@@ -18,6 +20,7 @@ import crowdvsmarket.server.prices.MarketPrices;
 import crowdvsmarket.server.service.GameService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -175,8 +178,12 @@ public class BotService {
                     k -> roundResults.lastMajorityDirection(market.id(), shot.interval())
                             .map(d -> Direction.valueOf(d.name())));
             Direction direction = strategy.chooseDirection(random, previous);
-            int leverage = strategy.chooseLeverage(random, market.maxLeverage());
-            String stake = strategy.chooseStake(random).toPlainString();
+            // bots follow the same rules as any player (Р-92): the stake is chosen first, because the leverage allowed
+            // depends on it (the market's cap for this round length, lowered by the stake tier)
+            BigDecimal stakeAmount = strategy.chooseStake(random);
+            int allowed = EconomyRules.maxLeverage(market.spec(), shot.interval(), PlayAmount.fromMoney(stakeAmount));
+            int leverage = strategy.chooseLeverage(random, allowed);
+            String stake = stakeAmount.toPlainString();
             Betting.PlaceBetRequest req = new Betting.PlaceBetRequest(shot.roundId(),
                     Enums.Direction.valueOf(direction.name()), leverage, stake);
             gameService.placeBet(bot.playerId(), req, nowMs);

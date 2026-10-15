@@ -187,7 +187,8 @@ public class MarketViewService {
                     (running.endMs() - running.startMs()) / 1000L, betting.roundId(), betting.startMs(),
                     running.roundId(), running.endMs(), split.participantCount(),
                     split.upStake().toMoney().toPlainString(), split.downStake().toMoney().toPlainString(),
-                    split.majorityDirection()));
+                    split.majorityDirection(), market.economy().capFor(interval),
+                    market.economy().herdFeeBp().stripTrailingZeros().toPlainString()));
         }
         return out;
     }
@@ -250,7 +251,7 @@ public class MarketViewService {
                         ? List.of(GameService.singleCandle(window, open, open)) : prices.get().path();
                 Position position = Position.openFromMargin(entry.bet().playerId(), window.roundId(),
                         entry.bet().direction(), entry.bet().leverage(), entry.bet().stake().toMoney(), open,
-                        market.spec());
+                        entry.bet().specFor(market.spec(), window.interval()));
                 entryPrice = market.rawString(open);
                 liquidationPrice = market.rawString(position.liquidationPrice());
                 size = position.size().toPlainString();

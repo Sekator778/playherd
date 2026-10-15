@@ -51,17 +51,44 @@ public sealed interface GameEvent {
     record PlayerRegistered(String playerId, long atMs) implements GameEvent {
     }
 
+    /**
+     * {@code feeHerdMojos} / {@code feeNetMojos} (economy stage A, Р-92, plan A4) are the fees charged with the stake, written
+     * only for a bet placed under the new rules ({@code @JsonInclude(NON_NULL)}: an event of the old shape is the same bytes
+     * it always was). A row written before the change has neither key, Jackson hands the components {@code null}, and
+     * {@code EventApplier} then places a <b>legacy</b> bet: no fees, the original settlement rules — so an old log replays to
+     * the balances it always did. Still no schema bump ({@code EventStore.CURRENT_SCHEMA_VERSION} stays 1); the fees are
+     * stored, never recomputed, so a later change of a rate cannot move a replayed balance.
+     */
     record BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
-                       int leverage, long stakeMojos, long atMs, String market) implements GameEvent {
+                       int leverage, long stakeMojos, long atMs, String market,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) Long feeHerdMojos,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) Long feeNetMojos) implements GameEvent {
 
         public BetPlaced {
             market = marketOrBtc(market);
+            if ((feeHerdMojos == null) != (feeNetMojos == null)) {
+                throw new IllegalArgumentException("feeHerdMojos and feeNetMojos are both set or both absent");
+            }
+            if ((feeHerdMojos != null && feeHerdMojos < 0) || (feeNetMojos != null && feeNetMojos < 0)) {
+                throw new IllegalArgumentException("fees must not be negative");
+            }
+        }
+
+        /** Pre-economy shape with a market: a legacy bet (no fees). */
+        public BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
+                           int leverage, long stakeMojos, long atMs, String market) {
+            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, market, null, null);
         }
 
         /** Pre-markets shape: a bet on BTC. */
         public BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
                            int leverage, long stakeMojos, long atMs) {
-            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, null);
+            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, null, null, null);
+        }
+
+        /** Whether the bet was placed under the economy-stage-A rules (it carries its fees). */
+        public boolean hasFees() {
+            return feeHerdMojos != null;
         }
     }
 

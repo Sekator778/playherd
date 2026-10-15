@@ -266,7 +266,7 @@ class WireFixturesTest extends LiveRpcTestBase {
         capture("betFeed", null, "betFeed", betting.roundId(), null);
         capture("myPositions", alice, "myPositions");
         capture("myAccount", alice, "myAccount");
-        capture("myLedger", alice, "myLedger", (Object) null);
+        capture("myLedger", alice, "myLedger", Map.of("limit", 50)); // three entries per bet since the fees: the default page of 20 no longer reaches the starter pack
         capture("mySeasonRecord", alice, "mySeasonRecord", (Object) null);
         capture("crowdAccount", null, "crowdAccount", story.perp().id());
         capture("crowdOverview", null, "crowdOverview");
@@ -421,7 +421,7 @@ class WireFixturesTest extends LiveRpcTestBase {
                 .allSatisfy(p -> assertThat(p.path("entryPrice").isTextual()).isTrue());
         List<JsonNode> ledger = elements(answers.get("myLedger").path("items"));
         assertThat(ledger).extracting(e -> e.path("type").asText())
-                .contains("STARTER_PACK", "STAKE_DEBIT", "SETTLEMENT", "STAKE_REFUND");
+                .contains("STARTER_PACK", "STAKE_DEBIT", "SETTLEMENT", "STAKE_REFUND", "FEE_HERD", "FEE_NETWORK");
         assertThat(answers.get("myAccount").path("inPlay").asText()).isNotEqualTo("0.000");
         assertThat(answers.get("mySeasonRecord").path("roundsPlayed").asInt()).isEqualTo(2);
 

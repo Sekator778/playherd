@@ -252,6 +252,11 @@ export interface BetDto {
   direction: Direction;
   leverage: Leverage;
   stake: PlayAmountStr;
+  /** Economy stage A (Р-92): the fees charged on top of `stake` when the bet was placed, and the highest leverage the market
+   *  allows for this stake in this round length. Absent/null for a bet placed before the economy change. */
+  feeHerd?: PlayAmountStr | null;
+  feeNetwork?: PlayAmountStr | null;
+  maxLeverageForStake?: number | null;
 }
 
 /** Position.java — a bet turned into an actual position once the round starts, at its fixed
@@ -528,6 +533,10 @@ export interface LiquidationPreviewRequest {
   stake: PlayAmountStr;
   /** Omit to let the server use its own current reference price. */
   referencePrice?: PriceStr;
+  /** Economy stage A (Р-92): the round length the bet is for. With it the answer uses that length's maintenance rate and
+   *  carries `feeHerd`/`feeNetwork`/`totalDebit`/`maxLeverageForStake`, and a leverage above what the stake allows is
+   *  `INVALID_LEVERAGE` (the message names the maximum). Omitted → the answer of old. */
+  interval?: Interval;
 }
 
 /** Mirrors `LiquidationCalculator.liquidationPrice` computed against a reference price, not a
@@ -538,6 +547,13 @@ export interface LiquidationPreviewDto {
   /** e.g. `0.025` = 2.5% adverse move from `entryPriceUsed` to `liquidationPrice` — the "%
    *  move to liquidation" figure Р-33 requires shown before the bet. */
   percentToLiquidation: number;
+  /** Economy stage A, present when the request named an `interval`: the herd fee, the flat network fee, stake plus both
+   *  fees (what leaves the balance), and the highest leverage allowed for this stake (the market's cap for the round
+   *  length, divided by 1 / 2 / 5 / 10 for a stake of up to 250 / 500 / 1 200 / more PLAY, at least 2). */
+  feeHerd?: PlayAmountStr | null;
+  feeNetwork?: PlayAmountStr | null;
+  totalDebit?: PlayAmountStr | null;
+  maxLeverageForStake?: number | null;
 }
 
 export interface PlaceBetRequest {
@@ -579,6 +595,12 @@ export type LedgerEntryType =
   | "STAKE_DEBIT"
   | "STAKE_REFUND"
   | "SETTLEMENT"
+  /** Economy stage A: the herd fee and the flat network fee charged with a bet (debits), and their refunds
+   *  when the bet is cancelled/replaced before the round or its round is cancelled (credits). */
+  | "FEE_HERD"
+  | "FEE_NETWORK"
+  | "FEE_HERD_REFUND"
+  | "FEE_NETWORK_REFUND"
   | "DEPOSIT"
   | "WITHDRAWAL"
   | "WITHDRAWAL_REFUND"
@@ -753,6 +775,10 @@ export interface MarketSeriesDto {
   downStake: PlayAmountStr;
   /** Null for a tie, including 0 vs 0. */
   majorityDirection: Direction | null;
+  /** Economy stage A: the market's leverage cap for this round length (a bigger stake lowers it, see
+   *  `BetDto.maxLeverageForStake`), and its herd-fee rate `r_m` in basis points (`fee = stake * min(1%, r_m * leverage)`). */
+  maxLeverage?: number | null;
+  herdFeeBp?: string | null;
 }
 
 /** A market's own crowd account (Р-5, Р-17, Т-6) in card form — how the herd is doing here. */

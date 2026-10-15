@@ -147,7 +147,9 @@ class LiveServerEndToEndTest extends LiveServerTestBase {
         }
         JsonNode account = ok(me, "myAccount");
         assertThat(money(account, "inPlay")).isEqualByComparingTo("350.500");
-        assertThat(money(account, "balance").add(money(account, "inPlay"))).isEqualByComparingTo(starter);
+        // the stakes are in play; the fees (herd + network, economy stage A) are not: they left the balance for good
+        assertThat(money(account, "balance").add(money(account, "inPlay"))).isEqualByComparingTo(starter.add(feesNet(me)));
+        assertThat(feesNet(me)).as("fees of the two bets").isNegative();
 
         // --- the lobby shows the live split of those rounds (it is cached for about a second: wait for it) ---
         await().atMost(Duration.ofSeconds(8)).pollInterval(POLL).untilAsserted(() -> {
@@ -209,7 +211,7 @@ class LiveServerEndToEndTest extends LiveServerTestBase {
         }
         assertThat(profile.path("history")).hasSize(2);
         assertThat(money(account2, "balance").add(money(account2, "inPlay")))
-                .isEqualByComparingTo(starter.add(net));
+                .isEqualByComparingTo(starter.add(net).add(feesNet(me)));
 
         // --- the profile history and the results the player has not seen carry the right market and length ---
         for (JsonNode entry : profile.path("history")) {

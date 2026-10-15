@@ -107,6 +107,17 @@ public final class EngineHub {
         return ensureMarket(market.spec());
     }
 
+    /**
+     * Gives the market fresh engines built from its registry row, replacing any it has — for a hub that is being built aside
+     * and is still empty ({@code EngineStateBuilder}): {@link #resetEmpty} seeds BTC from the engine's constant, and the BTC row of
+     * the registry (the economy parameters in the database) is what must rule. Never call it on a hub that holds bets.
+     */
+    public MarketEngines install(Market market) {
+        State current = state;
+        MarketSpec spec = market.spec();
+        return current.markets.compute(spec.id(), (id, old) -> new MarketEngines(spec, current.ledger));
+    }
+
     private MarketEngines ensureMarket(MarketSpec spec) {
         State current = state;
         return current.markets.computeIfAbsent(spec.id(), id -> new MarketEngines(spec, current.ledger));

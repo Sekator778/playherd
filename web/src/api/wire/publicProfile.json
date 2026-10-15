@@ -1,11 +1,11 @@
 {
   "method": "publicProfile",
   "args": [
-    "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a"
+    "4494220a-da20-40a8-9a2f-b95edf3714ab"
   ],
   "response": {
     "player": {
-      "playerId": "a2073ad3-dcd9-40bd-83da-7e5ae44ff99a",
+      "playerId": "4494220a-da20-40a8-9a2f-b95edf3714ab",
       "nickname": "Alice_Wire",
       "walletAddress": "txch1alice0wire0player0000000000000000000000000000000000000q2k7ar",
       "displayName": "Alice_Wire (txch1a…k7ar)",
@@ -22,13 +22,13 @@
     },
     "history": [
       {
-        "roundId": "T_WIRE_PERP-1h-1790919060000",
+        "roundId": "T_WIRE_PERP-1h-1792058760000",
         "interval": "HOURLY",
         "marketId": "T_WIRE_PERP",
         "asset": "WPR",
         "durationSec": 60,
         "kind": "PERP",
-        "settledAtMs": 1790919119999,
+        "settledAtMs": 1792058819999,
         "direction": "UP",
         "leverage": 5,
         "stake": "300.000",
@@ -37,13 +37,13 @@
         "payout": "307.500"
       },
       {
-        "roundId": "T_WIRE_PERP-1h-1790919000000",
+        "roundId": "T_WIRE_PERP-1h-1792058700000",
         "interval": "HOURLY",
         "marketId": "T_WIRE_PERP",
         "asset": "WPR",
         "durationSec": 60,
         "kind": "PERP",
-        "settledAtMs": 1790919059999,
+        "settledAtMs": 1792058759999,
         "direction": "UP",
         "leverage": 25,
         "stake": "100.000",
