@@ -150,9 +150,19 @@ export function clampLeverage(wanted, maxLeverage) {
   return Math.max(2, Math.min(wanted, maxLeverage));
 }
 
-/** The bets for `market`: the plan with every leverage cut to what the market allows. */
+/**
+ * Economy plan A3: the leverage a stake allows, the cap of the market for the round length divided by 1 / 2 / 5 / 10 for a stake of
+ * up to 250 / 500 / 1 200 / more PLAY (at least 2).
+ */
+export function maxLeverageForStake(cap, stakePlay) {
+  const divisor = stakePlay <= 250 ? 1 : stakePlay <= 500 ? 2 : stakePlay <= 1200 ? 5 : 10;
+  return Math.max(2, Math.floor(cap / divisor));
+}
+
+/** The bets for `market`: the plan with every leverage cut to what the market allows for the round length and the stake. */
 export function betPlanFor(market) {
-  return BET_PLAN.map((bet) => ({ ...bet, leverage: clampLeverage(bet.leverage, market.maxLeverage) }));
+  const cap = hourlySeries(market)?.maxLeverage ?? market.maxLeverage;
+  return BET_PLAN.map((bet) => ({ ...bet, leverage: clampLeverage(bet.leverage, maxLeverageForStake(cap, Number(bet.stake))) }));
 }
 
 /** The shortest series of the market, the one of the 3-minute rounds on the stand (`interval` `HOURLY`, Р-46). */
@@ -276,10 +286,16 @@ function sameBigInt(value, expected) {
 
 /**
  * A settled round's balance: stake out, payout in (a flat or cancelled round pays the stake back, a liquidated one
- * nothing). All integers, mojos.
+ * nothing). The fees of the bet (herd and network, economy plan A4) go out with the stake and come back only when the bet
+ * is cancelled or its round is. All integers, mojos.
  */
-export function expectedBalance({ before, stake, payout }) {
-  return before - stake + payout;
+export function expectedBalance({ before, stake, payout, fees = 0 }) {
+  return before - stake - fees + payout;
+}
+
+/** The fees a `placeBet` answer names (`feeHerd` + `feeNetwork`, economy plan A4), in mojos; 0 from a server without them. */
+export function feesOfBet(bet) {
+  return Math.round(parseFloat(bet?.feeHerd ?? "0") * 1000) + Math.round(parseFloat(bet?.feeNetwork ?? "0") * 1000);
 }
 
 /**

@@ -69,8 +69,8 @@ test("one market of each source is played in the same pass and every check passe
   assert.equal(stand.state.players.size, 12);
   const betsOn = (id) => stand.calls.filter((c) => c.method === "placeBet" && c.args[0].roundId.startsWith(`${id}-`)).map((c) => c.args[0].leverage);
   assert.deepEqual(betsOn("spot_BTC"), [5, 10, 40, 3]);
-  assert.deepEqual(betsOn("xyz_NVDA"), [5, 10, 20, 3]);
-  assert.deepEqual(betsOn("PM1"), [5, 10, 10, 3]);
+  assert.deepEqual(betsOn("xyz_NVDA"), [5, 10, 20, 3]); // 20 / 1000 PLAY: 20 / 5 = 4, so x3 stays
+  assert.deepEqual(betsOn("PM1"), [5, 5, 10, 2]); // a bigger stake allows less (plan A3)
 
   // one round per market with the four positions, and its oracle record on the market's own index
   // (the stand settles the rounds nobody bet on as well, with a record each, like the real one)

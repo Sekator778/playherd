@@ -100,7 +100,8 @@ services:
     # `herd_default`; `server` reaches it via the gateway IP instead (see `server.environment`).
     network_mode: host
     environment:
-      C2_PUSH: "1"
+      # C2_PUSH=0 (dry-run) in .env for a stand with no operator key of its own (a second publisher must never run; economy finish).
+      C2_PUSH: "${C2_PUSH:-1}"
       C2_DATA_DIR: /data
       C2_OPERATOR_NAME: operator
       C2_SVC_PORT: "8090"
@@ -120,7 +121,7 @@ services:
       # (F2 in docs/product/feedback/wave1-log.md). 1 000 000 000 mojos = 0.001 TXCH per batch at most.
       C2_MAX_FEE_MOJOS: ${C2_MAX_FEE_MOJOS:-1000000000}
     volumes:
-      - ${HOME}/.c2/testnet11:/data
+      - ${C2_DATA_HOST_DIR:-${HOME}/.c2/testnet11}:/data
     healthcheck:
       # debian:bookworm-slim (chain/c2-svc/Dockerfile's runtime stage) has no curl/wget — speak
       # HTTP over bash's /dev/tcp and require a 200 from /health, which turns 503 when the
@@ -246,6 +247,10 @@ services:
       # end on testnet11.
       HERD_WITHDRAWAL_ENABLED: "true"
       HERD_DEPOSIT_ENABLED: "true"
+      # Economy (plan B1, B3): the server defaults when unset - opening of TREASURY in PLAY, registrations per address per day.
+      HERD_ECONOMY_TREASURY_OPENING_PLAY: "${HERD_ECONOMY_TREASURY_OPENING_PLAY:-99998100}"
+      HERD_REGISTRATION_MAX_PER_IP_PER_DAY: "${HERD_REGISTRATION_MAX_PER_IP_PER_DAY:-3}"
+      HERD_BOTS_RESPAWN_DELAY_MS: "${HERD_BOTS_RESPAWN_DELAY_MS:-3600000}"
     depends_on:
       db:
         condition: service_healthy

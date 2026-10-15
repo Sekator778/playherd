@@ -12,6 +12,8 @@ import {
   checkResultsJson,
   clampLeverage,
   expectedBalance,
+  maxLeverageForStake,
+  feesOfBet,
   pickMarkets,
   underlyingClosedAt,
   unplayable,
@@ -297,8 +299,8 @@ test("leverage runs from x2 to the ceiling of the market", () => {
   assert.equal(clampLeverage(3, 10), 3);
   assert.equal(clampLeverage(1, 40), 2);
   assert.deepEqual(betPlanFor({ maxLeverage: 40 }).map((b) => b.leverage), [5, 10, 40, 3]);
-  assert.deepEqual(betPlanFor({ maxLeverage: 10 }).map((b) => b.leverage), [5, 10, 10, 3], "odds go up to x10");
-  assert.deepEqual(betPlanFor({ maxLeverage: 4 }).map((b) => b.leverage), [4, 4, 4, 3]);
+  assert.deepEqual(betPlanFor({ maxLeverage: 10 }).map((b) => b.leverage), [5, 5, 10, 2], "odds go up to x10, less for a bigger stake");
+  assert.deepEqual(betPlanFor({ maxLeverage: 4 }).map((b) => b.leverage), [2, 2, 4, 2]);
   assert.deepEqual(betPlanFor({ maxLeverage: 2 }).map((b) => b.leverage), [2, 2, 2, 2]);
   assert.deepEqual(betPlanFor({ maxLeverage: 40 }).map((b) => [b.direction, b.stake]), BET_PLAN.map((b) => [b.direction, b.stake]), "the stakes and directions are the plan's");
   assert.deepEqual(BET_PLAN.map((b) => b.direction), ["UP", "DOWN", "UP", "DOWN"], "both sides are bet on");
@@ -316,6 +318,7 @@ test("the balance of a player after a round is the balance before, less the stak
   assert.equal(expectedBalance({ before: 10_000_000, stake: 500_000, payout: 1_000_000 }), 10_500_000);
   assert.equal(expectedBalance({ before: 10_000_000, stake: 500_000, payout: 0 }), 9_500_000, "liquidated");
   assert.equal(expectedBalance({ before: 10_000_000, stake: 500_000, payout: 500_000 }), 10_000_000, "flat or cancelled: the stake back");
+  assert.equal(expectedBalance({ before: 10_000_000, stake: 500_000, payout: 1_000_000, fees: 330 }), 10_499_670, "the fees stay paid");
 });
 
 // --- results.json ---
@@ -407,4 +410,20 @@ test("a cancelled round has no close price for the record to carry", () => {
   const checks = checkOracleRecord({ row: { ...ROW, priceCents: 0 }, anchor: ANCHOR, registry: REGISTRY, market: market(), round, resultsVenue: "coinbase" });
   assert.deepEqual(failing(checks), []);
   assert.ok(!checks.some((c) => c.name.includes("close price")));
+});
+
+test("feesOfBet adds the herd and the network fee of a placeBet answer, 0 without them", () => {
+  assert.equal(feesOfBet({ feeHerd: "0.230", feeNetwork: "0.100" }), 330);
+  assert.equal(feesOfBet({}), 0);
+  assert.equal(feesOfBet(undefined), 0);
+});
+
+test("a stake allows the cap of the market divided by 1 / 2 / 5 / 10 by its size (economy plan A3), and the bet plan follows", () => {
+  assert.equal(maxLeverageForStake(10, 100), 10);
+  assert.equal(maxLeverageForStake(10, 300), 5);
+  assert.equal(maxLeverageForStake(10, 1000), 2);
+  assert.equal(maxLeverageForStake(10, 5000), 2);
+  assert.equal(maxLeverageForStake(1200, 5000), 120);
+  const plan = betPlanFor({ maxLeverage: 10, series: [{ interval: "HOURLY", maxLeverage: 10 }] });
+  assert.deepEqual(plan.map((b) => b.leverage), [5, 5, 10, 2]);
 });

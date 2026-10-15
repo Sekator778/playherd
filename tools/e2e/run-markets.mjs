@@ -42,6 +42,7 @@ import {
   checkOracleRecord,
   checkResultsJson,
   expectedBalance,
+  feesOfBet,
   pickMarkets,
 } from "./markets.mjs";
 
@@ -257,6 +258,7 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
 
   // --- 4. bets: mixed directions and leverage, cut to the market's ceiling ---
   const placed = []; // the indexes of the players whose bet was taken
+  const feesPaid = {}; // index -> mojos of herd + network fee the bet was charged (economy plan A4)
   for (let i = 0; i < players.length; i++) {
     const player = players[i];
     const bet = plan[i];
@@ -268,6 +270,7 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
         `roundId=${taken.roundId}`,
       );
       placed.push(i);
+      feesPaid[i] = feesOfBet(taken);
     } catch (e) {
       if (e.code === "MARKET_CLOSED") return skip("the market closed while the bets were placed", { kind: "closed" });
       c.fail(`placeBet: ${nickOf(player)}`, e);
@@ -376,11 +379,11 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
       const after = await balanceAfter(player);
       const stake = parsePlay(plan[i].stake);
       const payout = parsePlay(pos.payout ?? "0.000");
-      const expected = expectedBalance({ before: balanceBefore[player.playerId], stake, payout });
+      const expected = expectedBalance({ before: balanceBefore[player.playerId], stake, payout, fees: feesPaid[i] ?? 0 });
       c.check(
         `balance matches stake/payout: ${nickOf(player)}`,
         after === expected,
-        `before=${balanceBefore[player.playerId]} stake=${stake} payout=${payout} expected=${expected} actual=${after} liquidated=${pos.liquidated}`,
+        `before=${balanceBefore[player.playerId]} stake=${stake} fees=${feesPaid[i] ?? 0} payout=${payout} expected=${expected} actual=${after} liquidated=${pos.liquidated}`,
       );
     } catch (e) {
       c.fail(`balance check: ${nickOf(player)}`, e);

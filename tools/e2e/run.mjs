@@ -29,6 +29,7 @@
 // collector, the hashing) is in lib.mjs.
 import { createTestWallet } from "./testWallet.mjs";
 import { Player, createChecks, parsePlay, sha256HexOfExactBytes, sleep } from "./lib.mjs";
+import { feesOfBet } from "./markets.mjs";
 
 const args = process.argv.slice(2);
 const CI_MODE = args.includes("--ci") || process.env.HERD_E2E_CI === "1";
@@ -111,11 +112,13 @@ async function main() {
   }
 
   // --- 4. place bets (mixed directions/leverages incl. one 40x) ---
+  const feesPaid = {}; // mojos of herd + network fee each bet was charged (economy plan A4)
   for (let i = 0; i < players.length; i++) {
     const player = players[i];
     const p = plan[i];
     try {
       const bet = await player.rpc("placeBet", { roundId, direction: p.direction, leverage: p.leverage, stake: p.stake });
+      feesPaid[player.playerId] = feesOfBet(bet);
       check(
         `placeBet ${player.nickname}: ${p.direction} x${p.leverage} ${p.stake}`,
         bet.direction === p.direction && bet.leverage === p.leverage,
@@ -244,11 +247,12 @@ async function main() {
       const balanceAfter = parsePlay(acct.balance);
       const stakeMojos = parsePlay(plan[i].stake);
       const payoutMojos = parsePlay(pos.payout ?? "0.000");
-      const expected = balanceBefore[player.playerId] - stakeMojos + payoutMojos;
+      const feesMojos = feesPaid[player.playerId] ?? 0;
+      const expected = balanceBefore[player.playerId] - stakeMojos - feesMojos + payoutMojos;
       check(
         `balance matches stake/payout: ${player.nickname}`,
         balanceAfter === expected,
-        `before=${balanceBefore[player.playerId]} stake=${stakeMojos} payout=${payoutMojos} ` +
+        `before=${balanceBefore[player.playerId]} stake=${stakeMojos} fees=${feesMojos} payout=${payoutMojos} ` +
           `expected=${expected} actual=${balanceAfter} liquidated=${pos.liquidated}`,
       );
     } catch (e) {
