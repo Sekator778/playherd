@@ -77,7 +77,9 @@ class CatalogBotsTest extends LiveGameTestBase {
         assertThat(bots).hasSize(Catalog.load().bots().size());
 
         RoundWindow like = roundProgress.next("BTC", HOURLY);
-        RoundWindow running = new RoundWindow("BTC", HOURLY, like.startMs() + 90 * STEP, like.endMs() + 90 * STEP);
+        // a window of its own: the bots plan each betting window of the application only once, whatever class asked first
+        long ahead = (500 + java.util.concurrent.ThreadLocalRandom.current().nextInt(500)) * STEP;
+        RoundWindow running = new RoundWindow("BTC", HOURLY, like.startMs() + ahead, like.endMs() + ahead);
         for (Market market : markets) {
             alignTo(market, HOURLY, running);
             // the daily series is not what this test looks at: park it far from the window under test
@@ -115,13 +117,15 @@ class CatalogBotsTest extends LiveGameTestBase {
         assertThat(bets).as("21 personas over 3 markets with fresh prices").isGreaterThan(20);
         assertThat(botsThatBet.size()).isGreaterThan(10);
 
-        // the bots' day, as the operator sees it
-        long at = running.endMs();
-        int placed = botMetrics.lastDays(at, 2).stream().mapToInt(d -> (int) d.bets()).sum();
+        // the bots' day, as the operator sees it (the bets carry the test's clock, ahead of the real one; the bots were created now)
+        int placed = botMetrics.lastDays(running.endMs(), 3).stream().mapToInt(d -> (int) d.bets()).sum();
         assertThat(placed).isGreaterThanOrEqualTo(bets);
-        BotMetrics.Day today = botMetrics.lastDays(at, 1).get(0);
-        assertThat(today.botsCreated()).isEqualTo(Catalog.load().bots().size());
-        assertThat(today.starterPacks()).isEqualTo(new BigDecimal(10_000).multiply(new BigDecimal(today.botsCreated())).setScale(3).toPlainString());
+        assertThat(botMetrics.lastDays(running.endMs(), 3).stream().mapToLong(d -> new BigDecimal(d.fees()).signum()).sum()).isPositive();
+        List<BotMetrics.Day> createdDays = botMetrics.lastDays(System.currentTimeMillis(), 2);
+        int created = createdDays.stream().mapToInt(BotMetrics.Day::botsCreated).sum();
+        assertThat(created).isEqualTo(Catalog.load().bots().size());
+        assertThat(createdDays.stream().map(d -> new BigDecimal(d.starterPacks())).reduce(BigDecimal.ZERO, BigDecimal::add))
+                .isEqualByComparingTo(new BigDecimal(10_000).multiply(new BigDecimal(created)));
         Response status = given().header("Authorization", "Bearer " + operatorToken).get("/api/admin/status");
         assertThat(status.statusCode()).as(status.asString()).isEqualTo(200);
         List<java.util.Map<String, Object>> days = status.jsonPath().getList("botDays");
