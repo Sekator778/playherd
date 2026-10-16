@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
@@ -47,6 +47,22 @@ function DockBody({ positions }: { positions: readonly MyPositionDto[] }) {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  // The page reserves the card's REAL height (collapsed, expanded, a wrapped line): measured, written to `--dock-height` on the root.
+  const dockRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const write = () => root.style.setProperty("--dock-height", `${Math.ceil(el.getBoundingClientRect().height)}px`);
+    write();
+    if (typeof ResizeObserver === "undefined") return () => root.style.removeProperty("--dock-height");
+    const observer = new ResizeObserver(write);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--dock-height");
+    };
+  }, []);
 
   const position = newestPosition(positions);
   if (!position) return null;
@@ -87,6 +103,7 @@ function DockBody({ positions }: { positions: readonly MyPositionDto[] }) {
 
   return (
     <section
+      ref={dockRef}
       className={`my-bet-dock my-bet-dock--${side} ${state.kind === "wiped" ? "my-bet-dock--wiped" : ""} ${pulse}`}
       aria-label={t("dock.aria")}
       data-state={state.kind}

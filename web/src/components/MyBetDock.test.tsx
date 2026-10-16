@@ -172,3 +172,32 @@ describe("a live bet", () => {
     expect(card).toHaveTextContent(/If ETH reaches it, you lose the whole 500 PLAY\./);
   });
 });
+
+describe("the page reserves the card's real height", () => {
+  it("writes the measured height to --dock-height, follows a resize (expanded) and clears it when the card goes", async () => {
+    let height = 100;
+    let notify: () => void = () => {};
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(cb: () => void) {
+          notify = cb;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const spy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(() => ({ height }) as DOMRect);
+    const { unmount } = renderDock([position()]);
+    await dock();
+    const root = document.documentElement;
+    expect(root.style.getPropertyValue("--dock-height")).toBe("100px");
+    height = 260;
+    notify();
+    expect(root.style.getPropertyValue("--dock-height")).toBe("260px");
+    unmount();
+    expect(root.style.getPropertyValue("--dock-height")).toBe("");
+    spy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+});
