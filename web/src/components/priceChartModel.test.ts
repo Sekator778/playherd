@@ -216,7 +216,7 @@ describe("buildChartLines", () => {
     const lines = buildChartLines({ openPrice: "100.00", own });
     expect(lines.map((l) => l.id)).toEqual(["open", "own-liq"]);
     expect(lines[0]).toMatchObject({ label: "OPEN · YOUR ENTRY ▲ x10", tone: "entry", faint: false });
-    expect(lines[1]).toMatchObject({ label: "YOUR LIQ", price: 90.5, tone: "liq", faint: false });
+    expect(lines[1]).toMatchObject({ label: "YOUR WIPEOUT", price: 90.5, tone: "liq", faint: false });
   });
 
   it("the herd's lines are the same kind, fainter; its entry merges into the open line, its liquidation is its own", () => {

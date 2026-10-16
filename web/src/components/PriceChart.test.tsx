@@ -95,7 +95,7 @@ describe("PriceChart — the betting lines", () => {
     });
     const { container } = chart({ lines });
     const labels = [...container.querySelectorAll(".pchart__ref-text")].map((t) => t.textContent);
-    expect(labels).toEqual(expect.arrayContaining([expect.stringContaining("OPEN · YOUR ENTRY ▲ x10"), expect.stringContaining("YOUR LIQ"), expect.stringContaining("HERD LIQ ▼ x7")]));
+    expect(labels).toEqual(expect.arrayContaining([expect.stringContaining("OPEN · YOUR ENTRY ▲ x10"), expect.stringContaining("YOUR WIPEOUT"), expect.stringContaining("HERD LIQ ▼ x7")]));
     expect(container.querySelectorAll(".pchart__ref--faint")).toHaveLength(1); // the herd's
     expect(container.querySelectorAll(".pchart__ref--liq")).toHaveLength(2);
     expect(screen.getByText("Round open = your entry price")).toBeInTheDocument();
@@ -111,7 +111,7 @@ describe("PriceChart — the betting lines", () => {
     });
     const { container } = chart({ lines });
     const texts = [...container.querySelectorAll(".pchart__ref-text")].map((t) => t.textContent ?? "");
-    expect(texts.find((t) => t.startsWith("YOUR LIQ"))).toMatch(/\$60\.00 · \d+\.\d% below/);
+    expect(texts.find((t) => t.startsWith("YOUR WIPEOUT"))).toMatch(/\$60\.00 · \d+\.\d% below/);
     expect(texts.find((t) => t.startsWith("HERD LIQ"))).toMatch(/\$140\.00 · \d+\.\d% above/);
   });
 
