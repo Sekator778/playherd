@@ -272,7 +272,7 @@ describe("Lobby — the card", () => {
     expect(cardOf("ETH")).toHaveTextContent("-1.41%");
   });
 
-  it("UP and DOWN open the bet sheet over the lobby (Р-98); the herd's side is marked in words", async () => {
+  it("UP and DOWN open the bet sheet over the lobby (Р-98); the crowd's side is marked in words", async () => {
     renderLobby();
     await screen.findAllByRole("article");
     const btc = within(cardOf("BTC"));
@@ -281,10 +281,10 @@ describe("Lobby — the card", () => {
     const up = btc.getByRole("button", { name: /^Bet UP on BTC/ });
     const down = btc.getByRole("button", { name: /^Bet DOWN on BTC/ });
     expect(up).toHaveAttribute("aria-haspopup", "dialog");
-    expect(up).toHaveAccessibleName("Bet UP on BTC — the herd's side");
+    expect(up).toHaveAccessibleName("Bet UP on BTC — the crowd's side");
     expect(down).toHaveAccessibleName("Bet DOWN on BTC");
-    expect(within(up).getByText("herd")).toBeInTheDocument();
-    expect(within(down).queryByText("herd")).not.toBeInTheDocument();
+    expect(within(up).getByText("crowd")).toBeInTheDocument();
+    expect(within(down).queryByText("crowd")).not.toBeInTheDocument();
   });
 
   it("in the Pro view UP and DOWN are links into the room with that side preselected, as before", async () => {

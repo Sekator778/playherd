@@ -82,8 +82,8 @@ describe("PriceChart — the betting lines", () => {
   it("draws the round's open price, with a label and a legend", () => {
     const { container } = chart({ lines: buildChartLines({ openPrice: "100.00" }) });
     expect(container.querySelectorAll(".pchart__ref")).toHaveLength(1);
-    expect(container.querySelector(".pchart__ref-text")).toHaveTextContent("OPEN $100.00");
-    expect(screen.getByText("Round open — every bet's entry price")).toBeInTheDocument();
+    expect(container.querySelector(".pchart__ref-text")).toHaveTextContent("ROUND START $100.00");
+    expect(screen.getByText("Round start price — every bet's entry price")).toBeInTheDocument();
     expect(screen.getByText(/vs round open/)).toBeInTheDocument();
   });
 
@@ -95,11 +95,11 @@ describe("PriceChart — the betting lines", () => {
     });
     const { container } = chart({ lines });
     const labels = [...container.querySelectorAll(".pchart__ref-text")].map((t) => t.textContent);
-    expect(labels).toEqual(expect.arrayContaining([expect.stringContaining("OPEN · YOUR ENTRY ▲ x10"), expect.stringContaining("YOUR WIPEOUT"), expect.stringContaining("HERD LIQ ▼ x7")]));
+    expect(labels).toEqual(expect.arrayContaining([expect.stringContaining("ROUND START · YOUR ENTRY ▲ x10"), expect.stringContaining("YOUR WIPEOUT"), expect.stringContaining("HERD LIQ ▼ x7")]));
     expect(container.querySelectorAll(".pchart__ref--faint")).toHaveLength(1); // the herd's
     expect(container.querySelectorAll(".pchart__ref--liq")).toHaveLength(2);
-    expect(screen.getByText("Round open = your entry price")).toBeInTheDocument();
-    expect(screen.getByText("Your liquidation price")).toBeInTheDocument();
+    expect(screen.getByText("Round start price = your entry price")).toBeInTheDocument();
+    expect(screen.getByText("Your wipeout line")).toBeInTheDocument();
     expect(screen.getByText("Herd's liquidation price")).toBeInTheDocument();
   });
 

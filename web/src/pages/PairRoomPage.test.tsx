@@ -358,7 +358,7 @@ describe("Room — the live chart", () => {
     expect(chart).toHaveAccessibleName(/round opened at \$83,400\.00/);
     const ranges = within(screen.getByRole("tablist", { name: "Chart range" })).getAllByRole("tab");
     expect(ranges.map((r) => r.textContent)).toEqual(["1M", "5M", "15M"]);
-    expect(screen.getByText(/Round open — every bet's entry price/)).toBeInTheDocument();
+    expect(screen.getByText(/Round start price — every bet's entry price/)).toBeInTheDocument();
     expect(screen.getByText(/vs round open/)).toBeInTheDocument();
   });
 
@@ -374,16 +374,16 @@ describe("Room — the live chart", () => {
     const chart = await screen.findByRole("img", { name: /BTC price/ });
     expect(chart).toHaveAccessibleName(/your wipeout \$75,100\.00/);
     expect(chart).toHaveAccessibleName(/herd liq ▼ x7 \$91,000\.00/);
-    expect(screen.getByText("Your liquidation price")).toBeInTheDocument();
+    expect(screen.getByText("Your wipeout line")).toBeInTheDocument();
     expect(screen.getByText("Herd's liquidation price")).toBeInTheDocument();
     // The entry is the open price: said once, as the player's entry.
-    expect(screen.getByText("Round open = your entry price")).toBeInTheDocument();
+    expect(screen.getByText("Round start price = your entry price")).toBeInTheDocument();
   });
 
   it("without a position of the player's there is no own-liquidation line", async () => {
     renderRoom("/play/BTC", { running: (id) => runningRoundOf(id, "BTC", { openPrice: "83400.00", crowd: crowdPosition({ entryPrice: "83400.00", liquidationPrice: "91000.00" }) }) });
     await screen.findByRole("img", { name: /BTC price/ });
-    expect(screen.queryByText("Your liquidation price")).not.toBeInTheDocument();
+    expect(screen.queryByText("Your wipeout line")).not.toBeInTheDocument();
     expect(screen.getByText("Herd's liquidation price")).toBeInTheDocument();
   });
 
@@ -462,7 +462,7 @@ describe("Room — a running round with no opening price yet (RoundRunning.openP
     const chart = await screen.findByRole("img", { name: /BTC price/ });
     expect(chart).not.toHaveAccessibleName(/round opened at/);
     expect(screen.queryByText(/vs round open/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Round open/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Round start price/)).not.toBeInTheDocument();
     expect(screen.queryByText("Round start")).not.toBeInTheDocument();
   });
 

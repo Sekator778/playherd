@@ -214,7 +214,7 @@ describe("the mid-round liquidation moment", () => {
     expect(titleText()).toBe("-100 PLAY");
     const note = document.querySelector(".result-card__note");
     expect(note).toHaveTextContent("You lose most of your stake. The round is still running — if it is cancelled, every bet in it is refunded.");
-    expect(screen.getByText(/stake 100 PLAY · x25 · 3 MIN round/)).toBeInTheDocument();
+    expect(screen.getByText(/bet 100 PLAY · boost x25 · 3 MIN round/)).toBeInTheDocument();
   });
 
   it("names the round's real length from the position itself — no market list needed, never Hourly", async () => {
