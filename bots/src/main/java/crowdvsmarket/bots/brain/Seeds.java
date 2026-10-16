@@ -33,8 +33,7 @@ public final class Seeds {
             h ^= (b & 0xffL);
             h *= FNV_PRIME;
         }
-        h ^= 0;
-        h *= FNV_PRIME;
+        h *= FNV_PRIME; // the separator byte 0x00: xor with zero changes nothing, the multiply still mixes it in
         return h;
     }
 }

@@ -12,8 +12,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.TreeMap;
 
 /**
  * Command line of the backtest.
@@ -154,14 +152,5 @@ public final class BacktestMain {
 
     private static String pct(double v) {
         return Double.isNaN(v) ? "-" : String.format(Locale.ROOT, "%.1f%%", v * 100);
-    }
-
-    /** Result lookup for tests and for the report's callers. */
-    static Map<String, Backtester.Result> byKey(List<Backtester.Result> results) {
-        Map<String, Backtester.Result> m = new TreeMap<>();
-        for (Backtester.Result r : results) {
-            m.put(r.catalogId() + "|" + r.marketId() + "|" + r.horizonMinutes(), r);
-        }
-        return m;
     }
 }
