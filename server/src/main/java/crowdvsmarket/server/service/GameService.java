@@ -516,6 +516,23 @@ public class GameService implements MarketListener {
         }
     }
 
+    /** A bot's new name, written the way {@link #setNickname} writes a player's but without the players' allow-list: a bot's name
+     *  carries its strategy in parentheses ({@code BotService} relabels a bot moved to another strategy). */
+    public void renameBot(String playerId, String nickname) {
+        lockWrite();
+        try {
+            players.byId(playerId).filter(PlayerDirectory.Row::isBot)
+                    .orElseThrow(() -> ApiException.notFound("unknown bot " + playerId));
+            db.tx(c -> {
+                players.updateNickname(c, playerId, nickname);
+                return null;
+            });
+            players.cacheNickname(playerId, nickname);
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
     public Identity.PlayerSummaryDto summary(String playerId) {
         PlayerDirectory.Row row = players.byId(playerId)
                 .orElseThrow(() -> ApiException.notFound("unknown player " + playerId));

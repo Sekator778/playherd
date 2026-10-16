@@ -21,6 +21,13 @@ class BotNamesTest {
     }
 
     @Test
+    void relabelReplacesTheTrailingLabelOrAddsOne() {
+        assertThat(BotNames.relabel("Bot 18 (Trend Follower)", "Herd Follower")).isEqualTo("Bot 18 (Herd Follower)");
+        assertThat(BotNames.relabel("Bot Amber Fox (Fader)", "Fader")).isEqualTo("Bot Amber Fox (Fader)");
+        assertThat(BotNames.relabel("Bot 3", "Sprinter")).isEqualTo("Bot 3 (Sprinter)");
+    }
+
+    @Test
     void whenEveryPairIsTakenANumberIsAdded() {
         Random random = new Random(5);
         Set<String> taken = new HashSet<>();

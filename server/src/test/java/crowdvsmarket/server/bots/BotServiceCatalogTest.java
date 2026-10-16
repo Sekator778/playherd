@@ -92,6 +92,13 @@ class BotServiceCatalogTest {
                     true, strategy, r.playerIndex(), r.createdAtMs(), r.retiredAtMs(), r.replaced()) : r);
             return null;
         }).when(gameService).assignBotStrategy(anyString(), anyString());
+        doAnswer(inv -> {
+            String id = inv.getArgument(0);
+            String nickname = inv.getArgument(1);
+            rows.replaceAll(r -> r.playerId().equals(id) ? new PlayerDirectory.Row(r.playerId(), r.walletAddress(), nickname,
+                    true, r.botStrategy(), r.playerIndex(), r.createdAtMs(), r.retiredAtMs(), r.replaced()) : r);
+            return null;
+        }).when(gameService).renameBot(anyString(), anyString());
         when(gameService.createBotPlayer(anyString(), anyString(), anyLong())).thenAnswer(inv -> create(inv.getArgument(0), inv.getArgument(1), null));
         when(gameService.createBotPlayer(anyString(), anyString(), anyLong(), anyString()))
                 .thenAnswer(inv -> create(inv.getArgument(0), inv.getArgument(1), inv.getArgument(3)));
@@ -130,31 +137,57 @@ class BotServiceCatalogTest {
     }
 
     @Test
-    void theTwentyOldBotsMoveIntoCatalogSlotsOfTheirFamilyKeepingTheirNamesAndThe21stIsCreated() {
+    void theTwentyOldBotsMoveIntoCatalogSlotsOfTheirFamilyKeepingTheirNumbersUnderTheNewLabelAndThe21stIsCreated() {
         legacyBots();
         List<String> names = rows.stream().map(PlayerDirectory.Row::nickname).toList();
+        java.util.Map<String, String> oldName = rows.stream().collect(Collectors.toMap(PlayerDirectory.Row::playerId, PlayerDirectory.Row::nickname));
 
         bots.ensureBotsExist(1_000L);
 
         assertThat(rows).hasSize(21);
         assertThat(liveSlots()).as("21 distinct catalog slots").hasSize(21).containsExactlyInAnyOrderElementsOf(
                 CATALOG.bots().stream().map(CatalogEntry::catalogId).toList());
-        assertThat(rows.subList(0, 20)).extracting(PlayerDirectory.Row::nickname).containsExactlyElementsOf(names);
         assertThat(rows.subList(0, 20)).extracting(PlayerDirectory.Row::playerId).containsExactlyElementsOf(
                 java.util.stream.IntStream.range(0, 20).mapToObj(i -> "bot-" + i).toList());
+        // each keeps its number, and its label is now the name of the slot it plays: "Bot 9 (Trend Follower)" -> "Bot 9 (Herd Follower)"
+        for (int i = 0; i < 20; i++) {
+            PlayerDirectory.Row row = rows.get(i);
+            assertThat(row.nickname()).isEqualTo(names.get(i).substring(0, names.get(i).indexOf(" (")) + " ("
+                    + CATALOG.byId(row.botStrategy()).orElseThrow().name() + ")");
+        }
         // the old kinds took the slots of their family while there were such: all 2 contrarian and 2 follower slots, all 3 maximalists
         List<CatalogEntry> taken = rows.subList(0, 20).stream().map(r -> CATALOG.byId(r.botStrategy()).orElseThrow()).toList();
         assertThat(taken.stream().filter(e -> e.strategy().equals("crowd-contrarian")).filter(e -> rows.stream().anyMatch(
-                r -> r.botStrategy().equals(e.catalogId()) && r.nickname().contains("(Contrarian)")))).hasSize(2);
+                r -> r.botStrategy().equals(e.catalogId()) && oldName.getOrDefault(r.playerId(), "").contains("(Contrarian)")))).hasSize(2);
         assertThat(taken.stream().filter(e -> e.strategy().equals("crowd-follow")).filter(e -> rows.stream().anyMatch(
-                r -> r.botStrategy().equals(e.catalogId()) && r.nickname().contains("(Trend Follower)")))).hasSize(2);
+                r -> r.botStrategy().equals(e.catalogId()) && oldName.getOrDefault(r.playerId(), "").contains("(Trend Follower)")))).hasSize(2);
         assertThat(taken.stream().filter(e -> e.persona().startsWith("maximalist")).filter(e -> rows.stream().anyMatch(
-                r -> r.botStrategy().equals(e.catalogId()) && r.nickname().contains("(Maximalist)")))).hasSize(3);
+                r -> r.botStrategy().equals(e.catalogId()) && oldName.getOrDefault(r.playerId(), "").contains("(Maximalist)")))).hasSize(3);
         // the new bot's name is a generated one, labelled with its catalog name
         assertThat(rows.get(20).nickname()).startsWith("Bot ").endsWith("(" + CATALOG.byId(rows.get(20).botStrategy()).orElseThrow().name() + ")");
 
         bots.ensureBotsExist(2_000L);
         assertThat(rows).as("idempotent").hasSize(21);
+    }
+
+    @Test
+    void aBotMovedBeforeTheRelabelGetsItsSlotNameOnceAndARetiredBotKeepsItsName() {
+        bots.ensureBotsExist(1_000L); // 21 catalog bots
+        // the stand on 2026-10-16: bots moved to the catalog by an earlier version, still under the label of their old kind
+        PlayerDirectory.Row moved = rows.get(3);
+        rows.set(3, new PlayerDirectory.Row(moved.playerId(), moved.walletAddress(), "Bot 18 (Trend Follower)", true, moved.botStrategy(),
+                moved.playerIndex(), moved.createdAtMs()));
+        PlayerDirectory.Row retired = rows.get(5);
+        rows.set(5, new PlayerDirectory.Row(retired.playerId(), retired.walletAddress(), "Bot 7 (Maximalist)", true, retired.botStrategy(),
+                retired.playerIndex(), retired.createdAtMs(), 1_500L, false));
+
+        bots.ensureBotsExist(2_000L);
+        bots.ensureBotsExist(3_000L);
+
+        assertThat(rows.get(3).nickname()).isEqualTo("Bot 18 (" + CATALOG.byId(moved.botStrategy()).orElseThrow().name() + ")");
+        assertThat(rows.get(5).nickname()).isEqualTo("Bot 7 (Maximalist)");
+        verify(gameService).renameBot(eq(moved.playerId()), anyString());
+        verify(gameService, never()).renameBot(eq(retired.playerId()), anyString());
     }
 
     @Test

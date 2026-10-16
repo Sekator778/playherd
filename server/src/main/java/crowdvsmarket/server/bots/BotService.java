@@ -163,6 +163,7 @@ public class BotService {
             return;
         }
         migrateToCatalog();
+        relabelCatalogBots();
         List<PlayerDirectory.Row> all = players.bots();
         int live = (int) all.stream().filter(b -> !b.isRetired()).count();
         int missing = target - live;
@@ -235,6 +236,25 @@ public class BotService {
             held.add(slot.get().catalogId());
             gameService.assignBotStrategy(bot.playerId(), slot.get().catalogId());
             LOG.infof("bot %s (%s) now plays as %s", bot.playerId(), bot.nickname(), slot.get().catalogId());
+        }
+    }
+
+    /**
+     * Puts the name of its catalog slot into the label of every live catalog bot: a bot moved from an old kind keeps its number or its
+     * generated name, and its {@code "(Trend Follower)"} becomes the name of what it now plays. Renames only what differs, so it is
+     * idempotent; retired bots keep the names they played under.
+     */
+    private void relabelCatalogBots() {
+        for (PlayerDirectory.Row bot : players.bots()) {
+            Optional<CatalogEntry> slot = bot.isRetired() || bot.nickname() == null ? Optional.empty() : CATALOG.byId(bot.botStrategy());
+            if (slot.isEmpty()) {
+                continue;
+            }
+            String name = BotNames.relabel(bot.nickname(), slot.get().name());
+            if (!name.equals(bot.nickname())) {
+                gameService.renameBot(bot.playerId(), name);
+                LOG.infof("bot %s (%s) is now called %s", bot.playerId(), bot.nickname(), name);
+            }
         }
     }
 

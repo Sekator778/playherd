@@ -21,6 +21,14 @@ final class BotNames {
     private BotNames() {
     }
 
+    /** {@code nickname} with its trailing {@code " (<label>)"} replaced by {@code label}'s, or with it added when there is none:
+     *  {@code "Bot 18 (Trend Follower)"} becomes {@code "Bot 18 (Herd Follower)"}. */
+    static String relabel(String nickname, String label) {
+        int open = nickname.lastIndexOf(" (");
+        String base = open > 0 && nickname.endsWith(")") ? nickname.substring(0, open) : nickname;
+        return base + " (" + label + ")";
+    }
+
     /** A name not in {@code taken}: {@code "Bot <Adjective> <Noun> (<label>)"}, with a number added only when the 784 pairs of a label run out. */
     static String next(Random random, Set<String> taken, String label) {
         for (int attempt = 0; attempt < 200; attempt++) {
