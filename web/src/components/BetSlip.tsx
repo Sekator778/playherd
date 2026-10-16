@@ -36,6 +36,7 @@ import {
 import { herdSideOf } from "./marketModel";
 import { useT } from "../i18n";
 import { Rich } from "../i18n/Rich";
+import { betDraftFor, clearBetDraft, onDraftPlaced, onRevealBetSlip, saveBetDraft } from "./betDraft";
 
 interface BetSlipProps {
   round: RoundBetting;
@@ -94,6 +95,10 @@ export function BetSlip({
   const maxLeverage = market?.series?.find((s) => s.interval === interval)?.maxLeverage ?? market?.maxLeverage ?? LEVERAGE_MAX;
 
   const bettingClosed = nowMs >= round.window.startMs;
+  // A draft of a round whose betting has closed is of no use to anyone (see `betDraft.ts`).
+  useEffect(() => {
+    if (bettingClosed) clearBetDraft(round.roundId);
+  }, [bettingClosed, round.roundId]);
   if (bettingClosed) {
     return (
       <div className="card">
@@ -450,6 +455,22 @@ function BetSlipPreview({
   const { preview, stakeMax } = useLiquidationPreview(round.marketId, direction, wantedLeverage, stake, round.window.interval);
   const leverage = effectiveLeverage(leverageChoice, defaultLeverage(maxLeverage), maxLeverage, high, stakeMax);
   const [explainOpen, setExplainOpen] = useState(false);
+  // What was set up here goes with the player through the sign-in (`betDraft.ts`): the signed-in slip starts from it, and the
+  // welcome dialog offers to place exactly this bet.
+  const connect = () => {
+    saveBetDraft({
+      roundId: round.roundId,
+      marketId: round.marketId,
+      closesAtMs: round.window.startMs,
+      direction,
+      leverageChoice,
+      high,
+      stake,
+      leverage,
+      totalDebit: preview?.totalDebit ?? null,
+    });
+    onConnect();
+  };
 
   return (
     <div className="card bet-slip">
@@ -499,7 +520,7 @@ function BetSlipPreview({
 
       <p className="muted">{t("betSlip.connectToPlace")}</p>
       {noPlayerHint && <p className="muted">{noPlayerHint}</p>}
-      <button type="button" className="btn btn--primary btn--lg btn--block" onClick={onConnect}>
+      <button type="button" className="btn btn--primary btn--lg btn--block" onClick={connect}>
         {t("common.connectWallet")}
       </button>
     </div>
@@ -526,17 +547,19 @@ function BetSlipForm({
   const api = useApi();
   const t = useT();
   const existing = round.myBet;
+  // A player who signed in with a bet set up in the preview slip starts from it (`betDraft.ts`) — read once, when the form appears.
+  const [draft] = useState(() => (existing ? null : betDraftFor(round.roundId)));
   const [formOpen, setFormOpen] = useState(!existing);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [internalDirection, setInternalDirection] = useState<Direction>(existing?.direction ?? "UP");
+  const [internalDirection, setInternalDirection] = useState<Direction>(existing?.direction ?? draft?.direction ?? "UP");
   const direction = controlledDirection ?? internalDirection;
   const setDirection = onDirectionChange ?? setInternalDirection;
-  const [leverageChoice, setLeverage] = useState<number | null>(existing?.leverage ?? null);
+  const [leverageChoice, setLeverage] = useState<number | null>(existing?.leverage ?? draft?.leverageChoice ?? null);
   // Never above this market's own cap, even if the market list arrives after the player touched the dial; an untouched
   // dial is on the market's default (`defaultLeverage`: x10 as always — x3 where x10 would be the market's cap).
   // "High leverage" (above x100) is on from the start when the bet being edited already is above it.
-  const [high, setHigh] = useState((existing?.leverage ?? 0) > DEFAULT_LEVERAGE_LIMIT);
-  const [stake, setStake] = useState<string>(existing ? stakeDisplay(existing.stake) : DEFAULT_STAKE_DISPLAY);
+  const [high, setHigh] = useState((existing?.leverage ?? 0) > DEFAULT_LEVERAGE_LIMIT || (draft?.high ?? false));
+  const [stake, setStake] = useState<string>(existing ? stakeDisplay(existing.stake) : (draft?.stake ?? DEFAULT_STAKE_DISPLAY));
   // The preview names the economy's numbers (fees, the total debit, the highest leverage for this stake), and the dial stays within
   // that highest leverage: the leverage in use is the choice within the cap, x100 unless "High leverage" is on, and the stake's tier.
   const wantedLeverage = effectiveLeverage(leverageChoice, defaultLeverage(maxLeverage), maxLeverage, high, null);
@@ -677,6 +700,33 @@ function BetSlipForm({
       // the poll brings the new state
     }
   };
+
+  // The sign-in dialog can place the drafted bet itself (`betDraft.ts`): the server then has the bet, and the slip says so like it does
+  // for its own — "Saved, refreshing…", then "Bet placed." once the room shows it — and reloads the room at once.
+  const submitRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const offPlaced = onDraftPlaced((placed) => {
+      if (placed.roundId !== round.roundId) return;
+      setSaved({ kind: "placed", roundId: placed.roundId, direction: placed.direction, leverage: placed.leverage, stake: placed.stake });
+      requestFocus("status");
+      reload();
+    });
+    // The dialog has closed: on a narrow screen the slip is far below the room's arena, so the submit button (the slip, once there is a
+    // bet) is brought on screen and focused. Not at once: the dialog still holds the scroll lock and the focus.
+    const offReveal = onRevealBetSlip(() => {
+      window.setTimeout(() => {
+        const target = submitRef.current ?? slipRef.current;
+        target?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+        if (submitRef.current && !submitRef.current.disabled) submitRef.current.focus({ preventScroll: true });
+      }, 50);
+    });
+    return () => {
+      offPlaced();
+      offReveal();
+    };
+    // `reload` and `requestFocus` only touch refs and the latest `onChanged`: the listeners need not be re-made for them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [round.roundId]);
 
   // THE STATUS LINE: one element, always in the slip, and only its text changes — a live region that appears already filled is
   // often not read at all, one that is there and changes is. It sits above whichever view the slip is showing, so it survives
@@ -821,6 +871,7 @@ function BetSlipForm({
     try {
       const sent = stakeNum.toFixed(3);
       await api.placeBet({ roundId: round.roundId, direction, leverage, stake: sent });
+      clearBetDraft(round.roundId);
       // The server has the bet. The player is told so now — "Saved, refreshing…" — and what it came to ("Bet updated.") when the
       // page shows it: the card the form gives way to must show the bet as it is now, not the old one (see the block above).
       setSaved({ kind: existing ? "updated" : "placed", roundId: round.roundId, direction, leverage, stake: sent });
@@ -912,7 +963,7 @@ function BetSlipForm({
         {errorMessage && <p className="field-error">{errorMessage}</p>}
 
         <BetSummary round={round} market={market} direction={direction} leverage={leverage} stake={stakeNum} />
-        <button type="submit" className="btn btn--primary btn--lg btn--block" disabled={disabled}>
+        <button ref={submitRef} type="submit" className="btn btn--primary btn--lg btn--block" disabled={disabled}>
           {existing ? t("betSlip.updateBet") : t("betSlip.placeBet")}
         </button>
         {existing && (

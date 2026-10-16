@@ -11,6 +11,8 @@ import { connectAndSignWithSage, getWalletConnectProjectId, rememberSageAddress 
 import { QrCode } from "../wallet/QrCode";
 import { CopyButton, MultiAccountDisclosureLine, Skeleton } from "./Common";
 import { SageSignInTips } from "./SageHints";
+import { announceDraftPlaced, betDraftFor, clearBetDraft, revealBetSlip, useBetDraft } from "./betDraft";
+import { DirectionGlyph } from "./icons";
 
 type Step = "connect" | "sage-qr" | "waiting" | "nickname" | "starter-pack" | "error";
 
@@ -63,6 +65,12 @@ export function ConnectWalletModal() {
   const [startedAsNewPlayer, setStartedAsNewPlayer] = useState(false);
   // This sign-in credited a starter pack, so the dialog that says so is owed — after the nickname, when one is asked for.
   const [packGranted, setPackGranted] = useState(false);
+  // The bet the player set up in the room's slip before signing in (`betDraft.ts`), if it is this room's and still open for betting:
+  // the welcome dialog then places exactly that bet. `placing`/`placeError`: the placing is on its way / the server's refusal.
+  const savedDraft = useBetDraft();
+  const draft = savedDraft && isDraftRoom(pathname, savedDraft.marketId) ? betDraftFor(savedDraft.roundId) : null;
+  const [placing, setPlacing] = useState(false);
+  const [placeError, setPlaceError] = useState<string | null>(null);
 
   // What the "connect" step offers (the test wallet, Sage) depends on `serverInfo()`: `ConnectStep` below reads it from
   // the shared store — unknown until the server answers, never assumed. The answer is asked for as soon as the app
@@ -86,6 +94,8 @@ export function ConnectWalletModal() {
       setSavingNickname(false);
       setStartedAsNewPlayer(false);
       setPackGranted(false);
+      setPlacing(false);
+      setPlaceError(null);
       setSageStalled(false);
     }
   }
@@ -117,7 +127,35 @@ export function ConnectWalletModal() {
   if (!isOpen) return null;
 
   const handleClose = () => {
+    clearBetDraft();
     close();
+  };
+
+  // The sheet is done and the player stays where they were. In a room the slip is far below the arena on a phone: its submit button is
+  // brought on screen, so the way on is in sight (F4).
+  const closeInRoom = () => {
+    close();
+    if (pathname.startsWith("/play/")) revealBetSlip();
+  };
+
+  // The welcome dialog's main button with a draft: the bet the player set up, placed the way the slip places it.
+  const placeDraft = async () => {
+    if (!draft || placing) return;
+    const attemptId = attemptIdRef.current;
+    setPlacing(true);
+    setPlaceError(null);
+    try {
+      const stake = (Number(draft.stake) || 0).toFixed(3);
+      await api.placeBet({ roundId: draft.roundId, direction: draft.direction, leverage: draft.leverage, stake });
+      announceDraftPlaced({ roundId: draft.roundId, direction: draft.direction, leverage: draft.leverage, stake });
+      if (attemptIdRef.current !== attemptId) return;
+      closeInRoom();
+    } catch (err) {
+      if (attemptIdRef.current !== attemptId) return;
+      setPlaceError(mutationErrorText(err, t("common.somethingWrong"), t));
+    } finally {
+      setPlacing(false);
+    }
   };
 
   const FOCUSABLE_SELECTOR =
@@ -171,7 +209,7 @@ export function ConnectWalletModal() {
     // nickname step, which the server remembers as no nickname at all (the wallet address stands in): it is asked for once more.
     if (session_.isNewPlayer || hasPlaceholderNickname(session_.player)) setStep("nickname");
     else if (granted) setStep("starter-pack");
-    else close();
+    else closeInRoom();
   };
 
   const startConnect = async () => {
@@ -256,7 +294,7 @@ export function ConnectWalletModal() {
       await session.refresh();
       if (attemptIdRef.current !== attemptId) return; // the sheet was closed meanwhile
       if (packGranted) setStep("starter-pack");
-      else close();
+      else closeInRoom();
     } catch (err) {
       if (attemptIdRef.current !== attemptId) return;
       setNicknameError(mutationErrorText(err, t("connect.nicknameSaveFail"), t));
@@ -268,7 +306,7 @@ export function ConnectWalletModal() {
   // "Not now" on the second asking: the player leaves the nickname for later, but not the news — a pack that was credited is still told.
   const skipNickname = () => {
     if (packGranted) setStep("starter-pack");
-    else close();
+    else closeInRoom();
   };
 
   return (
@@ -436,20 +474,50 @@ export function ConnectWalletModal() {
                 </p>
               </>
             )}
+            {draft && (
+              // The bet from the slip, in one line — what the main button places, nothing else.
+              <div className="card card--tight" aria-label={t("betSlip.yourBet")}>
+                <p style={{ margin: 0 }}>
+                  {t("betSlip.yourBet")} <DirectionGlyph direction={draft.direction} /> {draft.direction} · x{draft.leverage} ·{" "}
+                  {formatPlayAmount(draft.stake)} PLAY
+                </p>
+                {draft.totalDebit != null && (
+                  <p className="faint" style={{ margin: "4px 0 0" }}>
+                    {t("connect.draftTotal", { total: formatPlayAmount(draft.totalDebit, { decimals: 3 }) })}
+                  </p>
+                )}
+              </div>
+            )}
+            {placeError && (
+              <p className="field-error" role="alert">
+                {placeError}
+              </p>
+            )}
             <div className="modal-actions stack" style={{ gap: 10 }}>
-              <button
-                type="button"
-                className="btn btn--primary btn--block btn--lg"
-                onClick={() => {
-                  handleClose();
-                  // Signed in from a room (or the lobby) the player is already where the bet is: the button must
-                  // not throw the room away. From any other screen the lobby is where a first bet starts.
-                  if (!isBettingScreen(pathname)) navigate("/");
-                }}
-              >
-                {t("connect.placeBet")}
-              </button>
-              <button type="button" className="btn btn--secondary btn--block" onClick={handleClose}>
+              {draft ? (
+                <>
+                  <button type="button" className="btn btn--primary btn--block btn--lg" disabled={placing} onClick={() => void placeDraft()}>
+                    {placing ? t("connect.placingDraft") : t("connect.placeDraft")}
+                  </button>
+                  <button type="button" className="btn btn--secondary btn--block" disabled={placing} onClick={closeInRoom}>
+                    {t("connect.changeDraft")}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn--primary btn--block btn--lg"
+                  onClick={() => {
+                    closeInRoom();
+                    // Signed in from a room (or the lobby) the player is already where the bet is: the button must
+                    // not throw the room away. From any other screen the lobby is where a first bet starts.
+                    if (!isBettingScreen(pathname)) navigate("/");
+                  }}
+                >
+                  {t("connect.chooseBet")}
+                </button>
+              )}
+              <button type="button" className="btn btn--secondary btn--block" disabled={placing} onClick={handleClose}>
                 {t("connect.explore")}
               </button>
             </div>
@@ -458,6 +526,16 @@ export function ConnectWalletModal() {
       </div>
     </div>
   );
+}
+
+/** The room (`/play/:marketId`) of the market a draft was set up in. */
+function isDraftRoom(pathname: string, marketId: string): boolean {
+  if (!pathname.startsWith("/play/")) return false;
+  try {
+    return decodeURIComponent(pathname.slice("/play/".length).split("/")[0]) === marketId;
+  } catch {
+    return false;
+  }
 }
 
 /** The screens a first bet is placed from: the lobby (its cards lead to a room) and a room itself. */

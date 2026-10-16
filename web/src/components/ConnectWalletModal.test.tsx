@@ -342,9 +342,9 @@ describe("Connect-wallet modal — a pack credited by THIS sign-in is told, to a
     expect(screen.queryByText(/You've got/)).not.toBeInTheDocument();
   });
 
-  it("…and the dialog is the same one: PLACE A BET keeps the room, EXPLORE closes it", async () => {
+  it("…and the dialog is the same one: CHOOSE A BET keeps the room, EXPLORE closes it", async () => {
     const { dialog, user } = await signInWithTestWallet(returningPlayerApi("Tester_One", undefined, true), "/play/spot_ETH?side=down");
-    await user.click(await within(dialog).findByRole("button", { name: "PLACE A BET" }));
+    await user.click(await within(dialog).findByRole("button", { name: "CHOOSE A BET" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent("/play/spot_ETH?side=down");
   });
@@ -422,27 +422,27 @@ describe("Connect-wallet modal — the nickname asked for once more can be left 
   });
 });
 
-describe("Connect-wallet modal — PLACE A BET on a first sign-in does not throw the screen away (first tester pass, D1)", () => {
-  const pressPlaceABet = async (path: string) => {
+describe("Connect-wallet modal — CHOOSE A BET on a first sign-in does not throw the screen away (first tester pass, D1)", () => {
+  const pressChooseABet = async (path: string) => {
     const { dialog, user, field } = await toNicknameStep(vi.fn(async (nickname: string) => ({ ...TEST_PLAYER, nickname })), path);
     await user.type(field, "moon Walker");
     await user.click(within(dialog).getByRole("button", { name: "CONTINUE" }));
-    await user.click(await within(dialog).findByRole("button", { name: "PLACE A BET" }));
+    await user.click(await within(dialog).findByRole("button", { name: "CHOOSE A BET" }));
   };
 
   it("from a room: the room stays, with its side", async () => {
-    await pressPlaceABet("/play/spot_ETH?side=down");
+    await pressChooseABet("/play/spot_ETH?side=down");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent("/play/spot_ETH?side=down");
   });
 
   it("from the lobby: the lobby stays, on its panel", async () => {
-    await pressPlaceABet("/?c=sports");
+    await pressChooseABet("/?c=sports");
     expect(screen.getByTestId("location")).toHaveTextContent("/?c=sports");
   });
 
   it.each(["/stats", "/how-it-works", "/wallet"])("from %s, where nothing can be bet: the lobby", async (path) => {
-    await pressPlaceABet(path);
+    await pressChooseABet(path);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
   });
