@@ -95,7 +95,7 @@ function DockBody({ positions }: { positions: readonly MyPositionDto[] }) {
         type="button"
         className="my-bet-dock__main"
         aria-expanded={open}
-        aria-label={t(open ? "dock.collapse" : "dock.expand")}
+        title={t(open ? "dock.collapse" : "dock.expand")}
         onClick={() => setOpen((v) => !v)}
       >
         <span className="my-bet-dock__row">

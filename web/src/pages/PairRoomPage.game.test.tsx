@@ -3,7 +3,7 @@
  * sheet; the oracle paragraph is behind an "i"; the crowd account is on the Stats page; the chart draws the player's own lines and the herd's
  * only in Pro. (`PairRoomPage.test.tsx` runs the same room in the Pro view.)
  */
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
 import type { Interval, RoundsPairDto } from "../api/contract";
 import { closeBetSheet, useBetSheetRequest } from "../components/betSheetState";
 import { setProMode } from "../components/proMode";
+import { ProToggle } from "../components/ProToggle";
 import { NOW, bettingRoundOf, catalogue, crowdPosition, marketsOf, publicPosition, runningRoundOf, ticksOf } from "../components/testFixtures";
 import { PairRoomPage } from "./PairRoomPage";
 
@@ -41,6 +42,8 @@ function renderRoom(signedIn = false, running = (id: string) => runningRoundOf(i
         <Route path="/play/:marketId" element={<PairRoomPage />} />
       </Routes>
       <SheetProbe />
+      {/* The footer's switch (Layout): the way into the Pro view from the default room. */}
+      <ProToggle />
     </MemoryRouter>,
     { wrapper: apiWrapper(api, signedIn ? TEST_PLAYER : null) },
   );
@@ -95,23 +98,23 @@ describe("Room — the default view", () => {
     const user = userEvent.setup();
     renderRoom();
     await screen.findByRole("button", { name: /^DOWN/ });
-    await user.click(screen.getByRole("button", { name: "Pro view" }));
+    await user.click(screen.getAllByRole("button", { name: "Pro view" })[0]);
     expect(await screen.findByRole("button", { name: "CONNECT WALLET" })).toBeInTheDocument();
     expect(screen.getByText("With the herd")).toBeInTheDocument();
     expect(screen.getByRole("slider")).toBeInTheDocument();
-    expect(within(document.body).getByRole("button", { name: "Pro view" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("button", { name: "Pro view" })[0]).toHaveAttribute("aria-pressed", "true");
   });
 
   it("the Pro choice is remembered in storage, and a browser without storage still switches for the page", async () => {
     const user = userEvent.setup();
     renderRoom();
-    await user.click(await screen.findByRole("button", { name: "Pro view" }));
+    await user.click((await screen.findAllByRole("button", { name: "Pro view" }))[0]);
     expect(window.localStorage.getItem("herd.pro")).toBe("1");
     const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("storage is off");
     });
-    await user.click(screen.getByRole("button", { name: "Pro view" }));
-    expect(screen.getByRole("button", { name: "Pro view" })).toHaveAttribute("aria-pressed", "false");
+    await user.click(screen.getAllByRole("button", { name: "Pro view" })[0]);
+    expect(screen.getAllByRole("button", { name: "Pro view" })[0]).toHaveAttribute("aria-pressed", "false");
     setItem.mockRestore();
   });
 });

@@ -470,6 +470,12 @@ function Room({ market }: { market: MarketDto }) {
             </span>
           )}
           {!open && <span className="room-stale">{t("card.lastPrice")}</span>}
+          {/* The default view keeps the price and the bet; where the price comes from is one tap away behind an "i" (Р-98). */}
+          {!pro && open && (
+            <button type="button" className="room-info" aria-expanded={sourcesOpen} aria-label={t("gameRoom.info")} onClick={() => setSourcesOpen((v) => !v)}>
+              <span aria-hidden="true">i</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -590,12 +596,6 @@ function Room({ market }: { market: MarketDto }) {
               )}
             </>
           ) : null}
-          {/* The default view keeps the price and the bet; where the price comes from is one tap away behind an "i" (Р-98). */}
-          {!pro && (
-            <button type="button" className="room-info" aria-expanded={sourcesOpen} aria-label={t("gameRoom.info")} onClick={() => setSourcesOpen((v) => !v)}>
-              <span aria-hidden="true">i</span>
-            </button>
-          )}
         </div>
         {/* "My bet" is pinned to the screen (the dock), so the default view does not repeat it here — except a wipeout, whose explanation lives on this card. */}
         {runningRound && player && ownPosition && (pro || ownPosition.liquidated) && (
@@ -632,11 +632,11 @@ function Room({ market }: { market: MarketDto }) {
           <div className={`room-arena ${lockedOverlay ? "room-arena--locked" : ""}`} role="group" aria-label={t("gameRoom.pickSide")}>
             <button
               type="button"
-              className={`room-arena__side room-arena__side--up ${direction === "UP" ? "room-arena__side--selected" : ""}`}
+              className={`room-arena__side room-arena__side--up ${pro && direction === "UP" ? "room-arena__side--selected" : ""}`}
               style={{ flexBasis: `${upPct}%` }}
               onClick={() => pick("UP")}
               disabled={betting.phase !== "BETTING"}
-              aria-pressed={direction === "UP"}
+              aria-pressed={pro ? direction === "UP" : undefined}
             >
               <DirectionGlyph direction="UP" />
               <span>UP</span>
@@ -644,11 +644,11 @@ function Room({ market }: { market: MarketDto }) {
             </button>
             <button
               type="button"
-              className={`room-arena__side room-arena__side--down ${direction === "DOWN" ? "room-arena__side--selected" : ""}`}
+              className={`room-arena__side room-arena__side--down ${pro && direction === "DOWN" ? "room-arena__side--selected" : ""}`}
               style={{ flexBasis: `${100 - upPct}%` }}
               onClick={() => pick("DOWN")}
               disabled={betting.phase !== "BETTING"}
-              aria-pressed={direction === "DOWN"}
+              aria-pressed={pro ? direction === "DOWN" : undefined}
             >
               <DirectionGlyph direction="DOWN" />
               <span>DOWN</span>
@@ -749,7 +749,7 @@ function Room({ market }: { market: MarketDto }) {
         </p>
 
         <MarketRail market={market} />
-        <ProToggle className="room-pro" />
+        {pro && <ProToggle className="room-pro" />}
       </div>
     </div>
   );

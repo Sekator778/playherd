@@ -2,6 +2,7 @@
  * The bet sheet (Р-98): a tap on UP or DOWN opens it; stake chips, three risk levels clamped to what the market and the stake allow, the
  * plain-words example, ONE button. Signed out, the first step is inside the sheet and the choice survives the sign-in.
  */
+import { StrictMode } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -64,13 +65,16 @@ function setup({ cap = 40, tierAt500, signedIn = true, kind = "PERP", placeBet }
     myAccount: async () => ({ playerId: TEST_PLAYER.playerId, balance: "10000.000", currentSeason: "2026-10", inPlay: "0.000" }),
     placeBet: place,
   });
+  // StrictMode, as the dev server runs it: effects run twice, and the sign-in the sheet asks for must survive that.
   render(
-    <MemoryRouter initialEntries={["/"]}>
-      <ApiProvider api={api}>
-        <BetSheetHost />
-        <ConnectWalletModal />
-      </ApiProvider>
-    </MemoryRouter>,
+    <StrictMode>
+      <MemoryRouter initialEntries={["/"]}>
+        <ApiProvider api={api}>
+          <BetSheetHost />
+          <ConnectWalletModal />
+        </ApiProvider>
+      </MemoryRouter>
+    </StrictMode>,
   );
   const open = (direction: Direction = "DOWN") => act(() => openBetSheet({ marketId: "BTC", interval: "HOURLY", direction }));
   return { round, place, open, user: userEvent.setup() };

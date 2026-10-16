@@ -12,7 +12,7 @@ import { notification } from "../fx/haptics";
 import { useT } from "../i18n";
 import { FeeBreakdown } from "./BetSlip";
 import { announceDraftPlaced, betDraftFor, clearBetDraft, onDraftPlaced, saveBetDraft, revealBetSlip } from "./betDraft";
-import { announceCustomize, closeBetSheet, requestAutoTestWallet, useBetSheetRequest, type BetSheetRequest } from "./betSheetState";
+import { announceCustomize, closeBetSheet, consumeAutoTestWallet, requestAutoTestWallet, useBetSheetRequest, type BetSheetRequest } from "./betSheetState";
 import { defaultRiskId, exampleFor, optionFor, riskOptions, RISK_WANTED, SHEET_STAKES, signedMove, stakeIsValid, type RiskId } from "./betSheetModel";
 import { defaultLeverage, formatMovePercent, sanitizeStakeInput } from "./betSlipModel";
 import { DirectionGlyph } from "./icons";
@@ -121,6 +121,13 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
   };
   // The sign-in dialog placed the drafted bet itself: the sheet has done its work.
   useEffect(() => onDraftPlaced(() => closeBetSheet()), []);
+  // A request for the test wallet that the sign-in dialog never took (it was already open, the sheet was closed) must not wait for the next one.
+  useEffect(
+    () => () => {
+      consumeAutoTestWallet();
+    },
+    [],
+  );
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     dialogRef.current?.focus();

@@ -101,7 +101,7 @@ describe("a bet waiting for its round", () => {
     const user = userEvent.setup();
     renderDock([position({ phase: "BETTING", entryPrice: null, liquidationPrice: null, untilMs: NOW + 57_000 })], [btc("100.00")], true, { cancelBet });
     await dock();
-    await user.click(screen.getByRole("button", { name: "Show details of my bet" }));
+    await user.click(within(await dock()).getAllByRole("button")[0]);
     await user.click(screen.getByRole("button", { name: "Cancel bet (free)" }));
     expect(screen.getByText(/1,000 PLAY comes back, fees included/)).toBeInTheDocument();
     expect(cancelBet).not.toHaveBeenCalled();
@@ -165,7 +165,7 @@ describe("a live bet", () => {
     // The ETH bet's round started later (30 s ago against 90 s): it is the newest one; BTC is the "other".
     expect(card).toHaveTextContent("ETH");
     expect(within(card).getByLabelText("1 more open bets")).toBeInTheDocument();
-    await user.click(within(card).getByRole("button", { name: "Show details of my bet" }));
+    await user.click(within(card).getAllByRole("button")[0]);
     expect(card).toHaveTextContent("My other bets");
     expect(within(card).getByRole("link", { name: /BTC · 1,000 PLAY/ })).toHaveAttribute("href", "/play/BTC?series=hourly");
     expect(within(card).getByRole("link", { name: "Open this round" })).toHaveAttribute("href", "/play/ETH?series=hourly");

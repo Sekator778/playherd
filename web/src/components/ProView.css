@@ -26,11 +26,9 @@
 
 /* The "i" behind which the room keeps where its price comes from (`PairRoomPage.tsx`, Р-98). */
 .room-info {
-  order: 2;
-  align-self: flex-start;
   width: 44px;
   height: 44px;
-  margin-top: 4px;
+  margin: -10px 0;
   background: none;
   border: 0;
   color: var(--text-muted);

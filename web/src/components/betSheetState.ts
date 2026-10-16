@@ -74,6 +74,11 @@ export function requestAutoTestWallet(): void {
   autoTestWallet = true;
 }
 
+/** Whether the request stands (without taking it): safe to read while rendering, twice if need be. */
+export function peekAutoTestWallet(): boolean {
+  return autoTestWallet;
+}
+
 /** Whether the dialog was opened that way — and forgets it, so a later opening asks as usual. */
 export function consumeAutoTestWallet(): boolean {
   const was = autoTestWallet;

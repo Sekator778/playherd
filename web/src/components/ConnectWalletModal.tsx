@@ -12,7 +12,7 @@ import { QrCode } from "../wallet/QrCode";
 import { CopyButton, MultiAccountDisclosureLine, Skeleton } from "./Common";
 import { SageSignInTips } from "./SageHints";
 import { announceDraftPlaced, clearBetDraft, revealBetSlip, useBetDraft } from "./betDraft";
-import { consumeAutoTestWallet } from "./betSheetState";
+import { consumeAutoTestWallet, peekAutoTestWallet } from "./betSheetState";
 import { DirectionGlyph } from "./icons";
 
 type Step = "connect" | "sage-qr" | "waiting" | "nickname" | "starter-pack" | "error";
@@ -561,18 +561,19 @@ function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => v
 
   // Opened by the bet sheet's "Continue with test wallet": that road is taken at once, as soon as the server has said it is on offer —
   // the player has already chosen it, and asking again would be a second tap for the same choice (Р-98).
-  const autoStarted = useRef(false);
+  const [autoStart] = useState(peekAutoTestWallet);
   useEffect(() => {
-    if (autoStarted.current || !known || !testWalletOffered) return;
-    autoStarted.current = true;
-    if (!consumeAutoTestWallet()) return;
+    if (!autoStart || !known || !testWalletOffered) return;
     // Not in this commit: the dialog's own effect on opening invalidates every attempt already started (`attemptIdRef`), and a child's
-    // effects run before its parent's — an attempt begun here would be thrown away by it.
-    const timer = window.setTimeout(onTestWallet, 0);
+    // effects run before its parent's — an attempt begun here would be thrown away by it. The request is taken inside the timer, so an
+    // effect that is run twice (StrictMode) and cleaned up in between does not lose it.
+    const timer = window.setTimeout(() => {
+      if (consumeAutoTestWallet()) onTestWallet();
+    }, 0);
     return () => window.clearTimeout(timer);
     // `onTestWallet` is a fresh closure on every render of the dialog; the request is read once, when the step has what it needs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [known, testWalletOffered]);
+  }, [autoStart, known, testWalletOffered]);
 
   return (
     <>
