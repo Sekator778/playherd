@@ -36,7 +36,7 @@ import {
 import { herdSideOf } from "./marketModel";
 import { useT } from "../i18n";
 import { Rich } from "../i18n/Rich";
-import { betDraftFor, clearBetDraft, onDraftPlaced, onRevealBetSlip, saveBetDraft } from "./betDraft";
+import { betDraftFor, clearBetDraft, dropStaleBetDraft, onDraftPlaced, onRevealBetSlip, saveBetDraft } from "./betDraft";
 
 interface BetSlipProps {
   round: RoundBetting;
@@ -95,10 +95,10 @@ export function BetSlip({
   const maxLeverage = market?.series?.find((s) => s.interval === interval)?.maxLeverage ?? market?.maxLeverage ?? LEVERAGE_MAX;
 
   const bettingClosed = nowMs >= round.window.startMs;
-  // A draft of a round whose betting has closed is of no use to anyone (see `betDraft.ts`).
+  // A draft of a round that is over is of no use to anyone (see `betDraft.ts`).
   useEffect(() => {
-    if (bettingClosed) clearBetDraft(round.roundId);
-  }, [bettingClosed, round.roundId]);
+    dropStaleBetDraft(round.marketId, round.roundId, bettingClosed);
+  }, [bettingClosed, round.marketId, round.roundId]);
   if (bettingClosed) {
     return (
       <div className="card">
@@ -461,7 +461,6 @@ function BetSlipPreview({
     saveBetDraft({
       roundId: round.roundId,
       marketId: round.marketId,
-      closesAtMs: round.window.startMs,
       direction,
       leverageChoice,
       high,

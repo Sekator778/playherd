@@ -10,8 +10,6 @@ import type { Direction } from "../api/contract";
 export interface BetDraft {
   roundId: string;
   marketId: string;
-  /** When betting on this round closes (ms): past it the draft is gone. */
-  closesAtMs: number;
   direction: Direction;
   /** The dial as the player left it (`null`: untouched, on the market's default) and the "High leverage" switch. */
   leverageChoice: number | null;
@@ -46,9 +44,15 @@ export function clearBetDraft(roundId?: string) {
   emitDraft();
 }
 
-/** The draft for this round, while its betting window is open; otherwise none. */
-export function betDraftFor(roundId: string, nowMs = Date.now()): BetDraft | null {
-  return draft && draft.roundId === roundId && nowMs < draft.closesAtMs ? draft : null;
+/** The draft for this round, if there is one. */
+export function betDraftFor(roundId: string): BetDraft | null {
+  return draft && draft.roundId === roundId ? draft : null;
+}
+
+/** What the slip of a room says about the draft of its market: that round is over (betting closed, or the room is on the next round)
+ *  and the draft goes. The slip's clock is the room's own (server time), so the draft carries no clock of its own. */
+export function dropStaleBetDraft(marketId: string, roundId: string, bettingClosed: boolean) {
+  if (draft && draft.marketId === marketId && (draft.roundId !== roundId || bettingClosed)) clearBetDraft();
 }
 
 /** The draft, whatever room the player is in — for the dialog, which finds the room by its market. */

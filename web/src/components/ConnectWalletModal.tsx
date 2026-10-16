@@ -11,7 +11,7 @@ import { connectAndSignWithSage, getWalletConnectProjectId, rememberSageAddress 
 import { QrCode } from "../wallet/QrCode";
 import { CopyButton, MultiAccountDisclosureLine, Skeleton } from "./Common";
 import { SageSignInTips } from "./SageHints";
-import { announceDraftPlaced, betDraftFor, clearBetDraft, revealBetSlip, useBetDraft } from "./betDraft";
+import { announceDraftPlaced, clearBetDraft, revealBetSlip, useBetDraft } from "./betDraft";
 import { DirectionGlyph } from "./icons";
 
 type Step = "connect" | "sage-qr" | "waiting" | "nickname" | "starter-pack" | "error";
@@ -68,7 +68,7 @@ export function ConnectWalletModal() {
   // The bet the player set up in the room's slip before signing in (`betDraft.ts`), if it is this room's and still open for betting:
   // the welcome dialog then places exactly that bet. `placing`/`placeError`: the placing is on its way / the server's refusal.
   const savedDraft = useBetDraft();
-  const draft = savedDraft && isDraftRoom(pathname, savedDraft.marketId) ? betDraftFor(savedDraft.roundId) : null;
+  const draft = savedDraft && isDraftRoom(pathname, savedDraft.marketId) ? savedDraft : null;
   const [placing, setPlacing] = useState(false);
   const [placeError, setPlaceError] = useState<string | null>(null);
 
