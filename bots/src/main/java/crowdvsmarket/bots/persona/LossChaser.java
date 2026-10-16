@@ -12,8 +12,23 @@ import java.util.random.RandomGenerator;
  */
 public final class LossChaser extends AbstractPersona {
 
+    /** Leverage added per loss in a row, as a share of the usual (0.5 = half). */
+    static final double DEFAULT_STEP = 0.5;
+    /** Losses in a row after which the leverage stops rising. */
+    static final int DEFAULT_CAP = 3;
+
+    private final double step;
+    private final int cap;
+
     public LossChaser() {
+        this(DEFAULT_STEP, DEFAULT_CAP);
+    }
+
+    /** Other steps and caps, for the parameter sweep of the math review; the catalog uses the defaults. */
+    LossChaser(double step, int cap) {
         super("loss-chaser", 0.85, 2, NoSignalPolicy.FALLBACK);
+        this.step = step;
+        this.cap = cap;
     }
 
     @Override
@@ -28,6 +43,6 @@ public final class LossChaser extends AbstractPersona {
         if (!lost(account)) {
             return base;
         }
-        return Leverages.clamp((int) Math.round(base * (1.0 + 0.5 * Math.min(account.streak(), 3))), allowed);
+        return Leverages.clamp((int) Math.round(base * (1.0 + step * Math.min(account.streak(), cap))), allowed);
     }
 }

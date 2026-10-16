@@ -17,8 +17,12 @@ import java.util.Locale;
  * Command line of the backtest.
  *
  * <pre>
- * java -cp bots.jar:engine.jar crowdvsmarket.bots.backtest.BacktestMain &lt;candles-dir&gt; [--stake PLAY] [--out report.md]
+ * java -cp bots.jar:engine.jar crowdvsmarket.bots.backtest.BacktestMain &lt;candles-dir&gt; [--stake PLAY] [--persona ID] [--leverage N] [--trace bets.csv] [--out report.md]
  * </pre>
+ *
+ * {@code --persona} makes every bot play with that persona's leverage rule and {@code --leverage} fixes the leverage of
+ * every bet, so strategies are compared on equal terms (their catalog personas otherwise differ in leverage, from 3 to the
+ * market's cap); {@code --trace} writes one CSV line per bet for statistics outside Java.
  *
  * Reads every {@code <MARKET>_1m.csv} of the directory (see {@link CandleFiles}; written by
  * {@code bots/scripts/download_candles.py}), replays the catalog and prints markdown: the data used, the base rates of the
@@ -31,20 +35,26 @@ public final class BacktestMain {
 
     public static void main(String[] args) throws IOException {
         if (args.length < 1) {
-            System.err.println("usage: BacktestMain <candles-dir> [--stake PLAY] [--out report.md]");
+            System.err.println("usage: BacktestMain <candles-dir> [--stake PLAY] [--persona ID] [--leverage N] [--trace bets.csv] [--out report.md]");
             System.exit(2);
         }
         Path dir = Path.of(args[0]);
         long stake = Backtester.DEFAULT_STAKE_PLAY;
         Path out = null;
+        String persona = null;
+        int leverage = 0;
+        Path trace = null;
         for (int i = 1; i < args.length; i++) {
             switch (args[i]) {
                 case "--stake" -> stake = Long.parseLong(args[++i]);
                 case "--out" -> out = Path.of(args[++i]);
+                case "--persona" -> persona = args[++i];
+                case "--leverage" -> leverage = Integer.parseInt(args[++i]);
+                case "--trace" -> trace = Path.of(args[++i]);
                 default -> throw new IllegalArgumentException("unknown argument " + args[i]);
             }
         }
-        String report = report(dir, stake);
+        String report = report(dir, stake, persona, leverage, trace);
         if (out == null) {
             System.out.print(report);
         } else {
@@ -55,6 +65,13 @@ public final class BacktestMain {
 
     /** The whole markdown report for the candle files in {@code dir}. */
     static String report(Path dir, long stakePlay) throws IOException {
+        return report(dir, stakePlay, null, 0, null);
+    }
+
+    /** As {@link #report(Path, long)}, with one fixed persona and/or leverage for every bot, and an optional bet trace file. */
+    static String report(Path dir, long stakePlay, String persona, int leverage, Path trace) throws IOException {
+        StringBuilder traceCsv = trace == null ? null : new StringBuilder(
+                "catalogId,market,horizon,startMs,direction,moveBp,leverage,liquidated,net,fees\n");
         List<BacktestMarket> markets = new ArrayList<>();
         StringBuilder data = new StringBuilder();
         try (DirectoryStream<Path> files = Files.newDirectoryStream(dir, "*_1m.csv")) {
@@ -75,11 +92,23 @@ public final class BacktestMain {
         }
         Catalog catalog = Catalog.load();
         List<CatalogEntry> entries = catalog.bots();
-        Backtester bt = new Backtester(stakePlay);
+        Backtester bt = new Backtester(stakePlay, persona, leverage, traceCsv == null ? null : b ->
+                traceCsv.append(b.catalogId()).append(',').append(b.marketId()).append(',').append(b.horizonMinutes()).append(',')
+                        .append(b.startMs()).append(',').append(b.direction()).append(',')
+                        .append(String.format(Locale.ROOT, "%.4f", b.moveBp())).append(',').append(b.leverage()).append(',')
+                        .append(b.liquidated() ? 1 : 0).append(',').append(b.net().toPlainString()).append(',')
+                        .append(b.fees().toPlainString()).append('\n'));
         List<Backtester.Result> results = bt.run(entries, markets);
 
         StringBuilder sb = new StringBuilder();
-        sb.append("Stake per bet: ").append(stakePlay).append(" PLAY.\n\n");
+        sb.append("Stake per bet: ").append(stakePlay).append(" PLAY.");
+        if (persona != null) {
+            sb.append(" Persona of every bot: ").append(persona).append('.');
+        }
+        if (leverage != 0) {
+            sb.append(" Leverage of every bet: x").append(leverage).append(" (clamped to the stake tier's cap).");
+        }
+        sb.append("\n\n");
         sb.append("| market | 1m candles | first | last | dropped lines |\n|---|---|---|---|---|\n").append(data).append('\n');
 
         sb.append("Base rates (windows with a decided move, share closing up):\n\n");
@@ -114,6 +143,9 @@ public final class BacktestMain {
                 sb.append(' ').append(cell(total(mine, h))).append(" |\n");
             }
             sb.append('\n');
+        }
+        if (traceCsv != null) {
+            Files.writeString(trace, traceCsv.toString());
         }
         sb.append("Crowd strategies (crowd-follow, crowd-contrarian) are not replayed: candles carry no previous-round majority.\n");
         return sb.toString();

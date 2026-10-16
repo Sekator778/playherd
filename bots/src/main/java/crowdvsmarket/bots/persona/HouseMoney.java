@@ -12,14 +12,30 @@ import java.util.random.RandomGenerator;
  */
 public final class HouseMoney extends AbstractPersona {
 
+    static final double DEFAULT_STEP = 0.5;
+    static final int DEFAULT_CAP = 3;
+    static final double DEFAULT_STAKE_MULTIPLE = 1.5;
+
+    private final double step;
+    private final int cap;
+    private final double stakeMultiple;
+
     public HouseMoney() {
+        this(DEFAULT_STEP, DEFAULT_CAP, DEFAULT_STAKE_MULTIPLE);
+    }
+
+    /** Other steps, caps and stake multiples, for the parameter sweep of the math review; the catalog uses the defaults. */
+    HouseMoney(double step, int cap, double stakeMultiple) {
         super("house-money", 0.85, 2, NoSignalPolicy.FALLBACK);
+        this.step = step;
+        this.cap = cap;
+        this.stakeMultiple = stakeMultiple;
     }
 
     @Override
     public PlayAmount stake(MarketSnapshot market, BotAccount account, RandomGenerator rng) {
         PlayAmount base = botStake(account);
-        return won(account) ? new PlayAmount(base.mojos() * 3 / 2) : base;
+        return won(account) ? new PlayAmount(Math.round(base.mojos() * stakeMultiple)) : base;
     }
 
     @Override
@@ -29,6 +45,6 @@ public final class HouseMoney extends AbstractPersona {
         if (!won(account)) {
             return base;
         }
-        return Leverages.clamp((int) Math.round(base * (1.0 + 0.5 * Math.min(account.streak(), 3))), allowed);
+        return Leverages.clamp((int) Math.round(base * (1.0 + step * Math.min(account.streak(), cap))), allowed);
     }
 }

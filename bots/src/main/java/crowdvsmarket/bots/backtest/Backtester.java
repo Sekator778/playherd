@@ -9,6 +9,7 @@ import crowdvsmarket.bots.brain.BotProfile;
 import crowdvsmarket.bots.brain.Seeds;
 import crowdvsmarket.bots.catalog.CatalogEntry;
 import crowdvsmarket.bots.persona.Persona;
+import crowdvsmarket.bots.persona.Personas;
 import crowdvsmarket.bots.signal.MarketView;
 import crowdvsmarket.bots.signal.Signal;
 import crowdvsmarket.engine.economy.EconomyRules;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.SplittableRandom;
+import java.util.function.Consumer;
 
 /**
  * Replays the catalog's bots over historical 1-minute candles, round by round, the way the game would settle them.
@@ -61,16 +63,52 @@ public final class Backtester {
     private static final PlayAmount BANKROLL = PlayAmount.ofWholePlay(1_000_000_000L);
 
     private final PlayAmount stake;
+    private final String personaOverride;
+    private final int fixedLeverage;
+    private final Consumer<Bet> betSink;
 
     public Backtester() {
         this(DEFAULT_STAKE_PLAY);
     }
 
     public Backtester(long stakePlay) {
+        this(stakePlay, null, 0, null);
+    }
+
+    /**
+     * A backtest that compares strategies on equal terms.
+     *
+     * @param personaOverride  persona id every bot plays with instead of its own catalog persona, or {@code null} for the
+     *                         catalog's (its leverage rule and win/loss state then apply to every strategy alike)
+     * @param fixedLeverage    leverage of every bet (clamped to {@code [2, cap of the stake's tier]}), or {@code 0} to let
+     *                         the persona choose
+     * @param betSink          receives every settled bet (for statistics outside this class), or {@code null}
+     */
+    public Backtester(long stakePlay, String personaOverride, int fixedLeverage, Consumer<Bet> betSink) {
         this.stake = PlayAmount.ofWholePlay(stakePlay);
         if (stake.compareTo(LedgerBook.MIN_STAKE) < 0) {
             throw new IllegalArgumentException("stake below the game's minimum: " + stakePlay);
         }
+        if (fixedLeverage != 0 && fixedLeverage < Leverage.MIN) {
+            throw new IllegalArgumentException("fixed leverage below the game's minimum: " + fixedLeverage);
+        }
+        if (personaOverride != null) {
+            Personas.byId(personaOverride); // fail early on an unknown id
+        }
+        this.personaOverride = personaOverride;
+        this.fixedLeverage = fixedLeverage;
+        this.betSink = betSink;
+    }
+
+    /**
+     * One settled bet.
+     *
+     * @param direction +1 for UP, -1 for DOWN
+     * @param moveBp    the window's close against its open, in basis points (signed, independent of the bet's direction)
+     * @param net       payout - stake - fees, PLAY
+     */
+    public record Bet(String catalogId, String marketId, int horizonMinutes, long startMs, int direction, double moveBp,
+                      int leverage, boolean liquidated, BigDecimal net, BigDecimal fees) {
     }
 
     /**
@@ -169,7 +207,7 @@ public final class Backtester {
     public Result run(CatalogEntry entry, BacktestMarket market, int horizonMinutes) {
         Interval interval = horizonMinutes == 3 ? Interval.HOURLY : Interval.DAILY;
         BotProfile profile = entry.profile(entry.catalogId());
-        Persona persona = profile.persona();
+        Persona persona = personaOverride == null ? profile.persona() : Personas.byId(personaOverride);
         MarketSpec spec = market.spec();
         MarketSpec roundSpec = spec.forInterval(interval);
         List<BarDto> bars = market.bars();
@@ -198,27 +236,17 @@ public final class Backtester {
             }
             MarketSnapshot snapshot = new MarketSnapshot(spec, interval, roundId, w.startMs(),
                     w.startMs() + horizonMinutes * BarDto.MINUTE_MS, true, LedgerBook.MIN_STAKE);
-            int leverage = Math.max(Leverage.MIN, Math.min(snapshot.maxLeverage(stake),
-                    persona.leverage(snapshot, stake, account, rng)));
+            int wanted = fixedLeverage != 0 ? fixedLeverage : persona.leverage(snapshot, stake, account, rng);
+            int leverage = Math.max(Leverage.MIN, Math.min(snapshot.maxLeverage(stake), wanted));
             Direction direction = signal.get().direction();
 
             Candle c = w.candle();
-            Position position = Position.openFromMargin(entry.catalogId(), roundId, direction, new Leverage(leverage),
-                    stake.toMoney(), c.open(), roundSpec);
-            PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, List.of(c));
-            BigDecimal payout;
-            if (outcome instanceof PositionSimulator.Outcome.Liquidated liq) {
+            Settled settled = settle(entry.catalogId(), roundId, direction, leverage, stake, c, spec, roundSpec);
+            if (settled.liquidated()) {
                 liquidations++;
-                payout = LiquidationCalculator.payoutAtCandleExtreme(position.size(), position.entryPrice(),
-                        position.leverage(), direction.toSide(), liq.extremePrice());
-            } else {
-                BigDecimal margin = LiquidationCalculator.initialMargin(position.size(), position.entryPrice(), position.leverage());
-                payout = margin.add(((PositionSimulator.Outcome.Settled) outcome).pnl()).max(BigDecimal.ZERO);
             }
-            BigDecimal cap = EconomyRules.maxPayout(stake).toMoney().setScale(2, RoundingMode.DOWN);
-            payout = payout.min(cap);
-            BigDecimal fees = EconomyRules.fees(spec, leverage, stake).total().toMoney();
-            BigDecimal net = payout.subtract(stake.toMoney()).subtract(fees);
+            BigDecimal fees = settled.fees();
+            BigDecimal net = settled.net();
 
             bets++;
             pnl = pnl.add(net);
@@ -230,11 +258,46 @@ public final class Backtester {
             } else if ((direction == Direction.UP) == (cmp > 0)) {
                 hits++;
             }
+            if (betSink != null) {
+                double moveBp = c.close().subtract(c.open()).divide(c.open(), java.math.MathContext.DECIMAL64).doubleValue() * 1e4;
+                betSink.accept(new Bet(entry.catalogId(), market.id(), horizonMinutes, w.startMs(),
+                        direction == Direction.UP ? 1 : -1, moveBp, leverage,
+                        settled.liquidated(), net, fees));
+            }
             boolean won = net.signum() > 0;
             account = nextAccount(account, won);
         }
         return new Result(entry.catalogId(), profile.strategy().id(), entry.persona(), market.id(), horizonMinutes, windows,
                 noSignal, bets, ties, hits, liquidations, pnl, feesPaid, leverageSum);
+    }
+
+    /** What one bet on one window paid: all amounts in PLAY, {@code net = payout - stake - fees}. */
+    record Settled(BigDecimal payout, BigDecimal fees, boolean liquidated, BigDecimal net) {
+    }
+
+    /**
+     * Settles a bet on the aggregate candle of its window the way {@code GameEngine#resolveRound} does: the position
+     * from the stake as margin at the candle's open, liquidation on the candle's high/low with the remainder at the
+     * extreme, the payout cap, the fees of {@link EconomyRules#fees}.
+     */
+    static Settled settle(String playerId, String roundId, Direction direction, int leverage, PlayAmount stake, Candle c,
+                          MarketSpec spec, MarketSpec roundSpec) {
+        Position position = Position.openFromMargin(playerId, roundId, direction, new Leverage(leverage), stake.toMoney(),
+                c.open(), roundSpec);
+        PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, List.of(c));
+        BigDecimal payout;
+        boolean liquidated = outcome instanceof PositionSimulator.Outcome.Liquidated;
+        if (outcome instanceof PositionSimulator.Outcome.Liquidated liq) {
+            payout = LiquidationCalculator.payoutAtCandleExtreme(position.size(), position.entryPrice(),
+                    position.leverage(), direction.toSide(), liq.extremePrice());
+        } else {
+            BigDecimal margin = LiquidationCalculator.initialMargin(position.size(), position.entryPrice(), position.leverage());
+            payout = margin.add(((PositionSimulator.Outcome.Settled) outcome).pnl()).max(BigDecimal.ZERO);
+        }
+        BigDecimal cap = EconomyRules.maxPayout(stake).toMoney().setScale(2, RoundingMode.DOWN);
+        payout = payout.min(cap);
+        BigDecimal fees = EconomyRules.fees(spec, leverage, stake).total().toMoney();
+        return new Settled(payout, fees, liquidated, payout.subtract(stake.toMoney()).subtract(fees));
     }
 
     private static BotAccount nextAccount(BotAccount a, boolean won) {
