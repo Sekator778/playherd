@@ -62,11 +62,11 @@ test: test-java test-chain test-web ## unit + integration tests of every compone
 
 # --- engine + server (Maven reactor: engine is built and tested before server) ---
 
-test-java: ## mvn verify for engine + server
-	$(MVN) -pl server -am verify $(MVN_PG)
+test-java: ## mvn verify for engine + bots + server
+	$(MVN) -pl bots,server -am verify $(MVN_PG)
 
-build-java: ## package engine + server without tests
-	$(MVN) -pl server -am package -DskipTests
+build-java: ## package engine + bots + server without tests
+	$(MVN) -pl bots,server -am package -DskipTests
 
 # --- chain (Rust workspace) ---
 
