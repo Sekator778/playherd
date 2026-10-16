@@ -12,6 +12,9 @@ import { EngineBanner } from "./EngineBanner";
 import { FeedbackModal } from "./FeedbackModal";
 import { FeedbackStrip } from "./FeedbackStrip";
 import { PositionsStrip } from "./PositionsStrip";
+import { MyBetDock } from "./MyBetDock";
+import { useMyBetDockVisible } from "./useMyBetDockVisible";
+import { useProMode } from "./proMode";
 import { ScrollManager } from "./ScrollManager";
 import { CoinIcon, SpeakerOnIcon, SpeakerMuteIcon, VibrationOnIcon, VibrationOffIcon, LobbyTabIcon, StatsTabIcon, ProfileTabIcon } from "./icons";
 import { useSettlementWatcher } from "../fx/useSettlementWatcher";
@@ -321,9 +324,12 @@ export function Layout() {
   useAndroidBackButton();
   // Feedback strip (Р-81): while it is up, the page keeps room for it under its content (`Feedback.css`).
   const feedbackStripUp = useFeedbackStripVisible();
+  // The pinned "My bet" card (Р-98) sits over the page above the tab bar: the page keeps room for it. The Pro view keeps the older strip instead.
+  const dockUp = useMyBetDockVisible();
+  const pro = useProMode();
 
   return (
-    <div className={`page${feedbackStripUp ? " page--feedback-strip" : ""}`}>
+    <div className={`page${feedbackStripUp ? " page--feedback-strip" : ""}${dockUp ? " page--dock" : ""}`}>
       <ScrollManager />
       <a href="#main-content" className="skip-link">
         {t("layout.skip")}
@@ -334,8 +340,9 @@ export function Layout() {
           {/* The server rebuilding its state (503 `ENGINE_NOT_READY`) — a notice, not an error: the screens below keep
            *  what they show and load again by themselves. */}
           <EngineBanner />
-          {/* "Your bets" across every market (Р-71) — in the page flow, never fixed to the screen. */}
-          <PositionsStrip />
+          {/* "Your bets" across every market (Р-71) — in the page flow, never fixed to the screen. The Pro view's: the default view pins
+           *  "My bet" above the tab bar instead (Р-98). */}
+          {pro && <PositionsStrip />}
           <Outlet />
         </div>
       </main>
@@ -353,6 +360,7 @@ export function Layout() {
           <LanguageSwitcher />
         </div>
       </footer>
+      <MyBetDock />
       <BottomTabBar />
       {/* The invitation to leave feedback, above the tab bar (Р-81) — a quiet bar, closable for good; the form it opens (and the
        *  footer's and the profile menu's entries open) is the sheet next to it. */}

@@ -818,6 +818,8 @@ export const hi: Dict = {
     coinAria: "ट्रेज़री कॉइन आईडी",
   },
   dock: {
+    moreAria: "{count} और खुली बाज़ियाँ",
+    near: "सफ़ाया रेखा के क़रीब",
     aria: "मेरी बाज़ी",
     title: "मेरी बाज़ी",
     more: "+{count} और",

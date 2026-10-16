@@ -818,6 +818,8 @@ export const zh: Dict = {
     coinAria: "金库币 ID",
   },
   dock: {
+    moreAria: "还有 {count} 个未结下注",
+    near: "接近清零线",
     aria: "我的下注",
     title: "我的下注",
     more: "另有 {count} 个",

@@ -818,6 +818,8 @@ export const uk: Dict = {
     coinAria: "Ідентифікатор монети казни",
   },
   dock: {
+    moreAria: "Ще відкритих ставок: {count}",
+    near: "Близько до лінії знищення",
     aria: "Моя ставка",
     title: "МОЯ СТАВКА",
     more: "ще {count}",

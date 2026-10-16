@@ -821,6 +821,8 @@ export const en = {
     coinAria: "Treasury coin id",
   },
   dock: {
+    moreAria: "{count} more open bets",
+    near: "Close to the wipeout line",
     aria: "My bet",
     title: "MY BET",
     more: "+{count} more",

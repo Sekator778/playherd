@@ -19,6 +19,7 @@ import { resetEngineStateForTests } from "./api/engineState";
 import { realApi } from "./api/realApi";
 import { WIRE_HELP, missingWireFiles, wire, wireFetch, wireResponse, type WireOverrides } from "./api/wireSource";
 import { sourceName } from "./components/marketModel";
+import { setProMode } from "./components/proMode";
 import { formatPercent, formatPlayAmount, formatPrice } from "./format";
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -307,7 +308,19 @@ describe("Your bets — the positions strip", () => {
     ];
   }
 
-  it("each bet is a card with its symbol, side, leverage, stake and a time — nothing broken", async () => {
+  it("the default view pins ONE 'My bet' card on real-shaped data, with a count of the others — nothing broken", async () => {
+    const positions = stripPositions();
+    renderApp("/", { overrides: { myPositions: () => ({ body: positions }) } });
+    const card = await screen.findByRole("region", { name: "My bet" });
+    await settle(300);
+    expect(card).toHaveTextContent(/DOWN|UP/);
+    expect(card).toHaveTextContent("PLAY");
+    expect(screen.queryByRole("region", { name: "Your open bets and positions" })).not.toBeInTheDocument();
+    expectCleanPage("my bet card");
+  });
+
+  it("Pro view: each bet is a card with its symbol, side, leverage, stake and a time — nothing broken", async () => {
+    setProMode(true);
     const positions = stripPositions();
     renderApp("/", { overrides: { myPositions: () => ({ body: positions }) } });
     const strip = await screen.findByRole("region", { name: "Your open bets and positions" });
@@ -322,6 +335,7 @@ describe("Your bets — the positions strip", () => {
       expect(card!).toHaveTextContent(`stake ${formatPlayAmount(position.stake)}`);
     }
     expectCleanPage("positions strip");
+    setProMode(false);
   });
 
   it("the bets the server recorded, as they are", async () => {

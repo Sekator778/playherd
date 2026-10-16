@@ -7,10 +7,10 @@ import "./Feedback.css";
 
 /** What the strip says. One short line; the word on the right names where a tap goes. */
 
-/** What the strip never sits on: the room's arena (the big UP and DOWN) and the bet slip — the stake, the leverage, PLACE BET
+/** What the strip never sits on: the room's arena (the big UP and DOWN), the bet sheet, the pinned "My bet" card (Р-98) and the bet slip — the stake, the leverage, PLACE BET
  *  (and, once there is a bet, its edit and cancel). The lobby's cards are not on the list: their small UP and DOWN lead to the
  *  room, the place a bet is made, and a strip that stepped aside for every card would not stay on the lobby for a moment. */
-const KEEP_CLEAR_OF = ".room-arena, .bet-slip";
+const KEEP_CLEAR_OF = ".room-arena, .bet-slip, .my-bet-dock, .bet-sheet";
 /** How near a control may come before the strip steps aside, so that the strip is gone before a thumb could reach it, not after. */
 const KEEP_CLEAR_PAD_PX = 8;
 

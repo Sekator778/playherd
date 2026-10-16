@@ -818,6 +818,8 @@ export const es: Dict = {
     coinAria: "Id de la moneda del tesoro",
   },
   dock: {
+    moreAria: "{count} apuestas abiertas más",
+    near: "Cerca de la línea de eliminación",
     aria: "Mi apuesta",
     title: "MI APUESTA",
     more: "+{count} más",

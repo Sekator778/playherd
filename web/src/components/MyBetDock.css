@@ -1,0 +1,205 @@
+/* "My bet" — the pinned card above the tab bar (`MyBetDock.tsx`, Р-98).
+   It sits over the page like the tab bar does, so the page keeps room under its content for it (`.page--dock`, below). Colours, radii,
+   shadows and durations are the app's tokens (index.css). Words and the arrow glyph carry the side and the state; colour only helps. */
+
+:root {
+  /* What the collapsed card occupies; the page reserves this much under its content while the card is up. */
+  --dock-height: 108px;
+  --dock-gap: 8px;
+}
+
+.my-bet-dock {
+  position: fixed;
+  z-index: 44;
+  left: max(10px, var(--safe-left));
+  right: max(10px, var(--safe-right));
+  bottom: calc(var(--tabbar-height) + var(--safe-bottom) + var(--dock-gap));
+  max-width: 640px;
+  margin: 0 auto;
+  max-height: calc(100dvh - var(--header-offset) - var(--tabbar-height) - var(--safe-bottom) - 24px);
+  overflow-y: auto;
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-strong);
+  border-left-width: 5px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  animation: my-bet-dock-in var(--dur-base) var(--ease-out-expo);
+}
+.my-bet-dock--up {
+  border-left-color: var(--up);
+}
+.my-bet-dock--down {
+  border-left-color: var(--down);
+}
+.my-bet-dock--wiped {
+  border-color: var(--liq-magenta-strong);
+  border-left-color: var(--liq-magenta);
+}
+@keyframes my-bet-dock-in {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .my-bet-dock {
+    animation: none;
+  }
+}
+
+.page--dock footer.app-footer {
+  padding-bottom: calc(24px + var(--tabbar-height) + var(--safe-bottom) + var(--dock-height) + var(--dock-gap));
+}
+/* The feedback strip rides above the card, never on it; and steps aside altogether while the card is open (`FeedbackStrip.tsx`). */
+.page--dock .feedback-strip {
+  bottom: calc(var(--tabbar-height) + var(--safe-bottom) + var(--dock-height) + var(--dock-gap) + 12px);
+}
+.page--dock.page--feedback-strip footer.app-footer {
+  padding-bottom: calc(24px + var(--tabbar-height) + var(--safe-bottom) + var(--dock-height) + var(--dock-gap) + var(--feedback-strip-space));
+}
+
+.my-bet-dock__main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 14px 10px 12px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.my-bet-dock__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.my-bet-dock__row--figures {
+  justify-content: space-between;
+  align-items: baseline;
+}
+.my-bet-dock__row--line {
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.my-bet-dock__side {
+  flex: none;
+  font-weight: 900;
+  font-size: 15px;
+  white-space: nowrap;
+}
+.my-bet-dock__side--up {
+  color: var(--up);
+}
+.my-bet-dock__side--down {
+  color: var(--down);
+}
+.my-bet-dock__what {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.my-bet-dock__chevron {
+  flex: none;
+  margin-left: 4px;
+  color: var(--text-muted);
+  align-self: center;
+}
+.my-bet-dock__mood {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 900;
+}
+.my-bet-dock__crack {
+  width: 14px;
+  height: 14px;
+}
+.my-bet-dock__now {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.my-bet-dock__pnl {
+  font-size: 18px;
+  font-weight: 900;
+}
+.my-bet-dock__mood-word {
+  font-size: 13px;
+}
+.my-bet-dock__note {
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--text);
+}
+.my-bet-dock__near {
+  color: var(--liq-magenta);
+  font-weight: 800;
+}
+.my-bet-dock__more {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.my-bet-dock__details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 14px 14px 12px;
+  font-size: 14px;
+}
+.my-bet-dock__details p {
+  margin: 0;
+}
+.my-bet-dock__buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+.my-bet-dock__buttons .btn {
+  flex: 1;
+}
+.my-bet-dock__others ul {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.my-bet-dock__others a {
+  display: block;
+  padding: 10px 0;
+  min-height: 44px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+/* A wide screen: the card keeps its phone width, centred over the page like the tab bar's pill. */
+@media (min-width: 721px) {
+  .my-bet-dock {
+    left: 0;
+    right: 0;
+    width: calc(100% - 40px);
+  }
+}

@@ -367,7 +367,7 @@ describe("Room — the live chart", () => {
       true,
     );
     const chart = await screen.findByRole("img", { name: /BTC price/ });
-    expect(chart).toHaveAccessibleName(/your liq \$75,100\.00/);
+    expect(chart).toHaveAccessibleName(/your wipeout \$75,100\.00/);
     expect(chart).toHaveAccessibleName(/herd liq ▼ x7 \$91,000\.00/);
     expect(screen.getByText("Your liquidation price")).toBeInTheDocument();
     expect(screen.getByText("Herd's liquidation price")).toBeInTheDocument();

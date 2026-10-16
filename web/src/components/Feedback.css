@@ -91,6 +91,13 @@
   pointer-events: none;
 }
 
+/* The bet sheet is open: the strip is gone for the eye and the thumb, so it can never sit on the sheet's BET button (Р-98). */
+.page:has(.bet-sheet) .feedback-strip {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* The whole strip but its × is one button — a thumb does not have to find a small word. */
 .feedback-strip__open {
   flex: 1 1 auto;
