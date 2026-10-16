@@ -41,6 +41,7 @@ public class ScriptedMarketPrices implements MarketPrices {
     private final Map<String, RuntimeException> resolveFailures = new ConcurrentHashMap<>();
     private final Map<String, RoundPriceData> soFar = new ConcurrentHashMap<>();
     private final Map<String, List<PricePoint>> series = new ConcurrentHashMap<>();
+    private final Map<String, List<crowdvsmarket.server.prices.PriceBar>> bars = new ConcurrentHashMap<>();
     private final Map<String, String> venues = new ConcurrentHashMap<>();
     private final List<String> opened = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<String, RuntimeException> openFailures = new ConcurrentHashMap<>();
@@ -56,6 +57,7 @@ public class ScriptedMarketPrices implements MarketPrices {
         otherVenueAsked.clear();
         venues.clear();
         series.clear();
+        bars.clear();
         latest.clear();
         defaults.clear();
         scripts.clear();
@@ -101,6 +103,18 @@ public class ScriptedMarketPrices implements MarketPrices {
     /** The ticks {@link #series} serves for the market, oldest first (what the price buffer would hold). */
     public void setSeries(Market market, List<PricePoint> points) {
         series.put(market.id(), List.copyOf(points));
+    }
+
+    /** The finished candles {@link #bars} serves for the market, oldest first (what the candle read-model would hold). */
+    public void setBars(Market market, List<crowdvsmarket.server.prices.PriceBar> candles) {
+        bars.put(market.id(), List.copyOf(candles));
+    }
+
+    @Override
+    public List<crowdvsmarket.server.prices.PriceBar> bars(String marketId, int minutes, long nowMs) {
+        long current = Math.floorDiv(nowMs, 60_000L);
+        return bars.getOrDefault(marketId, List.of()).stream()
+                .filter(b -> b.openTimeMs() / 60_000L < current && b.openTimeMs() / 60_000L >= current - minutes).toList();
     }
 
     /** The market's latest tick is older than the source's staleness limit. */

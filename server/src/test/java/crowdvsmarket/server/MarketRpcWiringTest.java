@@ -143,6 +143,42 @@ class MarketRpcWiringTest extends LiveGameTestBase {
         assertThat(noPrice.jsonPath().getString("error.code")).isEqualTo("PRICE_UNAVAILABLE");
     }
 
+    private static String scaled(String raw, Market market) {
+        return new java.math.BigDecimal(raw).setScale(market.priceDecimals()).toPlainString();
+    }
+
+    @Test
+    void candlesOverRpcAreFinishedMinutesInTheMarketsDecimalsAndAreBadRequestsWhenMalformed() throws Exception {
+        Market market = list("T_RPCCANDLE", MarketKind.PERP, Category.CRYPTO, "RCN", 25, 1);
+        long minute = System.currentTimeMillis() / 60_000L;
+        java.util.List<crowdvsmarket.server.prices.PriceBar> bars = new java.util.ArrayList<>();
+        for (long m = minute - 5; m <= minute; m++) { // the last one is the minute in progress
+            bars.add(new crowdvsmarket.server.prices.PriceBar(m * 60_000L, new java.math.BigDecimal("2500"),
+                    new java.math.BigDecimal("2510"), new java.math.BigDecimal("2490"), new java.math.BigDecimal("2505")));
+        }
+        prices.setBars(market, bars);
+
+        JsonNode answer = json(rpc(null, "candles", market.id(), 3));
+        assertThat(answer.path("marketId").asText()).isEqualTo("T_RPCCANDLE");
+        assertThat(answer.path("priceDecimals").asInt()).isEqualTo(market.priceDecimals());
+        assertThat(answer.path("candles")).hasSize(3);
+        JsonNode last = answer.path("candles").get(2);
+        assertThat(last.path("openTimeMs").asLong()).isEqualTo((minute - 1) * 60_000L);
+        assertThat(last.path("open").asText()).isEqualTo(scaled("2500", market));
+        assertThat(last.path("high").asText()).isEqualTo(scaled("2510", market));
+        assertThat(last.path("low").asText()).isEqualTo(scaled("2490", market));
+        assertThat(last.path("close").asText()).isEqualTo(scaled("2505", market));
+        assertThat(json(rpc(null, "candles", market.id())).path("candles")).hasSize(5); // minutes left out: 120, there are five
+        assertThat(json(rpc(null, "candles", market.id(), (Object) null)).path("candles")).hasSize(5);
+
+        assertThat(rpc(null, "candles").statusCode()).isEqualTo(400);
+        assertThat(rpc(null, "candles", market.id(), "abc").statusCode()).isEqualTo(400);
+        assertThat(rpc(null, "candles", market.id(), 2.5).statusCode()).isEqualTo(400);
+        Response unknown = rpc(null, "candles", "NOPE");
+        assertThat(unknown.statusCode()).isEqualTo(404);
+        assertThat(unknown.jsonPath().getString("error.code")).isEqualTo("MARKET_NOT_FOUND");
+    }
+
     @Test
     void placeBetOverRpcOnAMarketAndItsErrorCodes() throws Exception {
         Market market = list("T_RPCBET", MarketKind.PERP, Category.CRYPTO, "RBT", 25, 1);

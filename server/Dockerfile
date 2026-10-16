@@ -1,4 +1,4 @@
-# Multi-stage build for the Herd Quarkus server (engine + server), Р-44/Р-20.
+# Multi-stage build for the Herd Quarkus server (engine + bots + server), Р-44/Р-20.
 #
 # Build context MUST be the repo root (so this stage can see both engine/ and server/):
 #   docker build -f server/Dockerfile -t herd-server .
@@ -21,15 +21,17 @@ WORKDIR /build
 # Copy just the POMs first for better layer caching of dependency resolution.
 COPY pom.xml pom.xml
 COPY engine/pom.xml engine/pom.xml
+COPY bots/pom.xml bots/pom.xml
 COPY server/pom.xml server/pom.xml
-RUN mvn -B -f pom.xml -pl engine,server -am dependency:go-offline || true
+RUN mvn -B -f pom.xml -pl engine,bots,server -am dependency:go-offline || true
 
 COPY engine engine
+COPY bots bots
 COPY server server
 
 # Build engine first (installs it into the build container's local repo), then package server
 # (which depends on engine) into a runnable fast-jar under server/target/quarkus-app.
-RUN mvn -B -f pom.xml -pl engine,server -am -DskipTests install
+RUN mvn -B -f pom.xml -pl engine,bots,server -am -DskipTests install
 
 # --- Stage 2: minimal runtime ---
 FROM eclipse-temurin:21-jre-jammy AS runtime

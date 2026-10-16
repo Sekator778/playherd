@@ -67,10 +67,12 @@ jobs:
           filters: |
             engine:
               - 'engine/**'
+              - 'bots/**'
               - 'pom.xml'
             server:
               - 'server/**'
               - 'engine/**'
+              - 'bots/**'
               - 'pom.xml'
               # the server's tests read the web client's contract and the wire fixtures it is held against
               - 'web/src/api/contract.ts'
