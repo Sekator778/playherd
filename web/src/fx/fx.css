@@ -199,9 +199,15 @@
 }
 
 .result-card__secondary,
+.result-card__returned,
 .result-card__balance {
   color: var(--text-muted);
   margin: 4px 0;
+}
+/* "Stake 100 → returned 0 PLAY": as readable as the balance under it, not fine print (Р-98). */
+.result-card__returned {
+  font-size: 15px;
+  color: var(--text);
 }
 .result-card__note {
   margin: 6px 0 0;

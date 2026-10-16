@@ -272,6 +272,13 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             {seriesLabel ? ` · ${tr("results.lengthRound", { length: seriesLabel })}` : ""}
           </p>
         )}
+        {/* What came back, next to the signed result (Р-98): a loss at x100 reads as a small difference in the balance otherwise. The headline
+            stays the net result; this is the stake and what is returned of it (the payout), never a replacement for the sign. */}
+        {event.stakePlay > 0 && !event.midRound && (
+          <p className="result-card__returned mono">
+            {tr("results.returned", { stake: formatPlayAmount(event.stakePlay), returned: formatPlayAmount(Math.max(0, event.stakePlay + event.netPlay)) })}
+          </p>
+        )}
         {/* Р-76: a round that ran on the backup exchange says whose prices settled it — one quiet line, under the figures. */}
         {backupRound && event.kind !== "LIQUIDATION" && (
           <p className="result-card__venue">

@@ -71,6 +71,32 @@ describe("ResultMomentHost — a queue of moments", () => {
     expect(balanceLine()).toContain("9,998.29 PLAY");
   });
 
+  it("says what came back of the stake next to the signed result — and the headline stays the net result (Р-98)", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "a:p", roundId: "a", kind: "LOSS", netPlay: -19.85, stakePlay: 100, balanceBefore: 10_000, balanceAfter: 9_980.15 }));
+    });
+    expect(title()).toContain("-19.85 PLAY");
+    expect(screen.getByText("Stake 100 → returned 80.15 PLAY")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    act(() => {
+      publish(event({ id: "b:p", roundId: "b", kind: "LIQUIDATION", netPlay: -100, stakePlay: 100 }));
+    });
+    expect(title()).toContain("-100 PLAY");
+    expect(screen.getByText("Stake 100 → returned 0 PLAY")).toBeInTheDocument();
+  });
+
+  it("the mid-round liquidation toast has no 'returned' line: the round is not over", async () => {
+    renderHost();
+    act(() => {
+      publish(event({ id: "c:p", roundId: "c", kind: "LIQUIDATION", midRound: true, netPlay: -100, stakePlay: 100 }));
+    });
+    expect(screen.queryByText(/returned/)).not.toBeInTheDocument();
+  });
+
   it("every card leaves by itself — the second one too (it used to wait for a tap, over the player's next bet)", async () => {
     renderHost();
     act(() => {
