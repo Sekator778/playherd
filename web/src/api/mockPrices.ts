@@ -196,8 +196,6 @@ export function ticksBetween(spec: MockMarketSpec, afterMs: EpochMs, untilMs: Ep
   return ticks;
 }
 
-const MINUTE_MS = 60_000;
-
 /**
  * The mock's `candles` (`Api.candles`): the finished 1-minute candles among the `minutes` minutes before the one
  * `untilMs` is in, oldest first — each folded from the ticks on the {@link TICK_MS} grid inside its minute, exactly
