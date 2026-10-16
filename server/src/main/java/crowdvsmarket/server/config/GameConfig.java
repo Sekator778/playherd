@@ -57,6 +57,13 @@ public class GameConfig {
     @ConfigProperty(name = "herd.bots.respawn-delay-ms", defaultValue = "3600000")
     long botsRespawnDelayMs;
 
+    /**
+     * Which brain plays the bots: {@code catalog} (default, the {@code bots} module: 21 bots of the catalog, rules on candles and a
+     * persona each) or {@code legacy} (the five {@code BotStrategy} kinds as before). The operator's roll-back without a redeploy.
+     */
+    @ConfigProperty(name = "herd.bots.engine", defaultValue = "catalog")
+    String botsEngine;
+
     @ConfigProperty(name = "herd.operator.token")
     String operatorToken;
 
@@ -184,6 +191,11 @@ public class GameConfig {
 
     public int botsMarketsPerRound() {
         return botsMarketsPerRound;
+    }
+
+    /** {@code true} for the catalog brain; anything but {@code catalog} (case aside) is the legacy bots. */
+    public boolean botsCatalogEngine() {
+        return "catalog".equalsIgnoreCase(botsEngine == null ? "catalog" : botsEngine.strip());
     }
 
     public long tickMs() {

@@ -162,7 +162,8 @@ services:
       HERD_ROUND_HOURLY_SEC: ${HERD_ROUND_HOURLY_SEC:-180} # Р-46: test-mode "hourly" round = 3 min
       HERD_ROUND_DAILY_SEC: ${HERD_ROUND_DAILY_SEC:-900} # Р-46: test-mode "daily" round = 15 min
       HERD_REPLAY_SPEEDUP: ${HERD_REPLAY_SPEEDUP:-20} # HERD_MODE=replay only
-      HERD_BOTS_COUNT: ${HERD_BOTS_COUNT:-20} # Р-46: 20 labelled bots
+      HERD_BOTS_COUNT: ${HERD_BOTS_COUNT:-21} # Р-46: labelled bots (21 = the bots module's catalog)
+      HERD_BOTS_ENGINE: ${HERD_BOTS_ENGINE:-catalog} # catalog = the bots module; legacy = the five old strategies (roll-back, restart only)
       HERD_BOTS_MARKETS_PER_ROUND: ${HERD_BOTS_MARKETS_PER_ROUND:-3} # Т-8: pairs each bot plays per round
       # Market lists by category (Т-1/Т-10, §10); names are the source's own (`xyz:` = Hyperliquid's
       # xyz dex). Polymarket politics/sports markets are picked from the live catalog. Crypto is priced by

@@ -471,6 +471,51 @@ public class GameService implements MarketListener {
         }
     }
 
+    /** A player's PLAY balance, empty for a player the ledger does not know (a bot's view of its own account, {@code bots.ServerBotPorts}). */
+    public Optional<PlayAmount> balanceOf(String playerId) {
+        lockRead();
+        try {
+            return Optional.of(hub.ledger().balance(playerId));
+        } catch (java.util.NoSuchElementException e) {
+            return Optional.empty();
+        } finally {
+            engineLock.readLock().unlock();
+        }
+    }
+
+    /** The ids of the rounds (running and open for betting, every market and interval) the player has a bet in that has not settled yet. */
+    public java.util.Set<String> openBetRoundIds(String playerId) {
+        lockRead();
+        try {
+            java.util.Set<String> ids = new java.util.HashSet<>();
+            for (OpenBets.Entry entry : openBets.of(playerId)) {
+                ids.add(entry.window().roundId());
+            }
+            return ids;
+        } finally {
+            engineLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Writes {@code botStrategy} (the bots module's {@code catalogId}) to the bot's {@code players} row and cache. Like a nickname,
+     * it is not part of the event log: a bot's strategy has no effect on ledger or crowd-account maths.
+     */
+    public void assignBotStrategy(String playerId, String botStrategy) {
+        lockWrite();
+        try {
+            players.byId(playerId).filter(PlayerDirectory.Row::isBot)
+                    .orElseThrow(() -> ApiException.notFound("unknown bot " + playerId));
+            db.tx(c -> {
+                players.updateBotStrategy(c, playerId, botStrategy);
+                return null;
+            });
+            players.cacheBotStrategy(playerId, botStrategy);
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
     public Identity.PlayerSummaryDto summary(String playerId) {
         PlayerDirectory.Row row = players.byId(playerId)
                 .orElseThrow(() -> ApiException.notFound("unknown player " + playerId));

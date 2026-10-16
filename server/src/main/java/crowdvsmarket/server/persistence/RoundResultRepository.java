@@ -253,6 +253,19 @@ public class RoundResultRepository {
         return counter.result();
     }
 
+    /**
+     * The player's latest settled rounds that were not flat ({@code payout <> stake}), newest first, as {@code {stake, payout}} in
+     * mojos: what a bot reads its last result and its streak from. At most {@code limit}.
+     */
+    public List<long[]> recentOutcomes(String playerId, int limit) {
+        return db.read(c -> db.queryList(c, """
+                SELECT stake_mojos, payout_mojos FROM player_round_history
+                WHERE player_id = ? AND payout_mojos <> stake_mojos
+                ORDER BY settled_at_ms DESC, market DESC, round_id DESC LIMIT ?
+                """,
+                rs -> new long[] {rs.getLong("stake_mojos"), rs.getLong("payout_mojos")}, playerId, limit));
+    }
+
     private Identity.ProfileRoundEntryDto toHistoryEntry(java.sql.ResultSet rs) throws SQLException {
         String marketId = rs.getString("market");
         long durationMs = rs.getLong("duration_ms");
