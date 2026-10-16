@@ -1,5 +1,6 @@
 package crowdvsmarket.server.api;
 
+import crowdvsmarket.server.bots.BotMetrics;
 import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Enums;
@@ -48,6 +49,8 @@ public class AdminResource {
     PriceSources priceSources;
     @Inject
     FeedbackService feedbackService;
+    @Inject
+    BotMetrics botMetrics;
 
     private void requireOperator(String authorizationHeader) {
         String expected = "Bearer " + config.operatorToken();
@@ -159,7 +162,7 @@ public class AdminResource {
                 throw e;
             }
         }
-        return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker);
+        return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker, botDays());
     }
 
     /**
@@ -213,6 +216,18 @@ public class AdminResource {
         return (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, value));
     }
 
+    /** What the bots did on each of the last {@value #BOT_DAYS} UTC days; {@code null} while the database does not answer. */
+    private java.util.List<BotMetrics.Day> botDays() {
+        try {
+            return botMetrics.lastDays(System.currentTimeMillis(), BOT_DAYS);
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "the operator status could not read the bots' days");
+            return null;
+        }
+    }
+
+    private static final int BOT_DAYS = 7;
+
     /** What the price feeds are doing — memory only, so the page answers whatever is wrong elsewhere. */
     private java.util.List<PriceSource.FeedStatus> priceFeeds() {
         try {
@@ -229,10 +244,20 @@ public class AdminResource {
      *  {@code stream}), {@code state} ({@code polling}; for a stream {@code connected}, {@code silent},
      *  {@code rest-fallback}, {@code idle}; {@code disabled} for a venue in {@code herd.prices.disabled-venues};
      *  {@code synthetic}), {@code lastMessageAtMs} and {@code restReads} (how many markets the last poll read over REST
-     *  because the stream had no quote). Not part of {@code contract.ts}: the operator's own page. */
+     *  because the stream had no quote). {@code botDays}: one row per UTC day of the last seven, oldest first - {@code bets} by
+     *  bots with their {@code staked} PLAY and {@code fees}, the {@code pnl} of the bets that settled that day (payout minus stake,
+     *  before fees), {@code retirements}, {@code botsCreated} (first bots and replacements together) and the {@code starterPacks}
+     *  they were paid; {@code null} while the database does not answer. Not part of {@code contract.ts}: the operator's own page. */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                                    java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
-                                   java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen) {
+                                   java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
+                                   java.util.List<BotMetrics.Day> botDays) {
+
+        public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
+                              java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
+                              java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen) {
+            this(server, recentCancellations, recentLedgerCorrections, priceFeeds, circuitBreakerOpen, null);
+        }
 
         public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                               java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,

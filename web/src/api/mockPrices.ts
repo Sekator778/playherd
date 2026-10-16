@@ -17,7 +17,7 @@
  * — the same grid whether the round is running ("so far") or settled, so a position that has been
  * liquidated on the path so far can never become un-liquidated at settlement.
  */
-import type { EpochMs, PriceStr, PriceTickDto, RoundWindowDto } from "./contract";
+import type { CandleDto, EpochMs, PriceStr, PriceTickDto, RoundWindowDto } from "./contract";
 import { DAY_MS, HOUR_MS, SIM_BASE_MS } from "./clock";
 import { priceStr } from "./liquidation";
 import { hasMockPrice, type MockMarketSpec } from "./mockMarkets";
@@ -194,6 +194,44 @@ export function ticksBetween(spec: MockMarketSpec, afterMs: EpochMs, untilMs: Ep
     ticks.push({ atMs: k * TICK_MS, price: priceStrAt(spec, k * TICK_MS) });
   }
   return ticks;
+}
+
+/**
+ * The mock's `candles` (`Api.candles`): the finished 1-minute candles among the `minutes` minutes before the one
+ * `untilMs` is in, oldest first — each folded from the ticks on the {@link TICK_MS} grid inside its minute, exactly
+ * the prices `priceSeries` shows (the open is the first tick, the close the last). A minute before the market's
+ * first price has no candle.
+ */
+export function candlesBefore(spec: MockMarketSpec, untilMs: EpochMs, minutes: number): CandleDto[] {
+  const current = Math.floor(untilMs / MINUTE_MS);
+  const out: CandleDto[] = [];
+  for (let m = current - Math.max(0, minutes); m < current; m++) {
+    const start = m * MINUTE_MS;
+    let first = Math.floor(start / TICK_MS);
+    if (first * TICK_MS < start) first += 1;
+    if (spec.priceFromMs !== null) first = Math.max(first, Math.ceil(spec.priceFromMs / TICK_MS));
+    const last = Math.ceil((start + MINUTE_MS) / TICK_MS) - 1;
+    if (last < first) continue;
+    let high = -Infinity;
+    let low = Infinity;
+    let open = 0;
+    let close = 0;
+    for (let k = first; k <= last; k++) {
+      const price = Number(priceStrAt(spec, k * TICK_MS));
+      if (k === first) open = price;
+      close = price;
+      high = Math.max(high, price);
+      low = Math.min(low, price);
+    }
+    out.push({
+      openTimeMs: start,
+      open: priceStr(open, spec),
+      high: priceStr(high, spec),
+      low: priceStr(low, spec),
+      close: priceStr(close, spec),
+    });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

@@ -55,6 +55,8 @@ public class TickStore {
     private final ConcurrentHashMap<String, String> feedOf = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Double> change24h = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> latestPinMs = new ConcurrentHashMap<>();
+    /** The 1-minute candles of each key's live ticks (the candles read-model): fed by {@link #append} and {@link #restore} only. */
+    private final ConcurrentHashMap<String, MinuteBars> minuteBars = new ConcurrentHashMap<>();
 
     @Inject
     public TickStore(SnapshotStore snapshots, PricesConfig config) {
@@ -86,7 +88,9 @@ public class TickStore {
             return;
         }
         for (Map.Entry<String, BigDecimal> e : accepted.entrySet()) {
-            ring(e.getKey()).append(atMs, Px.encode(e.getValue()));
+            long px = Px.encode(e.getValue());
+            ring(e.getKey()).append(atMs, px);
+            minuteBars.computeIfAbsent(e.getKey(), id -> new MinuteBars()).add(atMs, px);
             feedOf.put(e.getKey(), source);
         }
         try {
@@ -103,7 +107,9 @@ public class TickStore {
         int rows = snapshots.replaySince(cutoff, snapshot -> {
             for (Map.Entry<String, BigDecimal> e : snapshot.prices().entrySet()) {
                 if (Px.isStorable(e.getValue())) {
-                    ring(e.getKey()).append(snapshot.atMs(), Px.encode(e.getValue()));
+                    long px = Px.encode(e.getValue());
+                    ring(e.getKey()).append(snapshot.atMs(), px);
+                    minuteBars.computeIfAbsent(e.getKey(), id -> new MinuteBars()).add(snapshot.atMs(), px);
                     feedOf.put(e.getKey(), snapshot.source());
                 }
             }
@@ -134,6 +140,24 @@ public class TickStore {
         TickRing ring = rings.get(marketId);
         long[] last = ring == null ? null : ring.lastLive();
         return last == null ? Optional.empty() : Optional.of(point(last[0], last[1]));
+    }
+
+    /**
+     * The finished 1-minute candles of exactly this key's live ticks among the last {@code minutes} minutes before the one
+     * {@code nowMs} is in, oldest first (see {@link MinuteBars}); memory only, O(minutes).
+     */
+    public List<PriceBar> bars(String marketId, int minutes, long nowMs) {
+        MinuteBars book = minuteBars.get(marketId);
+        if (book == null) {
+            return List.of();
+        }
+        List<MinuteBars.Bar> bars = book.finished(nowMs, minutes);
+        List<PriceBar> out = new ArrayList<>(bars.size());
+        for (MinuteBars.Bar b : bars) {
+            out.add(new PriceBar(b.openTimeMs(), Px.decode(b.open()), Px.decode(b.high()), Px.decode(b.low()),
+                    Px.decode(b.close())));
+        }
+        return out;
     }
 
     /** Ticks with {@code fromMs <= atMs < toMs}, oldest first — live, history and carried ones, not the pins. */

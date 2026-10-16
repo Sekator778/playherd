@@ -1,5 +1,10 @@
 package crowdvsmarket.server.bots;
 
+import crowdvsmarket.bots.brain.BotBrain;
+import crowdvsmarket.bots.brain.BotProfile;
+import crowdvsmarket.bots.brain.BotRunner;
+import crowdvsmarket.bots.catalog.Catalog;
+import crowdvsmarket.bots.catalog.CatalogEntry;
 import crowdvsmarket.engine.economy.EconomyRules;
 import crowdvsmarket.engine.ledger.PlayAmount;
 import crowdvsmarket.engine.market.Interval;
@@ -48,6 +53,13 @@ import org.jboss.logging.Logger;
  * majority" the contrarian/follower strategies look at is the previous round's majority OF THAT
  * MARKET. In {@code mode=live} a bot never bets on a market without a fresh price (none at all, or
  * a stale one): such a market is left out of the pick, and checked again at the moment of the bet.
+ *
+ * <p><b>Two brains (docs/research/bots_module_design.md section 7).</b> {@code herd.bots.engine=catalog} (the default): the bots of the
+ * {@code bots} module's catalog - 21 of them, each a rule on the candles read-model and a persona - decide with
+ * {@link BotBrain} through the ports of {@link ServerBotPorts}; each bot gets one shot per betting window of a series, at a random
+ * moment of it, and its persona picks the markets, the sides, the stakes and the leverage. {@code legacy}: the five
+ * {@link BotStrategy} kinds, as before. The choice is per bot as well: a bot whose {@code players.bot_strategy} is not a catalog id
+ * (a bot of the old kind, before it is migrated or when the operator rolled back) plays the legacy way.
  */
 @ApplicationScoped
 public class BotService {
@@ -74,8 +86,14 @@ public class BotService {
     MarketPrices marketPrices;
 
     private final Random random = new Random();
+    private static final Catalog CATALOG = Catalog.load();
+    private static final BotBrain BRAIN = new BotBrain();
+    /** The profile of each catalog bot ({@code botId|catalogId}); a profile is stateless, so it is built once. */
+    private final Map<String, BotProfile> profiles = new HashMap<>();
 
-    /** One bet a bot has decided to place: on which market's round, and when. */
+    /** One bet a bot has decided to place: on which market's round, and when. For a catalog bot {@code marketId} and
+     *  {@code roundId} are {@code null}: its shot is one pass of the brain over the whole window group
+     *  ({@code bettingClosesAtMs} is the start of that group's betting round). */
     private record Shot(String botId, String marketId, Interval interval, String roundId, long bettingClosesAtMs,
                         long fireAtMs) {
     }
@@ -94,8 +112,19 @@ public class BotService {
      * Keeps {@code herd.bots.count} LIVE bots (economy stage B, plan B4): a bot that retired is not live. A retired bot is replaced
      * {@code herd.bots.respawn-delay-ms} (1 hour) after it retired, by a bot of the same strategy under a new generated name; a missing
      * bot that no retirement explains (a first start, a raised count) is created at once. Idempotent.
+     *
+     * <p>With the catalog engine "the same strategy" is the same catalog slot, and the number of live bots is at most the catalog's
+     * 21; bots of the old kinds are first given a free slot ({@link #migrateToCatalog}), keeping their players and names.
      */
     public synchronized void ensureBotsExist(long nowMs) {
+        if (config.botsCatalogEngine()) {
+            ensureCatalogBots(nowMs);
+        } else {
+            ensureLegacyBots(nowMs);
+        }
+    }
+
+    private void ensureLegacyBots(long nowMs) {
         List<PlayerDirectory.Row> all = players.bots();
         int live = (int) all.stream().filter(b -> !b.isRetired()).count();
         int missing = config.botsCount() - live;
@@ -117,7 +146,7 @@ public class BotService {
             if (retired.retiredAtMs() + config.botsRespawnDelayMs() > nowMs) {
                 break; // the oldest is not an hour old yet, none after it is
             }
-            BotStrategy strategy = BotStrategy.valueOf(retired.botStrategy());
+            BotStrategy strategy = legacyStrategyOf(retired.botStrategy());
             if (taken == null) {
                 taken = new java.util.HashSet<>(gameService.nicknamesInUse());
             }
@@ -125,6 +154,159 @@ public class BotService {
             taken.add(nickname);
             gameService.createBotPlayer(nickname, strategy.name(), nowMs, retired.playerId());
         }
+    }
+
+    private void ensureCatalogBots(long nowMs) {
+        List<CatalogEntry> slots = CATALOG.bots();
+        int target = Math.min(config.botsCount(), slots.size());
+        if (target <= 0) {
+            return;
+        }
+        migrateToCatalog();
+        List<PlayerDirectory.Row> all = players.bots();
+        int live = (int) all.stream().filter(b -> !b.isRetired()).count();
+        int missing = target - live;
+        if (missing <= 0) {
+            return;
+        }
+        List<PlayerDirectory.Row> pending = all.stream().filter(b -> b.isRetired() && !b.replaced())
+                .sorted(java.util.Comparator.comparingLong(PlayerDirectory.Row::retiredAtMs)).toList();
+        int serve = Math.min(pending.size(), missing);
+        int immediate = missing - serve;
+        // the slots in use: held by a live bot, or kept for a retired bot that is waiting to be replaced
+        Set<String> held = catalogSlotsHeld(all, true);
+        Set<String> names = new HashSet<>(gameService.nicknamesInUse());
+        for (int i = 0; i < immediate; i++) {
+            Optional<CatalogEntry> slot = freeSlot(held, null);
+            if (slot.isEmpty()) {
+                break;
+            }
+            held.add(slot.get().catalogId());
+            createCatalogBot(slot.get(), names, nowMs, null);
+        }
+        Set<String> liveIds = catalogSlotsHeld(all, false);
+        for (int i = 0; i < serve; i++) {
+            PlayerDirectory.Row retired = pending.get(i);
+            if (retired.retiredAtMs() + config.botsRespawnDelayMs() > nowMs) {
+                break; // the oldest is not an hour old yet, none after it is
+            }
+            // the replacement takes the slot of the bot it replaces; when that slot is gone (an old kind of bot, a slot taken since), a free one
+            Optional<CatalogEntry> slot = CATALOG.byId(retired.botStrategy()).filter(e -> !liveIds.contains(e.catalogId()));
+            if (slot.isEmpty()) {
+                slot = freeSlot(held, legacyOrNull(retired.botStrategy()));
+            }
+            if (slot.isEmpty()) {
+                break;
+            }
+            held.add(slot.get().catalogId());
+            liveIds.add(slot.get().catalogId());
+            createCatalogBot(slot.get(), names, nowMs, retired.playerId());
+        }
+    }
+
+    private void createCatalogBot(CatalogEntry slot, Set<String> names, long nowMs, String replacesPlayerId) {
+        String nickname = BotNames.next(random, names, slot.name());
+        names.add(nickname);
+        if (replacesPlayerId == null) {
+            gameService.createBotPlayer(nickname, slot.catalogId(), nowMs);
+        } else {
+            gameService.createBotPlayer(nickname, slot.catalogId(), nowMs, replacesPlayerId);
+        }
+    }
+
+    /**
+     * Gives every live bot of an old kind (a {@link BotStrategy} name in {@code players.bot_strategy}) a free catalog slot, keeping the
+     * player, the name, the balance and the history; the slot of the same family when there is one (a contrarian takes a contrarian
+     * slot), else any free one. Bots in excess of the 21 slots stay as they are and play the legacy way.
+     */
+    private void migrateToCatalog() {
+        List<PlayerDirectory.Row> all = players.bots();
+        List<PlayerDirectory.Row> old = all.stream().filter(b -> !b.isRetired() && CATALOG.byId(b.botStrategy()).isEmpty())
+                .sorted(java.util.Comparator.comparingInt(PlayerDirectory.Row::playerIndex)).toList();
+        if (old.isEmpty()) {
+            return;
+        }
+        Set<String> held = catalogSlotsHeld(all, true);
+        for (PlayerDirectory.Row bot : old) {
+            Optional<CatalogEntry> slot = freeSlot(held, legacyOrNull(bot.botStrategy()));
+            if (slot.isEmpty()) {
+                return;
+            }
+            held.add(slot.get().catalogId());
+            gameService.assignBotStrategy(bot.playerId(), slot.get().catalogId());
+            LOG.infof("bot %s (%s) now plays as %s", bot.playerId(), bot.nickname(), slot.get().catalogId());
+        }
+    }
+
+    /** The catalog ids held by live bots, and - with {@code includeWaiting} - by retired bots not yet replaced. */
+    private static Set<String> catalogSlotsHeld(List<PlayerDirectory.Row> bots, boolean includeWaiting) {
+        Set<String> held = new HashSet<>();
+        for (PlayerDirectory.Row bot : bots) {
+            boolean counts = !bot.isRetired() || (includeWaiting && !bot.replaced());
+            if (counts && CATALOG.byId(bot.botStrategy()).isPresent()) {
+                held.add(bot.botStrategy());
+            }
+        }
+        return held;
+    }
+
+    /** The first catalog slot not in {@code held}; one of {@code family} (see {@link #familyMatches}) first when there is such. */
+    private static Optional<CatalogEntry> freeSlot(Set<String> held, BotStrategy family) {
+        CatalogEntry any = null;
+        for (CatalogEntry entry : CATALOG.bots()) {
+            if (held.contains(entry.catalogId())) {
+                continue;
+            }
+            if (family != null && familyMatches(family, entry)) {
+                return Optional.of(entry);
+            }
+            if (any == null) {
+                any = entry;
+            }
+        }
+        return Optional.ofNullable(any);
+    }
+
+    /** Whether a catalog bot is of the kind of an old one: the maximalists, the contrarians, the followers, the coin flippers, the cautious. */
+    private static boolean familyMatches(BotStrategy legacy, CatalogEntry entry) {
+        return switch (legacy) {
+            case ALWAYS_MAX_LEVERAGE -> entry.persona().startsWith("maximalist");
+            case CONTRARIAN -> entry.strategy().equals("crowd-contrarian");
+            case FOLLOW_MAJORITY -> entry.strategy().equals("crowd-follow");
+            case RANDOM -> entry.strategy().equals("coin");
+            case CAUTIOUS_LOW_LEVERAGE -> entry.persona().startsWith("cautious");
+        };
+    }
+
+    private static BotStrategy legacyOrNull(String botStrategy) {
+        try {
+            return botStrategy == null ? null : BotStrategy.valueOf(botStrategy);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The old kind a bot plays as when the legacy engine is on: its own, or - for a bot already moved to the catalog and rolled back -
+     * the nearest: the maximalists, the contrarian and the follower, the cautious; the rest are wildcards.
+     */
+    static BotStrategy legacyStrategyOf(String botStrategy) {
+        BotStrategy own = legacyOrNull(botStrategy);
+        if (own != null) {
+            return own;
+        }
+        CatalogEntry entry = botStrategy == null ? null : CATALOG.byId(botStrategy).orElse(null);
+        if (entry == null) {
+            return BotStrategy.RANDOM;
+        }
+        if (entry.persona().startsWith("maximalist")) {
+            return BotStrategy.ALWAYS_MAX_LEVERAGE;
+        }
+        return switch (entry.strategy()) {
+            case "crowd-contrarian" -> BotStrategy.CONTRARIAN;
+            case "crowd-follow" -> BotStrategy.FOLLOW_MAJORITY;
+            default -> entry.persona().startsWith("cautious") ? BotStrategy.CAUTIOUS_LOW_LEVERAGE : BotStrategy.RANDOM;
+        };
     }
 
     /** How often the bots' economy housekeeping (retire, replace, sweep) looks, in ms: it is cheap but takes the engine's write lock. */
@@ -198,6 +380,16 @@ public class BotService {
             if (bot.isRetired()) {
                 continue; // retired: out of the game, in no list (economy stage B)
             }
+            if (playsFromCatalog(bot)) {
+                // one pass of the brain per betting window of the series, at a random moment of it (the legacy bots get one
+                // shot per market): the persona decides how many markets, which, how much
+                RoundWindow first = windows.get(0);
+                long duration = first.endMs() - first.startMs();
+                long bettingOpensAt = first.startMs() - duration;
+                long offset = (long) (random.nextDouble() * duration * 0.9); // leave margin before close
+                shots.add(new Shot(bot.playerId(), null, interval, null, first.startMs(), bettingOpensAt + offset));
+                continue;
+            }
             List<RoundWindow> picks = new ArrayList<>(windows);
             Collections.shuffle(picks, random);
             for (RoundWindow window : picks.subList(0, perBot)) {
@@ -223,8 +415,44 @@ public class BotService {
                 iterator.remove(); // betting closed before it fired
             } else if (shot.fireAtMs() <= nowMs) {
                 iterator.remove(); // fire exactly once per round and market
-                placeBotBet(shot, nowMs);
+                if (shot.marketId() == null) {
+                    placeCatalogBets(shot, nowMs);
+                } else {
+                    placeBotBet(shot, nowMs);
+                }
             }
+        }
+    }
+
+    /** A bot plays from the catalog when the catalog engine is on and its {@code bot_strategy} is a catalog id. */
+    private boolean playsFromCatalog(PlayerDirectory.Row bot) {
+        return config.botsCatalogEngine() && bot.botStrategy() != null && CATALOG.byId(bot.botStrategy()).isPresent();
+    }
+
+    /**
+     * One pass of the bots module's brain for a catalog bot over the markets whose betting round of the shot's series closes at the
+     * shot's window start: the ports read the engine, the candles and the history, the brain returns the intents, the runner places
+     * them through {@link GameService#placeBet} (a refusal is a result, logged at debug level, never thrown).
+     */
+    private void placeCatalogBets(Shot shot, long nowMs) {
+        try {
+            PlayerDirectory.Row bot = players.byId(shot.botId()).orElse(null);
+            if (bot == null || bot.isRetired() || !playsFromCatalog(bot)) {
+                return; // reset since planning, retired, or rolled back to the legacy bots
+            }
+            BotProfile profile = profiles.computeIfAbsent(bot.playerId() + "|" + bot.botStrategy(),
+                    k -> CATALOG.byId(bot.botStrategy()).orElseThrow().profile(bot.playerId()));
+            ServerBotPorts ports = new ServerBotPorts(gameService, players, roundProgress, roundResults, marketRegistry,
+                    marketPrices, config, shot.interval(), shot.bettingClosesAtMs(), nowMs, previousMajority);
+            for (BotRunner.Placed placed : new BotRunner(ports, ports, ports, BRAIN).runOnce(profile)) {
+                if (!placed.result().accepted()) {
+                    LOG.debugf("bot %s could not bet on %s: %s", shot.botId(), placed.intent().roundId(), placed.result().reason());
+                }
+            }
+        } catch (ApiException e) {
+            LOG.debugf("bot %s skipped a pass: %s", shot.botId(), e.getMessage());
+        } catch (Exception e) {
+            LOG.warnf(e, "bot %s failed a pass of the brain (skipped this window)", shot.botId());
         }
     }
 
@@ -235,7 +463,7 @@ public class BotService {
             if (bot == null || bot.isRetired() || market == null || !market.isActive() || !hasFreshPrice(market)) {
                 return; // reset since planning, closed, or its price went away
             }
-            BotStrategy strategy = BotStrategy.valueOf(bot.botStrategy());
+            BotStrategy strategy = legacyStrategyOf(bot.botStrategy());
             Optional<Direction> previous = previousMajority.computeIfAbsent(market.id() + "/" + shot.interval(),
                     k -> roundResults.lastMajorityDirection(market.id(), shot.interval())
                             .map(d -> Direction.valueOf(d.name())));

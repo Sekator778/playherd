@@ -368,6 +368,32 @@ describe("referencePrice / priceSeries — one price per instant", () => {
     for (let i = 1; i < series.ticks.length; i++) expect(series.ticks[i].atMs - series.ticks[i - 1].atMs).toBe(TICK_MS);
   });
 
+  it("candles: finished minutes, oldest first, folded from the same ticks priceSeries shows, high/low around open/close", async () => {
+    const result = await mockApi.candles("ETH", 30);
+    expect(result.marketId).toBe("ETH");
+    expect(result.priceDecimals).toBe(2);
+    expect(result.candles).toHaveLength(30);
+    const currentMinute = Math.floor(simNowMs() / 60_000) * 60_000;
+    expect(result.candles[result.candles.length - 1].openTimeMs).toBe(currentMinute - 60_000); // the minute in progress is not in
+    for (let i = 0; i < result.candles.length; i++) {
+      const c = result.candles[i];
+      if (i > 0) expect(c.openTimeMs - result.candles[i - 1].openTimeMs).toBe(60_000);
+      expect(Number(c.low)).toBeLessThanOrEqual(Math.min(Number(c.open), Number(c.close)));
+      expect(Number(c.high)).toBeGreaterThanOrEqual(Math.max(Number(c.open), Number(c.close)));
+    }
+    const spec = mockMarketById("ETH")!;
+    const first = Math.ceil(result.candles[0].openTimeMs / TICK_MS) * TICK_MS;
+    expect(result.candles[0].open).toBe(priceStrAt(spec, first)); // the open is the first tick of the minute
+    expect(result.candles[0].close).toBe(priceStrAt(spec, result.candles[0].openTimeMs + 60_000 - TICK_MS)); // the close is the last
+  });
+
+  it("candles: 120 minutes by default, at most 179, and an unknown market is MARKET_NOT_FOUND", async () => {
+    expect((await mockApi.candles("BTC")).candles).toHaveLength(120);
+    expect((await mockApi.candles("BTC", 5000)).candles).toHaveLength(179);
+    expect((await mockApi.candles("BTC", 0)).candles).toHaveLength(1);
+    await expectApiError(mockApi.candles("NOPE"), "MARKET_NOT_FOUND");
+  });
+
   it("sinceMs returns only newer ticks, and polling incrementally never disagrees with a full reload", async () => {
     const first = await mockApi.priceSeries("SOL");
     const since = first.ticks[first.ticks.length - 1].atMs;

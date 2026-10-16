@@ -34,6 +34,15 @@ public interface MarketPrices {
     List<PricePoint> series(String marketId, long fromMs, long toMs);
 
     /**
+     * The finished 1-minute candles of exactly this key's live ticks (a market's primary venue, like {@link #series}) among the
+     * last {@code minutes} minutes before the minute {@code nowMs} is in, oldest first; a minute without ticks has no candle.
+     * Memory only, O(minutes), no lock of the engine. The default is none: a price source without a candle read-model.
+     */
+    default List<PriceBar> bars(String marketId, int minutes, long nowMs) {
+        return List.of();
+    }
+
+    /**
      * Settlement data of a finished window. May ask the source for history to fill a gap, so it
      * must NEVER be called while holding the engine lock. For a market with a backup it decides the round's venue first
      * when nothing has ({@link #openRound}), then settles from that venue alone; {@link PriceUnavailableException} when

@@ -12,7 +12,7 @@
   <name>Herd / C2 «Толпа против рынка» — root aggregator</name>
   <description>
     Root Maven aggregator (предложение, docs/research/server_design.md): lets a single
-    `mvn -s ~/.m2/settings-oss.xml -f pom.xml ... ` build engine and server together in
+    `mvn -s ~/.m2/settings-oss.xml -f pom.xml ... ` build engine, bots and server together in
     reactor/dependency order. Neither module has this project as its Maven &lt;parent&gt; —
     engine/pom.xml is untouched (project rule: only additive changes to engine/), and both
     modules stay independently buildable from their own directory exactly as before
@@ -21,6 +21,7 @@
 
   <modules>
     <module>engine</module>
+    <module>bots</module>
     <module>server</module>
   </modules>
 </project>

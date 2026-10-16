@@ -215,6 +215,11 @@ public class LiveMarketPrices implements MarketPrices {
     }
 
     @Override
+    public List<PriceBar> bars(String marketId, int minutes, long nowMs) {
+        return store.bars(marketId, minutes, nowMs);
+    }
+
+    @Override
     public Optional<String> decidedVenue(Market market, RoundWindow window) {
         requireSameMarket(market, window);
         return Instruments.hasBackup(market) ? venues.decided(window.roundId()) : Optional.empty();

@@ -67,6 +67,7 @@ import {
   type PlayerAccountDto,
   type PlayerSummaryDto,
   type PriceSeriesDto,
+  type CandlesDto,
   type ProfileRoundEntryDto,
   type PublicProfileDto,
   type RatingsDto,
@@ -101,7 +102,7 @@ import {
   prophetRatings,
   richRatings,
 } from "./mockPlayers";
-import { change24hAt, priceStrAt, ticksBetween } from "./mockPrices";
+import { candlesBefore, change24hAt, priceStrAt, ticksBetween } from "./mockPrices";
 import {
   betFeedPage,
   buildBettingRound,
@@ -451,6 +452,15 @@ class MockApi implements Api {
       priceDecimals: spec.priceDecimals,
       ticks: ticksBetween(spec, after, until, PRICE_SERIES_MAX_POINTS),
     };
+  }
+
+  /** The contract's words: the finished 1-minute candles of the last `minutes` (default 120, at most 179) minutes. */
+  async candles(marketId: MarketId, minutes?: number): Promise<CandlesDto> {
+    const spec = requireMarket(marketId);
+    const now = simNowMs();
+    const until = isMockMarketClosed(spec, now) ? spec.closesAtMs! : now;
+    const asked = Math.max(1, Math.min(Math.floor(minutes ?? 120), 179));
+    return { marketId: spec.id, priceDecimals: spec.priceDecimals, candles: candlesBefore(spec, until, asked) };
   }
 
   async referencePrice(marketId: MarketId): Promise<MarketReferenceDto> {

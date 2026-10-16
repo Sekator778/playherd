@@ -54,6 +54,20 @@
       <artifactId>engine</artifactId>
       <version>0.1.0-SNAPSHOT</version>
     </dependency>
+    <!-- The bots' brain, strategies and catalog (docs/research/bots_module_design.md); the server adapts its three ports. -->
+    <dependency>
+      <groupId>crowdvsmarket</groupId>
+      <artifactId>bots</artifactId>
+      <version>0.1.0-SNAPSHOT</version>
+    </dependency>
+    <!-- The ports contract test every adapter of the ports passes (bots/src/test/.../PortsContractTest). -->
+    <dependency>
+      <groupId>crowdvsmarket</groupId>
+      <artifactId>bots</artifactId>
+      <version>0.1.0-SNAPSHOT</version>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
 
     <dependency>
       <groupId>io.quarkus</groupId>

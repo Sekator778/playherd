@@ -12,6 +12,7 @@ import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Feedback;
 import crowdvsmarket.server.dto.Paging;
+import crowdvsmarket.server.service.CandleService;
 import crowdvsmarket.server.service.FeedbackService;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.service.MarketViewService;
@@ -77,6 +78,8 @@ public class RpcResource {
     @Inject
     PriceSeriesService priceSeriesService;
     @Inject
+    CandleService candleService;
+    @Inject
     ServerInfoService serverInfoService;
     @Inject
     FeedbackService feedbackService;
@@ -138,6 +141,10 @@ public class RpcResource {
             case "markets" -> result = marketView.markets(now);
             case "priceSeries" -> result = priceSeriesService.priceSeries(requiredStr(args, 0, "marketId"),
                     optionalLong(args, 1, "sinceMs"), now);
+            // `candles(marketId, minutes?)`: the finished 1-minute candles (a read-model of the price ticks, memory only,
+            // public and polled like priceSeries, so not rate-limited either).
+            case "candles" -> result = candleService.candles(requiredStr(args, 0, "marketId"),
+                    optionalMinutes(args, 1, "minutes"), now);
             case "myPositions" -> {
                 requireSignedIn(playerId);
                 result = marketView.myPositions(playerId, now);
@@ -337,6 +344,19 @@ public class RpcResource {
             throw ApiException.badRequest("invalid " + name);
         }
         return n.asLong();
+    }
+
+    /** Optional whole-number arg that fits an {@code int} ({@code candles}' {@code minutes}): omitted or JSON {@code null} is
+     *  {@code null}; anything else that is not such a number is a client error. */
+    private Integer optionalMinutes(JsonNode args, int i, String name) {
+        Long value = optionalLong(args, i, name);
+        if (value == null) {
+            return null;
+        }
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+            throw ApiException.badRequest("invalid " + name);
+        }
+        return value.intValue();
     }
 
     /** {@code string[]} arg (e.g. {@code ackResults}' {@code roundIds}) — an absent/{@code null}

@@ -168,6 +168,17 @@ public final class PlayerDirectory {
                 prev.isBot(), prev.botStrategy(), prev.playerIndex(), prev.createdAtMs(), prev.retiredAtMs(), true));
     }
 
+    /** Writes the strategy (catalog id) of a bot within the caller's transaction ({@link #cacheBotStrategy} after the commit). */
+    public void updateBotStrategy(Connection c, String playerId, String botStrategy) throws SQLException {
+        db.update(c, "UPDATE players SET bot_strategy = ? WHERE player_id = ? AND is_bot", botStrategy, playerId);
+    }
+
+    /** The cache's side of {@link #updateBotStrategy}, after the commit. */
+    public void cacheBotStrategy(String playerId, String botStrategy) {
+        maps.byId.computeIfPresent(playerId, (id, prev) -> new Row(prev.playerId(), prev.walletAddress(), prev.nickname(),
+                prev.isBot(), botStrategy, prev.playerIndex(), prev.createdAtMs(), prev.retiredAtMs(), prev.replaced()));
+    }
+
     public Map<String, PlayerIdentity> identitiesById() {
         Map<String, PlayerIdentity> out = new java.util.HashMap<>();
         for (Row row : maps.byId.values()) {

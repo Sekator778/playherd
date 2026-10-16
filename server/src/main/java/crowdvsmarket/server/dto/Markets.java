@@ -86,6 +86,14 @@ public final class Markets {
     public record PriceSeriesDto(String marketId, int priceDecimals, List<PriceTickDto> ticks) {
     }
 
+    /** One finished 1-minute candle: {@code openTimeMs} is the start of the minute, the prices are raw prices with the market's {@code priceDecimals}. */
+    public record CandleDto(long openTimeMs, String open, String high, String low, String close) {
+    }
+
+    /** Finished 1-minute candles of a market's primary exchange, oldest first; a minute without ticks has none. */
+    public record CandlesDto(String marketId, int priceDecimals, List<CandleDto> candles) {
+    }
+
     /**
      * One pending bet ({@code BETTING}) or open position ({@code RUNNING}) of the signed-in player.
      * {@code entryPrice}, {@code liquidationPrice} and {@code size} are {@code null} in {@code BETTING} and
