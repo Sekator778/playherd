@@ -24,7 +24,7 @@ public final class HouseMoney extends AbstractPersona {
         this(DEFAULT_STEP, DEFAULT_CAP, DEFAULT_STAKE_MULTIPLE);
     }
 
-    /** Other steps, caps and stake multiples, for the parameter sweep of the math review; the catalog uses the defaults. */
+    /** Other steps, caps and stake multiples: the sweep of the math review and the catalog's spread (step 0.5..1.0, cap 3..5, stake 1.5..2.0). */
     HouseMoney(double step, int cap, double stakeMultiple) {
         super("house-money", 0.85, 2, NoSignalPolicy.FALLBACK);
         this.step = step;

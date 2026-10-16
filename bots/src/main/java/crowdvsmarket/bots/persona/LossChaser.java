@@ -24,7 +24,7 @@ public final class LossChaser extends AbstractPersona {
         this(DEFAULT_STEP, DEFAULT_CAP);
     }
 
-    /** Other steps and caps, for the parameter sweep of the math review; the catalog uses the defaults. */
+    /** Other steps and caps: the sweep of the math review and the catalog's spread (step 0.5..1.0, cap 3..5). */
     LossChaser(double step, int cap) {
         super("loss-chaser", 0.85, 2, NoSignalPolicy.FALLBACK);
         this.step = step;

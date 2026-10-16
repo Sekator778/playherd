@@ -17,7 +17,7 @@ public final class Personas {
             "cautious", Cautious::new);
 
     /**
-     * Parameter variants for sweeps, never in the catalog: {@code loss-chaser@step/cap}, {@code house-money@step/cap/stakeMultiple},
+     * Parameter variants (sweeps, and the catalog's own spread inside the math review's ranges): {@code loss-chaser@step/cap}, {@code house-money@step/cap/stakeMultiple},
      * {@code maximalist@share} (e.g. {@code loss-chaser@1.0/5}); null for any other id.
      */
     private static Persona swept(String id) {

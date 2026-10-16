@@ -48,14 +48,35 @@ class CatalogTest {
     @Test
     void everyPersonaIsUsedAndEveryEntryBuildsAProfile() {
         Catalog c = Catalog.load();
-        assertThat(c.bots().stream().map(CatalogEntry::persona).collect(Collectors.toSet()))
+        assertThat(c.bots().stream().map(e -> e.persona().split("@")[0]).collect(Collectors.toSet()))
                 .containsExactlyInAnyOrderElementsOf(Personas.ids());
         for (CatalogEntry e : c.bots()) {
             assertThat(e.profile("player-1").strategy().id()).isNotBlank();
-            assertThat(e.profile("player-1").persona().id()).isEqualTo(e.persona());
+            assertThat(e.profile("player-1").persona().id()).isEqualTo(e.persona().split("@")[0]);
         }
         assertThat(c.byId("momentum-3-disciplined")).isPresent();
         assertThat(c.byId("nope")).isEmpty();
+    }
+
+    /** Math review (bots_math_review_2026-10-16.md, sections 3 and 5): the personas' ranges and one full Maximalist. */
+    @Test
+    void personaVariantsStayInsideTheMathReviewRanges() {
+        List<String> personas = Catalog.load().bots().stream().map(CatalogEntry::persona).toList();
+        assertThat(personas.stream().filter(p -> p.equals("maximalist"))).hasSize(1);
+        assertThat(personas.stream().filter(p -> p.equals("maximalist@0.5"))).hasSize(2);
+        for (String p : personas) {
+            String[] parts = p.contains("@") ? p.split("@")[1].split("/") : new String[0];
+            if (p.startsWith("loss-chaser@")) {
+                assertThat(Double.parseDouble(parts[0])).isBetween(0.5, 1.0);
+                assertThat(Integer.parseInt(parts[1])).isBetween(3, 5);
+            } else if (p.startsWith("house-money@")) {
+                assertThat(Double.parseDouble(parts[0])).isBetween(0.5, 1.0);
+                assertThat(Integer.parseInt(parts[1])).isBetween(3, 5);
+                assertThat(Double.parseDouble(parts[2])).isBetween(1.5, 2.0);
+            } else {
+                assertThat(p).as("no bare loss-chaser or house-money").isNotIn("loss-chaser", "house-money");
+            }
+        }
     }
 
     @Test

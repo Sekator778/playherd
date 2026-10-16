@@ -75,8 +75,11 @@ public final class Catalog {
                 throw new IllegalArgumentException(where + ": name must be non-blank and unique: \"" + name + "\"");
             }
             String persona = string(b, "persona", i);
-            if (!Personas.ids().contains(persona)) {
-                throw new IllegalArgumentException(where + ": unknown persona " + persona + " (known: " + Personas.ids() + ")");
+            try {
+                Personas.byId(persona); // a base id, or a parameter variant such as loss-chaser@0.75/4
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalArgumentException(where + ": unknown persona " + persona + " (known: " + Personas.ids()
+                        + ", variants as loss-chaser@step/cap, house-money@step/cap/stake, maximalist@share)", ex);
             }
             Map<String, Double> params = new LinkedHashMap<>();
             for (Map.Entry<String, Object> e : asObject(b.get("params"), where + ".params").entrySet()) {
