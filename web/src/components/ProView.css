@@ -1,0 +1,63 @@
+/* The Pro view switch (`ProToggle.tsx`): a quiet pill in the footer and at the end of the room. Pressed = a filled pill AND the word stays. */
+.pro-toggle {
+  min-height: 44px;
+  padding: 0 16px;
+  background: none;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.pro-toggle[aria-pressed="true"] {
+  border-color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--text);
+}
+.pro-toggle--footer {
+  margin-left: 12px;
+}
+.room-pro {
+  align-self: flex-start;
+  margin-top: 12px;
+}
+
+/* The "i" behind which the room keeps where its price comes from (`PairRoomPage.tsx`, Р-98). */
+.room-info {
+  order: 2;
+  align-self: flex-start;
+  width: 44px;
+  height: 44px;
+  margin-top: 4px;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.room-info span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-weight: 700;
+  font-size: 14px;
+}
+.room-info[aria-expanded="true"] {
+  color: var(--accent-text);
+}
+.room-sources__more {
+  order: 2;
+  margin: 0;
+  font-size: 13px;
+}
+.room-crowd-moved {
+  margin: 0;
+  font-size: 14px;
+}

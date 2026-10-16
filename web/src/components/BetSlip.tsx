@@ -343,7 +343,7 @@ function LiquidationPreviewHead({ open, onToggle }: { open: boolean; onToggle: (
  * of the stake, the total that leaves the balance (stake + both fees), and the highest leverage the stake allows. Shown only when the
  * server's preview names them (it does once the preview was asked for the round's length); a cancelled bet gives both fees back.
  */
-function FeeBreakdown({ preview, stake }: { preview: LiquidationPreviewDto; stake: number }) {
+export function FeeBreakdown({ preview, stake }: { preview: LiquidationPreviewDto; stake: number }) {
   const t = useT();
   if (preview.feeHerd == null || preview.feeNetwork == null || preview.totalDebit == null) return null;
   const herd = Number(preview.feeHerd);
@@ -448,9 +448,11 @@ function BetSlipPreview({
   const setDirection = onDirectionChange ?? setInternalDirection;
   // `null`: the dial has not been touched, so it sits on the market's default — which follows the cap once the market
   // list has arrived (`defaultLeverage`), instead of being fixed by whatever cap was assumed before it did.
-  const [leverageChoice, setLeverage] = useState<number | null>(null);
-  const [high, setHigh] = useState(false);
-  const [stake, setStake] = useState<string>(DEFAULT_STAKE_DISPLAY);
+  // A choice made in the bet sheet and carried here by "Customize (Pro)" (`betDraft.ts`) is where the preview starts.
+  const [carried] = useState(() => betDraftFor(round.roundId));
+  const [leverageChoice, setLeverage] = useState<number | null>(carried?.leverageChoice ?? null);
+  const [high, setHigh] = useState(carried?.high ?? false);
+  const [stake, setStake] = useState<string>(carried?.stake ?? DEFAULT_STAKE_DISPLAY);
   const wantedLeverage = effectiveLeverage(leverageChoice, defaultLeverage(maxLeverage), maxLeverage, high, null);
   const { preview, stakeMax } = useLiquidationPreview(round.marketId, direction, wantedLeverage, stake, round.window.interval);
   const leverage = effectiveLeverage(leverageChoice, defaultLeverage(maxLeverage), maxLeverage, high, stakeMax);

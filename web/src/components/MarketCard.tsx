@@ -8,6 +8,8 @@ import { FlameIcon, LockIcon, StarIcon } from "./icons";
 import { useT } from "../i18n";
 import { Rich } from "../i18n/Rich";
 import { MarketIcon } from "./MarketIcon";
+import { openBetSheet } from "./betSheetState";
+import { useProMode } from "./proMode";
 import { formatAgo, formatStartsIn, formatTimeLeft, trend, TREND_GLYPH } from "./marketFormat";
 import { backupPriceNote, backupPriceOf, crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, oddsMarketPhrase, subtitleParts } from "./marketModel";
 import "./MarketCard.css";
@@ -139,6 +141,8 @@ interface MarketCardProps {
  */
 export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = false }: MarketCardProps) {
   const t = useT();
+  // The default view opens the bet sheet over the lobby (Р-98); the Pro view keeps the links into the room and its full slip.
+  const pro = useProMode();
   const meta = symbolMeta(market.symbol);
   const series = leadSeries(market);
   const open = isOpenMarket(market);
@@ -265,22 +269,35 @@ export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = fa
           <div className="mk-card__actions">
             {canBet ? (
               <>
-                <Link
-                  to={`${room}?side=up`}
-                  className={`mk-dir mk-dir--up ${herdSide === "UP" ? "mk-dir--herd" : ""}`}
-                  aria-label={t(herdSide === "UP" ? "card.betUpHerd" : "card.betUp", { symbol: market.symbol })}
-                >
-                  <span aria-hidden="true">▲</span> UP
-                  {herdSide === "UP" && <span className="mk-dir__herd">{t("card.herdTag")}</span>}
-                </Link>
-                <Link
-                  to={`${room}?side=down`}
-                  className={`mk-dir mk-dir--down ${herdSide === "DOWN" ? "mk-dir--herd" : ""}`}
-                  aria-label={t(herdSide === "DOWN" ? "card.betDownHerd" : "card.betDown", { symbol: market.symbol })}
-                >
-                  <span aria-hidden="true">▼</span> DOWN
-                  {herdSide === "DOWN" && <span className="mk-dir__herd">{t("card.herdTag")}</span>}
-                </Link>
+                {(["UP", "DOWN"] as const).map((side) => {
+                  const lower = side.toLowerCase();
+                  const className = `mk-dir mk-dir--${lower} ${herdSide === side ? "mk-dir--herd" : ""}`;
+                  const label = t(herdSide === side ? (side === "UP" ? "card.betUpHerd" : "card.betDownHerd") : side === "UP" ? "card.betUp" : "card.betDown", {
+                    symbol: market.symbol,
+                  });
+                  const body = (
+                    <>
+                      <span aria-hidden="true">{side === "UP" ? "▲" : "▼"}</span> {side}
+                      {herdSide === side && <span className="mk-dir__herd">{t("card.herdTag")}</span>}
+                    </>
+                  );
+                  return pro || !series ? (
+                    <Link key={side} to={`${room}?side=${lower}`} className={className} aria-label={label}>
+                      {body}
+                    </Link>
+                  ) : (
+                    <button
+                      key={side}
+                      type="button"
+                      className={className}
+                      aria-label={label}
+                      aria-haspopup="dialog"
+                      onClick={() => openBetSheet({ marketId: market.id, interval: series.interval, direction: side })}
+                    >
+                      {body}
+                    </button>
+                  );
+                })}
               </>
             ) : (
               <>

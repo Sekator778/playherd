@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setProMode } from "./components/proMode";
 import App from "./App";
 import { ApiProvider } from "./api/ApiContext";
 import { reloadFavoritesFromStorage } from "./api/favorites";
@@ -23,6 +24,7 @@ beforeEach(() => {
   // `ScrollManager` (in `Layout`) scrolls the window on every navigation; jsdom has no `scrollTo`
   // and would print "Not implemented" for each one.
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  setProMode(false);
 });
 
 afterEach(() => {
@@ -59,7 +61,36 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     expect(screen.getAllByRole("article")).toHaveLength(4);
   });
 
-  it("a card's DOWN button opens the room with DOWN preselected", async () => {
+  it("a card's DOWN button opens the bet sheet for that market and side, over the lobby (Р-98)", async () => {
+    const user = userEvent.setup();
+    renderApp("/");
+    const eth = await screen.findByRole("article", { name: /^ETH/ });
+    await user.click(within(eth).getByRole("button", { name: /^Bet DOWN on ETH/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Place a bet" });
+    expect(sheet).toHaveTextContent("DOWN on ETH");
+    // Still the lobby underneath: no page change.
+    expect(screen.getAllByRole("article").length).toBeGreaterThan(1);
+  });
+
+  it("'Customize (Pro)' in the sheet opens today's full slip in the room with the same side and stake, and the Pro view is on", async () => {
+    const user = userEvent.setup();
+    renderApp("/");
+    const eth = await screen.findByRole("article", { name: /^ETH/ });
+    await user.click(within(eth).getByRole("button", { name: /^Bet DOWN on ETH/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Place a bet" });
+    await user.click(await within(sheet).findByRole("button", { name: "500" }));
+    await user.click(within(sheet).getByRole("button", { name: "Customize (Pro)" }));
+
+    expect(await screen.findByText("ETH/USD")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Place a bet" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Pro view" })[0]).toHaveAttribute("aria-pressed", "true");
+    // The full slip (signed out: its preview) starts from the choice made in the sheet.
+    expect(await screen.findByLabelText("Preview stake (PLAY)")).toHaveValue("500");
+    expect(screen.getByRole("button", { name: /^DOWN/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("Pro view: a card's DOWN link opens the room with DOWN preselected, as before", async () => {
+    setProMode(true);
     const user = userEvent.setup();
     renderApp("/");
     const eth = await screen.findByRole("article", { name: /^ETH/ });
@@ -69,7 +100,8 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     expect(screen.getByRole("button", { name: /^UP/ })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("loads the BTC pair room with the live arena and a bet slip", async () => {
+  it("loads the BTC pair room with the live arena and — in the Pro view — the full bet slip", async () => {
+    setProMode(true);
     renderApp("/play/BTC");
     expect(await screen.findByText("BTC/USD")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /^UP/ })).toBeInTheDocument();
@@ -89,8 +121,11 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
   });
 
   it("an odds market's room says what a bet on it is", async () => {
+    const user = userEvent.setup();
     renderApp("/play/PM900101");
     expect(await screen.findByText(/You bet on how the odds move during the round — not on who wins/)).toBeInTheDocument();
+    // The default view keeps where the price comes from behind an "i".
+    await user.click(await screen.findByRole("button", { name: "About the price source" }));
     expect(screen.getByText(/Odds from Polymarket, published by our team's key — not a decentralized oracle/)).toBeInTheDocument();
   });
 

@@ -2,6 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setProMode } from "../components/proMode";
 import { ApiInstanceContext, SessionContext, type SessionState } from "../api/ApiContext";
 import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
 import type { Api, MarketDto, MarketsDto } from "../api/contract";
@@ -271,19 +272,32 @@ describe("Lobby — the card", () => {
     expect(cardOf("ETH")).toHaveTextContent("-1.41%");
   });
 
-  it("UP and DOWN open the room with that side preselected; the herd's side is marked in words", async () => {
+  it("UP and DOWN open the bet sheet over the lobby (Р-98); the herd's side is marked in words", async () => {
     renderLobby();
     await screen.findAllByRole("article");
     const btc = within(cardOf("BTC"));
 
-    const up = btc.getByRole("link", { name: /^Bet UP on BTC/ });
-    const down = btc.getByRole("link", { name: /^Bet DOWN on BTC/ });
-    expect(up).toHaveAttribute("href", "/play/BTC?side=up");
-    expect(down).toHaveAttribute("href", "/play/BTC?side=down");
+    // Buttons now, not links: a tap opens the sheet where the bet is made, it does not take the player down a page.
+    const up = btc.getByRole("button", { name: /^Bet UP on BTC/ });
+    const down = btc.getByRole("button", { name: /^Bet DOWN on BTC/ });
+    expect(up).toHaveAttribute("aria-haspopup", "dialog");
     expect(up).toHaveAccessibleName("Bet UP on BTC — the herd's side");
     expect(down).toHaveAccessibleName("Bet DOWN on BTC");
     expect(within(up).getByText("herd")).toBeInTheDocument();
     expect(within(down).queryByText("herd")).not.toBeInTheDocument();
+  });
+
+  it("in the Pro view UP and DOWN are links into the room with that side preselected, as before", async () => {
+    setProMode(true);
+    try {
+      renderLobby();
+      await screen.findAllByRole("article");
+      const btc = within(cardOf("BTC"));
+      expect(btc.getByRole("link", { name: /^Bet UP on BTC/ })).toHaveAttribute("href", "/play/BTC?side=up");
+      expect(btc.getByRole("link", { name: /^Bet DOWN on BTC/ })).toHaveAttribute("href", "/play/BTC?side=down");
+    } finally {
+      setProMode(false);
+    }
   });
 
   it("the card's own link opens the room and keeps ids URL-safe", async () => {
@@ -336,7 +350,7 @@ describe("Lobby — the card", () => {
     const nvda = within(cardOf("NVDA"));
     expect(nvda.getByText("$231.70")).toBeInTheDocument();
     expect(nvda.getByText(/^Stale · /)).toBeInTheDocument();
-    expect(nvda.getByRole("link", { name: /^Bet UP on NVDA/ })).toBeInTheDocument();
+    expect(nvda.getByRole("button", { name: /^Bet UP on NVDA/ })).toBeInTheDocument();
   });
 
   it("a market with no price yet says so and its UP/DOWN are off — such a round could not settle", async () => {
@@ -547,7 +561,7 @@ describe("Lobby — the card: which exchange the price is from (Р-76)", () => {
     expect(legacy.getByText(/Open bets were refunded\. This market takes no more bets\./)).toBeInTheDocument();
     expect(legacy.queryByRole("link", { name: /Bet UP/ })).not.toBeInTheDocument();
     // …while the market that replaced it is open for bets, with the same ticker
-    expect(cardById("spot_BTC").getByRole("link", { name: /^Bet UP on BTC/ })).toBeInTheDocument();
+    expect(cardById("spot_BTC").getByRole("button", { name: /^Bet UP on BTC/ })).toBeInTheDocument();
   });
 
   it("an odds tag names whose odds they are only when the market says: Polymarket's, a simulated one's", async () => {

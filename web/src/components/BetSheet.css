@@ -1,0 +1,250 @@
+/* The bet sheet (`BetSheet.tsx`, Р-98): a tap on UP or DOWN opens it over the screen. A bottom sheet on a phone, a centred card on a wide screen.
+   Under the sign-in dialog (z 200, index.css) and over the tab bar, the pinned card and the feedback strip. The tokens are the app's. Zones are at
+   least 48 px high, for a thumb; the BET button is the one solid-filled control on the sheet. */
+
+.bet-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(4, 5, 9, 0.72);
+  animation: bet-sheet-fade var(--dur-fast) ease;
+}
+.bet-sheet {
+  width: 100%;
+  max-width: 520px;
+  max-height: 94dvh;
+  overflow-y: auto;
+  padding: 16px 16px calc(16px + var(--safe-bottom));
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
+  animation: bet-sheet-up var(--dur-base) var(--ease-out-expo);
+}
+.bet-sheet:focus-visible {
+  outline: none;
+}
+@keyframes bet-sheet-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes bet-sheet-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bet-sheet,
+  .bet-sheet-overlay {
+    animation: none;
+  }
+}
+@media (min-width: 721px) {
+  .bet-sheet-overlay {
+    align-items: center;
+  }
+  .bet-sheet {
+    border-bottom: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    padding-bottom: 16px;
+  }
+}
+
+.bet-sheet__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.bet-sheet__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+.bet-sheet__title--up {
+  color: var(--up);
+}
+.bet-sheet__title--down {
+  color: var(--down);
+}
+.bet-sheet__timer {
+  flex: none;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.bet-sheet__close {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  margin: -6px -8px -6px 0;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+}
+.bet-sheet__close:hover {
+  color: var(--text);
+}
+
+.bet-sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.bet-sheet__body p {
+  margin: 0;
+}
+.bet-sheet__existing {
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+}
+
+.bet-sheet__group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.bet-sheet__group legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.bet-sheet__chips {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.bet-sheet__chip {
+  min-height: 52px;
+  padding: 6px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--bg-elevated-2);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform var(--dur-instant) ease;
+}
+.bet-sheet__chip:active {
+  transform: scale(0.97);
+}
+.bet-sheet__chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* The chosen chip: a thick border AND a filled tint, not colour alone. */
+.bet-sheet__chip[aria-pressed="true"] {
+  border-color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 24%, var(--bg-elevated-2));
+}
+.bet-sheet__risk span:first-child {
+  font-size: 14px;
+}
+.bet-sheet__risk span:last-child {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.bet-sheet__other {
+  margin-top: 8px;
+}
+.bet-sheet__other input {
+  width: 100%;
+  min-height: 48px;
+  font-size: 18px;
+}
+.bet-sheet__balance,
+.bet-sheet__cap {
+  margin-top: 6px !important;
+  font-size: 12px;
+}
+
+.bet-sheet__example {
+  padding: 12px;
+  background: var(--bg-elevated-2);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  min-height: 92px;
+}
+.bet-sheet__lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bet-sheet__wipeout {
+  font-weight: 800;
+}
+
+.bet-sheet__fees-toggle {
+  min-height: 44px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.bet-sheet__go {
+  min-height: 60px;
+  font-size: 18px;
+  font-weight: 900;
+  border: 0;
+  color: #fff;
+}
+.bet-sheet__go--up {
+  background: var(--up-strong);
+  color: #fff;
+}
+.bet-sheet__go--down {
+  background: var(--down-strong);
+  color: #fff;
+}
+.bet-sheet__go:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bet-sheet__signin {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bet-sheet__customize {
+  align-self: center;
+  min-height: 44px;
+  font-size: 14px;
+}

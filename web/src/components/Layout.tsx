@@ -13,6 +13,8 @@ import { FeedbackModal } from "./FeedbackModal";
 import { FeedbackStrip } from "./FeedbackStrip";
 import { PositionsStrip } from "./PositionsStrip";
 import { MyBetDock } from "./MyBetDock";
+import { BetSheetHost } from "./BetSheet";
+import { ProToggle } from "./ProToggle";
 import { useMyBetDockVisible } from "./useMyBetDockVisible";
 import { useProMode } from "./proMode";
 import { ScrollManager } from "./ScrollManager";
@@ -357,7 +359,7 @@ export function Layout() {
           </button>
         </div>
         <div className="container">
-          <LanguageSwitcher />
+          <LanguageSwitcher /> <ProToggle className="pro-toggle--footer" />
         </div>
       </footer>
       <MyBetDock />
@@ -365,6 +367,7 @@ export function Layout() {
       {/* The invitation to leave feedback, above the tab bar (Р-81) — a quiet bar, closable for good; the form it opens (and the
        *  footer's and the profile menu's entries open) is the sheet next to it. */}
       <FeedbackStrip />
+      <BetSheetHost />
       <ConnectWalletModal />
       <FeedbackModal />
       {/* Portal-ish host (result-moment.md §1) — outside <Outlet/>, on top of everything. */}

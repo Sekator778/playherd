@@ -12,6 +12,7 @@ import { QrCode } from "../wallet/QrCode";
 import { CopyButton, MultiAccountDisclosureLine, Skeleton } from "./Common";
 import { SageSignInTips } from "./SageHints";
 import { announceDraftPlaced, clearBetDraft, revealBetSlip, useBetDraft } from "./betDraft";
+import { consumeAutoTestWallet } from "./betSheetState";
 import { DirectionGlyph } from "./icons";
 
 type Step = "connect" | "sage-qr" | "waiting" | "nickname" | "starter-pack" | "error";
@@ -68,7 +69,7 @@ export function ConnectWalletModal() {
   // The bet the player set up in the room's slip before signing in (`betDraft.ts`), if it is this room's and still open for betting:
   // the welcome dialog then places exactly that bet. `placing`/`placeError`: the placing is on its way / the server's refusal.
   const savedDraft = useBetDraft();
-  const draft = savedDraft && isDraftRoom(pathname, savedDraft.marketId) ? savedDraft : null;
+  const draft = savedDraft && (savedDraft.fromSheet === true || isDraftRoom(pathname, savedDraft.marketId)) ? savedDraft : null;
   const [placing, setPlacing] = useState(false);
   const [placeError, setPlaceError] = useState<string | null>(null);
 
@@ -557,6 +558,21 @@ function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => v
   const known = status === "ready" || status === "unsupported";
   const testWalletOffered = status === "unsupported" ? true : info?.testWallet !== false;
   const wcProjectId = known ? getWalletConnectProjectId(info) : null;
+
+  // Opened by the bet sheet's "Continue with test wallet": that road is taken at once, as soon as the server has said it is on offer —
+  // the player has already chosen it, and asking again would be a second tap for the same choice (Р-98).
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoStarted.current || !known || !testWalletOffered) return;
+    autoStarted.current = true;
+    if (!consumeAutoTestWallet()) return;
+    // Not in this commit: the dialog's own effect on opening invalidates every attempt already started (`attemptIdRef`), and a child's
+    // effects run before its parent's — an attempt begun here would be thrown away by it.
+    const timer = window.setTimeout(onTestWallet, 0);
+    return () => window.clearTimeout(timer);
+    // `onTestWallet` is a fresh closure on every render of the dialog; the request is read once, when the step has what it needs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [known, testWalletOffered]);
 
   return (
     <>

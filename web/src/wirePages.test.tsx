@@ -154,6 +154,10 @@ describe("Lobby — a card for every market, each price in its own scale", () =>
 });
 
 describe("Pair room — in every phase of its pair of rounds", () => {
+  // The full room — oracle lines, the slip, the crowd account — is the Pro view since Р-98.
+  beforeEach(() => setProMode(true));
+  afterEach(() => setProMode(false));
+
   const phases: Array<[string, (p: RoundsPairDto) => RoundsPairDto]> = [
     ["a running round and the next one open for bets, as the server answered", (p) => p],
     ["a settled round and the next one open", (p) => ({ ...p, running: wireResponse<RoundSettled>("round.settled") })],
@@ -376,6 +380,10 @@ describe("Status — what the server says about itself", () => {
 });
 
 describe("The exchange behind a price and a round (Р-76), on the server's own answers", () => {
+  // The full room — oracle lines, the slip, the crowd account — is the Pro view since Р-98.
+  beforeEach(() => setProMode(true));
+  afterEach(() => setProMode(false));
+
   const backed = () => markets().find((m) => m.status === "ACTIVE" && m.backupSource);
   const fromBackup = () => markets().find((m) => m.status === "ACTIVE" && m.price?.venue && m.price.venue !== m.source);
 

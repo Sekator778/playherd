@@ -18,6 +18,9 @@ export interface BetDraft {
   /** The leverage actually in use (what is sent), and the total debit the preview named for it, if it had one. */
   leverage: number;
   totalDebit: string | null;
+  /** Set by the bet sheet (Р-98): it can be opened from the lobby, where there is no room whose path would tell the sign-in dialog the draft is
+   *  the player's to place. */
+  fromSheet?: boolean;
 }
 
 /** What the sign-in dialog placed for the player: the slip shows it as its own placed bet. */

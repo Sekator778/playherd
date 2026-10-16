@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
 import type { Api, Interval, MarketDto, MyPositionDto, RoundBetting, RoundRunning, RoundsPairDto } from "../api/contract";
 import { reloadFavoritesFromStorage } from "../api/favorites";
@@ -19,6 +19,7 @@ import {
   ticksOf,
 } from "../components/testFixtures";
 import { PairRoomPage } from "./PairRoomPage";
+import { setProMode } from "../components/proMode";
 
 const MARKETS = catalogue();
 const BTC = MARKETS[0];
@@ -79,9 +80,13 @@ function renderRoom(path: string, setup: RoomSetup = {}, signedIn = false) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  // These suites describe the full room: the boost slider, the herd shortcuts, the oracle line, the crowd account, every chart line. That is the
+  // Pro view since Р-98; the default view has its own suite (PairRoomPage.game.test.tsx).
+  setProMode(true);
   window.sessionStorage.clear();
   reloadFavoritesFromStorage();
 });
+afterEach(() => setProMode(false));
 
 describe("Room — header", () => {
   it("a perp: ticker/USD, name, live price with its 24 h change, and no odds note", async () => {

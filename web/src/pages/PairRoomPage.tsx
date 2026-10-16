@@ -48,6 +48,10 @@ import type {
 import { LONG, SHORT, unrealizedPnl } from "../api/liquidation";
 import { outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
 import { BetSlip } from "../components/BetSlip";
+import { onDraftPlaced } from "../components/betDraft";
+import { openBetSheet, useCustomizeRequest } from "../components/betSheetState";
+import { ProToggle } from "../components/ProToggle";
+import { useProMode } from "../components/proMode";
 import { liveBetRows } from "../components/liveBetsModel";
 import { BotBadge, Countdown, ErrorState, OracleDisclosureLine, RoundVenueNote, Skeleton } from "../components/Common";
 import { CrowdPositionCard, IntervalTabs } from "../components/RoundParts";
@@ -273,6 +277,10 @@ function Room({ market }: { market: MarketDto }) {
   const api = useApi();
   const t = useT();
   const { player } = useSession();
+  const pro = useProMode();
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const customize = useCustomizeRequest();
+  const [seenCustomize, setSeenCustomize] = useState(customize.nonce);
   const [searchParams] = useSearchParams();
   const nowMs = useServerNow(1000);
   const seriesParam = searchParams.get("series");
@@ -288,6 +296,11 @@ function Room({ market }: { market: MarketDto }) {
     setSeenParams({ series: seriesParam, side: sideParam });
     if (seenParams.series !== seriesParam && seriesParam) setInterval_(seriesParam.toLowerCase() === "daily" ? "DAILY" : "HOURLY");
     if (seenParams.side !== sideParam && sideParam) setDirection(sideParam.toLowerCase() === "down" ? "DOWN" : "UP");
+  }
+  // The bet sheet's "Customize (Pro)" while this room is open: the side it was for, and the slip below starts over from the draft (its key).
+  if (seenCustomize !== customize.nonce) {
+    setSeenCustomize(customize.nonce);
+    setDirection(customize.direction);
   }
   const [pairData, setPairData] = useState<RoundsPairDto | null>(null);
   const [error, setError] = useState(false);
@@ -332,6 +345,9 @@ function Room({ market }: { market: MarketDto }) {
 
   usePoll(load, POLL_MS, [load]);
 
+  // A bet placed from the bet sheet (or the sign-in dialog): the room reads its round again at once instead of on the next poll.
+  useEffect(() => onDraftPlaced(() => void load()), [load]);
+
   useEffect(() => {
     if (!pairData) return;
     const nextBetting = pairData.betting.phase === "BETTING" ? pairData.betting : null;
@@ -368,16 +384,17 @@ function Room({ market }: { market: MarketDto }) {
   const waitingOpen = runningRound !== null && runningRound.openPrice === null;
   // The player's bet in such a round is known to `myPositions()` only — the round's own list is empty.
   const ownWaiting = waitingOpen && player ? myPositions.find((p) => p.roundId === runningRound.roundId) : undefined;
+  // The default view draws the price and — once you bet — YOUR entry and wipeout lines; the herd's liquidation line is Pro's (Р-98).
   const lines = useMemo(
     () =>
       open && runningRound
         ? buildChartLines({
             openPrice: runningRound.openPrice,
             own: ownPosition && !ownPosition.liquidated ? ownPosition : null,
-            crowd: runningRound.crowd,
+            crowd: pro ? runningRound.crowd : null,
           }, t)
         : [],
-    [open, runningRound, ownPosition, t],
+    [open, runningRound, ownPosition, t, pro],
   );
 
   // How many of the player's bets are open per series — the dot on a series chip.
@@ -431,6 +448,7 @@ function Room({ market }: { market: MarketDto }) {
         </div>
         <FavoriteButton market={market} />
       </header>
+
 
       <div className="room-pricebar">
         <div className="room-pricebar__main">
@@ -540,6 +558,11 @@ function Room({ market }: { market: MarketDto }) {
     );
   }
 
+  // The default view: a tap on UP or DOWN opens the bet sheet. The Pro view: it picks the side of the full slip below, as it always did.
+  const pick = (side: Direction) => {
+    setDirection(side);
+    if (!pro && betting.phase === "BETTING") openBetSheet({ marketId, interval, direction: side });
+  };
   const split = roundSplit(betting.phase === "BETTING" ? betting : running);
   const upPct = split ? split.upPct : 50;
   // One row per bet, the current one: the server's feed keeps every version of an edited bet and every cancelled one.
@@ -553,18 +576,34 @@ function Room({ market }: { market: MarketDto }) {
         {header}
         {chart}
         <div className="room-sources">
-          <OracleDisclosureLine source={market.source} backup={market.backupSource} />
-          {/* The exchange of the round open for bets is chosen when it starts: the note is about the one already running. */}
-          {(running.phase === "RUNNING" || running.phase === "SETTLED") && (
-            <RoundVenueNote source={running.source} market={market} phase={running.phase} subject="live" />
+          {pro || sourcesOpen ? (
+            <>
+              <OracleDisclosureLine source={market.source} backup={market.backupSource} />
+              {/* The exchange of the round open for bets is chosen when it starts: the note is about the one already running. */}
+              {(running.phase === "RUNNING" || running.phase === "SETTLED") && (
+                <RoundVenueNote source={running.source} market={market} phase={running.phase} subject="live" />
+              )}
+              {!pro && (
+                <p className="room-sources__more">
+                  <Link to="/how-it-works">{t("layout.howItWorks")}</Link>
+                </p>
+              )}
+            </>
+          ) : null}
+          {/* The default view keeps the price and the bet; where the price comes from is one tap away behind an "i" (Р-98). */}
+          {!pro && (
+            <button type="button" className="room-info" aria-expanded={sourcesOpen} aria-label={t("gameRoom.info")} onClick={() => setSourcesOpen((v) => !v)}>
+              <span aria-hidden="true">i</span>
+            </button>
           )}
         </div>
-        {runningRound && player && ownPosition && (
+        {/* "My bet" is pinned to the screen (the dock), so the default view does not repeat it here — except a wipeout, whose explanation lives on this card. */}
+        {runningRound && player && ownPosition && (pro || ownPosition.liquidated) && (
           <div className="room-own room-o1">
             <OwnPositionCard position={ownPosition} referencePrice={referencePrice} market={market} />
           </div>
         )}
-        {ownWaiting && (
+        {ownWaiting && pro && (
           <div className="room-own room-o1">
             <OwnBetWaiting position={ownWaiting} />
           </div>
@@ -590,12 +629,12 @@ function Room({ market }: { market: MarketDto }) {
         </div>
 
         <div className="room-arena-wrap room-o3">
-          <div className={`room-arena ${lockedOverlay ? "room-arena--locked" : ""}`}>
+          <div className={`room-arena ${lockedOverlay ? "room-arena--locked" : ""}`} role="group" aria-label={t("gameRoom.pickSide")}>
             <button
               type="button"
               className={`room-arena__side room-arena__side--up ${direction === "UP" ? "room-arena__side--selected" : ""}`}
               style={{ flexBasis: `${upPct}%` }}
-              onClick={() => setDirection("UP")}
+              onClick={() => pick("UP")}
               disabled={betting.phase !== "BETTING"}
               aria-pressed={direction === "UP"}
             >
@@ -607,7 +646,7 @@ function Room({ market }: { market: MarketDto }) {
               type="button"
               className={`room-arena__side room-arena__side--down ${direction === "DOWN" ? "room-arena__side--selected" : ""}`}
               style={{ flexBasis: `${100 - upPct}%` }}
-              onClick={() => setDirection("DOWN")}
+              onClick={() => pick("DOWN")}
               disabled={betting.phase !== "BETTING"}
               aria-pressed={direction === "DOWN"}
             >
@@ -647,16 +686,20 @@ function Room({ market }: { market: MarketDto }) {
 
       <div className="room-col room-col--side">
         {betting.phase === "BETTING" ? (
-          <div className="room-bet room-o3">
-            <BetSlip
-              round={betting}
-              nowMs={nowMs}
-              onChanged={load}
-              direction={direction}
-              onDirectionChange={setDirection}
-              hideDirectionPicker
-            />
-          </div>
+          // The full slip is the Pro view's; the default view bets through the sheet (Р-98).
+          pro && (
+            <div className="room-bet room-o3">
+              <BetSlip
+                key={`slip-${customize.nonce}`}
+                round={betting}
+                nowMs={nowMs}
+                onChanged={load}
+                direction={direction}
+                onDirectionChange={setDirection}
+                hideDirectionPicker
+              />
+            </div>
+          )
         ) : (
           <div className="card room-cancelled room-o3">
             <h3>{t("room.cancelledTitle")}</h3>
@@ -682,8 +725,17 @@ function Room({ market }: { market: MarketDto }) {
               )
             ) : (
               <>
-                <h3 className="room-section-title">{t("room.crowdAccount")}</h3>
-                <CrowdPositionCard phase="RUNNING" crowd={running.crowd} referencePrice={referencePrice} market={market} />
+                {pro ? (
+                  <>
+                    <h3 className="room-section-title">{t("room.crowdAccount")}</h3>
+                    <CrowdPositionCard phase="RUNNING" crowd={running.crowd} referencePrice={referencePrice} market={market} />
+                  </>
+                ) : (
+                  // The crowd's paper account is on the Stats page (Р-98), one tap away.
+                  <p className="muted room-crowd-moved">
+                    <Link to={`/stats?m=${encodeURIComponent(market.id)}`}>{t("gameRoom.crowdAccountStats")}</Link>
+                  </p>
+                )}
                 <h3 className="room-section-title">{t("room.liveRound")}</h3>
                 <LiveRoundStrip positions={running.positions} referencePrice={referencePrice} roundId={running.roundId} market={market} />
               </>
@@ -697,6 +749,7 @@ function Room({ market }: { market: MarketDto }) {
         </p>
 
         <MarketRail market={market} />
+        <ProToggle className="room-pro" />
       </div>
     </div>
   );
