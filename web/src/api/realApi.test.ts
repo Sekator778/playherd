@@ -50,6 +50,13 @@ describe("RealApi — one POST /api/rpc/<method> per Api method, positional args
     expect(lastCall(fetchMock).args).toEqual(["ETH", 1_790_000_000_000]);
   });
 
+  it("candles sends the market and the number of minutes (null when omitted)", async () => {
+    await realApi.candles("ETH");
+    expect(lastCall(fetchMock)).toMatchObject({ url: "/api/rpc/candles", args: ["ETH", null] });
+    await realApi.candles("ETH", 60);
+    expect(lastCall(fetchMock).args).toEqual(["ETH", 60]);
+  });
+
   it("rounds and crowdAccount take an optional marketId", async () => {
     await realApi.rounds("HOURLY");
     expect(lastCall(fetchMock)).toMatchObject({ url: "/api/rpc/rounds", args: ["HOURLY", null] });

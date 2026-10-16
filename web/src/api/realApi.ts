@@ -56,6 +56,7 @@ import {
   type PlayerAccountDto,
   type PlayerSummaryDto,
   type PriceSeriesDto,
+  type CandlesDto,
   type ProfileRoundEntryDto,
   type PublicProfileDto,
   type RatingsDto,
@@ -189,6 +190,9 @@ class RealApi implements Api {
   }
   priceSeries(marketId: MarketId, sinceMs?: EpochMs): Promise<PriceSeriesDto> {
     return rpc("priceSeries", [marketId, sinceMs ?? null]);
+  }
+  candles(marketId: MarketId, minutes?: number): Promise<CandlesDto> {
+    return rpc("candles", [marketId, minutes ?? null]);
   }
   referencePrice(marketId: MarketId): Promise<MarketReferenceDto> {
     return rpc("referencePrice", [marketId]);

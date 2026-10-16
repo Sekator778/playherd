@@ -865,6 +865,24 @@ export interface PriceSeriesDto {
   ticks: PriceTickDto[];
 }
 
+/** One finished 1-minute candle: `openTimeMs` is the start of the minute; prices are raw prices with the
+ *  market's `priceDecimals` digits, `low <= open, close <= high`. */
+export interface CandleDto {
+  openTimeMs: EpochMs;
+  open: PriceStr;
+  high: PriceStr;
+  low: PriceStr;
+  close: PriceStr;
+}
+
+/** Finished 1-minute candles of a market's primary exchange, oldest first. A minute without a tick has no
+ *  candle, so consecutive candles are not always one minute apart. */
+export interface CandlesDto {
+  marketId: MarketId;
+  priceDecimals: number;
+  candles: CandleDto[];
+}
+
 /** One pending bet or open position of the signed-in player, in any market — the "my positions"
  *  strip (Р-71). Live P&L is computed client-side from `markets()` prices with
  *  `api/liquidation.ts`. */
@@ -1180,6 +1198,10 @@ export interface Api {
    *  600 points; when more exist the newest 600 are returned, thinned evenly so they still span
    *  the whole requested range. */
   priceSeries(marketId: MarketId, sinceMs?: EpochMs): Promise<PriceSeriesDto>;
+  /** The finished 1-minute candles (OHLC) of the market's primary exchange, oldest first: the last `minutes`
+   *  minutes (default 120, at most 179), without the minute in progress. A minute without a tick has no
+   *  candle. Public, read from memory; the bots read their rules' history from it. */
+  candles(marketId: MarketId, minutes?: number): Promise<CandlesDto>;
   referencePrice(marketId: MarketId): Promise<MarketReferenceDto>;
   /** Every pending bet and open position of the signed-in player, all markets. */
   myPositions(): Promise<MyPositionDto[]>;
