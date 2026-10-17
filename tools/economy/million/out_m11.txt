@@ -1,0 +1,6 @@
+retention top25, registrations uniform12: breaker opens day 1 (players registered so far 2900); first pack that cannot be paid: day 4 (players registered so far 11600); theory: N_max = T/pack = 10000 players if nobody tops up
+retention top25, registrations uniform6: breaker opens day 1 (players registered so far 5617); first pack that cannot be paid: day 2 (players registered so far 11233); theory: N_max = T/pack = 10000 players if nobody tops up
+retention top25, registrations spike: breaker opens day 1 (players registered so far 16730); first pack that cannot be paid: day 1 (players registered so far 16730); theory: N_max = T/pack = 10000 players if nobody tops up
+retention median, registrations uniform12: breaker opens day 1 (players registered so far 2900); first pack that cannot be paid: day 4 (players registered so far 11600); theory: N_max = T/pack = 10000 players if nobody tops up
+retention median, registrations uniform6: breaker opens day 1 (players registered so far 5617); first pack that cannot be paid: day 2 (players registered so far 11233); theory: N_max = T/pack = 10000 players if nobody tops up
+retention median, registrations spike: breaker opens day 1 (players registered so far 16730); first pack that cannot be paid: day 1 (players registered so far 16730); theory: N_max = T/pack = 10000 players if nobody tops up

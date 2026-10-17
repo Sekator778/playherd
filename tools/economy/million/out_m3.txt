@@ -1,0 +1,138 @@
+retention 'top25': power-law exponent b=0.844; R(7) fit 0.0581 vs benchmark D7 0.065; P(active) in month 2,3,6,12,24 = [0.309, 0.2106, 0.1139, 0.0628, 0.0349]; mean extra days in month 0 1.52
+retention 'median': power-law exponent b=0.965; R(7) fit 0.0306 vs benchmark D7 0.039; P(active) in month 2,3,6,12,24 = [0.1445, 0.0892, 0.0425, 0.0211, 0.0106]; mean extra days in month 0 0.84
+
+### q=1 (pack 10000), retention top25, registrations uniform12, no skill, no withdrawals, fees to HERD
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 87000 | 87000 | 8.7e+08 | 0 | 3.99e+06 | 8.654e+08 | 9.95e+03 | 9.95e+03
+ 2 | 168500 | 109500 | 8.15e+08 | 2.23e+06 | 1.56e+07 | 1.668e+09 | 9.9e+03 | 9.87e+03
+ 3 | 251150 | 127550 | 8.26e+08 | 4.71e+06 | 2.04e+07 | 2.48e+09 | 9.87e+03 | 9.85e+03
+ 6 | 501900 | 160950 | 8.4e+08 | 1.36e+07 | 3.51e+07 | 4.93e+09 | 9.82e+03 | 9.8e+03
+ 9 | 754150 | 186100 | 8.52e+08 | 1.71e+07 | 4.09e+07 | 7.379e+09 | 9.78e+03 | 9.8e+03
+12 | 1000000 | 198600 | 8.4e+08 | 2.6e+07 | 5.17e+07 | 9.764e+09 | 9.76e+03 | 9.76e+03
+18 | 1000000 | 64500 | 0 | 1.95e+07 | 2.44e+07 | 9.693e+09 | 9.69e+03 | 9.6e+03
+24 | 1000000 | 44750 | 0 | 1.42e+07 | 1.8e+07 | 9.674e+09 | 9.67e+03 | 9.64e+03
+24 months: packs paid (new+top-ups) 1.04e+10, fees 7.476e+08, K 9.674e+09
+
+### q=1 (pack 10000), retention top25, registrations spike, no skill, no withdrawals, fees to HERD
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 501900 | 501900 | 5.02e+09 | 0 | 2.47e+07 | 4.993e+09 | 9.95e+03 | 9.95e+03
+ 2 | 754400 | 407650 | 2.52e+09 | 1.25e+07 | 7.55e+07 | 7.456e+09 | 9.88e+03 | 9.82e+03
+ 3 | 876000 | 304600 | 1.22e+09 | 2.53e+07 | 7.94e+07 | 8.623e+09 | 9.84e+03 | 9.77e+03
+ 6 | 985450 | 147850 | 1.68e+08 | 2.66e+07 | 5.29e+07 | 9.614e+09 | 9.76e+03 | 9.65e+03
+ 9 | 998950 | 93300 | 2.05e+07 | 2.83e+07 | 4.42e+07 | 9.705e+09 | 9.71e+03 | 9.56e+03
+12 | 1000000 | 70400 | 2.5e+06 | 2.34e+07 | 3.23e+07 | 9.697e+09 | 9.7e+03 | 9.57e+03
+18 | 1000000 | 46000 | 0 | 1.5e+07 | 1.82e+07 | 9.674e+09 | 9.67e+03 | 9.67e+03
+24 | 1000000 | 36050 | 0 | 1.1e+07 | 1.25e+07 | 9.661e+09 | 9.66e+03 | 9.6e+03
+24 months: packs paid (new+top-ups) 1.047e+10, fees 8.105e+08, K 9.661e+09
+
+### q=1 (pack 10000), retention median, registrations uniform12, no skill, no withdrawals, fees to HERD
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 87000 | 87000 | 8.7e+08 | 0 | 3.2e+06 | 8.67e+08 | 9.97e+03 | 9.97e+03
+ 2 | 168500 | 94600 | 8.15e+08 | 8.5e+05 | 8.12e+06 | 1.674e+09 | 9.93e+03 | 9.91e+03
+ 3 | 251150 | 101600 | 8.26e+08 | 8.99e+05 | 9.41e+06 | 2.49e+09 | 9.91e+03 | 9.89e+03
+ 6 | 501900 | 117800 | 8.4e+08 | 3.43e+06 | 1.58e+07 | 4.964e+09 | 9.89e+03 | 9.89e+03
+ 9 | 754150 | 125600 | 8.52e+08 | 5.34e+06 | 2.07e+07 | 7.442e+09 | 9.87e+03 | 9.84e+03
+12 | 1000000 | 129700 | 8.4e+08 | 5.18e+06 | 2.33e+07 | 9.859e+09 | 9.86e+03 | 9.84e+03
+18 | 1000000 | 20450 | 0 | 3.58e+06 | 8.84e+06 | 9.814e+09 | 9.81e+03 | 9.66e+03
+24 | 1000000 | 12600 | 0 | 3.47e+06 | 5.4e+06 | 9.795e+09 | 9.79e+03 | 9.43e+03
+24 months: packs paid (new+top-ups) 1.01e+10, fees 3.13e+08, K 9.795e+09
+
+### q=1 (pack 10000), retention median, registrations spike, no skill, no withdrawals, fees to HERD
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 501900 | 501900 | 5.02e+09 | 0 | 1.86e+07 | 5.001e+09 | 9.96e+03 | 9.96e+03
+ 2 | 754400 | 324000 | 2.52e+09 | 4.19e+06 | 3.59e+07 | 7.493e+09 | 9.93e+03 | 9.89e+03
+ 3 | 876000 | 203950 | 1.22e+09 | 6.5e+06 | 3.78e+07 | 8.678e+09 | 9.91e+03 | 9.83e+03
+ 6 | 985450 | 67750 | 1.68e+08 | 7.84e+06 | 2.27e+07 | 9.715e+09 | 9.86e+03 | 9.63e+03
+ 9 | 998950 | 36250 | 2.05e+07 | 7.19e+06 | 1.37e+07 | 9.823e+09 | 9.83e+03 | 9.67e+03
+12 | 1000000 | 22600 | 2.5e+06 | 3e+06 | 6.95e+06 | 9.818e+09 | 9.82e+03 | 9.69e+03
+18 | 1000000 | 13800 | 0 | 1.86e+06 | 4.31e+06 | 9.799e+09 | 9.8e+03 | 9.76e+03
+24 | 1000000 | 10450 | 0 | 1.08e+06 | 3.9e+06 | 9.785e+09 | 9.78e+03 | 9.64e+03
+24 months: packs paid (new+top-ups) 1.011e+10, fees 3.304e+08, K 9.785e+09
+
+### q=100 (pack 100), retention top25, registrations uniform12, no skill, no withdrawals, fees to HERD
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 87000 | 87000 | 8.7e+06 | 0 | 4.03e+04 | 8.654e+06 | 99.5 | 99.5
+ 2 | 168500 | 109500 | 8.15e+06 | 2.24e+04 | 1.57e+05 | 1.668e+07 | 99 | 98.7
+ 3 | 251150 | 127550 | 8.26e+06 | 4.73e+04 | 2.06e+05 | 2.479e+07 | 98.7 | 98.5
+ 6 | 501900 | 160950 | 8.4e+06 | 1.37e+05 | 3.54e+05 | 4.929e+07 | 98.2 | 98
+ 9 | 754150 | 186100 | 8.52e+06 | 1.72e+05 | 4.12e+05 | 7.377e+07 | 97.8 | 98
+12 | 1000000 | 198600 | 8.4e+06 | 2.61e+05 | 5.21e+05 | 9.761e+07 | 97.6 | 97.5
+18 | 1000000 | 64500 | 0 | 1.97e+05 | 2.46e+05 | 9.69e+07 | 96.9 | 96
+24 | 1000000 | 44750 | 0 | 1.43e+05 | 1.82e+05 | 9.671e+07 | 96.7 | 96.3
+24 months: packs paid (new+top-ups) 1.041e+08, fees 7.54e+06, K 9.671e+07
+
+### q=100 (pack 100), retention top25, registrations spike, no skill, no withdrawals, fees to HERD
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 501900 | 501900 | 5.02e+07 | 0 | 2.49e+05 | 4.993e+07 | 99.5 | 99.5
+ 2 | 754400 | 407650 | 2.52e+07 | 1.25e+05 | 7.62e+05 | 7.455e+07 | 98.8 | 98.2
+ 3 | 876000 | 304600 | 1.22e+07 | 2.55e+05 | 8.01e+05 | 8.622e+07 | 98.4 | 97.7
+ 6 | 985450 | 147850 | 1.68e+06 | 2.68e+05 | 5.33e+05 | 9.612e+07 | 97.5 | 96.4
+ 9 | 998950 | 93300 | 2.05e+05 | 2.86e+05 | 4.46e+05 | 9.702e+07 | 97.1 | 95.5
+12 | 1000000 | 70400 | 2.5e+04 | 2.36e+05 | 3.26e+05 | 9.694e+07 | 96.9 | 95.6
+18 | 1000000 | 46000 | 0 | 1.51e+05 | 1.83e+05 | 9.671e+07 | 96.7 | 96.7
+24 | 1000000 | 36050 | 0 | 1.11e+05 | 1.26e+05 | 9.658e+07 | 96.6 | 96
+24 months: packs paid (new+top-ups) 1.047e+08, fees 8.175e+06, K 9.658e+07
+
+### q=100 (pack 100), retention median, registrations uniform12, no skill, no withdrawals, fees to HERD
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 87000 | 87000 | 8.7e+06 | 0 | 3.23e+04 | 8.67e+06 | 99.7 | 99.7
+ 2 | 168500 | 94600 | 8.15e+06 | 8.54e+03 | 8.2e+04 | 1.674e+07 | 99.3 | 99.1
+ 3 | 251150 | 101600 | 8.26e+06 | 9.04e+03 | 9.5e+04 | 2.489e+07 | 99.1 | 98.8
+ 6 | 501900 | 117800 | 8.4e+06 | 3.45e+04 | 1.59e+05 | 4.963e+07 | 98.9 | 98.9
+ 9 | 754150 | 125600 | 8.52e+06 | 5.38e+04 | 2.09e+05 | 7.441e+07 | 98.7 | 98.4
+12 | 1000000 | 129700 | 8.4e+06 | 5.22e+04 | 2.35e+05 | 9.858e+07 | 98.6 | 98.4
+18 | 1000000 | 20450 | 0 | 3.61e+04 | 8.91e+04 | 9.812e+07 | 98.1 | 96.6
+24 | 1000000 | 12600 | 0 | 3.5e+04 | 5.45e+04 | 9.792e+07 | 97.9 | 94.3
+24 months: packs paid (new+top-ups) 1.01e+08, fees 3.157e+06, K 9.792e+07
+
+### q=100 (pack 100), retention median, registrations spike, no skill, no withdrawals, fees to HERD
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 501900 | 501900 | 5.02e+07 | 0 | 1.88e+05 | 5e+07 | 99.6 | 99.6
+ 2 | 754400 | 324000 | 2.52e+07 | 4.21e+04 | 3.63e+05 | 7.492e+07 | 99.3 | 98.9
+ 3 | 876000 | 203950 | 1.22e+07 | 6.53e+04 | 3.82e+05 | 8.677e+07 | 99.1 | 98.3
+ 6 | 985450 | 67750 | 1.68e+06 | 7.89e+04 | 2.29e+05 | 9.713e+07 | 98.6 | 96.3
+ 9 | 998950 | 36250 | 2.05e+05 | 7.24e+04 | 1.39e+05 | 9.821e+07 | 98.3 | 96.7
+12 | 1000000 | 22600 | 2.5e+04 | 3.03e+04 | 7.02e+04 | 9.816e+07 | 98.2 | 96.9
+18 | 1000000 | 13800 | 0 | 1.88e+04 | 4.35e+04 | 9.797e+07 | 98 | 97.5
+24 | 1000000 | 10450 | 0 | 1.09e+04 | 3.94e+04 | 9.783e+07 | 97.8 | 96.3
+24 months: packs paid (new+top-ups) 1.011e+08, fees 3.332e+06, K 9.783e+07
+
+=== sensitivity: skilled players (1% of players accuracy 0.56), q=1, top25, uniform12 ===
+
+### skilled 1% a=0.56
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 87000 | 87000 | 8.7e+08 | 0 | 3.99e+06 | 8.653e+08 | 9.95e+03 | 9.95e+03
+ 2 | 168500 | 109500 | 8.15e+08 | 2.3e+06 | 1.56e+07 | 1.668e+09 | 9.9e+03 | 9.87e+03
+ 3 | 251150 | 127550 | 8.26e+08 | 4.71e+06 | 2.05e+07 | 2.48e+09 | 9.87e+03 | 9.86e+03
+ 6 | 501900 | 160950 | 8.4e+08 | 1.35e+07 | 3.52e+07 | 4.931e+09 | 9.82e+03 | 9.8e+03
+ 9 | 754150 | 186100 | 8.52e+08 | 1.67e+07 | 4.11e+07 | 7.38e+09 | 9.79e+03 | 9.8e+03
+12 | 1000000 | 198600 | 8.4e+08 | 2.6e+07 | 5.17e+07 | 9.766e+09 | 9.77e+03 | 9.76e+03
+18 | 1000000 | 64500 | 0 | 1.95e+07 | 2.44e+07 | 9.696e+09 | 9.7e+03 | 9.6e+03
+24 | 1000000 | 44750 | 0 | 1.41e+07 | 1.8e+07 | 9.678e+09 | 9.68e+03 | 9.64e+03
+24 months: packs paid (new+top-ups) 1.04e+10, fees 7.491e+08, K 9.678e+09
+
+### skilled 1% a=0.60
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 87000 | 87000 | 8.7e+08 | 0 | 3.99e+06 | 8.654e+08 | 9.95e+03 | 9.95e+03
+ 2 | 168500 | 109500 | 8.15e+08 | 2.24e+06 | 1.57e+07 | 1.669e+09 | 9.9e+03 | 9.88e+03
+ 3 | 251150 | 127550 | 8.26e+08 | 4.71e+06 | 2.05e+07 | 2.481e+09 | 9.88e+03 | 9.86e+03
+ 6 | 501900 | 160950 | 8.4e+08 | 1.35e+07 | 3.55e+07 | 4.933e+09 | 9.83e+03 | 9.81e+03
+ 9 | 754150 | 186100 | 8.52e+08 | 1.67e+07 | 4.17e+07 | 7.383e+09 | 9.79e+03 | 9.81e+03
+12 | 1000000 | 198600 | 8.4e+08 | 2.57e+07 | 5.19e+07 | 9.769e+09 | 9.77e+03 | 9.76e+03
+18 | 1000000 | 64500 | 0 | 1.95e+07 | 2.44e+07 | 9.705e+09 | 9.7e+03 | 9.6e+03
+24 | 1000000 | 44750 | 0 | 1.41e+07 | 1.8e+07 | 9.686e+09 | 9.69e+03 | 9.64e+03
+24 months: packs paid (new+top-ups) 1.04e+10, fees 7.534e+08, K 9.686e+09
+
+=== sensitivity: withdrawals (50% of the excess over the pack leaves each active month), q=1, top25 ===
+
+### withdraw 50% of excess
+month | registered(cum) | active | new packs | top-ups | fees paid | K (players) | K per registered / pack | mean balance of active / pack
+ 1 | 87000 | 87000 | 8.7e+08 | 0 | 3.99e+06 | 8.644e+08 | 9.94e+03 | 9.94e+03
+ 2 | 168500 | 109500 | 8.15e+08 | 2.23e+06 | 1.55e+07 | 1.666e+09 | 9.89e+03 | 9.86e+03
+ 3 | 251150 | 127550 | 8.26e+08 | 4.73e+06 | 2.03e+07 | 2.476e+09 | 9.86e+03 | 9.84e+03
+ 6 | 501900 | 160950 | 8.4e+08 | 1.37e+07 | 3.47e+07 | 4.922e+09 | 9.81e+03 | 9.78e+03
+ 9 | 754150 | 186100 | 8.52e+08 | 1.73e+07 | 4.06e+07 | 7.368e+09 | 9.77e+03 | 9.79e+03
+12 | 1000000 | 198600 | 8.4e+08 | 2.63e+07 | 5.14e+07 | 9.748e+09 | 9.75e+03 | 9.74e+03
+18 | 1000000 | 64500 | 0 | 1.98e+07 | 2.41e+07 | 9.676e+09 | 9.68e+03 | 9.58e+03
+24 | 1000000 | 44750 | 0 | 1.43e+07 | 1.79e+07 | 9.657e+09 | 9.66e+03 | 9.62e+03
+24 months: packs paid (new+top-ups) 1.041e+10, fees 7.416e+08, K 9.657e+09

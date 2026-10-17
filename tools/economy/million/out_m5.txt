@@ -1,0 +1,47 @@
+candles: ~/projects/crowd-vs-market/.local/econ-candles
+
+== break-even accuracy a*(L): EV per unit stake of a player with accuracy a equals fees (stake 1000 PLAY), by market and leverage ==
+-- BTC: windows 350399, E|r|=6.95bp, sigma=10.96bp (table sigma 9.2bp, r_m=0.92bp)
+   L | fee % of stake | EV(a=0.5) %  | a* (fees to HERD or treasury: player pays them either way) | a* ignoring fees (gross edge only: the treasury's break-even if fees leave to HERD)
+   2 | 0.028 | -0.028 | 60.22 | 50.00
+   10 | 0.102 | -0.102 | 57.34 | 50.00
+   50 | 0.470 | -0.470 | 56.77 | 50.01
+   100 | 0.930 | -0.931 | 56.70 | 50.01
+   240 | 1.010 | -1.011 | 53.05 | 50.00
+   120 | 1.010 | -1.010 | 56.06 | 50.00
+   600 | 1.010 | -1.056 | 51.35 | 50.06
+   1200 | 1.010 | -1.439 | 51.12 | 50.33
+-- ETH: windows 350399, E|r|=10.14bp, sigma=16.26bp (table sigma 13.4bp, r_m=1.00bp)
+   L | fee % of stake | EV(a=0.5) %  | a* (fees to HERD or treasury: player pays them either way) | a* ignoring fees (gross edge only: the treasury's break-even if fees leave to HERD)
+   2 | 0.030 | -0.030 | 57.39 | 50.00
+   10 | 0.110 | -0.110 | 55.42 | 50.00
+   50 | 0.510 | -0.512 | 55.05 | 50.02
+   100 | 1.010 | -1.019 | 55.03 | 50.04
+   240 | 1.010 | -1.023 | 52.14 | 50.03
+   100 | 1.010 | -1.019 | 55.03 | 50.04
+   500 | 1.010 | -1.115 | 51.21 | 50.11
+   1000 | 1.010 | -1.626 | 51.13 | 50.43
+-- SOL: windows 350399, E|r|=12.35bp, sigma=19.10bp (table sigma 17.3bp, r_m=1.00bp)
+   L | fee % of stake | EV(a=0.5) %  | a* (fees to HERD or treasury: player pays them either way) | a* ignoring fees (gross edge only: the treasury's break-even if fees leave to HERD)
+   2 | 0.030 | -0.030 | 56.07 | 50.00
+   10 | 0.110 | -0.110 | 54.45 | 50.00
+   50 | 0.510 | -0.512 | 54.15 | 50.01
+   100 | 1.010 | -1.012 | 54.11 | 50.01
+   240 | 1.010 | -1.034 | 51.79 | 50.04
+   60 | 0.610 | -0.612 | 54.13 | 50.01
+   300 | 1.010 | -1.092 | 51.54 | 50.12
+   600 | 1.010 | -1.835 | 51.50 | 50.67
+
+Reading: a* above 50% = the fee protects the treasury; for L above the point where the herd fee reaches the 1% cap a* falls towards 50%+.
+
+== leak per day of a skilled share, treasury view (BTC, L=10, 1000 PLAY stakes, 10 bets/day each) ==
+a=0.52: gross edge +0.0278% of stake (treasury loses this per bet), fee 0.1020% of stake, net for the player -0.0742%
+a=0.56: gross edge +0.0834% of stake (treasury loses this per bet), fee 0.1020% of stake, net for the player -0.0186%
+a=0.6: gross edge +0.1389% of stake (treasury loses this per bet), fee 0.1020% of stake, net for the player +0.0369%
+a=0.65: gross edge +0.2084% of stake (treasury loses this per bet), fee 0.1020% of stake, net for the player +0.1064%
+If fees go to HERD the treasury bears the gross edge of every player with a>0.5 (and also of fee-losing players with a in (0.5, a*): they lose net but still take money out of T).
+
+== treasury-level leak per day with the exposure AT the limit (lambda=1), informed independent crowd (S3), 12 markets (real + proxy returns) ==
+E|r|-weighted exposure per day = 123.948% T per unit (2a-1); fee premium per day at b=1: 14.869% T (fees to TREASURY) or 0 (fees to HERD)
+a=0.52: leak 4.958% T/day at lambda=1 (gross, before fees); fee/leak = 3.00 at b=1 -> fees cover it iff b <= 3.00
+a=0.56: leak 14.874% T/day at lambda=1 (gross, before fees); fee/leak = 1.00 at b=1 -> fees cover it iff b <= 1.00

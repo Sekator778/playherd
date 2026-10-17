@@ -1,0 +1,46 @@
+== 1. packs paid for N=1,000,000 PEOPLE with g accounts each (all accounts registered; pack 10000/q PLAY) ==
+g accounts/person | accounts | packs PLAY at q=1 | share of T=1e8 | T=1e10 | T=1e12 (q=1)
+1.0 | 1,000,000 | 1.000e+10 | 100.0x | 1.000 | 0.0100
+1.1 | 1,100,000 | 1.100e+10 | 110.0x | 1.100 | 0.0110
+2 | 2,000,000 | 2.000e+10 | 200.0x | 2.000 | 0.0200
+10 | 10,000,000 | 1.000e+11 | 1000.0x | 10.000 | 0.1000
+Throttle: 3 new players per IP per 24h -> registering 9,000,000 extra accounts takes 3,000,000 IP-days (e.g. 8,200 addresses for a year). The limit is per address, not per person; wallets are free (testnet).
+
+== 2. hedged pair (own account long + own account short) ==
+-- BTC: 350399 windows
+   L | pair gross EV % of one stake (long+short-2) | 2 fees % | pair net EV % | P(both lose)
+   2 | +0.0000 | 0.057 | -0.0568 | 0.0000
+   10 | +0.0000 | 0.204 | -0.2040 | 0.0000
+   50 | -0.0009 | 0.940 | -0.9409 | 0.0000
+   100 | -0.0016 | 1.860 | -1.8616 | 0.0000
+   240 | -0.0029 | 2.020 | -2.0229 | 0.0002
+   240 | -0.0029 | 2.020 | -2.0229 | 0.0002
+   600 | -0.0911 | 2.020 | -2.1111 | 0.0056
+   1200 | -0.8576 | 2.020 | -2.8776 | 0.0456
+-- ETH: 350399 windows
+   L | pair gross EV % of one stake (long+short-2) | 2 fees % | pair net EV % | P(both lose)
+   2 | +0.0000 | 0.060 | -0.0600 | 0.0000
+   10 | +0.0001 | 0.220 | -0.2199 | 0.0000
+   50 | -0.0040 | 1.020 | -1.0240 | 0.0000
+   100 | -0.0181 | 2.020 | -2.0381 | 0.0001
+   240 | -0.0265 | 2.020 | -2.0465 | 0.0007
+   200 | -0.0377 | 2.020 | -2.0577 | 0.0004
+   500 | -0.2099 | 2.020 | -2.2299 | 0.0099
+   1000 | -1.2329 | 2.020 | -3.2529 | 0.0711
+-- SOL: 350399 windows
+   L | pair gross EV % of one stake (long+short-2) | 2 fees % | pair net EV % | P(both lose)
+   2 | +0.0000 | 0.060 | -0.0600 | 0.0000
+   10 | -0.0000 | 0.220 | -0.2200 | 0.0000
+   50 | -0.0037 | 1.020 | -1.0237 | 0.0000
+   100 | -0.0035 | 2.020 | -2.0235 | 0.0001
+   240 | -0.0472 | 2.020 | -2.0672 | 0.0014
+   120 | -0.0077 | 2.020 | -2.0277 | 0.0001
+   300 | -0.1646 | 2.020 | -2.1846 | 0.0029
+   600 | -1.6506 | 2.020 | -3.6706 | 0.0289
+
+== 3. expected cost of moving X PLAY from one own account to the other by a random walk of pair bets (fees only) ==
+To make account B end X above the pack by repeated opposite bets of stake S at leverage L on BTC: rounds n ~ (X/(S*L*E|r|))^2 (random walk step S*L*E|r|), fees 2*n*fee(S,L).
+X=10000 S=10000 L=10: step 69.5 PLAY/round, rounds ~ 2.07e+04, fees ~ 3.85e+05 PLAY = 38.54x the amount moved  (cost/gain >1 means the farm loses money)
+X=10000 S=10000 L=100: step 694.7 PLAY/round, rounds ~ 207, fees ~ 3.82e+04 PLAY = 3.82x the amount moved  (cost/gain >1 means the farm loses money)
+X=10000 S=250 L=1200: step 208.4 PLAY/round, rounds ~ 2.3e+03, fees ~ 1.2e+04 PLAY = 1.20x the amount moved  (cost/gain >1 means the farm loses money)
+X=5000 S=250 L=240: step 41.7 PLAY/round, rounds ~ 1.44e+04, fees ~ 7.48e+04 PLAY = 14.96x the amount moved  (cost/gain >1 means the farm loses money)

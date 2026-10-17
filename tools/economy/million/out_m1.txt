@@ -1,0 +1,19 @@
+candles dir: ~/projects/crowd-vs-market/.local/econ-candles | days of data: 730.0 | 15-min rows: 70079
+
+== optimal block length, stationary bootstrap (rows of 15 min) ==
+  log per-step variance proxy sum_m (W15*R15)^2: stationary 750.57 rows (187.6 h), circular 795.00
+  log |R15| BTC: stationary 719.08 rows (179.8 h), circular 795.00
+  log |R15| ETH: stationary 758.56 rows (189.6 h), circular 795.00
+  log |R15| SOL: stationary 795.00 rows (198.8 h), circular 795.00
+  herd P&L crypto sum_crypto W15*R15: stationary 6.78 rows (1.7 h), circular 7.77
+  herd P&L other sum_other W15*R15: stationary 2.33 rows (0.6 h), circular 2.66
+CHOSEN mean block length (max over the series above, >=2): 795 rows = 198.75 h
+
+== POT/GPD on |3-min return| (non-overlapping 3-min rounds) and |15-min return| ==
+market | n | u(97.5%) | xi | beta | q99.9 GPD | q99.9 empirical | stress in code | q99.99 GPD | max |r| in sample
+BTC 3m | 350395 | 28.65bp | 0.230 | 10.32bp | 77.8bp | 76.8bp | 81.7bp | 143.4bp | 529.9bp
+BTC 15m | 70079 | 62.98bp | 0.188 | 25.34bp | 175.1bp | 176.1bp | 179.7bp | 308.7bp | 536.3bp
+ETH 3m | 350395 | 40.88bp | 0.261 | 15.14bp | 117.3bp | 115.1bp | 130.8bp | 228.2bp | 1260.6bp
+ETH 15m | 70079 | 92.39bp | 0.232 | 35.57bp | 262.6bp | 267.5bp | 287.8bp | 491.0bp | 849.5bp
+SOL 3m | 350395 | 48.20bp | 0.283 | 16.67bp | 135.8bp | 134.7bp | 160.1bp | 270.3bp | 878.6bp
+SOL 15m | 70079 | 107.93bp | 0.215 | 39.55bp | 291.5bp | 290.4bp | 352.2bp | 526.9bp | 1096.8bp
