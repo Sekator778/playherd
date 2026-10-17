@@ -50,7 +50,7 @@ indexmap = "2.11"
 # supports preset dictionaries) so no C toolchain / libz-sys is needed --
 # see `src/offer_compress.rs`.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
-hex-literal = "0.4"
+hex-literal = "1.1"
 
 # --- CLI / keystore / chain-client plumbing (not part of sim-spike) ---
 clap = { version = "4.6", features = ["derive"] }
