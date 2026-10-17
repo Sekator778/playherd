@@ -51,7 +51,7 @@ hex = "0.4"
 # Only used locally, to label an in-flight spend for `GET /v1/oracle/status`
 # (`oracle/queue.rs::InFlightSpend::bundle_id`) -- see that field's doc
 # comment for why coinset's own `push_tx` response doesn't give us a tx id.
-sha2 = "0.10"
+sha2 = "0.11"
 bip39 = { version = "=2.2.2", features = ["rand"] }
 chrono = { version = "0.4", features = ["clock"], default-features = false }
 
