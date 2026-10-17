@@ -171,7 +171,7 @@ jobs:
       # actions-rs/toolchain is archived/unmaintained — dtolnay/rust-toolchain is the standard
       # actively-maintained replacement. It has no version tags; pinned to the `master` branch's
       # HEAD commit at the time this workflow was written.
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master @ 2026-09-12
         with:
           toolchain: stable
           components: clippy
@@ -352,7 +352,7 @@ jobs:
 
       # Only to run `c2 keygen` for a throwaway CI key below — never touches testnet11 (no
       # `oracle-launch`, no `--push`).
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master @ 2026-09-12
         with:
           toolchain: stable
 
