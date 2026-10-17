@@ -1,0 +1,51 @@
+normal-crowd peak net notional per side per round (all markets): 1.23e+08 PLAY  (= 2.42e-05 x 5.072 x T)
+
+odds market, stress 0.20: limit per side per round = 0.05 x 0.0025 x T / 0.2 = 6.25e+08 PLAY of notional (risk at stress 0.0125% of T)
+  share of crowd on odds | markets sharing it | demand x | demand per market | reject share
+   0.1 | 6 | x1   |  2.05e+06 | 0.000
+   0.1 | 6 | x10  |  2.05e+07 | 0.000
+   0.1 | 6 | x100 |  2.05e+08 | 0.000
+   0.1 | 1 | x1   |  1.23e+07 | 0.000
+   0.1 | 1 | x10  |  1.23e+08 | 0.000
+   0.1 | 1 | x100 |  1.23e+09 | 0.491
+   0.5 | 6 | x1   |  1.02e+07 | 0.000
+   0.5 | 6 | x10  |  1.02e+08 | 0.000
+   0.5 | 6 | x100 |  1.02e+09 | 0.389
+   0.5 | 1 | x1   |  6.14e+07 | 0.000
+   0.5 | 1 | x10  |  6.14e+08 | 0.000
+   0.5 | 1 | x100 |  6.14e+09 | 0.898
+   1.0 | 6 | x1   |  2.05e+07 | 0.000
+   1.0 | 6 | x10  |  2.05e+08 | 0.000
+   1.0 | 6 | x100 |  2.05e+09 | 0.694
+   1.0 | 1 | x1   |  1.23e+08 | 0.000
+   1.0 | 1 | x10  |  1.23e+09 | 0.491
+   1.0 | 1 | x100 |  1.23e+10 | 0.949
+  demand multiplier (on one market, whole crowd) at which the reject share reaches 1%: x5.14
+
+odds market, stress 1.00: limit per side per round = 0.05 x 0.0025 x T / 1.0 = 1.25e+08 PLAY of notional (risk at stress 0.0125% of T)
+  share of crowd on odds | markets sharing it | demand x | demand per market | reject share
+   0.1 | 6 | x1   |  2.05e+06 | 0.000
+   0.1 | 6 | x10  |  2.05e+07 | 0.000
+   0.1 | 6 | x100 |  2.05e+08 | 0.389
+   0.1 | 1 | x1   |  1.23e+07 | 0.000
+   0.1 | 1 | x10  |  1.23e+08 | 0.000
+   0.1 | 1 | x100 |  1.23e+09 | 0.898
+   0.5 | 6 | x1   |  1.02e+07 | 0.000
+   0.5 | 6 | x10  |  1.02e+08 | 0.000
+   0.5 | 6 | x100 |  1.02e+09 | 0.878
+   0.5 | 1 | x1   |  6.14e+07 | 0.000
+   0.5 | 1 | x10  |  6.14e+08 | 0.796
+   0.5 | 1 | x100 |  6.14e+09 | 0.980
+   1.0 | 6 | x1   |  2.05e+07 | 0.000
+   1.0 | 6 | x10  |  2.05e+08 | 0.389
+   1.0 | 6 | x100 |  2.05e+09 | 0.939
+   1.0 | 1 | x1   |  1.23e+08 | 0.000
+   1.0 | 1 | x10  |  1.23e+09 | 0.898
+   1.0 | 1 | x100 |  1.23e+10 | 0.990
+  demand multiplier (on one market, whole crowd) at which the reject share reaches 1%: x1.03
+
+odds fee (closed form a* = 1/2 + r/(2 E|dp/p|); E|dp/p| per round from out_a1.txt: 3-min 0.0024, 15-min 0.0074; 94% of 3-min windows have no price change):
+  today r_m 1.0, 15-min = same r 3-min: a* = 52.1%
+  today r_m 1.0, 15-min = same r 15-min: a* = 50.7%
+  proposal 2.5 bp, 3-min: a* = 55.2%
+  proposal 7.5 bp (k = 3), 15-min: a* = 55.1%

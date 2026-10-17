@@ -1,0 +1,19 @@
+markets fetched: 120 (top-60 by 24h volume of politics and sports, 2026-10-17)
+Gamma liquidityNum (USD), all top markets: min 2627 p10 38540 p25 86069 median 183991 p75 351133 p90 551917 max 2712839
+  politics: n=60 median 280760, p10 39649, share < 50k: 0.20, share < 100k: 0.27
+  sports: n=60 median 147628, p10 38441, share < 50k: 0.18, share < 100k: 0.28
+
+markets with 0.10 <= p <= 0.90 (not a tail price): 54
+3-minute windows: 25068 from 54 markets (1 day each)
+all: mean 0.0024  p99 0.0500  p99.9 0.3152  max 3.4231
+liquidity 0k-50k USD: windows 4793  mean 0.0062  p99 0.1412  p99.9 0.4588  max 3.4231
+liquidity 50k-200k USD: windows 7580  mean 0.0025  p99 0.0557  p99.9 0.3111  max 0.5589
+liquidity 200k-1000000k USD: windows 12695  mean 0.0008  p99 0.0206  p99.9 0.1367  max 0.4242
+share of windows with a move >= 1 tick-equivalent (>=1%): 0.035  >= 5%: 0.0101  >= 20%: 0.00211
+
+15-minute windows: 4973 (same markets)
+all: mean 0.0074  p99 0.1608  p99.9 0.6775  max 3.4231
+liquidity 0k-50k USD: windows 951  mean 0.0192  p99 0.3693  p99.9 1.1378  max 3.4231
+liquidity 50k-200k USD: windows 1504  mean 0.0077  p99 0.1764  p99.9 0.5125  max 0.7500
+liquidity 200k-1000000k USD: windows 2518  mean 0.0028  p99 0.0449  p99.9 0.2990  max 0.7407
+share of 3-minute windows with NO price change: 0.943
