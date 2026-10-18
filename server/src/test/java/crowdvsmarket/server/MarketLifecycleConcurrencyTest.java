@@ -3,6 +3,7 @@ package crowdvsmarket.server;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 
 import crowdvsmarket.engine.market.Interval;
@@ -12,6 +13,7 @@ import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.events.EventStore;
+import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
@@ -231,7 +233,7 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
             inSettlement.countDown();
             assertThat(release.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
             return inv.callRealMethod();
-        }).when(oracleRecords).insert(any(Connection.class), any(OracleRecordRepository.NewRecord.class));
+        }).when(eventStoreSpy).append(any(Connection.class), any(GameEvent.RoundResolved.class), anyLong());
         ExecutorService pool = pool(6);
         Future<?> settlement = pool.submit(() -> gameService.resolveRound(betting, betting.endMs()));
         assertThat(inSettlement.await(10, TimeUnit.SECONDS)).isTrue();

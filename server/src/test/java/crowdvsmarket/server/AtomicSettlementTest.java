@@ -13,10 +13,11 @@ import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Rounds;
+import crowdvsmarket.server.events.EventApplier;
+import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
-import crowdvsmarket.server.persistence.OracleRecordRepository;
 import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.testsupport.LiveGameTestBase;
 import crowdvsmarket.server.testsupport.LiveMarketsProfile;
@@ -29,21 +30,22 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Settlement and cancellation are atomic (docs/research/markets_architecture.md §4 п.3): ONE
- * transaction appends the event, writes the result rows and the oracle record, and applies the event
- * to the engine inside it. A failure at any point after the event was appended — injected here by
- * making the oracle insert, resp. the cancelled-result insert, throw — rolls everything back and
- * rebuilds the in-memory engine from the log, so afterwards there is neither event nor result and the
- * engine is exactly what a fresh rebuild gives; the very same call then succeeds. (Before, the event
- * and the result were separate transactions: a failure between them left a settled round without a
- * result row, which the next tick settled a second time.)
+ * Settlement and cancellation are atomic where the journal is concerned (docs/research/markets_architecture.md §4 п.3): ONE
+ * transaction appends the event and applies it to the engine inside it; a cancellation writes its result row in that
+ * transaction too. A failure at any point after the event was appended — injected here by making the applier, resp. the
+ * cancelled-result insert, throw — rolls everything back and rebuilds the in-memory engine from the log, so afterwards
+ * there is no event and the engine is exactly what a fresh rebuild gives; the very same call then succeeds. The rows of a
+ * settlement (result, history, oracle record) are written after that transaction, without the engine lock
+ * (docs/research/settle_outside_lock_2026-10-18.md): a failure there keeps the event and is repaired, which
+ * {@link SettleOutsideLockTest} covers.
  */
 @QuarkusTest
 @TestProfile(LiveMarketsProfile.class)
 class AtomicSettlementTest extends LiveGameTestBase {
 
+    /** The bean the live game applies its events with (a rebuild uses an applier of its own). */
     @InjectSpy
-    OracleRecordRepository oracleRecords;
+    EventApplier applier;
     @InjectSpy
     RoundResultRepository roundResultsSpy;
 
@@ -93,13 +95,17 @@ class AtomicSettlementTest extends LiveGameTestBase {
         assertThat(before.balance()).isEqualTo("9699.600"); // 300 staked + herd fee 300 * 10 bp = 0.3 + network fee 0.1
         assertThat(before.inPlay()).isEqualTo("300.000");
 
-        // The settlement's oracle insert fails — AFTER the RoundResolved event was appended and applied
-        // to the engine inside the transaction. What the engine looks like at that very moment:
+        // The settlement fails — AFTER the RoundResolved event was appended and applied to the engine inside the
+        // transaction (the applier throws once it has applied it). What the engine looks like at that very moment:
         AtomicReference<Snapshot> atFailure = new AtomicReference<>();
         doAnswer(inv -> {
-            atFailure.set(snapshot(p, market, betting));
-            throw new RuntimeException("injected failure after the event append");
-        }).when(oracleRecords).insert(any(Connection.class), any(OracleRecordRepository.NewRecord.class));
+            Object result = inv.callRealMethod();
+            if (inv.getArgument(0) instanceof GameEvent.RoundResolved) {
+                atFailure.set(snapshot(p, market, betting));
+                throw new RuntimeException("injected failure after the event append");
+            }
+            return result;
+        }).when(applier).apply(any(GameEvent.class));
 
         assertThatThrownBy(() -> gameService.resolveRound(betting, betting.endMs()))
                 .hasMessageContaining("injected failure after the event append");
@@ -124,7 +130,7 @@ class AtomicSettlementTest extends LiveGameTestBase {
         assertThat(snapshot(p, market, betting)).isEqualTo(before);
 
         // the same call now succeeds, once
-        Mockito.reset(oracleRecords);
+        Mockito.reset(applier);
         assertThat(gameService.resolveRound(betting, betting.endMs())).isNotNull();
         assertThat(resolvedEvents(market, betting)).isEqualTo(1);
         assertThat(roundResults.exists(betting.roundId())).isTrue();
@@ -140,7 +146,7 @@ class AtomicSettlementTest extends LiveGameTestBase {
     }
 
     @Test
-    void aFailureWhileWritingTheSettledResultRollsBackToo() throws Exception {
+    void aFailureWhileWritingTheSettledResultKeepsTheEventAndIsRepairedOnce() throws Exception {
         Market market = list("T_ATOMIC2", MarketKind.PERP, Category.CRYPTO, "AT2", 10, 0);
         prices.setPrice(market, "100.00");
         alignTo(market, Interval.HOURLY, roundProgress.next("BTC", Interval.HOURLY));
@@ -150,25 +156,26 @@ class AtomicSettlementTest extends LiveGameTestBase {
         gameService.placeBet(p, bet(betting, Enums.Direction.UP, 5, "200.000"), betting.startMs() - 1);
         scheduler.tick(running.endMs());
         prices.script(market, betting, "100.00", "110.00", "100.00", "110.00");
-        Snapshot before = snapshot(p, market, betting);
-        doThrow(new IllegalStateException("injected result failure")).when(roundResultsSpy).insertSettled(
-                any(Connection.class), anyString(), anyString(), any(Interval.class), anyLong(), anyLong(), anyLong(),
-                anyLong(), any(), any(), anyString(), anyString(), anyLong(), any(), any());
+        doThrow(new IllegalStateException("injected result failure")).doCallRealMethod().when(roundResultsSpy)
+                .insertSettled(any(Connection.class), anyString(), anyString(), any(Interval.class), anyLong(), anyLong(),
+                        anyLong(), anyLong(), any(), any(), anyString(), anyString(), anyLong(), any(), any());
 
         assertThatThrownBy(() -> gameService.resolveRound(betting, betting.endMs()))
                 .hasMessageContaining("injected result failure");
 
-        assertThat(resolvedEvents(market, betting)).isZero();
-        assertThat(roundResults.exists(betting.roundId())).isFalse();
-        assertThat(snapshot(p, market, betting)).isEqualTo(before);
+        // the event is committed (the journal is the truth) and the rebuild behind the failure wrote the rows from it
+        assertThat(resolvedEvents(market, betting)).isEqualTo(1);
+        assertThat(roundResults.exists(betting.roundId())).isTrue();
+        assertThat(rebuild.isReady()).isTrue();
+        assertThat(gameService.account(p).inPlay()).isEqualTo("0.000");
+        assertThat(((Rounds.RoundSettled) roundResults.findRoundDto(betting.roundId()).orElseThrow()).positions())
+                .hasSize(1);
 
-        // the scheduler simply tries again on its next tick: nothing is settled twice
+        // the scheduler's next tick settles nothing a second time
         Mockito.reset(roundResultsSpy);
         scheduler.tick(betting.endMs());
         assertThat(resolvedEvents(market, betting)).isEqualTo(1);
-        assertThat(roundResults.exists(betting.roundId())).isTrue();
-        assertThat(((Rounds.RoundSettled) roundResults.findRoundDto(betting.roundId()).orElseThrow()).positions())
-                .hasSize(1);
+        assertThat(count("SELECT COUNT(*) AS n FROM player_round_history WHERE round_id = ?", betting.roundId())).isEqualTo(1);
     }
 
     @Test

@@ -2,7 +2,7 @@ package crowdvsmarket.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
 
 import crowdvsmarket.engine.ledger.LedgerBook;
 import crowdvsmarket.engine.market.Candle;
@@ -13,7 +13,8 @@ import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
-import crowdvsmarket.server.persistence.OracleRecordRepository;
+import crowdvsmarket.server.events.EventApplier;
+import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.prices.RoundPriceData;
 import crowdvsmarket.server.testsupport.LiveGameTestBase;
 import crowdvsmarket.server.testsupport.LiveMarketsProfile;
@@ -21,7 +22,6 @@ import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.junit.mockito.InjectSpy;
 import java.math.BigDecimal;
-import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
@@ -55,12 +55,13 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
     private static final String SETTLEMENT_FAILED = "settlement failed within 1 hour of round close";
     private static final String NO_PRICE_FROM_THE_SOURCE = "No price from the source; stakes returned";
 
+    /** The bean the live game applies its events with (a rebuild uses an applier of its own). */
     @InjectSpy
-    OracleRecordRepository oracleRecords;
+    EventApplier applier;
 
     @AfterEach
     void healTheSpy() {
-        Mockito.reset(oracleRecords);
+        Mockito.reset(applier);
     }
 
     private record Fixture(Market market, RoundWindow running, RoundWindow betting, String player) {
@@ -125,8 +126,13 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
         Fixture f = marketWithABet("T_TXFAIL", "TXF");
         scheduler.tick(f.running().endMs());
         prices.script(f.market(), f.betting(), "100.00", "110.00", "100.00", "110.00");
-        doThrow(new IllegalStateException("injected failure after the event append")).when(oracleRecords)
-                .insert(any(Connection.class), any(OracleRecordRepository.NewRecord.class));
+        doAnswer(inv -> {
+            Object result = inv.callRealMethod();
+            if (inv.getArgument(0) instanceof GameEvent.RoundResolved) {
+                throw new IllegalStateException("injected failure after the event append");
+            }
+            return result;
+        }).when(applier).apply(any(GameEvent.class));
 
         scheduler.tick(f.betting().endMs() + 1);   // fails inside the transaction; the engine is rebuilt behind it
         scheduler.tick(f.betting().endMs() + 2);   // ... and again

@@ -1,5 +1,6 @@
 package crowdvsmarket.server.scheduler;
 
+import crowdvsmarket.engine.game.RoundReport;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.domain.BetFeed;
@@ -35,7 +36,8 @@ import org.jboss.logging.Logger;
  * moment something has just gone wrong (a half-replayed hub that requests could reach, or an empty
  * ledger that hands out a new starter pack, are what the in-place rebuild it replaced could leave).
  *
- * <p>The one thing it does that outlives a failed build is the refund of a closed market's open
+ * <p>The things it does that outlive a failed build: the result rows of the last resolved round when a stop left the
+ * journal ahead of them ({@code GameService#repairSettledResult}), and the refund of a closed market's open
  * rounds ({@link RoundCancellations}): that is a committed event and result row in the database
  * (memory is then BEHIND the database, never ahead — the next build replays it). The caller holds
  * the engine write lock.
@@ -91,8 +93,14 @@ public class EngineStateBuilder {
         List<GameEvent> events = eventStore.loadAll();
         jfr.loadNs = JfrClock.since(rec, t);
         t = JfrClock.nanos(rec);
+        GameEvent.RoundResolved lastResolved = null;
+        RoundReport lastReport = null;
         for (GameEvent event : events) {
-            applier.apply(event); // also keeps the hub's index of the windows that hold bets
+            Object result = applier.apply(event); // also keeps the hub's index of the windows that hold bets
+            if (event instanceof GameEvent.RoundResolved resolved) {
+                lastResolved = resolved;
+                lastReport = (RoundReport) result;
+            }
         }
         if (rec) {
             jfr.applyNs = JfrClock.since(rec, t);
@@ -100,6 +108,13 @@ public class EngineStateBuilder {
             jfr.heapAfter = usedHeap();
             jfr.end();
             jfr.commit();
+        }
+        // The derived rows of a settlement are written after its event is committed (GameService#resolveRound): a stop
+        // between the two leaves the LAST resolved round without them. Only that one can be, because the next resolution
+        // starts after the rows of the previous one are committed; the rows are written from the event, here, before the
+        // series are seeded and the boundary prices read, which both read them.
+        if (lastResolved != null) {
+            gameService.repairSettledResult(lastResolved, lastReport);
         }
         cancelRoundsOfClosedMarkets(applier, hub, markets, nowMs);
 

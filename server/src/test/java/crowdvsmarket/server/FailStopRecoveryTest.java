@@ -21,12 +21,12 @@ import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.Rounds;
+import crowdvsmarket.server.events.EventApplier;
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
-import crowdvsmarket.server.persistence.OracleRecordRepository;
 import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.testsupport.LiveGameTestBase;
 import crowdvsmarket.server.testsupport.LiveMarketsProfile;
@@ -69,8 +69,9 @@ class FailStopRecoveryTest extends LiveGameTestBase {
 
     private static final Interval HOURLY = Interval.HOURLY;
 
+    /** The bean the live game applies its events with (a rebuild uses an applier of its own). */
     @InjectSpy
-    OracleRecordRepository oracleRecords;
+    EventApplier applier;
     @InjectSpy
     EventStore eventStoreSpy;
     @InjectSpy
@@ -80,7 +81,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
 
     @AfterEach
     void healTheEngine() {
-        Mockito.reset(oracleRecords, eventStoreSpy, roundResultsSpy, playersSpy);
+        Mockito.reset(applier, eventStoreSpy, roundResultsSpy, playersSpy);
         rebuild.rebuild(); // whatever a test left half-way: the next one starts on a ready engine
     }
 
@@ -142,10 +143,15 @@ class FailStopRecoveryTest extends LiveGameTestBase {
         });
     }
 
-    /** The settlement fails after its event was applied to the engine (the oracle insert throws). */
+    /** The settlement fails after its event was applied to the engine, inside the transaction of the journal append (the live applier throws). */
     private void failTheSettlementAfterItsEventWasApplied() throws Exception {
-        doThrow(new IllegalStateException("injected failure after the event append")).when(oracleRecords)
-                .insert(any(Connection.class), any(OracleRecordRepository.NewRecord.class));
+        doAnswer(inv -> {
+            Object result = inv.callRealMethod();
+            if (inv.getArgument(0) instanceof GameEvent.RoundResolved) {
+                throw new IllegalStateException("injected failure after the event append");
+            }
+            return result;
+        }).when(applier).apply(any(GameEvent.class));
     }
 
     /** What the game answers while the engine cannot be trusted: 503 for everything that changes
@@ -248,7 +254,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
                         count("SELECT COUNT(*) AS n FROM players"));
 
         // --- the failure is gone: one tick rebuilds, resumes and settles the round, once ---
-        Mockito.reset(oracleRecords, eventStoreSpy, roundResultsSpy, playersSpy);
+        Mockito.reset(applier, eventStoreSpy, roundResultsSpy, playersSpy);
         scheduler.tick(f.betting().endMs());
 
         assertThat(rebuild.isReady()).isTrue();
@@ -366,7 +372,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
                 .isEmpty();
         assertThat(roundProgress.isSeeded("T_LATEMARKET", HOURLY)).isFalse();
 
-        Mockito.reset(oracleRecords, eventStoreSpy);
+        Mockito.reset(applier, eventStoreSpy);
         prices.setPrice(late.get(), "10.00");
         scheduler.tick(f.betting().endMs());
 

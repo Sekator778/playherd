@@ -13,13 +13,13 @@ import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Rounds;
+import crowdvsmarket.server.events.EventApplier;
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.persistence.Db;
-import crowdvsmarket.server.persistence.OracleRecordRepository;
 import crowdvsmarket.server.scheduler.OraclePublisherService;
 import crowdvsmarket.server.testsupport.LiveGameTestBase;
 import crowdvsmarket.server.testsupport.LiveMarketsProfile;
@@ -59,8 +59,10 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
      *  test after it). Nothing here is about what it publishes. */
     @InjectMock
     OraclePublisherService oraclePublisher;
+    /** The bean the live game applies its events with (a rebuild uses an applier of its own): where the settlement is made to
+     *  fail after its event was applied. */
     @InjectSpy
-    OracleRecordRepository oracleRecords;
+    EventApplier applier;
     @InjectSpy
     EventStore eventStoreSpy;
     @InjectSpy
@@ -70,7 +72,7 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
 
     @AfterEach
     void healAndCloseWhatThisTestListed() {
-        Mockito.reset(oracleRecords, eventStoreSpy, dbSpy);
+        Mockito.reset(applier, eventStoreSpy, dbSpy);
         rebuild.rebuild();
         for (Market market : listed) {
             if (registry.require(market.id()).isActive()) {
@@ -103,30 +105,36 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         return new Fixture(market, running, betting, player);
     }
 
+    private static boolean resolves(Object event, RoundWindow window) {
+        return event instanceof GameEvent.RoundResolved r && r.market().equals(window.market())
+                && r.interval() == window.interval() && r.windowStart() == window.startMs();
+    }
+
+    /** How often the settlement of {@code window} got as far as applying its event to the engine. */
     private long insertsFor(RoundWindow window) {
-        return mockingDetails(oracleRecords).getInvocations().stream()
-                .filter(i -> i.getMethod().getName().equals("insert"))
-                .filter(i -> ((OracleRecordRepository.NewRecord) i.getArgument(1)).roundId().equals(window.roundId()))
+        return mockingDetails(applier).getInvocations().stream()
+                .filter(i -> i.getMethod().getName().equals("apply"))
+                .filter(i -> resolves(i.getArgument(0), window))
                 .count();
     }
 
-    /** The settlement of the window with the bet fails after its event was applied (the oracle insert throws); every
-     *  other window of the game settles as usual. */
+    /** The settlement of the window with the bet fails after its event was applied, inside the transaction that holds the
+     *  journal append (the applier throws once it has applied it); every other window of the game settles as usual. */
     private void theSettlementOfTheBetWindowFailsAfterItsEventWasApplied(Fixture f) throws Exception {
         doAnswer(inv -> {
-            OracleRecordRepository.NewRecord record = inv.getArgument(1);
-            if (record.roundId().equals(f.betting().roundId())) {
+            Object result = inv.callRealMethod();
+            if (resolves(inv.getArgument(0), f.betting())) {
                 throw new IllegalStateException("injected failure after the event append");
             }
-            return inv.callRealMethod();
-        }).when(oracleRecords).insert(any(Connection.class), any(OracleRecordRepository.NewRecord.class));
+            return result;
+        }).when(applier).apply(any(GameEvent.class));
     }
 
     @Test
     void aSettlementThatKeepsFailingIsTriedAtTwoFourEightSecondsAndSoOnNotEveryTick() throws Exception {
         Fixture f = marketWithABetAndTheRunningWindowSettled("T_BO_EVERY", "BOE");
         theSettlementOfTheBetWindowFailsAfterItsEventWasApplied(f);
-        Mockito.clearInvocations(oracleRecords, eventStoreSpy);
+        Mockito.clearInvocations(applier, eventStoreSpy);
         long t0 = f.betting().endMs() + 1;
 
         for (long dt = 0; dt <= 30_000L; dt += 1_000L) {
@@ -147,7 +155,7 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         theSettlementOfTheBetWindowFailsAfterItsEventWasApplied(f);
         long t0 = f.betting().endMs() + 1;
         scheduler.tick(t0);            // fails: the next attempt is due at +2 s
-        Mockito.reset(oracleRecords);  // the cause is gone
+        Mockito.reset(applier);  // the cause is gone
 
         scheduler.tick(t0 + 1_999L);
         assertThat(roundResults.exists(f.betting().roundId())).as("not due yet: nothing is tried").isFalse();

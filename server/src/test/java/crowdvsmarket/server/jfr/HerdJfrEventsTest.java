@@ -77,7 +77,9 @@ class HerdJfrEventsTest extends LiveRpcTestBase {
                 && e.getInt("bets") == 2).findFirst().orElseThrow();
         assertThat(settled.getLong("storeNs")).isPositive();
         assertThat(settled.getLong("appendNs")).isPositive();
-        assertThat(settled.getLong("lockedNs")).isGreaterThanOrEqualTo(settled.getLong("storeNs"));
+        // the hold is the journal append and the apply; the rows are written after the lock was released (settle_outside_lock)
+        assertThat(settled.getLong("lockedNs")).isGreaterThanOrEqualTo(settled.getLong("appendNs") + settled.getLong("applyNs"));
+        assertThat(settled.getDuration().toNanos()).isGreaterThanOrEqualTo(settled.getLong("lockedNs") + settled.getLong("storeNs"));
 
         List<RecordedEvent> rebuilds = named(events, "herd.Rebuild");
         assertThat(rebuilds).isNotEmpty();
