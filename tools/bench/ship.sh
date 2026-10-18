@@ -65,4 +65,9 @@ if [ "$BUILD_IMAGE" = 1 ] || [ "$FAB_ONLY" = 1 ]; then
   JAR=$("$ROOT/tools/bench/build-fabricator.sh")
   ssh "$SSH_HOST" "mkdir -p ~/$REMOTE" && scp -q "$JAR" "$SSH_HOST:$REMOTE/bench-fabricator.jar"
 fi
+if [ "$BUILD_IMAGE" = 1 ]; then
+  # the sync above removes repo/* but not dotfiles: a .env.bench of an earlier ship survives with its old image tag (step 3 edited it
+  # by hand), so the tag in it is set to the image just loaded
+  ssh "$SSH_HOST" "f=\$HOME/$REMOTE/repo/.env.bench; [ -f \$f ] && { grep -v '^HERD_BENCH_IMAGE=' \$f > \$f.new; echo HERD_BENCH_IMAGE=$IMAGE >> \$f.new; mv \$f.new \$f; }; true"
+fi
 echo "$SHA"

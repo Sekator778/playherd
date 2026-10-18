@@ -13,6 +13,11 @@ Results of the first run: `docs/research/bench_step1_2026-10-18.md`.
 | `pgbench-ceiling.sh` | the bench box | S-F: pgbench against Postgres of the bench stand + `pg_test_fsync` |
 | `build-fabricator.sh` | Mac | compiles the seeding / journal fabricator (`server/src/test/java/crowdvsmarket/server/bench/`, test scope) into `server/target/bench-fabricator.jar`; `ship.sh` calls it and ships the jar to `~/herd-bench/bench-fabricator.jar` |
 | `seed.sh` | the bench box | step 3: `seed` (players, sessions, cutover), `history` (settled journal for S-D), `hotround` (N bets on one future round for S-B), `verify`, `cookies`; runs as a container of the server image on the bench network |
+| `gen/` | Mac (build), the bench box (run) | step 4: Gatling Java scenarios (`SimBets` S-A/S-B probe, `SimPoll` S-C), `Report` (per-step table from the HdrHistogram log), `JfrSummary` (where the time goes), `wrk/herd.lua` (wrk2), `Dockerfile` (image `herd-bench-gen`: Gatling libs + wrk2 built from pinned commits) |
+| `build-gen.sh` | Mac | `mvn -s ~/.m2/settings-oss.xml package` of `gen/`, builds the image for linux/amd64, `--ship` loads it on the bench box and writes its tag to `~/herd-bench/gen-image` |
+| `run.sh` | the bench box | `start`/`stop`/`snapdb`/`restore`/`gatling`/`wrk`/`report`/`jfr`: one primitive per call; every generator run is wrapped by the USE sampler, Postgres snapshots and a manifest |
+| `use-sampler.sh`, `use_table.py` | the bench box / any | once-a-second `/proc` samples (CPU per core set, runnable tasks, DB disk, server eth0) and the USE table from them |
+| `step4-ceiling.sh`, `step4-i0.sh` | the bench box | the generator self-check and the S-A ladder (one run per rate, stop at the first broken step); the I-0 overhead run (a/b/c arms, three repeats, interleaved) |
 | `sql/` | the bench box | the one-INSERT pgbench script and the copy of `game_events` |
 
 ## Bring it up
@@ -52,3 +57,13 @@ Result and proof of byte-compatibility: `docs/research/bench_step3_2026-10-18.md
 (first start creates markets and the calendar origin), `docker stop herdbench-server-1`, `seed.sh seed --players N`, then `seed.sh history` and/or
 `seed.sh hotround`, then `bench-ctl.sh up` (the rebuild replays the journal). Every call is deterministic (`--seed`) and idempotent (marker in
 `server_meta`); `seed --reset` wipes the game state of the bench database. After editing the image tag in `.env.bench` (`HERD_BENCH_IMAGE`) for a new ship.
+
+## Load generators (step 4)
+
+Result: `docs/research/bench_step4_2026-10-18.md`. Order on the bench box: `build-gen.sh --ship` and `ship.sh` (Mac), `bench-ctl.sh up` once, `docker stop herdbench-server-1`,
+`seed.sh seed --players 100000 --cookies-out /results/cookies.tsv`, `run.sh snapdb` (the seeded state), then `step4-ceiling.sh` / `step4-i0.sh` (each restores that state,
+`run.sh restore`, before a run). Gatling: open model (`constantUsersPerSec(...).randomized()`), `shareConnections`, session id as a plain `Cookie` header, response
+times in an in-process HdrHistogram (3 digits, 1 ms resolution of Gatling) per second and class, written at the end as `<rd>.hdrlog` and `<rd>.counts.tsv`;
+parameters are `BENCH_*` environment variables (`BENCH_LADDER=rate:sec,...`, `BENCH_SHAPE=spread|hot|other`, `BENCH_PLAYERS`, `BENCH_SESSIONS`, `BENCH_METHODS`).
+wrk2 (`-R`, constant throughput, latency from the scheduled send time): `run.sh wrk <label> <rate> <seconds> <sessions> <mode>`; `herd.lua` takes the sessions file.
+The server runs without a request limit (`HERD_BENCH_RATELIMIT_*` in the override). Generator cores are pinned (`BENCH_GEN_CPUS`); `use_table.py` reports their load.

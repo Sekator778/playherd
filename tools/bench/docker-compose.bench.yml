@@ -79,6 +79,10 @@ services:
       # profile tech (§2.4): treasury large enough that the exposure limits never reject
       HERD_ECONOMY_TREASURY_OPENING_PLAY: "${HERD_BENCH_TREASURY_OPENING_PLAY:-1000000000000}"
       HERD_REGISTRATION_MAX_PER_IP_PER_DAY: "${HERD_BENCH_REG_MAX_PER_IP:-1000000}"
+      # request limits (design R-4): the generator is one IP, so the per-IP bucket of placeBet is lifted out of reach; its own
+      # cost (one synchronized bucket) is part of the numbers and is named as such in the reports
+      HERD_RATELIMIT_CAPACITY: "${HERD_BENCH_RATELIMIT_CAPACITY:-2000000000}"
+      HERD_RATELIMIT_REFILL_PER_SEC: "${HERD_BENCH_RATELIMIT_REFILL:-1000000000}"
 
   # never started in the bench
   chainsvc:

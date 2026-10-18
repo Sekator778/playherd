@@ -3,6 +3,7 @@
 #   tools/bench/bench-ctl.sh up       start db + server (compose project herdbench, never chainsvc/web)
 #   tools/bench/bench-ctl.sh down     stop and remove ONLY the containers and network of project herdbench
 #   tools/bench/bench-ctl.sh purge    down + remove the volume herdbench_pg (the bench database)
+#   tools/bench/bench-ctl.sh image <tag>  pin HERD_BENCH_IMAGE in .env.bench (`up` and `ship.sh` also keep it equal to .bench-sha / the caller's HERD_BENCH_IMAGE)
 #   tools/bench/bench-ctl.sh status   containers of the project, image, health
 #   tools/bench/bench-ctl.sh snap <label> [dir]   Postgres statistics now (pg_stat_wal, pg_stat_database, pg_stat_statements, settings)
 #                                      into <dir>/<label>.*.txt (default ~/herd-bench/results/snap); take one before and one after a run
@@ -33,9 +34,25 @@ ensure_env() {
   log "wrote $ENV_FILE (new random secrets)"
 }
 
+# The image tag in .env.bench follows .bench-sha (written by ship.sh) or the HERD_BENCH_IMAGE of the caller, on every call: an .env.bench
+# left by an earlier ship must not keep an old tag (step 3 had to edit it by hand).
+sync_image() {
+  [ -f "$ENV_FILE" ] || return 0
+  want=${HERD_BENCH_IMAGE:-herd-bench-server:${SHA:0:12}}
+  # "unknown" means there is no .bench-sha: keep what the file has
+  case $want in *:unknown) return 0 ;; esac
+  tmp=$(mktemp) && { grep -v '^HERD_BENCH_IMAGE=' "$ENV_FILE"; echo "HERD_BENCH_IMAGE=$want"; } > "$tmp" && cat "$tmp" > "$ENV_FILE" && rm -f "$tmp"
+}
+
 case "${1:-status}" in
+  image)   # image <tag>: pin the server image tag (e.g. the pre-instrumentation arm of the overhead run) and print it
+    ensure_env
+    HERD_BENCH_IMAGE=${2:?usage: bench-ctl.sh image <tag>} sync_image
+    sed -n 's/^HERD_BENCH_IMAGE=//p' "$ENV_FILE"
+    ;;
   up)
     ensure_env
+    sync_image
     # refuse to share a name with anything that is not ours
     if docker network inspect herdbench_default >/dev/null 2>&1 &&
        [ "$(docker network inspect herdbench_default --format '{{index .Labels "com.docker.compose.project"}}')" != "$PROJECT" ]; then
@@ -45,6 +62,7 @@ case "${1:-status}" in
     ;;
   down)
     ensure_env
+    sync_image
     "${COMPOSE[@]}" down --remove-orphans
     ;;
   purge)
@@ -74,5 +92,5 @@ case "${1:-status}" in
     docker cp herdbench-server-1:/tmp/herd.jfr "$dir/herd-$(date +%Y%m%d-%H%M%S).jfr"
     log "JFR dump -> $dir"
     ;;
-  *) echo "usage: bench-ctl.sh {up|down|purge|status|snap <label> [dir]|jfr [dir]}" >&2; exit 2 ;;
+  *) echo "usage: bench-ctl.sh {up|down|purge|image <tag>|status|snap <label> [dir]|jfr [dir]}" >&2; exit 2 ;;
 esac
