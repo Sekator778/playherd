@@ -11,6 +11,8 @@ Results of the first run: `docs/research/bench_step1_2026-10-18.md`.
 | `ship.sh` | Mac | builds the server image for linux/amd64, `git archive` of a commit plus this directory to `~/herd-bench/repo`, `docker load` of the images (the bench box is air-gapped: no Maven Central, no registry) |
 | `bench-ctl.sh` | the bench box | `up` / `down` / `purge` / `status` of project `herdbench` only |
 | `pgbench-ceiling.sh` | the bench box | S-F: pgbench against Postgres of the bench stand + `pg_test_fsync` |
+| `build-fabricator.sh` | Mac | compiles the seeding / journal fabricator (`server/src/test/java/crowdvsmarket/server/bench/`, test scope) into `server/target/bench-fabricator.jar`; `ship.sh` calls it and ships the jar to `~/herd-bench/bench-fabricator.jar` |
+| `seed.sh` | the bench box | step 3: `seed` (players, sessions, cutover), `history` (settled journal for S-D), `hotround` (N bets on one future round for S-B), `verify`, `cookies`; runs as a container of the server image on the bench network |
 | `sql/` | the bench box | the one-INSERT pgbench script and the copy of `game_events` |
 
 ## Bring it up
@@ -43,3 +45,10 @@ Results of the first run: `docs/research/bench_step1_2026-10-18.md`.
 S-F: transactions per second and latency percentiles (p50/p90/p99/p99.9/max, from the per-transaction log) of a single-row INSERT into a copy of
 `game_events`, 1 and 8 clients, `synchronous_commit` on and off, 300 s each after a 30 s warm-up, plus `pg_test_fsync` and `pg_stat_wal`
 (write/sync counts and times) and the disk counters of the DB disk before/after each run. Raw output goes to `~/herd-bench/results/<timestamp>-pgbench/`.
+
+## Seeding and journal (step 3)
+
+Result and proof of byte-compatibility: `docs/research/bench_step3_2026-10-18.md`. Order on the bench box: `ship.sh --worktree` (Mac), `bench-ctl.sh up`
+(first start creates markets and the calendar origin), `docker stop herdbench-server-1`, `seed.sh seed --players N`, then `seed.sh history` and/or
+`seed.sh hotround`, then `bench-ctl.sh up` (the rebuild replays the journal). Every call is deterministic (`--seed`) and idempotent (marker in
+`server_meta`); `seed --reset` wipes the game state of the bench database. After editing the image tag in `.env.bench` (`HERD_BENCH_IMAGE`) for a new ship.
