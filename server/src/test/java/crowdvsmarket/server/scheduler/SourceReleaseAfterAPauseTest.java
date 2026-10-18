@@ -20,7 +20,6 @@ import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
-import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.prices.Instruments;
 import crowdvsmarket.server.prices.PriceUnavailableException;
 import crowdvsmarket.server.prices.PricesConfig;
@@ -72,7 +71,6 @@ class SourceReleaseAfterAPauseTest {
     private final EngineRebuildService rebuildService = mock(EngineRebuildService.class);
     private final BotService botService = mock(BotService.class);
     private final OraclePublisherService oraclePublisher = mock(OraclePublisherService.class);
-    private final RoundResultRepository roundResults = mock(RoundResultRepository.class);
     private final OracleSeqGate gate = mock(OracleSeqGate.class);
     private final GameConfig config = mock(GameConfig.class);
     private final RoundProgress progress = new RoundProgress();
@@ -108,7 +106,6 @@ class SourceReleaseAfterAPauseTest {
         scheduler.oraclePublisher = oraclePublisher;
         scheduler.rebuildService = rebuildService;
         scheduler.roundProgress = progress;
-        scheduler.roundResults = roundResults;
         scheduler.oracleSeqGate = gate;
         scheduler.config = config;
         scheduler.pricesConfig = PricesConfig.defaults();

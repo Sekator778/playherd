@@ -146,7 +146,7 @@ class AtomicSettlementTest extends LiveGameTestBase {
     }
 
     @Test
-    void aFailureWhileWritingTheSettledResultKeepsTheEventAndIsRepairedOnce() throws Exception {
+    void aFailureWhileWritingTheSettledResultKeepsTheEventAndTheRowsFollowOnce() throws Exception {
         Market market = list("T_ATOMIC2", MarketKind.PERP, Category.CRYPTO, "AT2", 10, 0);
         prices.setPrice(market, "100.00");
         alignTo(market, Interval.HOURLY, roundProgress.next("BTC", Interval.HOURLY));
@@ -160,13 +160,20 @@ class AtomicSettlementTest extends LiveGameTestBase {
                 .insertSettled(any(Connection.class), anyString(), anyString(), any(Interval.class), anyLong(), anyLong(),
                         anyLong(), anyLong(), any(), any(), anyString(), anyString(), anyLong(), any(), any());
 
-        assertThatThrownBy(() -> gameService.resolveRound(betting, betting.endMs()))
-                .hasMessageContaining("injected result failure");
-
-        // the event is committed (the journal is the truth) and the rebuild behind the failure wrote the rows from it
-        assertThat(resolvedEvents(market, betting)).isEqualTo(1);
-        assertThat(roundResults.exists(betting.roundId())).isTrue();
-        assertThat(rebuild.isReady()).isTrue();
+        gameService.setRowsRetryDelays(20, 100);
+        try {
+            // the write of the rows fails once: the round is resolved all the same (the journal and the engine say so), the call
+            // returns, the game is ready, and the retry in the background writes the rows once
+            assertThat(gameService.resolveRound(betting, betting.endMs())).isNotNull();
+            assertThat(rebuild.isReady()).isTrue();
+            assertThat(resolvedEvents(market, betting)).isEqualTo(1);
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(20))
+                    .until(() -> roundResults.exists(betting.roundId()));
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                    .until(() -> gameService.missingRows().isEmpty() && !gameService.rowsPending(betting.roundId()));
+        } finally {
+            gameService.setRowsRetryDelays(1000, 60_000);
+        }
         assertThat(gameService.account(p).inPlay()).isEqualTo("0.000");
         assertThat(((Rounds.RoundSettled) roundResults.findRoundDto(betting.roundId()).orElseThrow()).positions())
                 .hasSize(1);

@@ -162,7 +162,8 @@ public class AdminResource {
                 throw e;
             }
         }
-        return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker, botDays());
+        return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker, botDays(),
+                gameService.missingRows());
     }
 
     /**
@@ -247,11 +248,21 @@ public class AdminResource {
      *  because the stream had no quote). {@code botDays}: one row per UTC day of the last seven, oldest first - {@code bets} by
      *  bots with their {@code staked} PLAY and {@code fees}, the {@code pnl} of the bets that settled that day (payout minus stake,
      *  before fees), {@code retirements}, {@code botsCreated} (first bots and replacements together) and the {@code starterPacks}
-     *  they were paid; {@code null} while the database does not answer. Not part of {@code contract.ts}: the operator's own page. */
+     *  they were paid; {@code null} while the database does not answer. {@code missingRoundRows}: rounds that are resolved in the
+     *  journal and whose result rows could not be written so far ({@code roundId}, {@code failures}, {@code sinceMs}, {@code lastError}),
+     *  each retried in the background; empty when all is written. Not part of {@code contract.ts}: the operator's own page. */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                                    java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
                                    java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
-                                   java.util.List<BotMetrics.Day> botDays) {
+                                   java.util.List<BotMetrics.Day> botDays,
+                                   java.util.List<GameService.MissingRows> missingRoundRows) {
+
+        public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
+                              java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
+                              java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
+                              java.util.List<BotMetrics.Day> botDays) {
+            this(server, recentCancellations, recentLedgerCorrections, priceFeeds, circuitBreakerOpen, botDays, null);
+        }
 
         public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                               java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,

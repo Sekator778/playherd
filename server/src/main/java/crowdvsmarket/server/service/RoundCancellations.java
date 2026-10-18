@@ -74,7 +74,7 @@ public class RoundCancellations {
                 windows.put(window.startMs(), window);
             }
             for (RoundWindow window : windows.values()) {
-                if (!roundResults.exists(window.roundId())) {
+                if (!hub.closedRounds().isClosed(window)) {
                     cancel(applier, hub, market, window, reason, nowMs);
                 }
             }

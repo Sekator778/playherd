@@ -53,7 +53,10 @@ public class SeriesSeeder {
      */
     public RoundWindow seedFor(EngineHub hub, Market market, Interval interval, long nowMs) {
         RoundWindow base = calendar.windowContaining(market.id(), interval, nowMs);
-        Optional<Long> latestEnd = roundResults.latestWindowEnd(market.id(), interval);
+        // the engine's own record of the closed rounds (replayed from the journal); the table is only a lower bound
+        // for a journal that predates it - its rows are projections of the same events, so never later than the marker
+        Optional<Long> latestEnd = latestOf(hub.closedRounds().latestEnd(market.id(), interval),
+                roundResults.latestWindowEnd(market.id(), interval));
         if (latestEnd.isPresent() && latestEnd.get() < base.startMs()) {
             long stepMs = config.roundDurations().forInterval(interval);
             base = new RoundWindow(market.id(), interval, latestEnd.get(), latestEnd.get() + stepMs);
@@ -62,7 +65,11 @@ public class SeriesSeeder {
         return !pending.isEmpty() && pending.get(0).startMs() < base.startMs() ? pending.get(0) : base;
     }
 
-    /** The windows of {@code hub}'s series that hold a bet in its engine and have no result row, earliest
+    private static Optional<Long> latestOf(Optional<Long> a, Optional<Long> b) {
+        return a.isPresent() && b.isPresent() ? Optional.of(Math.max(a.get(), b.get())) : a.isPresent() ? a : b;
+    }
+
+    /** The windows of {@code hub}'s series that hold a bet in its engine and are not resolved or cancelled, earliest
      *  first — what is still waiting to be resolved or refunded. A window of the index that holds no bet any more
      *  (its only bet was cancelled by the player, and the empty round was stepped over without an event) is dropped
      *  from the index here: it would otherwise stay in it for as long as the process lives. The caller holds the
@@ -77,7 +84,7 @@ public class SeriesSeeder {
         for (RoundWindow window : hub.betWindows().of(market.id(), interval)) {
             if (book.betsFor(window.roundId()).isEmpty()) {
                 hub.betWindows().closed(window);
-            } else if (!roundResults.exists(window.roundId())) {
+            } else if (!hub.closedRounds().isClosed(window)) {
                 pending.add(window);
             }
         }

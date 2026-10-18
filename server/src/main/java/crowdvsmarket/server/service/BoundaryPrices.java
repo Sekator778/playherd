@@ -93,6 +93,13 @@ public class BoundaryPrices {
         }
 
         /** Where the settled rounds of {@code marketId} (a market with no backup) closed that it still knows: end of window → close. */
+        /** Adds the close of a round whose row could not be written ({@code EngineStateBuilder}): the next round of the
+         *  series opens at it all the same. */
+        public void settled(RoundWindow window, long closeCents, String venue) {
+            closes.computeIfAbsent(window.market(), market -> new ConcurrentSkipListMap<>())
+                    .putIfAbsent(new CloseKey(window.endMs(), venueKey(venue)), BigDecimal.valueOf(closeCents, 2));
+        }
+
         public Map<Long, BigDecimal> of(String marketId) {
             return of(marketId, null);
         }

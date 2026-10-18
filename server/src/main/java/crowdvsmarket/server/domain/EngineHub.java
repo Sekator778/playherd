@@ -76,6 +76,7 @@ public final class EngineHub {
         final LedgerBook ledger = new LedgerBook();
         final ConcurrentHashMap<String, MarketEngines> markets = new ConcurrentHashMap<>();
         final BetWindows betWindows = new BetWindows();
+        final ClosedRounds closedRounds = new ClosedRounds();
     }
 
     private volatile State state;
@@ -130,6 +131,11 @@ public final class EngineHub {
     /** The windows that may still hold a bet ({@link BetWindows}); kept by {@code EventApplier}. */
     public BetWindows betWindows() {
         return state.betWindows;
+    }
+
+    /** The rounds that are resolved or cancelled ({@link ClosedRounds}); kept by {@code EventApplier}. */
+    public ClosedRounds closedRounds() {
+        return state.closedRounds;
     }
 
     /** The market's engines, or empty when {@link #ensureMarket} never ran for it. */

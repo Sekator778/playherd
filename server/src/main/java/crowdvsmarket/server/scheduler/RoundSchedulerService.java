@@ -9,7 +9,6 @@ import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.markets.Market;
-import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.prices.Instruments;
 import crowdvsmarket.server.prices.PriceUnavailableException;
 import crowdvsmarket.server.prices.PricesConfig;
@@ -132,8 +131,6 @@ public class RoundSchedulerService {
 
     @Inject
     RoundProgress roundProgress;
-    @Inject
-    RoundResultRepository roundResults;
     @Inject
     GameService gameService;
     @Inject
@@ -328,7 +325,7 @@ public class RoundSchedulerService {
                 }
                 continue;
             }
-            if (roundResults.exists(next.roundId())) {
+            if (gameService.isClosed(next)) {
                 // Already resolved — e.g. an operator cancelled this exact round ahead of time
                 // (GameService#cancelRound never touches RoundProgress itself, see its javadoc).
                 roundProgress.advance(marketId, interval, next);

@@ -103,6 +103,7 @@ public final class EventApplier {
                 RoundReport report = market.engine(e.interval()).runRound(window, prices);
                 market.comparison().onRoundResolved(report, path);
                 hub.betWindows().closed(window);
+                hub.closedRounds().closed(window);
                 yield report;
             }
             case GameEvent.RoundCancelled e -> {
@@ -110,6 +111,7 @@ public final class EventApplier {
                 RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
                 refundAndClear(market.engine(e.interval()), window, Instant.ofEpochMilli(e.atMs()));
                 hub.betWindows().closed(window);
+                hub.closedRounds().closed(window);
                 yield null;
             }
             case GameEvent.WithdrawalRequested e -> {

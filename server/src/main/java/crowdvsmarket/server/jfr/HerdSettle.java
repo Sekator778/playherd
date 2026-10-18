@@ -23,7 +23,7 @@ public final class HerdSettle extends Event {
     @Label("Under the lock (hold)")
     @Timespan(Timespan.NANOSECONDS)
     public long lockedNs;
-    @Label("round_results.exists")
+    @Label("closed-round check")
     @Timespan(Timespan.NANOSECONDS)
     public long existsNs;
     @Label("eventStore.append")

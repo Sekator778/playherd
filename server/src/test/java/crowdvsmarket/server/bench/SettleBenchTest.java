@@ -58,16 +58,32 @@ class SettleBenchTest extends LiveGameTestBase {
         rebuild.rebuild(now);
         for (int i = 0; i < repeats; i++) {
             prices.script(markets.get(i), windows.get(i), "2500.000", "2510.000", "2490.000", "2520.000");
+            // the series' cursor stands on the hot round, as it does when the scheduler is about to resolve it
+            roundProgress.seed(windows.get(i).market(), Interval.HOURLY, windows.get(i));
         }
 
         for (int i = 0; i < repeats; i++) {
             RoundWindow w = windows.get(i);
             long[] wall = new long[1];
+            long[] cursorMovedNs = {-1};
             List<RecordedEvent> events = record(() -> {
                 long t = System.nanoTime();
+                // "the next round accepts bets" is the moment the series' cursor leaves the window: a watcher thread
+                // polls it, as the bets' own check does (GameService#placeBet reads the same cursor)
+                Thread watcher = new Thread(() -> {
+                    while (cursorMovedNs[0] < 0 && System.nanoTime() - t < 120_000_000_000L) {
+                        if (!w.equals(roundProgress.findNext(w.market(), w.interval()).orElse(null))) {
+                            cursorMovedNs[0] = System.nanoTime() - t;
+                        }
+                    }
+                });
+                watcher.start();
                 try {
                     RoundReport report = gameService.resolveRound(w, w.endMs());
                     assertThat(report.playerOutcomes()).hasSize(bets);
+                    // what the scheduler does when resolveRound returns (a no-op when the cursor has moved already)
+                    roundProgress.advance(w.market(), w.interval(), w);
+                    watcher.join();
                 } catch (Exception e) {
                     throw new IllegalStateException(e);
                 }
@@ -75,9 +91,9 @@ class SettleBenchTest extends LiveGameTestBase {
             });
             RecordedEvent s = events.stream().filter(e -> e.getEventType().getName().equals("herd.Settle")
                     && e.getString("outcome").equals("SETTLED")).findFirst().orElseThrow();
-            System.out.printf("SETTLE-BENCH run=%d bets=%d total_ms=%.1f locked_ms=%.1f store_ms=%.1f apply_ms=%.1f append_ms=%.1f oracle_ms=%.1f%n",
+            System.out.printf("SETTLE-BENCH run=%d bets=%d total_ms=%.1f locked_ms=%.1f store_ms=%.1f apply_ms=%.1f append_ms=%.1f oracle_ms=%.1f next_round_open_ms=%.1f%n",
                     i + 1, bets, wall[0] / 1e6, s.getLong("lockedNs") / 1e6, s.getLong("storeNs") / 1e6,
-                    s.getLong("applyNs") / 1e6, s.getLong("appendNs") / 1e6, s.getLong("oracleNs") / 1e6);
+                    s.getLong("applyNs") / 1e6, s.getLong("appendNs") / 1e6, s.getLong("oracleNs") / 1e6, cursorMovedNs[0] / 1e6);
             assertThat(roundResults.exists(w.roundId())).isTrue();
         }
     }

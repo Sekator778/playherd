@@ -74,6 +74,13 @@ public class RoundResultRepository {
                 marketId, interval.name(), fromStartMs));
     }
 
+    /** The ids of all rounds that have a row: what a rebuild compares the journal's resolved rounds with
+     *  ({@code EngineStateBuilder}) to find those whose rows were never written. */
+    public java.util.Set<String> allRoundIds() {
+        return new java.util.HashSet<>(db.read(c -> db.queryList(c, "SELECT round_id FROM round_results",
+                rs -> rs.getString("round_id"))));
+    }
+
     public boolean exists(String roundId) {
         return db.read(c -> db.queryOne(c, "SELECT 1 FROM round_results WHERE round_id = ?",
                 rs -> Boolean.TRUE, roundId)) != null;

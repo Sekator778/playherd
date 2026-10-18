@@ -15,7 +15,6 @@ import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.markets.Market;
-import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.prices.Fixtures;
 import crowdvsmarket.server.prices.Instruments;
 import crowdvsmarket.server.prices.LiveMarketPrices;
@@ -152,7 +151,6 @@ class VenueReleaseWithRealPricesTest {
         scheduler = new RoundSchedulerService();
         scheduler.gameService = gameService;
         scheduler.roundProgress = progress;
-        scheduler.roundResults = mock(RoundResultRepository.class);
         scheduler.oracleSeqGate = gate;
         scheduler.config = config;
         scheduler.pricesConfig = pricesConfig.withReleaseAfter(PricesConfig.ReleaseAfter.off()); // Р-79's release has its own scenarios below

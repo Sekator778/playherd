@@ -14,15 +14,19 @@ import crowdvsmarket.server.jfr.HerdRebuild;
 import crowdvsmarket.server.jfr.JfrClock;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.service.BoundaryPrices;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.service.RoundCancellations;
 import crowdvsmarket.server.service.SeriesSeeder;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.jboss.logging.Logger;
 
 /**
@@ -61,6 +65,8 @@ public class EngineStateBuilder {
     BoundaryPrices boundaryPrices;
     @Inject
     GameService gameService;
+    @Inject
+    RoundResultRepository roundResults;
 
     /** A finished build: ready to be swapped in. {@code cursors} holds one window per running series;
      *  {@code boundaries} the closes of the settled rounds those cursors may open at; {@code description}
@@ -93,13 +99,20 @@ public class EngineStateBuilder {
         List<GameEvent> events = eventStore.loadAll();
         jfr.loadNs = JfrClock.since(rec, t);
         t = JfrClock.nanos(rec);
-        GameEvent.RoundResolved lastResolved = null;
-        RoundReport lastReport = null;
+        // The derived rows of a settlement are written after its event is committed (GameService#resolveRound), and a
+        // stop or a failing write between the two leaves rounds without them - possibly several, since the game goes on
+        // while a write is retried. Every resolved round of the journal that has no row is repaired below.
+        Set<String> withRows = roundResults.allRoundIds();
+        List<GameEvent.RoundResolved> unwrittenEvents = new ArrayList<>();
+        List<RoundReport> unwrittenReports = new ArrayList<>();
         for (GameEvent event : events) {
             Object result = applier.apply(event); // also keeps the hub's index of the windows that hold bets
             if (event instanceof GameEvent.RoundResolved resolved) {
-                lastResolved = resolved;
-                lastReport = (RoundReport) result;
+                RoundReport report = (RoundReport) result;
+                if (!withRows.contains(report.window().roundId())) {
+                    unwrittenEvents.add(resolved);
+                    unwrittenReports.add(report);
+                }
             }
         }
         if (rec) {
@@ -109,12 +122,15 @@ public class EngineStateBuilder {
             jfr.end();
             jfr.commit();
         }
-        // The derived rows of a settlement are written after its event is committed (GameService#resolveRound): a stop
-        // between the two leaves the LAST resolved round without them. Only that one can be, because the next resolution
-        // starts after the rows of the previous one are committed; the rows are written from the event, here, before the
-        // series are seeded and the boundary prices read, which both read them.
-        if (lastResolved != null) {
-            gameService.repairSettledResult(lastResolved, lastReport);
+        // Written from the events, here, before the boundary prices are read, which read them; a write that fails does
+        // not fail the build (the game does not depend on the rows, the engine's marker says what is resolved): it goes to
+        // the background retry of GameService, and the close of that round is added to the boundary prices from the event.
+        List<GameEvent.RoundResolved> notWritten = new ArrayList<>();
+        for (int i = 0; i < unwrittenEvents.size(); i++) {
+            gameService.repairSettledResult(unwrittenEvents.get(i), unwrittenReports.get(i));
+            if (gameService.rowsPending(unwrittenReports.get(i).window().roundId())) {
+                notWritten.add(unwrittenEvents.get(i));
+            }
         }
         cancelRoundsOfClosedMarkets(applier, hub, markets, nowMs);
 
@@ -132,8 +148,13 @@ public class EngineStateBuilder {
                         .append(seed.roundId());
             }
         }
-        return new Built(hub, betFeed, cursors, boundaryPrices.load(cursors), events.size(), markets.size(),
-                series.toString());
+        BoundaryPrices.Snapshot closes = boundaryPrices.load(cursors);
+        for (GameEvent.RoundResolved resolved : notWritten) {
+            closes.settled(new RoundWindow(resolved.market(), resolved.interval(), resolved.windowStart(),
+                    resolved.windowEnd()), new BigDecimal(resolved.closePrice()).movePointRight(2).longValueExact(),
+                    resolved.venue());
+        }
+        return new Built(hub, betFeed, cursors, closes, events.size(), markets.size(), series.toString());
     }
 
     private static long usedHeap() {

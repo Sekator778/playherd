@@ -20,7 +20,6 @@ import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.markets.Market;
-import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.prices.PriceUnavailableException;
 import crowdvsmarket.server.prices.PricesConfig;
 import crowdvsmarket.server.prices.TestMarkets;
@@ -60,7 +59,6 @@ class VenueReleaseSchedulerTest {
     private final Market plain = TestMarkets.coinbase("ETH", 0, 2);
 
     private final GameService gameService = mock(GameService.class);
-    private final RoundResultRepository roundResults = mock(RoundResultRepository.class);
     private final OracleSeqGate gate = mock(OracleSeqGate.class);
     private final GameConfig config = mock(GameConfig.class);
     private final RoundProgress progress = new RoundProgress();
@@ -90,7 +88,6 @@ class VenueReleaseSchedulerTest {
         scheduler = new RoundSchedulerService();
         scheduler.gameService = gameService;
         scheduler.roundProgress = progress;
-        scheduler.roundResults = roundResults;
         scheduler.oracleSeqGate = gate;
         scheduler.config = config;
         scheduler.pricesConfig = venueReleaseOnly();

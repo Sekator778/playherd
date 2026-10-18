@@ -22,7 +22,6 @@ import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
-import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.prices.Instruments;
 import crowdvsmarket.server.prices.PriceUnavailableException;
 import crowdvsmarket.server.prices.PricesConfig;
@@ -81,7 +80,6 @@ class SourceReleaseSchedulerTest {
     private final Market walk = TestMarkets.synthetic("SYN1", MarketKind.PERP, "SYN", 0, null);
 
     private final GameService gameService = mock(GameService.class);
-    private final RoundResultRepository roundResults = mock(RoundResultRepository.class);
     private final OracleSeqGate gate = mock(OracleSeqGate.class);
     private final GameConfig config = mock(GameConfig.class);
     private final RoundProgress progress = new RoundProgress();
@@ -114,7 +112,6 @@ class SourceReleaseSchedulerTest {
         scheduler = new RoundSchedulerService();
         scheduler.gameService = gameService;
         scheduler.roundProgress = progress;
-        scheduler.roundResults = roundResults;
         scheduler.oracleSeqGate = gate;
         scheduler.config = config;
         scheduler.pricesConfig = PricesConfig.defaults();

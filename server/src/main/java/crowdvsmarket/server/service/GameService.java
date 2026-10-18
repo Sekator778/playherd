@@ -71,6 +71,9 @@ import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
+import crowdvsmarket.server.util.FailureLog;
+import jakarta.annotation.PreDestroy;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 import java.math.BigDecimal;
 import java.math.MathContext;
@@ -85,6 +88,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -182,14 +188,84 @@ public class GameService implements MarketListener {
     MarketPrices marketPrices;
     @Inject
     RoundResultRepository roundResults;
-    /** Rounds whose {@code RoundResolved} event is committed and applied but whose derived rows ({@code round_results},
-     *  {@code player_round_history}, the oracle record) are being written, without the engine lock, by
-     *  {@link #storeAfterTheLock}: the guard against a second resolution or a cancellation of the round in that time,
-     *  and what readers of those rows wait for ({@link #awaitStored}). Entered under the write lock, left when the rows
-     *  have committed or the write has failed. */
-    private final ConcurrentHashMap<String, CompletableFuture<Void>> storing = new ConcurrentHashMap<>();
-    /** The longest a read waits for the rows of a round that is being written ({@link #awaitStored}). */
-    private static final long STORE_WAIT_MS = 30_000L;
+    /** Rounds whose {@code RoundResolved} event is committed and applied (the journal and the engine have them as
+     *  resolved: {@link crowdvsmarket.server.domain.ClosedRounds}) but whose derived rows ({@code round_results},
+     *  {@code player_round_history}, the oracle record) are not written yet. Entered under the write lock right after the
+     *  event, left when the rows have committed. It guards nothing - whether a round is resolved is the engine's marker -
+     *  it is what {@link #awaitStored} waits for, what the background retry works through ({@link #rowsFailed}), and what
+     *  the rebuild leaves to that retry ({@link #repairSettledResult}). */
+    private final ConcurrentHashMap<String, PendingRows> storing = new ConcurrentHashMap<>();
+    /** The longest, in all, a read waits for the rows of the rounds being written ({@link #awaitStored}). */
+    private static final long STORE_WAIT_MS = 5_000L;
+    @ConfigProperty(name = "herd.rows-retry.base-ms", defaultValue = "1000")
+    long rowsRetryBaseMs;
+    @ConfigProperty(name = "herd.rows-retry.max-ms", defaultValue = "60000")
+    long rowsRetryMaxMs;
+    private final FailureLog rowsFailureLog = new FailureLog(60_000L);
+    private ScheduledExecutorService rowsRetryExecutor;
+
+    /** A resolved round whose derived rows are to be written: what {@link #writeRows} needs, and the state of the
+     *  attempts so far. */
+    private static final class PendingRows {
+        final Market market;
+        final RoundWindow window;
+        final RoundReport report;
+        final long sourceTsMs;
+        final String venue;
+        final CompletableFuture<Void> stored = new CompletableFuture<>();
+        final long sinceMs = System.currentTimeMillis();
+        volatile int failures;
+        volatile String lastError;
+
+        PendingRows(Market market, RoundWindow window, RoundReport report, long sourceTsMs, String venue) {
+            this.market = market;
+            this.window = window;
+            this.report = report;
+            this.sourceTsMs = sourceTsMs;
+            this.venue = venue;
+        }
+    }
+
+    /** A resolved round whose rows keep failing to be written: the operator's signal ({@code /api/admin/status}). */
+    public record MissingRows(String roundId, int failures, long sinceMs, String lastError) {
+    }
+
+    /** Rounds that are resolved in the journal and whose result rows could not be written so far (each is being retried
+     *  in the background). Empty when everything is written. */
+    public List<MissingRows> missingRows() {
+        List<MissingRows> out = new ArrayList<>();
+        for (PendingRows p : storing.values()) {
+            if (p.failures > 0) {
+                out.add(new MissingRows(p.window.roundId(), p.failures, p.sinceMs, p.lastError));
+            }
+        }
+        out.sort(java.util.Comparator.comparing(MissingRows::roundId));
+        return out;
+    }
+
+    /** The delays of the background retry of a failed rows write ({@link #rowsFailed}): the first and the longest.
+     *  For tests; the settings {@code herd.rows-retry.base-ms} and {@code herd.rows-retry.max-ms} otherwise. */
+    public void setRowsRetryDelays(long baseMs, long maxMs) {
+        rowsRetryBaseMs = baseMs;
+        rowsRetryMaxMs = maxMs;
+    }
+
+    /** Whether the rows of the round are still to be written (by the retry or the writer of the settlement). */
+    public boolean rowsPending(String roundId) {
+        return storing.containsKey(roundId);
+    }
+
+    /** Whether the engine has the round as resolved or cancelled (the journal's word, not the table's). */
+    public boolean isClosed(RoundWindow window) {
+        return hub.closedRounds().isClosed(window);
+    }
+
+    @PreDestroy
+    synchronized void stopRowsRetry() {
+        if (rowsRetryExecutor != null) {
+            rowsRetryExecutor.shutdownNow();
+        }
+    }
 
     @Inject
     WithdrawalDepositRepository withdrawalDeposits;
@@ -277,16 +353,23 @@ public class GameService implements MarketListener {
     /**
      * Waits, without any lock, until the derived rows of the rounds that {@link #resolveRound} has resolved and is still
      * writing are committed: a read of those rows (a round's result, a profile's history, "unseen results") then never
-     * shows the balance of a settlement without its result. Returns at once when nothing is being written; gives up
-     * after {@link #STORE_WAIT_MS}.
+     * shows the balance of a settlement without its result. Returns at once when nothing is being written. The wait is
+     * bounded: {@link #STORE_WAIT_MS} in all, not per round. When the rows are still not there then (the write is failing
+     * and being retried), the read answers with what the tables hold: the round is not in the history, and its own result
+     * answers 404 "not stored yet", while balances, which come from the engine, already show the settlement.
      */
     private void awaitStored() {
         if (storing.isEmpty()) {
             return;
         }
-        for (CompletableFuture<Void> stored : List.copyOf(storing.values())) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(STORE_WAIT_MS);
+        for (PendingRows pending : List.copyOf(storing.values())) {
+            long left = deadline - System.nanoTime();
+            if (left <= 0) {
+                return;
+            }
             try {
-                stored.get(STORE_WAIT_MS, TimeUnit.MILLISECONDS);
+                pending.stored.get(left, TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
@@ -883,11 +966,11 @@ public class GameService implements MarketListener {
             if (!bettingWindow.roundId().equals(ref.roundId()) || nowMs >= bettingWindow.startMs()) {
                 throw ApiException.roundNotOpenForBetting(req.roundId());
             }
-            // §4 п.6: a round that already has a result row was cancelled by the operator before it
+            // §4 п.6: a round that is already closed (the engine's marker) was cancelled by the operator before it
             // started — the cancellation refunded and cleared its bets, so a bet accepted now would
             // sit in the bet book with its stake debited and never be settled or refunded.
             t = JfrClock.nanos(rec);
-            if (roundResults.exists(bettingWindow.roundId())) {
+            if (hub.closedRounds().isClosed(bettingWindow)) {
                 throw ApiException.roundNotOpenForBetting(req.roundId());
             }
             jfr.existsNs = JfrClock.since(rec, t);
@@ -1038,13 +1121,16 @@ public class GameService implements MarketListener {
      *       round one hour after its end (Р-23). So does a price it cannot be settled on (an open or
      *       close that is not positive, too long a path: {@link RoundPriceChecks}), found out here
      *       and not inside the settlement transaction.
-     *   <li>Under the write lock: looks again whether the round was resolved or cancelled while prices were fetched (in
-     *       {@link #storing} or in {@code round_results} - then nothing happens and {@code null} is returned), takes the
-     *       open from the round that closed there ({@link BoundaryPrices}, Р-40), then runs ONE database transaction: the
-     *       {@code RoundResolved} event, with the event applied to the engine inside it. A failure rolls it back and, if
-     *       the event had been applied, rebuilds the in-memory state from the event log before it propagates (§4 п.13).
+     *   <li>Under the write lock: looks again whether the round was resolved or cancelled while prices were fetched (the
+     *       engine's marker, {@link crowdvsmarket.server.domain.ClosedRounds} - then nothing happens and {@code null} is
+     *       returned), takes the open from the round that closed there ({@link BoundaryPrices}, Р-40), then runs ONE
+     *       database transaction: the {@code RoundResolved} event, with the event applied to the engine inside it. A
+     *       failure rolls it back and, if the event had been applied, rebuilds the in-memory state from the event log
+     *       before it propagates (§4 п.13). Once it has committed, still under the lock: the close goes to the boundary
+     *       prices and the series' cursor moves on, so the next round takes bets at once.
      *   <li>Without the lock: ONE transaction with the result and history rows and the oracle record, projections of that
-     *       event ({@link #storeAfterTheLock}); what is left of it after a crash or a failure is written by the rebuild
+     *       event ({@link #storeAfterTheLock}). A failure of that write does not fail the call: it is retried in the
+     *       background with a growing delay ({@link #rowsFailed}), and the rebuild writes what a crash left
      *       ({@link #repairSettledResult}). docs/research/settle_outside_lock_2026-10-18.md.
      * </ol>
      * A round nobody bet on stores a single open→close candle as its path (§4 п.7); one with bets
@@ -1083,7 +1169,7 @@ public class GameService implements MarketListener {
             }
         }
         try {
-            storeAfterTheLock(market, window, applied, nowMs, jfr, rec);
+            storeAfterTheLock(applied, jfr, rec);
             return applied.report();
         } finally {
             if (rec) {
@@ -1093,9 +1179,8 @@ public class GameService implements MarketListener {
         }
     }
 
-    /** What phase 2 of {@link #resolveRound} hands to phase 3: the engine's report and the data the derived rows need. */
-    private record Applied(RoundReport report, long sourceTsMs, String venue, long closeCents,
-                           CompletableFuture<Void> stored) {
+    /** What phase 2 of {@link #resolveRound} hands to phase 3: the engine's report and the rows still to be written. */
+    private record Applied(RoundReport report, PendingRows pending) {
     }
 
     /**
@@ -1111,8 +1196,8 @@ public class GameService implements MarketListener {
     private Applied journalAndApplyLocked(Market market, RoundWindow window, RoundPriceData fetched, long nowMs,
                                           HerdSettle jfr, boolean rec, long lockedAtNanos) {
         long t = lockedAtNanos;
-        // already resolved: its derived rows are being written (storing) or are written (round_results), or it was cancelled
-        boolean alreadyDone = storing.containsKey(window.roundId()) || roundResults.exists(window.roundId());
+        // already resolved or cancelled: the engine's marker, which the journal sets (live and in a replay)
+        boolean alreadyDone = hub.closedRounds().isClosed(window);
         jfr.existsNs = JfrClock.since(rec, t);
         if (alreadyDone) {
             jfr.outcome = "SKIPPED";
@@ -1141,9 +1226,13 @@ public class GameService implements MarketListener {
                 jfr.bets = r.playerOutcomes().size();
                 return r;
             });
-            CompletableFuture<Void> stored = new CompletableFuture<>();
-            storing.put(window.roundId(), stored);
-            return new Applied(report, data.sourceTsMs(), data.venue(), close.movePointRight(2).longValueExact(), stored);
+            PendingRows pending = new PendingRows(market, window, report, data.sourceTsMs(), data.venue());
+            storing.put(window.roundId(), pending);
+            // the event is committed: the close is the close on the exchange the round ran on (Р-76), the next round of the
+            // series opens at it, and the series' cursor leaves the round, so the next round takes bets right away
+            boundaries.settled(window, close.movePointRight(2).longValueExact(), data.venue());
+            roundProgress.advance(market.id(), window.interval(), window);
+            return new Applied(report, pending);
         } catch (RuntimeException | Error e) {
             if (touchedMemory.get()) {
                 rebuildService.recoverAfterFailure(e, window.roundId(), nowMs);
@@ -1154,46 +1243,106 @@ public class GameService implements MarketListener {
 
     /**
      * Phase 3 of {@link #resolveRound}, <b>without the engine lock</b>: ONE transaction with the result row, the
-     * per-player history rows and the oracle record of the round the journal has already resolved. A failure leaves the
-     * journal ahead of these rows, which is exactly what a crash at this point leaves, and is repaired the same way: the
-     * engine is rebuilt, and the rebuild writes the rows of the last resolved round that has none
-     * ({@link #repairSettledResult}); the failure propagates as before.
+     * per-player history rows and the oracle record of the round the journal has already resolved. The round is resolved
+     * for the game whether or not this succeeds; a failure leaves the journal ahead of these rows, which is exactly what a
+     * crash at this point leaves. It is logged as an error and retried in the background ({@link #rowsFailed}); the call
+     * returns the report as usual and the game goes on.
      */
-    private void storeAfterTheLock(Market market, RoundWindow window, Applied applied, long nowMs, HerdSettle jfr,
-                                   boolean rec) {
-        String roundId = window.roundId();
+    private void storeAfterTheLock(Applied applied, HerdSettle jfr, boolean rec) {
+        PendingRows pending = applied.pending();
         try {
             long t0 = JfrClock.nanos(rec);
-            db.tx(c -> {
-                storeSettledResult(c, market, window, applied.report(), applied.sourceTsMs(), applied.venue(), jfr);
-                return null;
-            });
+            writeRows(pending, jfr);
             jfr.storeNs = JfrClock.since(rec, t0);
-            // only once it has committed; the close is the close on the exchange the round ran on (Р-76)
-            boundaries.settled(window, applied.closeCents(), applied.venue());
-            storing.remove(roundId);
-            applied.stored().complete(null);
-            rebuildService.recovered(roundId);
-            jfr.outcome = "SETTLED";
-        } catch (RuntimeException | Error e) {
-            storing.remove(roundId); // first: the rebuild below must not take this round for one that is being written
-            applied.stored().complete(null);
-            engineLock.writeLock().lock();
-            try {
-                rebuildService.recoverAfterFailure(e, roundId, nowMs);
-            } finally {
-                engineLock.writeLock().unlock();
-            }
+            rowsWritten(pending);
+        } catch (RuntimeException e) {
+            rowsFailed(pending, e);
+        } catch (Error e) {
+            rowsFailed(pending, e);
             throw e;
+        }
+        jfr.outcome = "SETTLED";
+    }
+
+    /** One attempt: the rows in ONE transaction, unless an earlier attempt's commit got through after all. */
+    private void writeRows(PendingRows p, HerdSettle jfr) {
+        if (p.failures > 0 && roundResults.exists(p.window.roundId())) {
+            return;
+        }
+        db.tx(c -> {
+            storeSettledResult(c, p.market, p.window, p.report, p.sourceTsMs, p.venue, jfr);
+            return null;
+        });
+    }
+
+    private void rowsWritten(PendingRows p) {
+        String roundId = p.window.roundId();
+        storing.remove(roundId, p);
+        p.stored.complete(null);
+        rebuildService.recovered(roundId);
+        rowsFailureLog.clear(roundId);
+    }
+
+    /** The rows of a resolved round could not be written. The round stays resolved (journal and engine), the game goes
+     *  on, the failure is an ERROR in the log (a full stack once, then a line a minute) and a row in
+     *  {@link #missingRows}, and the write is tried again after 1 s, 2 s, 4 s ... up to a minute, for as long as it takes
+     *  (or until the rebuild at the next start writes them). Readers that wait for the rows give up after
+     *  {@link #STORE_WAIT_MS} ({@link #awaitStored}). */
+    private void rowsFailed(PendingRows p, Throwable cause) {
+        String roundId = p.window.roundId();
+        p.failures = p.failures + 1;
+        p.lastError = cause.toString();
+        storing.putIfAbsent(roundId, p);
+        switch (rowsFailureLog.next(roundId, System.currentTimeMillis())) {
+            case STACK_TRACE -> LOG.errorf(cause, "the result rows of round %s (result, history, oracle record) could not "
+                    + "be written - the round is resolved in the journal and the game goes on; retrying", roundId);
+            case LINE -> LOG.errorf("the result rows of round %s still cannot be written (%d attempts, since %s): %s",
+                    roundId, p.failures, java.time.Instant.ofEpochMilli(p.sinceMs), cause);
+            case NOTHING -> {
+                // already said this minute
+            }
+        }
+        long delayMs = Math.min(rowsRetryMaxMs, rowsRetryBaseMs << Math.min(p.failures - 1, 20));
+        scheduleRowsRetry(p, delayMs);
+    }
+
+    private synchronized void scheduleRowsRetry(PendingRows p, long delayMs) {
+        if (rowsRetryExecutor == null) {
+            rowsRetryExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "herd-rows-retry");
+                t.setDaemon(true);
+                return t;
+            });
+        }
+        try {
+            rowsRetryExecutor.schedule(() -> retryRows(p), delayMs, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+            // shutting down: the rebuild at the next start writes them
+        }
+    }
+
+    private void retryRows(PendingRows p) {
+        if (storing.get(p.window.roundId()) != p) {
+            return;
+        }
+        try {
+            writeRows(p, new HerdSettle());
+            rowsWritten(p);
+            LOG.infof("the result rows of round %s are written after %d failed attempt(s)", p.window.roundId(),
+                    p.failures);
+        } catch (RuntimeException e) {
+            rowsFailed(p, e);
         }
     }
 
     /**
      * The restart/rebuild half of the settlement: writes the result row, the history and the oracle record of a round
      * whose {@code RoundResolved} event is in the journal and has none ({@code EngineStateBuilder}, which replayed the
-     * event and so has {@code report}). A round that is being written by {@link #storeAfterTheLock} right now, or that
-     * has its rows, is left alone. The price reading's own timestamp is not in the event: the open time of the last candle
-     * of its path stands for it in the oracle record's {@code source_ts}.
+     * event and so has {@code report}) - every such round, not only the last. A round whose rows are being written or
+     * retried by this process is left alone, and so is one that has its rows. A write that fails does not fail the
+     * rebuild: the round goes to the background retry like a failure of the live write ({@link #rowsFailed}). The price
+     * reading's own timestamp is not in the event: the open time of the last candle of its path stands for it in the oracle
+     * record's {@code source_ts}.
      *
      * @return whether rows were written
      */
@@ -1207,11 +1356,17 @@ public class GameService implements MarketListener {
         LOG.warnf("round %s is resolved in the journal but has no result row (the process stopped, or the write failed, "
                 + "after the event was committed) - writing the result row, the history and the oracle record from the "
                 + "event", window.roundId());
-        db.tx(c -> {
-            storeSettledResult(c, market, window, report, sourceTsMs, event.venue(), new HerdSettle());
-            return null;
-        });
-        return true;
+        PendingRows pending = new PendingRows(market, window, report, sourceTsMs, event.venue());
+        try {
+            db.tx(c -> {
+                storeSettledResult(c, market, window, report, sourceTsMs, event.venue(), new HerdSettle());
+                return null;
+            });
+            return true;
+        } catch (RuntimeException e) {
+            rowsFailed(pending, e);
+            return false;
+        }
     }
 
     /** Phase 1 of {@link #resolveRound}: the settlement data of a finished window, in engine (lot)
@@ -1353,7 +1508,7 @@ public class GameService implements MarketListener {
         Market market = marketRegistry.require(window.market());
         lockWrite();
         try {
-            if (storing.containsKey(window.roundId()) || roundResults.exists(window.roundId())) {
+            if (hub.closedRounds().isClosed(window)) {
                 throw ApiException.badRequest("round " + window.roundId() + " is already resolved");
             }
             Optional<RoundWindow> running = roundProgress.findNext(market.id(), window.interval());
@@ -1428,6 +1583,10 @@ public class GameService implements MarketListener {
         lockRead();
         try {
             hub.ensureMarket(market);
+            if (hub.closedRounds().isClosed(window)) {
+                // resolved in the journal, no row after the bounded wait (awaitStored): it is being retried
+                throw ApiException.notFound("the result of round " + roundId + " is not stored yet");
+            }
             Optional<RoundWindow> running = roundProgress.findNext(market.id(), window.interval());
             if (running.isPresent()) {
                 if (window.equals(running.get())) {
