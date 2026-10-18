@@ -780,7 +780,7 @@ export interface MarketSeriesDto {
   /** Null for a tie, including 0 vs 0. */
   majorityDirection: Direction | null;
   /** Economy stage A: the market's leverage cap for this round length (a bigger stake lowers it, see
-   *  `BetDto.maxLeverageForStake`), and its herd-fee rate `r_m` in basis points (`fee = stake * min(1%, r_m * leverage)`). */
+   *  `BetDto.maxLeverageForStake`), and its herd-fee rate `r_m` in basis points (`fee = stake * min(20%, k * r_m * leverage), k = 1 in the 3-minute round, 2.2 (3.0 odds) in the 15-minute one`). */
   maxLeverage?: number | null;
   herdFeeBp?: string | null;
 }

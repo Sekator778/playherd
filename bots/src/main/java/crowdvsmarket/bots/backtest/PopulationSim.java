@@ -258,7 +258,7 @@ public final class PopulationSim {
                         }
                         MarketSpec spec = e.market().spec();
                         Backtester.Settled s = Backtester.settle(b.account.botId(), intent.roundId(), dir, intent.leverage(),
-                                intent.stake(), c, spec, spec.forInterval(interval));
+                                intent.stake(), c, spec, spec.forInterval(interval), interval);
                         PlayAmount out = intent.stake().plus(PlayAmount.fromMoney(s.fees()));
                         b.account = b.account.withBalance(b.account.balance().minus(out));
                         b.open++;

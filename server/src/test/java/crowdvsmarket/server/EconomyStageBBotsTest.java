@@ -175,17 +175,17 @@ class EconomyStageBBotsTest extends LiveGameTestBase {
         String human = signUp("human");
         PlayerDirectory.Row bot = liveBots().get(0);
         long nowMs = betting.startMs() - 1;
-        gameService.placeBet(bot.playerId(), bet(betting, Enums.Direction.UP, 100, "200.000"), nowMs);   // 2.000 + 0.100
-        gameService.placeBet(human, bet(betting, Enums.Direction.UP, 10, "200.000"), nowMs);             // 0.200 + 0.100
+        gameService.placeBet(bot.playerId(), bet(betting, Enums.Direction.UP, 100, "200.000"), nowMs);   // 2.500 + 0.100
+        gameService.placeBet(human, bet(betting, Enums.Direction.UP, 10, "200.000"), nowMs);             // 0.250 + 0.100
         PlayAmount herdBefore = ledger().herd();
         PlayAmount treasuryBefore = ledger().treasury();
-        assertThat(herdBefore).isEqualTo(PlayAmount.fromMoney(new java.math.BigDecimal("2.400")));
-        assertThat(ledger().feesPaid(bot.playerId())).isEqualTo(PlayAmount.fromMoney(new java.math.BigDecimal("2.100")));
+        assertThat(herdBefore).isEqualTo(PlayAmount.fromMoney(new java.math.BigDecimal("2.950")));
+        assertThat(ledger().feesPaid(bot.playerId())).isEqualTo(PlayAmount.fromMoney(new java.math.BigDecimal("2.600")));
 
         PlayAmount moved = gameService.sweepBotFeesIfDue(nowMs);
 
-        assertThat(moved).isEqualTo(PlayAmount.fromMoney(new java.math.BigDecimal("2.100")));
-        assertThat(ledger().herd()).as("the person's fees stay").isEqualTo(PlayAmount.fromMoney(new java.math.BigDecimal("0.300")));
+        assertThat(moved).isEqualTo(PlayAmount.fromMoney(new java.math.BigDecimal("2.600")));
+        assertThat(ledger().herd()).as("the person's fees stay").isEqualTo(PlayAmount.fromMoney(new java.math.BigDecimal("0.350")));
         assertThat(ledger().treasury()).isEqualTo(treasuryBefore.plus(moved));
         assertThat(gameService.sweepBotFeesIfDue(nowMs + 3_600_000L)).as("once a day").isEqualTo(PlayAmount.ZERO);
         assertThat(gameService.sweepBotFeesIfDue(nowMs + 86_400_000L)).as("nothing new to move").isEqualTo(PlayAmount.ZERO);

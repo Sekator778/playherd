@@ -77,7 +77,7 @@ class GameEngineEconomyTest {
 
     private void bet(String player, RoundWindow window, Direction direction, int leverage, long stakePlay) {
         PlayAmount stake = play(stakePlay);
-        Fees fees = EconomyRules.fees(TST, leverage, stake);
+        Fees fees = EconomyRules.fees(TST, window.interval(), leverage, stake);
         engine.placeBet(player, window, direction, new Leverage(leverage), stake, fees, BET_TIME);
     }
 
@@ -194,26 +194,29 @@ class GameEngineEconomyTest {
     // --- A4: fees ---
 
     @Test
-    void theHerdFeeScalesWithLeverageUpToOnePercent() {
-        // r_m = 1 bp: fee = stake * min(1%, 0.0001 * L)
-        assertThat(EconomyRules.fees(TST, 10, play(1_000)).herd()).isEqualTo(play(1)); // 0.1% of 1000
-        assertThat(EconomyRules.fees(TST, 50, play(1_000)).herd()).isEqualTo(play(5));
-        assertThat(EconomyRules.fees(TST, 100, play(1_000)).herd()).isEqualTo(play(10)); // 1%
-        assertThat(EconomyRules.fees(TST, 500, play(1_000)).herd()).as("capped at 1%").isEqualTo(play(10));
+    void theHerdFeeScalesWithLeverageUpToTheTwentyPercentGuard() {
+        // r_m = 1 bp: fee = stake * min(20%, 0.0001 * L) in the short round
+        assertThat(EconomyRules.fees(TST, Interval.HOURLY, 10, play(1_000)).herd()).isEqualTo(play(1)); // 0.1% of 1000
+        assertThat(EconomyRules.fees(TST, Interval.HOURLY, 50, play(1_000)).herd()).isEqualTo(play(5));
+        assertThat(EconomyRules.fees(TST, Interval.HOURLY, 100, play(1_000)).herd()).isEqualTo(play(10)); // 1%
+        assertThat(EconomyRules.fees(TST, Interval.HOURLY, 500, play(1_000)).herd()).as("no cap below 20%").isEqualTo(play(50));
+        assertThat(EconomyRules.fees(TST, Interval.HOURLY, 3_000, play(1_000)).herd()).as("capped at 20%").isEqualTo(play(200));
+        // the long round: k = 2.2
+        assertThat(EconomyRules.fees(TST, Interval.DAILY, 100, play(1_000)).herd()).isEqualTo(play(22));
         // BTC r_m = 0.92 bp
-        assertThat(EconomyRules.fees(MarketSpec.BTC, 100, play(1_000)).herd()).isEqualTo(new PlayAmount(9_200));
-        assertThat(EconomyRules.fees(MarketSpec.BTC, 1_200, play(1_000)).herd()).isEqualTo(play(10));
+        assertThat(EconomyRules.fees(MarketSpec.BTC, Interval.HOURLY, 100, play(1_000)).herd()).isEqualTo(new PlayAmount(9_200));
+        assertThat(EconomyRules.fees(MarketSpec.BTC, Interval.HOURLY, 1_200, play(1_000)).herd()).isEqualTo(new PlayAmount(110_400));
     }
 
     @Test
     void feesRoundUpToAThousandthAndHaveAMinimum() {
         // 100.001 * 0.0003 = 0.0300003 -> 0.031
-        assertThat(EconomyRules.fees(TST, 3, new PlayAmount(100_001)).herd()).isEqualTo(new PlayAmount(31));
+        assertThat(EconomyRules.fees(TST, Interval.HOURLY, 3, new PlayAmount(100_001)).herd()).isEqualTo(new PlayAmount(31));
         // 100 * 0.0002 = 0.02 exactly
-        assertThat(EconomyRules.fees(TST, 2, play(100)).herd()).isEqualTo(new PlayAmount(20));
+        assertThat(EconomyRules.fees(TST, Interval.HOURLY, 2, play(100)).herd()).isEqualTo(new PlayAmount(20));
         // a tiny product never rounds to 0: minimum 0.001
-        assertThat(EconomyRules.fees(TST, 2, new PlayAmount(1)).herd()).isEqualTo(new PlayAmount(1));
-        assertThat(EconomyRules.fees(TST, 2, play(100)).network()).isEqualTo(new PlayAmount(100)); // 0.1 PLAY
+        assertThat(EconomyRules.fees(TST, Interval.HOURLY, 2, new PlayAmount(1)).herd()).isEqualTo(new PlayAmount(1));
+        assertThat(EconomyRules.fees(TST, Interval.HOURLY, 2, play(100)).network()).isEqualTo(new PlayAmount(100)); // 0.1 PLAY
     }
 
     @Test
@@ -301,7 +304,7 @@ class GameEngineEconomyTest {
 
     @Test
     void theCrowdLeverageIsClampedToTheCapOfTheRoundLength() {
-        engine.placeBet("alice", LONG, Direction.UP, new Leverage(40), play(200), EconomyRules.fees(TST, 40, play(200)), BET_TIME);
+        engine.placeBet("alice", LONG, Direction.UP, new Leverage(40), play(200), EconomyRules.fees(TST, Interval.HOURLY, 40, play(200)), BET_TIME);
         RoundReport report = engine.runRound(LONG, path("1000.00", "1001.00", "999.00", "1000.00"));
         assertThat(report.crowdResult().leverage()).isEqualTo(40);
     }

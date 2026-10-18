@@ -5,6 +5,7 @@ import crowdvsmarket.bots.api.LastOutcome;
 import crowdvsmarket.bots.api.MarketSnapshot;
 import crowdvsmarket.engine.economy.Fees;
 import crowdvsmarket.engine.ledger.PlayAmount;
+import crowdvsmarket.engine.margin.Leverage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -93,11 +94,31 @@ abstract class AbstractPersona implements Persona {
                 return Optional.of(new Sizing(stake, leverage));
             }
             if (stake.compareTo(market.minStake()) <= 0) {
-                return Optional.empty();
+                // the herd fee is no longer capped at 1% of the stake (Р-102): at the smallest stake a high leverage can cost more
+                // than the balance leaves, so lower the leverage to the highest one that fits before giving up
+                PlayAmount atMin = stake;
+                return fittingLeverage(market, atMin, account, leverage).map(l -> new Sizing(atMin, l));
             }
             PlayAmount lower = stake.minus(PlayAmount.ofWholePlay(STEP_PLAY));
             stake = lower.compareTo(market.minStake()) < 0 ? market.minStake() : lower;
         }
+    }
+
+    /** The highest leverage in {@code [Leverage.MIN, below)} whose stake plus fees fit the balance (the fee only grows with leverage). */
+    private static Optional<Integer> fittingLeverage(MarketSnapshot market, PlayAmount stake, BotAccount account, int below) {
+        int lo = Leverage.MIN;
+        int hi = below - 1;
+        Integer best = null;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (stake.plus(market.fees(mid, stake).total()).compareTo(account.balance()) <= 0) {
+                best = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return Optional.ofNullable(best);
     }
 
     /** A stake in whole 10-PLAY steps, never below {@code min}. */

@@ -19,12 +19,12 @@ public record BacktestMarket(String id, MarketSpec spec, List<BarDto> bars) {
     /** id to {cap of the 3-minute round, cap of the 15-minute round, herd fee in bp}. */
     private static final Map<String, double[]> TERMS = Map.of(
             "BTC", new double[] {1200, 500, 0.92},
-            "ETH", new double[] {1000, 400, 1.0},
-            "SOL", new double[] {600, 300, 1.0},
+            "ETH", new double[] {1000, 400, 1.05},
+            "SOL", new double[] {600, 300, 1.25},
             "NVDA", new double[] {1500, 800, 0.75},
             "GOLD", new double[] {2000, 1200, 0.48});
 
-    /** The V11 terms of {@code id}. @throws IllegalArgumentException for a market without known terms */
+    /** The V11 terms with the Р-102 fee rates (V13) of {@code id}. @throws IllegalArgumentException for a market without known terms */
     public static MarketSpec specOf(String id) {
         double[] t = TERMS.get(id);
         if (t == null) {

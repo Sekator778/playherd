@@ -41,7 +41,7 @@ class BacktesterTest {
     void aRisingMarketPaysAMaximalistAtThePriceOfFees() {
         // +6 per minute on 60 000 (1 bp); momentum-3 UP at leverage 1200 (BTC, 3-minute round, stake 100 PLAY).
         // A window gains ~3 minutes * 6 = 18 on 60 000 = 0.03%; payout = 100 * (1 + 1200 * 0.0003) = 136;
-        // fees = herd min(1%, 0.000092 * 1200 = 11%) = 1.00 + network 0.10 = 1.10; net ~ 34.9 per bet.
+        // fees = herd min(20%, 0.000092 * 1200 = 11.04%) = 11.04 + network 0.10 = 11.14; net ~ 24.9 per bet.
         List<BarDto> bars = TestBars.of(TestBars.ramp(60, 60_000, 6));
         Backtester.Result r = new Backtester().run(entry("momentum", Map.of("n", 3.0), "maximalist"), BacktestMarket.of("BTC", bars), 3);
         assertThat(r.windows()).isEqualTo(20);
@@ -50,9 +50,9 @@ class BacktesterTest {
         assertThat(r.hits()).isEqualTo(18);
         assertThat(r.liquidations()).isZero();
         assertThat(r.meanLeverage()).isEqualTo(1200.0);
-        assertThat(r.fees()).isEqualByComparingTo(new BigDecimal("1.10").multiply(BigDecimal.valueOf(18)));
+        assertThat(r.fees()).isEqualByComparingTo(new BigDecimal("11.14").multiply(BigDecimal.valueOf(18)));
         BigDecimal perBet = r.pnl().divide(BigDecimal.valueOf(r.bets()), java.math.MathContext.DECIMAL64);
-        assertThat(perBet.doubleValue()).isBetween(34.0, 36.0);
+        assertThat(perBet.doubleValue()).isBetween(24.0, 26.0);
     }
 
     @Test

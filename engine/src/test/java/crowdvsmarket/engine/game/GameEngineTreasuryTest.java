@@ -71,7 +71,7 @@ class GameEngineTreasuryTest {
         ledger.activateEconomy(play(100_000), Instant.ofEpochMilli(START - 600_000L)); // a small treasury: 0.1% = 100 PLAY
         RoundWindow window = new RoundWindow("TST", Interval.HOURLY, START, START + SHORT_ROUND);
         PlayAmount stake = play(200);
-        engine.placeBet("alice", window, Direction.UP, new Leverage(50), stake, EconomyRules.fees(TST, 50, stake),
+        engine.placeBet("alice", window, Direction.UP, new Leverage(50), stake, EconomyRules.fees(TST, Interval.HOURLY, 50, stake),
                 Instant.ofEpochMilli(START - 60_000L));
         PlayAmount treasury = ledger.treasury(); // 100000 minus alice's pack: 0.1% of it is 90 PLAY
 
@@ -92,10 +92,10 @@ class GameEngineTreasuryTest {
         RoundWindow window = new RoundWindow("TST", Interval.HOURLY, START, START + SHORT_ROUND);
         PlayAmount stake = play(200);
         // x20 is the largest leverage today; stored cap 100 -> l = 0.1 / 100 = 0.001
-        engine.replayBet("stored", window, Direction.UP, new Leverage(20), stake, EconomyRules.fees(TST, 20, stake),
+        engine.replayBet("stored", window, Direction.UP, new Leverage(20), stake, EconomyRules.fees(TST, Interval.HOURLY, 20, stake),
                 new LiquidationParams(100, MarketSpec.DEFAULT_KAPPA), Instant.ofEpochMilli(START - 60_000L));
         // no stored parameters: today's row decides (cap 20 -> l = 0.005)
-        engine.replayBet("current", window, Direction.UP, new Leverage(20), stake, EconomyRules.fees(TST, 20, stake),
+        engine.replayBet("current", window, Direction.UP, new Leverage(20), stake, EconomyRules.fees(TST, Interval.HOURLY, 20, stake),
                 Instant.ofEpochMilli(START - 60_000L));
 
         // x20: liquidation near -5% + maintenance: l=0.001 -> entry*(1-0.05)/(1-0.001) = 950.95 ; l=0.005 -> 954.77. Low 953.00 liquidates only "current".
@@ -171,7 +171,7 @@ class GameEngineTreasuryTest {
                 PlayAmount stake = play(stakePlay);
                 int allowed = EconomyRules.maxLeverage(spec, interval, stake);
                 int leverage = 2 + random.nextInt(allowed - 1);
-                Fees fees = EconomyRules.fees(spec, leverage, stake);
+                Fees fees = EconomyRules.fees(spec, interval, leverage, stake);
                 if (stake.plus(fees.total()).compareTo(balance) > 0) {
                     continue;
                 }

@@ -15,8 +15,9 @@ import java.math.RoundingMode;
  *   <li><b>Stake tiers (A3).</b> The bigger the stake the lower the highest leverage: {@code cap} for a stake of up to
  *       250 PLAY, {@code cap/2} up to 500, {@code cap/5} up to 1 200, {@code cap/10} above (integer division, at
  *       least {@link Leverage#MIN}, never above the cap). {@code cap} is {@link MarketSpec#capFor}.
- *   <li><b>Fees (A4).</b> {@code fee_herd = stake * min(1%, r_m * L)}, {@code fee_net = 0.1 PLAY}, both rounded up
- *       to 0.001 PLAY, {@code fee_herd} at least 0.001 PLAY.
+ *   <li><b>Fees (A4).</b> {@code fee_herd = stake * min(20%, k * r_m * L)}, {@code fee_net = 0.1 PLAY}, both rounded up
+ *       to 0.001 PLAY, {@code fee_herd} at least 0.001 PLAY. {@code k} is {@link MarketSpec#feeFactorFor} (1 in the
+ *       short round; 2.2 price / 3.0 odds in the long one), the 20% is a guard no market reaches (Р-102).
  *   <li><b>Payout cap (A5).</b> A bet pays at most {@code min(20 * stake, 0.1% of the treasury)}. Until the treasury
  *       account exists (stage B) the treasury is the constant {@link #TREASURY_FALLBACK}, the treasury coin on chain
  *       at the time of the decision; stage B replaces it with the TREASURY balance.
@@ -28,8 +29,8 @@ public final class EconomyRules {
     public static final PlayAmount NETWORK_FEE = new PlayAmount(100);
     /** The smallest herd fee: 0.001 PLAY. */
     public static final PlayAmount MIN_HERD_FEE = new PlayAmount(1);
-    /** The herd fee never exceeds this share of the stake. */
-    public static final BigDecimal HERD_FEE_MAX_SHARE = new BigDecimal("0.01");
+    /** The herd fee never exceeds this share of the stake: a guard only, no market reaches it (Р-102; before it 1%). */
+    public static final BigDecimal HERD_FEE_MAX_SHARE = new BigDecimal("0.20");
 
     /** Stake-tier upper bounds in whole PLAY: up to 250 -> cap, 500 -> cap/2, 1200 -> cap/5, above -> cap/10. */
     private static final long[] TIER_UPPER_PLAY = {250, 500, 1_200};
@@ -79,9 +80,10 @@ public final class EconomyRules {
         }
     }
 
-    /** The fees of a bet (A4). */
-    public static Fees fees(MarketSpec spec, int leverage, PlayAmount stake) {
-        BigDecimal share = spec.herdFeeRate().multiply(BigDecimal.valueOf(leverage)).min(HERD_FEE_MAX_SHARE);
+    /** The fees of a bet of {@code interval}'s round length (A4, Р-102). */
+    public static Fees fees(MarketSpec spec, Interval interval, int leverage, PlayAmount stake) {
+        BigDecimal share = spec.herdFeeRate().multiply(spec.feeFactorFor(interval)).multiply(BigDecimal.valueOf(leverage))
+                .min(HERD_FEE_MAX_SHARE);
         BigDecimal herd = stake.toMoney().multiply(share).setScale(3, RoundingMode.CEILING);
         PlayAmount herdFee = PlayAmount.fromMoney(herd);
         if (herdFee.compareTo(MIN_HERD_FEE) < 0) {

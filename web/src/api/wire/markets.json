@@ -180,7 +180,7 @@
             "downStake": "0.000",
             "majorityDirection": "UP",
             "maxLeverage": 10,
-            "herdFeeBp": "1"
+            "herdFeeBp": "2.5"
           },
           {
             "interval": "DAILY",
@@ -194,7 +194,7 @@
             "downStake": "0.000",
             "majorityDirection": null,
             "maxLeverage": 10,
-            "herdFeeBp": "1"
+            "herdFeeBp": "2.5"
           }
         ],
         "crowd": {

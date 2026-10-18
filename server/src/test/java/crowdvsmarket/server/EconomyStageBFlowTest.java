@@ -97,7 +97,7 @@ class EconomyStageBFlowTest extends LiveGameTestBase {
         PlayAmount herd0 = ledger().herd();
         gameService.placeBet(loser, bet(betting, Enums.Direction.UP, 100, "200.000"), betting.startMs() - 1);
         gameService.placeBet(winner, bet(betting, Enums.Direction.UP, 2, "200.000"), betting.startMs() - 1);
-        assertThat(ledger().herd()).as("fees 2.000 + 0.100 and 0.040 + 0.100").isEqualTo(herd0.plus(play("2.240")));
+        assertThat(ledger().herd()).as("fees 2.500 + 0.100 and 0.050 + 0.100").isEqualTo(herd0.plus(play("2.750")));
         assertThat(ledger().openStakes()).isEqualTo(play("400.000"));
         assertThat(ledger().treasury()).as("the open stakes are in no account").isEqualTo(treasury0);
 
@@ -107,8 +107,8 @@ class EconomyStageBFlowTest extends LiveGameTestBase {
 
         // treasury keeps 200 - 2.00 from the loser and pays 2.40 to the winner
         assertThat(ledger().treasury()).isEqualTo(treasury0.plus(play("195.600")));
-        assertThat(gameService.account(loser).balance()).isEqualTo("9799.900");
-        assertThat(gameService.account(winner).balance()).isEqualTo("10002.260");
+        assertThat(gameService.account(loser).balance()).isEqualTo("9799.400");
+        assertThat(gameService.account(winner).balance()).isEqualTo("10002.250");
         assertThat(ledger().openStakes()).isEqualTo(PlayAmount.ZERO);
         assertThat(ledger().identityDelta()).isEqualTo(PlayAmount.ZERO);
 
@@ -143,7 +143,7 @@ class EconomyStageBFlowTest extends LiveGameTestBase {
         PlayAmount herd0 = ledger().herd();
 
         gameService.placeBet(p, bet(betting, Enums.Direction.UP, 100, "200.000"), betting.startMs() - 1);
-        assertThat(ledger().herd()).isEqualTo(herd0.plus(play("2.100")));
+        assertThat(ledger().herd()).isEqualTo(herd0.plus(play("2.600")));
         gameService.cancelBet(p, betting.roundId(), betting.startMs() - 1);
 
         assertThat(ledger().herd()).isEqualTo(herd0);

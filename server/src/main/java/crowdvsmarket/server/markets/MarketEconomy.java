@@ -24,8 +24,17 @@ public record MarketEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDe
 
     public static final BigDecimal PRICE_KAPPA = new BigDecimal("0.1");
     public static final BigDecimal ODDS_KAPPA = new BigDecimal("0.5");
-    /** {@code r_m} of every market the plan has no figure for, and of the odds markets (plan A4). */
+    /** {@code r_m} of every price market the plan has no figure for (plan A4). */
     public static final BigDecimal DEFAULT_FEE_BP = new BigDecimal("1.0");
+    /** {@code r_m} of an odds market: 2.5 bp (Р-102, rule 2g; before it {@link #DEFAULT_FEE_BP}). */
+    public static final BigDecimal ODDS_FEE_BP = new BigDecimal("2.5");
+    /**
+     * {@code k} of the herd fee in the long (15-minute) round of a price market: 2.2, the same number as
+     * {@link #LONG_ROUND_STRESS_FACTOR} (the mean move of 15 minutes against 3; Р-102, rule 2b). The short round has k = 1.
+     */
+    public static final BigDecimal LONG_ROUND_FEE_FACTOR = new BigDecimal("2.2");
+    /** {@code k} of the herd fee in the long round of an odds market: 3.0 (Р-102, rule 2g). */
+    public static final BigDecimal ODDS_LONG_ROUND_FEE_FACTOR = new BigDecimal("3.0");
 
     /** Plan A2/A4 starting values by symbol: short-round cap, long-round cap, {@code r_m} in bp. Kept equal to V11. */
     private record Row(int capHourly, int capDaily, String feeBp, String stress) {
@@ -43,11 +52,11 @@ public record MarketEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDe
 
     private static final Map<String, Row> PRICE_MARKETS = Map.ofEntries(
             Map.entry("BTC", new Row(1200, 500, "0.92", "0.00817")),
-            Map.entry("ETH", new Row(1000, 400, "1.0", "0.01308")),
-            Map.entry("SOL", new Row(600, 300, "1.0", "0.01601")),
-            Map.entry("DOGE", new Row(600, 300, "1.0", "0.01456")),
-            Map.entry("XRP", new Row(600, 300, "1.0", "0.01478")),
-            Map.entry("HYPE", new Row(600, 250, "1.0", "0.01271")),
+            Map.entry("ETH", new Row(1000, 400, "1.05", "0.01308")),
+            Map.entry("SOL", new Row(600, 300, "1.25", "0.01601")),
+            Map.entry("DOGE", new Row(600, 300, "1.25", "0.01456")),
+            Map.entry("XRP", new Row(600, 300, "1.10", "0.01478")),
+            Map.entry("HYPE", new Row(600, 250, "1.15", "0.01271")),
             Map.entry("NVDA", new Row(1500, 800, "0.75", "0.00527")),
             Map.entry("TSLA", new Row(1500, 1000, "0.70", "0.00758")),
             Map.entry("BRENTOIL", new Row(1000, 500, "0.83", "0.0043")),
@@ -64,11 +73,11 @@ public record MarketEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDe
     /**
      * What a market gets when it is listed: the plan's starting values for the twelve price markets (by symbol), and for
      * everything else — odds markets and price markets the plan does not name — the market's own single cap for both
-     * round lengths, {@code r_m = 1.0 bp}, and {@code κ} 0.5 (odds) or 0.1 (price).
+     * round lengths, {@code r_m = 1.0 bp} (2.5 bp for odds), and {@code κ} 0.5 (odds) or 0.1 (price).
      */
     public static MarketEconomy defaultsFor(MarketKind kind, String symbol, int maxLeverage) {
         if (kind == MarketKind.ODDS) {
-            return new MarketEconomy(maxLeverage, maxLeverage, ODDS_KAPPA, DEFAULT_FEE_BP, DEFAULT_ODDS_STRESS);
+            return new MarketEconomy(maxLeverage, maxLeverage, ODDS_KAPPA, ODDS_FEE_BP, DEFAULT_ODDS_STRESS);
         }
         Row row = PRICE_MARKETS.get(symbol);
         if (row == null) {
@@ -87,6 +96,11 @@ public record MarketEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDe
         BigDecimal base = stressMove != null ? stressMove
                 : kind == MarketKind.ODDS ? DEFAULT_ODDS_STRESS : DEFAULT_PRICE_STRESS;
         return interval == crowdvsmarket.engine.market.Interval.HOURLY ? base : base.multiply(LONG_ROUND_STRESS_FACTOR);
+    }
+
+    /** {@code k} of the herd fee in the long round of a market of {@code kind} (the short round has k = 1). */
+    public static BigDecimal longRoundFeeFactor(MarketKind kind) {
+        return kind == MarketKind.ODDS ? ODDS_LONG_ROUND_FEE_FACTOR : LONG_ROUND_FEE_FACTOR;
     }
 
     /** The leverage cap of one round length. */

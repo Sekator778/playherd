@@ -44,10 +44,12 @@ import java.util.regex.Pattern;
  * {@link #maintenanceRateFor}) and the herd-fee rate {@code r_m} as a fraction of notional
  * ({@link #herdFeeRate}, 1 bp = 0.0001). {@link #forInterval} is the spec a bet of one round length is
  * simulated with. The three-argument constructor keeps both caps at {@code maxLeverage} and the defaults
- * {@code κ = 0.1}, {@code r_m = 1 bp}.
+ * {@code κ = 0.1}, {@code r_m = 1 bp}. The herd fee is {@code stake * min(20%, k * r_m * L)} (Р-102), {@code k} =
+ * {@link #feeFactorFor}: 1 in the short round, {@link #longRoundFeeFactor} in the long one (2.2 price markets, 3.0 odds).
  */
 public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMarginRate,
-                         int capHourly, int capDaily, BigDecimal kappa, BigDecimal herdFeeRate) {
+                         int capHourly, int capDaily, BigDecimal kappa, BigDecimal herdFeeRate,
+                         BigDecimal longRoundFeeFactor) {
 
     // Declared before BTC on purpose: BTC's initializer runs the compact constructor, which reads
     // these two (static fields initialize in textual order).
@@ -59,6 +61,12 @@ public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMargi
     /** Default herd-fee rate {@code r_m}: 1.0 bp of notional (plan A4). */
     public static final BigDecimal DEFAULT_HERD_FEE_RATE = new BigDecimal("0.0001");
 
+    /**
+     * Default {@code k} of the long (15-minute) round: 2.2, the median sigma(15 min) / sigma(3 min) of the price markets
+     * (docs/research/economy_variant_a_rules_2026-10-17.md, rule 2b, Р-102). An odds market takes 3.0 (rule 2g).
+     */
+    public static final BigDecimal DEFAULT_LONG_ROUND_FEE_FACTOR = new BigDecimal("2.2");
+
     /** The legacy market id. A {@code RoundWindow} of this market keeps the pre-markets round id. */
     public static final String BTC_ID = "BTC";
 
@@ -67,7 +75,8 @@ public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMargi
             .withEconomy(1200, 500, DEFAULT_KAPPA, new BigDecimal("0.000092"));
 
     public MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMarginRate) {
-        this(id, maxLeverage, maintenanceMarginRate, maxLeverage, maxLeverage, DEFAULT_KAPPA, DEFAULT_HERD_FEE_RATE);
+        this(id, maxLeverage, maintenanceMarginRate, maxLeverage, maxLeverage, DEFAULT_KAPPA, DEFAULT_HERD_FEE_RATE,
+                DEFAULT_LONG_ROUND_FEE_FACTOR);
     }
 
     public MarketSpec {
@@ -90,11 +99,26 @@ public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMargi
         if (herdFeeRate == null || herdFeeRate.signum() <= 0 || herdFeeRate.compareTo(new BigDecimal("0.01")) > 0) {
             throw new IllegalArgumentException("herdFeeRate must be in (0, 0.01], got " + herdFeeRate);
         }
+        if (longRoundFeeFactor == null || longRoundFeeFactor.compareTo(BigDecimal.ONE) < 0) {
+            throw new IllegalArgumentException("longRoundFeeFactor must be at least 1, got " + longRoundFeeFactor);
+        }
     }
 
     /** This market with the stage-A economy parameters: the caps of the two round lengths, {@code κ} and {@code r_m} (a fraction). */
     public MarketSpec withEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDecimal herdFeeRate) {
-        return new MarketSpec(id, maxLeverage, maintenanceMarginRate, capHourly, capDaily, kappa, herdFeeRate);
+        return withEconomy(capHourly, capDaily, kappa, herdFeeRate, longRoundFeeFactor);
+    }
+
+    /** {@link #withEconomy(int, int, BigDecimal, BigDecimal)} with the herd-fee factor {@code k} of the long round as well. */
+    public MarketSpec withEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDecimal herdFeeRate,
+                                  BigDecimal longRoundFeeFactor) {
+        return new MarketSpec(id, maxLeverage, maintenanceMarginRate, capHourly, capDaily, kappa, herdFeeRate,
+                longRoundFeeFactor);
+    }
+
+    /** The herd-fee factor {@code k} of one round length: 1 for the short round, {@link #longRoundFeeFactor} for the long one. */
+    public BigDecimal feeFactorFor(Interval interval) {
+        return interval == Interval.HOURLY ? BigDecimal.ONE : longRoundFeeFactor;
     }
 
     /** The leverage cap of one round length (plan A2). */
@@ -113,7 +137,7 @@ public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMargi
      */
     public MarketSpec forInterval(Interval interval) {
         int cap = capFor(interval);
-        return new MarketSpec(id, cap, maintenanceRateFor(interval), cap, cap, kappa, herdFeeRate);
+        return new MarketSpec(id, cap, maintenanceRateFor(interval), cap, cap, kappa, herdFeeRate, longRoundFeeFactor);
     }
 
     /**
@@ -122,7 +146,7 @@ public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMargi
      */
     public MarketSpec forCap(int cap, BigDecimal kappa) {
         BigDecimal rate = kappa.divide(BigDecimal.valueOf(cap), MathContext.DECIMAL128);
-        return new MarketSpec(id, cap, rate, cap, cap, kappa, herdFeeRate);
+        return new MarketSpec(id, cap, rate, cap, cap, kappa, herdFeeRate, longRoundFeeFactor);
     }
 
     /**

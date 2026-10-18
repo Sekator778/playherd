@@ -91,9 +91,9 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         gameService.placeBet(p1, bet(ethBet, Enums.Direction.DOWN, 20, "300.000"), nowMs);
         gameService.placeBet(p1, bet(oddsBet, Enums.Direction.UP, 10, "200.000"), nowMs);
         gameService.placeBet(p2, bet(btcBet, Enums.Direction.DOWN, 5, "100.000"), nowMs);
-        // 10 000 - 1000 staked - fees: BTC 500 * 5 * 0.92 bp = 0.23 + 0.1, ETH 300 * 20 * 1 bp = 0.6 + 0.1,
-        // odds 200 * 10 * 1 bp = 0.2 + 0.1 (economy stage A)
-        assertThat(gameService.account(p1).balance()).isEqualTo("8998.670");
+        // 10 000 - 1000 staked - fees: BTC 500 * 5 * 0.92 bp = 0.23 + 0.1, ETH 300 * 20 * 1.05 bp = 0.63 + 0.1,
+        // odds 200 * 10 * 2.5 bp = 0.5 + 0.1 (economy stage A, Р-102)
+        assertThat(gameService.account(p1).balance()).isEqualTo("8998.340");
         assertThat(gameService.account(p1).inPlay()).isEqualTo("1000.000");
 
         // the betting DTO of a market names it and shows only that market's split
@@ -168,8 +168,8 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         assertThat(oddsPosition.payout()).isEqualTo("400.000");
         assertThat(oddsRound.crowd().entryPrice()).isEqualTo("0.400000");
 
-        // --- ONE balance: 10000 - 1000 staked - 1.33 fees + 550 + 540 + 400 paid out; p2 lost 10 on BTC and paid 0.146 ---
-        assertThat(gameService.account(p1).balance()).isEqualTo("10488.670");
+        // --- ONE balance: 10000 - 1000 staked - 1.66 fees + 550 + 540 + 400 paid out; p2 lost 10 on BTC and paid 0.146 ---
+        assertThat(gameService.account(p1).balance()).isEqualTo("10488.340");
         assertThat(gameService.account(p1).inPlay()).isEqualTo("0.000");
         assertThat(gameService.account(p2).balance()).isEqualTo("9989.854");
 
@@ -258,7 +258,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         String btcCapital = gameService.crowdAccount("BTC").capital();
         int ethPoints = gameService.crowdAccount(eth.id()).history().size();
         rebuild.rebuild(btcBet.endMs());   // restarted at the instant the test's clock stands at, not at the real one
-        assertThat(gameService.account(p1).balance()).isEqualTo("10488.670");
+        assertThat(gameService.account(p1).balance()).isEqualTo("10488.340");
         assertThat(gameService.account(p2).balance()).isEqualTo("9989.854");
         assertThat(gameService.crowdAccount("BTC").capital()).isEqualTo(btcCapital);
         assertThat(gameService.crowdAccount(eth.id()).capital()).isEqualTo("108000.00");

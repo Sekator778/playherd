@@ -847,7 +847,7 @@ public class GameService implements MarketListener {
             } catch (IllegalArgumentException e) {
                 throw ApiException.invalidLeverage(e.getMessage());
             }
-            Fees fees = EconomyRules.fees(spec, req.leverage(), stake);
+            Fees fees = EconomyRules.fees(spec, ref.interval(), req.leverage(), stake);
 
             LedgerBook ledger = hub.ledger();
             Instant now = Instant.ofEpochMilli(nowMs);
@@ -1551,7 +1551,7 @@ public class GameService implements MarketListener {
             return new Betting.LiquidationPreviewDto(market.rawString(entryPrice), market.rawString(liqPrice), pct);
         }
         PlayAmount stake = PlayAmount.fromMoney(stakeMoney);
-        Fees fees = EconomyRules.fees(spec, req.leverage(), stake);
+        Fees fees = EconomyRules.fees(spec, interval, req.leverage(), stake);
         return new Betting.LiquidationPreviewDto(market.rawString(entryPrice), market.rawString(liqPrice), pct,
                 fees.herd().toMoney().toPlainString(), fees.network().toMoney().toPlainString(),
                 stake.plus(fees.total()).toMoney().toPlainString(), EconomyRules.maxLeverage(spec, interval, stake));

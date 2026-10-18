@@ -42,6 +42,6 @@ public record MarketSnapshot(MarketSpec spec, Interval interval, String roundId,
 
     /** The fees charged on top of a bet of {@code stake} at {@code leverage} here. */
     public Fees fees(int leverage, PlayAmount stake) {
-        return EconomyRules.fees(spec, leverage, stake);
+        return EconomyRules.fees(spec, interval, leverage, stake);
     }
 }

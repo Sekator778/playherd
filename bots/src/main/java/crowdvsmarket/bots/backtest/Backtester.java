@@ -241,7 +241,7 @@ public final class Backtester {
             Direction direction = signal.get().direction();
 
             Candle c = w.candle();
-            Settled settled = settle(entry.catalogId(), roundId, direction, leverage, stake, c, spec, roundSpec);
+            Settled settled = settle(entry.catalogId(), roundId, direction, leverage, stake, c, spec, roundSpec, interval);
             if (settled.liquidated()) {
                 liquidations++;
             }
@@ -281,7 +281,7 @@ public final class Backtester {
      * extreme, the payout cap, the fees of {@link EconomyRules#fees}.
      */
     static Settled settle(String playerId, String roundId, Direction direction, int leverage, PlayAmount stake, Candle c,
-                          MarketSpec spec, MarketSpec roundSpec) {
+                          MarketSpec spec, MarketSpec roundSpec, Interval interval) {
         Position position = Position.openFromMargin(playerId, roundId, direction, new Leverage(leverage), stake.toMoney(),
                 c.open(), roundSpec);
         PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, List.of(c));
@@ -296,7 +296,7 @@ public final class Backtester {
         }
         BigDecimal cap = EconomyRules.maxPayout(stake).toMoney().setScale(2, RoundingMode.DOWN);
         payout = payout.min(cap);
-        BigDecimal fees = EconomyRules.fees(spec, leverage, stake).total().toMoney();
+        BigDecimal fees = EconomyRules.fees(spec, interval, leverage, stake).total().toMoney();
         return new Settled(payout, fees, liquidated, payout.subtract(stake.toMoney()).subtract(fees));
     }
 

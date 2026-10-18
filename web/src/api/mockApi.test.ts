@@ -296,9 +296,11 @@ describe("previewLiquidation — per market, with the market's leverage cap", ()
     const old = await mockApi.previewLiquidation({ ...base, stake: "500.000" });
     expect(old.feeHerd).toBeUndefined();
     const res = await mockApi.previewLiquidation({ ...base, stake: "500.000", interval: "HOURLY" });
-    // fee_herd = 500 * min(1 %, 1 bp * 10) = 0.5; fee_net = 0.1
+    // fee_herd = 500 * min(20 %, 1 * 1 bp * 10) = 0.5; fee_net = 0.1
     expect(res).toMatchObject({ feeHerd: "0.500", feeNetwork: "0.100", totalDebit: "500.600", maxLeverageForStake: 12 });
     // up to 250 PLAY the cap itself, over 1 200 a tenth of it (at least 2)
+    // the long round: k = 2.2, 500 * 2.2 * 1 bp * 10 = 1.1
+    expect((await mockApi.previewLiquidation({ ...base, stake: "500.000", interval: "DAILY" })).feeHerd).toBe("1.100");
     expect((await mockApi.previewLiquidation({ ...base, stake: "250.000", interval: "HOURLY" })).maxLeverageForStake).toBe(25);
     expect((await mockApi.previewLiquidation({ ...base, stake: "2000.000", leverage: 2, interval: "HOURLY" })).maxLeverageForStake).toBe(2);
   });
@@ -477,7 +479,7 @@ describe("placeBet and the player's positions across markets", () => {
 
     const account = await mockApi.myAccount();
     expect(account.inPlay).toBe("900.000");
-    expect(account.balance).toBe("9098.960" /* 900 staked + 1.04 in fees */);
+    expect(account.balance).toBe("9098.480" /* 900 staked + 1.52 in fees; the DAILY bet pays k = 2.2 */);
     // the betting round of each market shows the player's own bet
     expect(((await mockApi.rounds("HOURLY", "ETH")).betting as RoundBetting).myBet).toMatchObject({ stake: "200.000" });
     expect(((await mockApi.rounds("HOURLY", "SOL")).betting as RoundBetting).myBet).toMatchObject({ stake: "300.000" });
@@ -664,7 +666,7 @@ describe("the market that closes during a session (Т-10)", () => {
     const d = await bettingRoundOf(CLOSING.id, "DAILY");
     await mockApi.placeBet({ roundId: h.roundId, direction: "UP", leverage: 5, stake: "300.000" });
     await mockApi.placeBet({ roundId: d.roundId, direction: "DOWN", leverage: 7, stake: "200.000" });
-    expect((await mockApi.myAccount()).balance).toBe("9499.510"); // 500 staked, 0.49 in fees (0.15 + 0.14 herd, 2 x 0.1 network)
+    expect((await mockApi.myAccount()).balance).toBe("9499.342"); // 500 staked, 0.658 in fees (0.15 + 0.308 herd, the DAILY one with k = 2.2; 2 x 0.1 network)
     expect((await mockApi.myPositions()).map((p) => p.marketId)).toEqual([CLOSING.id, CLOSING.id]);
 
     await advanceSimClockTo(MOCK_CLOSING_AT_MS + 60_000);

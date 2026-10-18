@@ -18,12 +18,12 @@ function tierMax(stake: number): number {
   return Math.min(CAP, Math.max(2, Math.floor(CAP / divisor)));
 }
 
-/** What the server's preview says: the fees of A4 (r_m 1 bp, 0.1 PLAY network), the total, the tier maximum; a move to liquidation of 1/leverage... times 0.9. */
+/** What the server's preview says: the fees of A4 (r_m 1 bp, k = 1 in the short round, 20 % guard, 0.1 PLAY network), the total, the tier maximum; a move to liquidation of 1/leverage... times 0.9. */
 function previewFor(req: LiquidationPreviewRequest): LiquidationPreviewDto {
   const stake = Number(req.stake);
   const max = tierMax(stake);
   if (req.leverage > max) throw new ApiRequestError("INVALID_LEVERAGE", `leverage must be in [2, ${max}] for a stake of ${stake} PLAY`);
-  const herd = Math.max(0.001, Math.ceil(stake * Math.min(0.01, 0.0001 * req.leverage) * 1000) / 1000);
+  const herd = Math.max(0.001, Math.ceil(Math.round(stake * Math.min(0.2, 0.0001 * req.leverage) * 1e6) / 1e3) / 1e3);
   return {
     entryPriceUsed: "100.00",
     liquidationPrice: (100 * (1 - 0.9 / req.leverage)).toFixed(2),
@@ -157,8 +157,8 @@ describe("BetSlip — leverage up to x100, and 'High leverage' behind a question
 
     fireEvent.change(slider(), { target: { value: "1000" } }); // the end of the track is the cap itself
     await waitFor(() => expect(screen.getByText("x1200", { selector: ".leverage-dial__value" })).toBeInTheDocument());
-    // the Herd fee is capped at 1% of the stake: min(1%, 1 bp × 1200 = 12%) of 100 PLAY
-    await waitFor(() => expect(screen.getByLabelText("Cost of this bet")).toHaveTextContent("1.000 PLAY (1.00%)"));
+    // no 1% cap any more (Р-102): min(20%, 1 bp × 1200 = 12%) of 100 PLAY
+    await waitFor(() => expect(screen.getByLabelText("Cost of this bet")).toHaveTextContent("12.000 PLAY (12.00%)"));
     await user.click(screen.getByRole("button", { name: "PLACE BET" }));
     await waitFor(() => expect(placeBet).toHaveBeenCalledWith(expect.objectContaining({ leverage: 1200, stake: "100.000" })));
   });

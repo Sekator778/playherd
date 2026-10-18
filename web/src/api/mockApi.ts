@@ -154,10 +154,12 @@ const PRICE_SERIES_MAX_POINTS = 600;
 const INTERVALS: readonly Interval[] = ["HOURLY", "DAILY"];
 
 /** Economy plan A4: the mock's herd-fee rate `r_m` in basis points of the notional (every mock market), the flat network fee, and
- *  the cap on the herd fee (1 % of the stake). */
+ *  the guard on the herd fee (20 % of the stake, Р-102),
+ *  and `k`, the herd-fee factor of the long (DAILY, 15-minute) round of a price market (the short round has k = 1). */
 const MOCK_HERD_FEE_BP = "1.0";
 const MOCK_NETWORK_FEE = 0.1;
-const MOCK_HERD_FEE_CAP = 0.01;
+const MOCK_HERD_FEE_CAP = 0.2;
+const MOCK_LONG_ROUND_FEE_FACTOR = 2.2;
 
 type WithdrawalRecord = WithdrawalRequestDto;
 
@@ -596,7 +598,7 @@ class MockApi implements Api {
       entryPriceUsed,
       liquidationPrice: priceStr(liqPrice, spec),
       percentToLiquidation: percentToLiquidation(entryPriceUsed, liqPrice),
-      ...(req.interval ? mockCosts(req.stake, req.leverage, spec) : {}),
+      ...(req.interval ? mockCosts(req.stake, req.leverage, spec, req.interval) : {}),
     };
   }
 
@@ -620,7 +622,7 @@ class MockApi implements Api {
       throw new ApiRequestError("STAKE_BELOW_MINIMUM", "Minimum stake is 100 PLAY.");
     }
     requireLeverageForStake(req.leverage, req.stake, spec);
-    const costs = mockCosts(req.stake, req.leverage, spec);
+    const costs = mockCosts(req.stake, req.leverage, spec, parsed.interval);
     const debit = Number(costs.totalDebit);
     // GameEngine.placeBet always refunds any prior bet on this round before reserving the new
     // one (round_engine_design.md §4.9) — so an increased stake against the freed balance isn't
@@ -996,10 +998,11 @@ function requireLeverageForStake(leverage: number, stake: string, spec: MockMark
   }
 }
 
-/** Plan A4: `fee_herd = stake * min(1 %, r_m * L)` and the flat network fee, each rounded UP to 0.001 PLAY (herd fee at least 0.001). */
-function mockCosts(stake: string, leverage: number, spec: MockMarketSpec) {
+/** Plan A4, Р-102: `fee_herd = stake * min(20 %, k * r_m * L)` (k = 1 in the HOURLY round, 2.2 in the DAILY one) and the flat network fee, each rounded UP to 0.001 PLAY (herd fee at least 0.001). */
+function mockCosts(stake: string, leverage: number, spec: MockMarketSpec, interval: Interval) {
   const up = (x: number) => Math.ceil(Math.round(x * 1e6) / 1e3) / 1e3;
-  const herd = Math.max(0.001, up(Number(stake) * Math.min(MOCK_HERD_FEE_CAP, Number(MOCK_HERD_FEE_BP) * 1e-4 * leverage)));
+  const k = interval === "HOURLY" ? 1 : MOCK_LONG_ROUND_FEE_FACTOR;
+  const herd = Math.max(0.001, up(Number(stake) * Math.min(MOCK_HERD_FEE_CAP, k * Number(MOCK_HERD_FEE_BP) * 1e-4 * leverage)));
   const network = up(MOCK_NETWORK_FEE);
   return {
     feeHerd: herd.toFixed(3),

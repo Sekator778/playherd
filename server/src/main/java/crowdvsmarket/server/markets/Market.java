@@ -74,7 +74,8 @@ public record Market(
      */
     public MarketSpec spec() {
         return MarketSpec.of(id, maxLeverage)
-                .withEconomy(economy.capHourly(), economy.capDaily(), economy.kappa(), economy.herdFeeRate());
+                .withEconomy(economy.capHourly(), economy.capDaily(), economy.kappa(), economy.herdFeeRate(),
+                        MarketEconomy.longRoundFeeFactor(kind));
     }
 
     /** Fractional digits of every raw price string of this market. */
