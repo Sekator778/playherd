@@ -668,7 +668,7 @@ describe("Lobby — the intro line, when its flag is on: says what this is, once
   it("one small line above the markets: call real prices UP or DOWN, up to x40, the result in 3 minutes", async () => {
     renderLobbyAs({}, true);
     const intro = screen.getByText("Call real prices UP or DOWN:").closest("p") as HTMLElement;
-    expect(intro).toHaveTextContent("Call real prices UP or DOWN: up to x40, the result in 3 minutes. How it works");
+    expect(intro).toHaveTextContent("Call real prices UP or DOWN: leverage up to each market's cap, the result in 3 minutes. How it works");
     expect(within(intro).getByRole("link", { name: "How it works" })).toHaveAttribute("href", "/how-it-works");
     await screen.findAllByRole("article");
     // above the ribbon of panels, which stays the lobby's first control

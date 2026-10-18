@@ -20,7 +20,7 @@ export const HEAT_VAR: Record<HeatTier, string> = {
 /**
  * live-round.md §1's zone table, RELATIVE to the market's own maximum (Р-69): the zones are fractions of
  * the cap — Calm up to 20 %, Warm up to 37.5 %, Hot up to 60 %, Danger up to 82.5 %, Flame above — so
- * "all-in on the dial" is Flame on every market. At the platform maximum (x40) that is exactly the
+ * "all-in on the dial" is Flame on every market. At a cap of x40 that is exactly the
  * table's x8 / x15 / x24 / x33 thresholds; on a market capped at x10 (an odds market) x2 is Calm and
  * x9–x10 is Flame, where absolute thresholds would have kept a x10 bet in "Warm" — the dial telling a
  * player a market's hottest setting is mild.
@@ -47,7 +47,7 @@ export function liquidationZone(fraction: number): { tier: HeatTier; className: 
 
 /** Same zone table, as the class that pulses the whole card hosting a LIVE (RUNNING-phase) position —
  *  `live-round.md` §2: "карточка получает... пульс". Takes the room left as a 0..1 share of the distance the
- *  position had at ENTRY (not the raw distance in % of the price: a x40 position starts only ~2.4 % from
+ *  position had at ENTRY (not the raw distance in % of the price: a x40 position (an example; caps differ per market) starts only ~2.4 % from
  *  liquidation, which read as "critical" from the first second). `""` for the Safe zone (no card-level
  *  pulse there, matching the bar's own "статично" row). */
 export function liquidationLiveCardClass(roomFraction: number): string {

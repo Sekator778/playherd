@@ -59,3 +59,20 @@ describe("Profile tab (player review fix item 2: was the wallet, now the player'
     expect(screen.queryByText("Deposit from wallet")).not.toBeInTheDocument();
   });
 });
+
+describe("Invite link block on the player's own profile", () => {
+  it("shows the link with a copy button and the counter; no reward wording", async () => {
+    renderMyProfile();
+    const input = (await screen.findByLabelText("Your invite link")) as HTMLInputElement;
+    expect(input.value).toMatch(/\/\?ref=[0-9a-f]{8}$/);
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    expect(screen.getByText("Joined through your link: 0")).toBeInTheDocument();
+    expect(screen.queryByText(/reward|bonus|prize/i)).not.toBeInTheDocument();
+  });
+
+  it("the counter follows the server's number", async () => {
+    (mockApi as unknown as { simulateInvited(n: number): void }).simulateInvited(3);
+    renderMyProfile();
+    expect(await screen.findByText("Joined through your link: 3")).toBeInTheDocument();
+  });
+});

@@ -210,6 +210,7 @@ class FakeApi implements Api {
   currentPlayer = () => this.unused();
   setNickname = () => this.unused();
   signOut = () => this.unused();
+  myInvite = () => this.unused();
   markets = () => this.unused();
   priceSeries = () => this.unused();
   candles = () => this.unused();

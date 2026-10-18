@@ -37,7 +37,6 @@ import { useFavorites } from "../api/favorites";
 import type {
   Direction,
   Interval,
-  LiveBetDto,
   MarketDto,
   MarketReferenceDto,
   PublicPositionDto,
@@ -52,7 +51,7 @@ import { onDraftPlaced } from "../components/betDraft";
 import { openBetSheet, useCustomizeRequest } from "../components/betSheetState";
 import { ProToggle } from "../components/ProToggle";
 import { useProMode } from "../components/proMode";
-import { liveBetRows } from "../components/liveBetsModel";
+import { liveBetRows, topWithOwn, type LiveBetRow } from "../components/liveBetsModel";
 import { BotBadge, Countdown, ErrorState, OracleDisclosureLine, RoundVenueNote, Skeleton } from "../components/Common";
 import { CrowdPositionCard, IntervalTabs } from "../components/RoundParts";
 import { Avatar } from "../components/Avatar";
@@ -104,7 +103,8 @@ function roundSplit(round: RoundDto): CrowdSplit | null {
   return null;
 }
 
-function LiveBetFeed({ bets }: { bets: LiveBetDto[] }) {
+function LiveBetFeed({ bets }: { bets: LiveBetRow[] }) {
+  const t = useT();
   return (
     <ul className="room-feed">
       {bets.map((b, i) => (
@@ -112,6 +112,7 @@ function LiveBetFeed({ bets }: { bets: LiveBetDto[] }) {
           <DirectionGlyph direction={b.direction} />
           <span className="room-feed__name">{b.player.displayName}</span>
           <BotBadge isBot={b.player.isBot} />
+          {b.own && <span className="you-badge">{t("room.youBadge")}</span>}
           <span className="faint">x{b.leverage}</span>
           <span className="room-feed__stake mono">{formatPlayAmount(b.stake)}</span>
         </li>
@@ -141,6 +142,7 @@ function topMovers(
   referencePrice: MarketReferenceDto | null,
   count: number,
   market: MarketDto,
+  ownPlayerId?: string | null,
 ): Mover[] {
   const withLive: Mover[] = [];
   for (const p of positions) {
@@ -152,7 +154,9 @@ function topMovers(
     const live = unrealizedPnl(p.size, p.entryPrice, p.direction === "UP" ? LONG : SHORT, referencePrice.price, market);
     withLive.push({ position: p, live: live.toNumber() });
   }
-  return withLive.sort((a, b) => Math.abs(b.live) - Math.abs(a.live)).slice(0, count);
+  withLive.sort((a, b) => Math.abs(b.live) - Math.abs(a.live));
+  // The viewer's own position is always shown (marked «Вы»), even when it is not among the biggest swings.
+  return topWithOwn(withLive, count, (m) => m.position.playerId === ownPlayerId);
 }
 
 /** Compact "live round" strip (player review item 1) — players count + a handful of top-movers
@@ -163,14 +167,16 @@ function LiveRoundStrip({
   referencePrice,
   roundId,
   market,
+  ownPlayerId,
 }: {
+  ownPlayerId?: string | null;
   positions: PublicPositionDto[];
   referencePrice: MarketReferenceDto | null;
   roundId: RoundId;
   market: MarketDto;
 }) {
   const t = useT();
-  const movers = topMovers(positions, referencePrice, 4, market);
+  const movers = topMovers(positions, referencePrice, 4, market, ownPlayerId);
   return (
     <div className="room-live-strip">
       <div className="room-live-strip__row">
@@ -187,6 +193,7 @@ function LiveRoundStrip({
             <li key={m.position.playerId} className={`room-mover-chip room-mover-chip--${m.position.direction.toLowerCase()}`}>
               <Avatar name={m.position.player.nickname} className="room-mover-chip__avatar" />
               <BotBadge isBot={m.position.player.isBot} />
+              {m.position.playerId === ownPlayerId && <span className="you-badge">{t("room.youBadge")}</span>}
               <span className={`room-mover-chip__result mono ${outcomeClassName(outcomeFromNet(m.live))}`}>
                 {formatPlayAmount(m.live, { sign: true })}
                 {m.position.liquidated && ` · ${t("common.liqShort")}`}
@@ -572,7 +579,7 @@ function Room({ market }: { market: MarketDto }) {
   const split = roundSplit(betting.phase === "BETTING" ? betting : running);
   const upPct = split ? split.upPct : 50;
   // One row per bet, the current one: the server's feed keeps every version of an edited bet and every cancelled one.
-  const liveBets = betting.phase === "BETTING" ? liveBetRows(betting.recentBets ?? [], player?.playerId, betting.myBet) : [];
+  const liveBets = betting.phase === "BETTING" ? liveBetRows(betting.recentBets ?? [], player?.playerId, betting.myBet, player) : [];
 
   return (
     <div className="room-root room-grid">
@@ -737,7 +744,7 @@ function Room({ market }: { market: MarketDto }) {
                   </p>
                 )}
                 <h3 className="room-section-title">{t("room.liveRound")}</h3>
-                <LiveRoundStrip positions={running.positions} referencePrice={referencePrice} roundId={running.roundId} market={market} />
+                <LiveRoundStrip positions={running.positions} referencePrice={referencePrice} roundId={running.roundId} market={market} ownPlayerId={player?.playerId} />
               </>
             ))}
           {running.phase === "SETTLED" && <p className="muted">{t("room.settled")}</p>}

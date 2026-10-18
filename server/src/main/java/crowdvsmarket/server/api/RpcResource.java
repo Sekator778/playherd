@@ -226,6 +226,10 @@ public class RpcResource {
                 requireSignedIn(playerId);
                 result = gameService.myDepositAddress(playerId);
             }
+            case "myInvite" -> {
+                requireSignedIn(playerId);
+                result = gameService.myInvite(playerId);
+            }
             case "crowdAccount" -> result = gameService.crowdAccount(str(args, 0));
             case "ratings" -> result = gameService.ratings(str(args, 0));
             case "publicProfile" -> result = gameService.publicProfile(str(args, 0), playerId);

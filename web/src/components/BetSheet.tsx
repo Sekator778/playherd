@@ -377,7 +377,7 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
   );
 }
 
-/** The plain-words example under the choice: what a small move for the bet and against it does, and the price at which the whole bet is gone. */
+/** The plain-words example under the choice: what a small move for the bet and against it does, and the price at which most or all of the bet is lost (Р-93: the remainder at the candle's extreme comes back, 0 on a gap). */
 function Example({
   market,
   symbol,

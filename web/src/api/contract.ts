@@ -209,6 +209,18 @@ export interface AuthVerifyRequest {
   address: string;
   publicKey: string;
   signature: string;
+  /** Another player's invite code and a channel tag, as kept from the landing URL (`/?ref=<code>&src=<channel>`, `api/referral.ts`).
+   *  Optional; the server reads them only when this sign-in registers a NEW player, records them once, and ignores an unknown code,
+   *  the player's own code, or a malformed tag. */
+  referralCode?: string;
+  source?: string;
+}
+
+/** The signed-in player's own invite link data: `code` goes into `/?ref=<code>`; `referredCount` is the number of players
+ *  who registered through it (bots excluded). No rewards attach to either. */
+export interface InviteDto {
+  code: string;
+  referredCount: number;
 }
 
 export interface AuthSessionDto {
@@ -1216,6 +1228,8 @@ export interface Api {
   currentPlayer(): Promise<PlayerSummaryDto | null>;
   setNickname(nickname: string): Promise<PlayerSummaryDto>;
   signOut(): Promise<void>;
+  /** The signed-in player's invite code and how many players came through it. */
+  myInvite(): Promise<InviteDto>;
 
   // --- markets (Р-69, Р-70) ---
   markets(): Promise<MarketsDto>;

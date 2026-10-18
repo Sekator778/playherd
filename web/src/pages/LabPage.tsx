@@ -112,7 +112,7 @@ export function LabPage() {
             </button>
           ))}
         </div>
-        <h3>LIQUIDATION (representative leverage x5 / x15 / x25 / x38)</h3>
+        <h3>LIQUIDATION (sample leverage x5 / x15 / x25 / x38, not market caps)</h3>
         <div className="lab-grid">
           {TIERS.map((tier) => (
             <button
@@ -171,7 +171,7 @@ export function LabPage() {
       </div>
 
       <div className="lab-section">
-        <h2>Leverage dial (x2–x40)</h2>
+        <h2>Leverage dial (x2–x40, a sample cap)</h2>
         <LeverageDial id="lab-leverage" value={leverage} min={2} max={40} onChange={setLeverage} />
       </div>
 

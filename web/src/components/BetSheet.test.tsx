@@ -142,7 +142,7 @@ describe("the sheet, signed in", () => {
     // x10 on 100 PLAY: a 1% move is 10 PLAY; the wipeout is 9% away (the stub's price); DOWN wins when the price falls.
     expect(await within(dialog).findByText(/BTC −1% → you win \+9\.65 after fees/)).toBeInTheDocument();
     expect(within(dialog).getByText(/BTC \+1% → you lose -10\.35 with fees/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/BTC \+9% \(\$109\.00\) → you lose the whole 100 \+ 0\.35 fees/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/BTC \+9% \(\$109\.00\) → you lose most or all of 100 \+ 0\.35 fees/)).toBeInTheDocument();
     // The line names the total in PLAY and as a share of the stake (the server's preview numbers: 0.250 + 0.100 on 100).
     expect(within(dialog).getByRole("button", { name: /Fees 0\.350 PLAY \(0\.35%\)/ })).toBeInTheDocument();
 
@@ -159,7 +159,7 @@ describe("the sheet, signed in", () => {
     const dialog = await sheet();
     expect(await within(dialog).findByText(/BTC \+1% → you win \+9\.65 after fees/)).toBeInTheDocument();
     expect(within(dialog).getByText(/BTC −1% → you lose -10\.35 with fees/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/BTC −9% \(\$91\.00\) → you lose the whole 100 \+ 0\.35 fees/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/BTC −9% \(\$91\.00\) → you lose most or all of 100 \+ 0\.35 fees/)).toBeInTheDocument();
   });
 
   it("the chosen stake and level are what is placed: 500 and Bold x25", async () => {

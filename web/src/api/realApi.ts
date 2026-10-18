@@ -32,6 +32,7 @@ import {
   type AuthChallengeRequest,
   type AuthSessionDto,
   type AuthVerifyRequest,
+  type InviteDto,
   type BetDto,
   type BetFeedDto,
   type CancellationDto,
@@ -182,6 +183,9 @@ class RealApi implements Api {
   }
   signOut(): Promise<void> {
     return rpc("signOut", []);
+  }
+  myInvite(): Promise<InviteDto> {
+    return rpc("myInvite", []);
   }
 
   // --- markets (Р-69, Р-70) ---

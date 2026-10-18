@@ -3,9 +3,13 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { ApiProvider } from "./api/ApiContext";
+import { captureReferral } from "./api/referral";
 import { I18nProvider } from "./i18n";
 import "./index.css";
 import "./fx/fx.css";
+
+// `/?ref=<code>&src=<channel>`: kept until the first sign-in that registers the player (api/referral.ts).
+captureReferral(window.location.search);
 
 const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("#root element not found");

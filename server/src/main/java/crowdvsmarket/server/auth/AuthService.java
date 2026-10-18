@@ -103,7 +103,8 @@ public class AuthService {
             throw ApiException.signatureInvalid(result.reason());
         }
 
-        GameService.PlayerTouchResult touch = gameService.registerOrTouchPlayer(req.address(), now, clientIp);
+        GameService.PlayerTouchResult touch = gameService.registerOrTouchPlayer(req.address(), now, clientIp,
+                req.referralCode(), req.source());
         String sessionId = sessions.create(touch.player().playerId(), now);
         return new VerifyResult(new Auth.AuthSessionDto(touch.player(), touch.isNewPlayer(), touch.starterPackGranted()), sessionId);
     }

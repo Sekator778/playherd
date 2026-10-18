@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { LEVERAGE_MAX, LEVERAGE_MIN, RATING_ROUNDS_THRESHOLD, STARTER_PACK_PLAY } from "../api/contract";
+import { LEVERAGE_MIN, RATING_ROUNDS_THRESHOLD, STARTER_PACK_PLAY } from "../api/contract";
 import { MultiAccountDisclosureLine, OracleDisclosureLine } from "../components/Common";
 import { formatPlayAmount } from "../format";
 import { useT } from "../i18n";
@@ -32,7 +32,7 @@ export function HowItWorksPage() {
 
       <section id="liquidation">
         <h2>{t("howItWorks.levTitle")}</h2>
-        <p>{t("howItWorks.lev1", { min: LEVERAGE_MIN, max: LEVERAGE_MAX })}</p>
+        <p>{t("howItWorks.lev1", { min: LEVERAGE_MIN })}</p>
         <p>{t("howItWorks.lev2")}</p>
       </section>
 

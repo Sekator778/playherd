@@ -23,10 +23,10 @@ export const DEFAULT_LEVERAGE = 10;
 export const CAPPED_MARKET_DEFAULT_LEVERAGE = 3;
 
 /**
- * Where a new slip's leverage starts. x10, as it always did, on a market whose cap is above x10 (BTC and the indices x40,
- * ETH x25, SOL x20 …). On a market capped at x10 or lower — every odds market, DOGE, HYPE — x10 was the cap, so a slip opened
+ * Where a new slip's leverage starts. x10, as it always did, on a market whose cap (for the chosen round length) is above x10 —
+ * every price market. On a market capped at x10 or lower — today the odds markets — x10 was the cap, so a slip opened
  * on its Flame setting, which a player who just pressed PLACE BET had not chosen (first tester pass, D2: two of three such bets
- * lost the whole stake): those open on x3 instead (and on the cap itself when that is below x3). Nothing else about the
+ * lost the stake): those open on x3 instead (and on the cap itself when that is below x3). Nothing else about the
  * default changed — it is the minimal fix of the defect, not a new rule for every market. Never below `LEVERAGE_MIN`, never above the cap.
  */
 export function defaultLeverage(maxLeverage: number): number {

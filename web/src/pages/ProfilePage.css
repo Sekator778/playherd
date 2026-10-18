@@ -19,3 +19,34 @@
     grid-column: auto;
   }
 }
+
+/* Own profile: the personal invite link (no rewards) */
+.invite-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.invite-block h2,
+.invite-block p {
+  margin: 0;
+}
+.invite-block__row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.invite-block__link {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+.invite-block__count {
+  font-weight: 600;
+}

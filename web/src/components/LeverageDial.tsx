@@ -123,7 +123,7 @@ export function LeverageDial({
         <span id={`${id}-zone`} className="leverage-dial__zone">
           {t(ZONE_LABEL[tier])}
         </span>
-        {/* The market's own cap, always in view: the dial's right end is not x40 everywhere. */}
+        {/* The market's own cap, always in view: the dial's right end differs per market, round length and stake. */}
         <span className="leverage-dial__cap">
           <Rich text={t("dial.cap", { min, max })} />
         </span>

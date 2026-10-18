@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { isEngineNotReady, isNotFound } from "../api/apiErrors";
-import type { MarketDto, ProfileRoundEntryDto, PublicProfileDto } from "../api/contract";
+import type { InviteDto, MarketDto, ProfileRoundEntryDto, PublicProfileDto } from "../api/contract";
 import { useEngineEpoch } from "../api/engineState";
 import { netFromPayoutAndStake } from "../api/outcome";
 import { seasonHistory } from "../api/seasonStats";
+import { inviteLink } from "../api/referral";
 import { useMarkets } from "../api/useMarkets";
 import { Avatar } from "../components/Avatar";
-import { BotBadge, ErrorState, Skeleton } from "../components/Common";
+import { BotBadge, CopyButton, ErrorState, Skeleton } from "../components/Common";
 import { ResultTile } from "../components/ResultTile";
 import { StreakBadge } from "../components/StreakBadge";
 import { formatDateTime, formatDuration, formatPercent, formatPlayAmount } from "../format";
@@ -33,6 +34,39 @@ function seriesLabelOf(entry: ProfileRoundEntryDto, market: MarketDto | undefine
   if (entry.durationSec !== undefined && Number.isFinite(entry.durationSec) && entry.durationSec > 0) return formatDuration(entry.durationSec, t);
   const series = market?.series.find((s) => s.interval === entry.interval);
   return series ? formatDuration(series.durationSec, t) : undefined;
+}
+
+/** Own profile only: the personal invite link with a copy button and how many players came through it. No rewards. A failed
+ *  load shows nothing - the block is a convenience, never a reason to break the profile. */
+export function InviteBlock() {
+  const api = useApi();
+  const t = useT();
+  const [invite, setInvite] = useState<InviteDto | null>(null);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve()
+      .then(() => api.myInvite())
+      .then(
+      (v) => live && setInvite(v),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [api]);
+  if (!invite) return null;
+  const link = inviteLink(invite.code);
+  return (
+    <section className="invite-block" aria-labelledby="invite-title">
+      <h2 id="invite-title">{t("profile.inviteTitle")}</h2>
+      <p className="muted">{t("profile.inviteHint")}</p>
+      <div className="invite-block__row">
+        <input className="invite-block__link" type="text" readOnly value={link} aria-label={t("profile.inviteLinkAria")} onFocus={(e) => e.currentTarget.select()} />
+        <CopyButton value={link} />
+      </div>
+      <p className="invite-block__count">{t("profile.inviteCount", { count: invite.referredCount })}</p>
+    </section>
+  );
 }
 
 export function ProfilePage({ mine = false }: { mine?: boolean }) {
@@ -147,6 +181,8 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
           )}
         </div>
       )}
+
+      {isOwn && <InviteBlock />}
 
       <h2>{t("profile.roundHistory")}</h2>
       {history.length === 0 ? (

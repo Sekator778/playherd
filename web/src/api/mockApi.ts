@@ -39,6 +39,7 @@ import {
   type AuthChallengeRequest,
   type AuthSessionDto,
   type AuthVerifyRequest,
+  type InviteDto,
   type BetDto,
   type BetFeedDto,
   type CancellationDto,
@@ -185,7 +186,7 @@ export function mockFeedbackMessages(): readonly MockFeedbackEntry[] {
   return mockFeedback;
 }
 
-class MockApi implements Api {
+export class MockApi implements Api {
   private player: PlayerSummaryDto | null = null;
   private balance = 0;
   private ledger: LedgerEntryDto[] = [];
@@ -198,6 +199,10 @@ class MockApi implements Api {
   private challenges = new Map<string, { message: string; expiresAtMs: number; address: string }>();
   private withdrawals = new Map<string, WithdrawalRecord>();
   private depositAddress: string | null = null;
+  /** What the sign-in that registered this player carried (`referralCode`, `source`), recorded once like the server does. */
+  private registration: { referredByCode?: string; source?: string } = {};
+  /** Players the mock pretends came through this player's link (it has no other players): set by `simulateInvited`. */
+  private invitedCount = 0;
   // "While you were away" (unseenResults/acknowledgeResults) — every settled `myHistory` entry
   // starts unacknowledged; a result moment (shown live via `useSettlementWatcher` or caught up via
   // `useAwayReplay`) acks its `roundId` so it never replays again this session.
@@ -346,7 +351,42 @@ class MockApi implements Api {
       displayName: req.address,
     };
     this.resetPlayerState();
+    // Recorded once, at registration (the mock registers on every verify): a malformed value is dropped, and so is the player's own
+    // code. The mock knows no other player, so a well-formed foreign code is kept as given.
+    const ownCode = this.inviteCodeOf(this.player.playerId);
+    const code = req.referralCode?.trim().toLowerCase();
+    const source = req.source?.trim().toLowerCase();
+    this.registration = {
+      ...(code && /^[a-z0-9]{4,16}$/.test(code) && code !== ownCode ? { referredByCode: code } : {}),
+      ...(source && /^[a-z0-9_-]{1,32}$/.test(source) ? { source } : {}),
+    };
     return { player: this.player, isNewPlayer: true };
+  }
+
+  private inviteCodeOf(playerId: string): string {
+    return Math.floor(rngFor("invite-code", playerId)() * 0xffffffff)
+      .toString(16)
+      .padStart(8, "0");
+  }
+
+  async myInvite(): Promise<InviteDto> {
+    const player = this.requireSignedIn();
+    // Dev only: `?mockInvited=N` in the page URL shows a counter of N, so the profile block can be looked at with a number in it.
+    let fromUrl = 0;
+    if (import.meta.env.DEV && typeof window !== "undefined") {
+      fromUrl = Number(new URLSearchParams(window.location.search).get("mockInvited")) || 0;
+    }
+    return { code: this.inviteCodeOf(player.playerId), referredCount: this.invitedCount + fromUrl };
+  }
+
+  /** Test/demo helper (not part of `Api`): pretend `n` more players registered through this player's link. */
+  simulateInvited(n: number): void {
+    this.invitedCount += n;
+  }
+
+  /** Test helper (not part of `Api`): what the last registration recorded. */
+  registrationRecord(): { referredByCode?: string; source?: string } {
+    return this.registration;
   }
 
   async currentPlayer(): Promise<PlayerSummaryDto | null> {
@@ -367,6 +407,8 @@ class MockApi implements Api {
 
   async signOut(): Promise<void> {
     this.player = null;
+    this.registration = {};
+    this.invitedCount = 0;
     this.resetPlayerState();
     this.withdrawals.clear();
     this.depositAddress = null;

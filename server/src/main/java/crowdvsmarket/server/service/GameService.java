@@ -184,6 +184,8 @@ public class GameService implements MarketListener {
     @Inject
     crowdvsmarket.server.persistence.ServerMetaRepository serverMeta;
     @Inject
+    crowdvsmarket.server.persistence.InviteRepository invites;
+    @Inject
     ChainSvcClient chainSvc;
     @Inject
     crowdvsmarket.server.persistence.PlayerDepositAddressRepository depositAddresses;
@@ -387,6 +389,22 @@ public class GameService implements MarketListener {
      * ({@code RegistrationIpRepository}). {@code null} or {@code "unknown"} (no peer address could be read) is not limited.
      */
     public PlayerTouchResult registerOrTouchPlayer(String walletAddress, long nowMs, String clientIp) {
+        return registerOrTouchPlayer(walletAddress, nowMs, clientIp, null, null);
+    }
+
+    /** The player's own invite code and the number of players who registered through it (bots excluded); assigns the code on first use. */
+    public crowdvsmarket.server.dto.Auth.InviteDto myInvite(String playerId) {
+        return new crowdvsmarket.server.dto.Auth.InviteDto(invites.ensureCode(playerId), invites.referredCount(playerId));
+    }
+
+    /**
+     * {@link #registerOrTouchPlayer(String, long, String)} with what the client kept from the landing URL: {@code referralCode}
+     * (another player's invite code) and {@code source} (a channel tag). Both are used only when this call registers a NEW player,
+     * once, in the transaction that inserts the row; an unknown or malformed code, the player's own, or a malformed tag records
+     * nothing for that part, and the sign-in goes on regardless. A returning player's call never changes them.
+     */
+    public PlayerTouchResult registerOrTouchPlayer(String walletAddress, long nowMs, String clientIp, String referralCode,
+                                                   String source) {
         lockWrite();
         try {
             Optional<String> existing = players.playerIdForWallet(walletAddress);
@@ -408,9 +426,14 @@ public class GameService implements MarketListener {
                 playerId = UUID.randomUUID().toString();
                 String finalPlayerId = playerId;
                 int playerIndex = serverMeta.reserveNextPlayerIndex();
+                String referrerId = referralCode == null ? null : invites.playerIdForCode(referralCode).orElse(null);
                 // The directory's cache gets the row only after the commit (PlayerDirectory's javadoc).
-                players.cache(db.tx(c -> players.insert(c, finalPlayerId, walletAddress, null, false, null,
-                        playerIndex, nowMs)));
+                players.cache(db.tx(c -> {
+                    PlayerDirectory.Row row = players.insert(c, finalPlayerId, walletAddress, null, false, null,
+                            playerIndex, nowMs);
+                    invites.recordAtRegistration(c, finalPlayerId, referrerId, source);
+                    return row;
+                }));
                 packGranted = hub.ledger().seasonPackAmount(playerId, now).isPositive(); // a player nobody has seen: the first pack
                 if (ipHash != null) {
                     registrationIps.record(ipHash, nowMs);

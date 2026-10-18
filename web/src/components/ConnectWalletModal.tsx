@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useApi, useConnectModalState, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
 import { STARTER_PACK_PLAY } from "../api/contract";
+import { clearReferral, pendingReferral } from "../api/referral";
 import { checkNickname, hasPlaceholderNickname, NICKNAME_MAX } from "../api/nickname";
 import { useT } from "../i18n";
 import { prefetchServerInfo, useServerInfo } from "../api/useServerInfo";
@@ -195,7 +196,10 @@ export function ConnectWalletModal() {
     signed: { address: string; publicKey: string; signature: string },
     nonce: string,
   ) => {
-    const session_ = await api.authVerify({ nonce, ...signed });
+    // The invite link / channel tag kept from the landing URL (`api/referral.ts`): the server uses it only when this sign-in
+    // registers a new player and ignores it otherwise; either way it has been used, so it is forgotten once the sign-in went through.
+    const session_ = await api.authVerify({ nonce, ...signed, ...pendingReferral() });
+    clearReferral();
     if (attemptIdRef.current !== attemptId) return;
     setAddress(session_.player.walletAddress);
     await session.refresh();

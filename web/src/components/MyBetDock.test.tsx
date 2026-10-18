@@ -169,7 +169,7 @@ describe("a live bet", () => {
     expect(card).toHaveTextContent("My other bets");
     expect(within(card).getByRole("link", { name: /BTC · 1,000 PLAY/ })).toHaveAttribute("href", "/play/BTC?series=hourly");
     expect(within(card).getByRole("link", { name: "Open this round" })).toHaveAttribute("href", "/play/ETH?series=hourly");
-    expect(card).toHaveTextContent(/If ETH reaches it, you lose the whole 500 PLAY\./);
+    expect(card).toHaveTextContent(/If ETH reaches it, you lose most or all of your 500 PLAY\./);
   });
 });
 

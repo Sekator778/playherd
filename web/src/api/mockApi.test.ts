@@ -14,7 +14,7 @@ import {
   priceStr,
   sizeForMargin,
 } from "./liquidation";
-import { mockApi, mockFeedbackMessages } from "./mockApi";
+import { MockApi, mockApi, mockFeedbackMessages } from "./mockApi";
 import { crowdOutcomeOf } from "./mockCrowdHistory";
 import { CLOSED_LISTING_MS, MOCK_CLOSING_AT_MS, MOCK_MARKETS, MOCK_NEW_LISTING_ID, mockMarketById } from "./mockMarkets";
 import { priceStrAt, TICK_MS } from "./mockPrices";
@@ -1215,5 +1215,31 @@ describe("submitFeedback (Р-81) — open to everyone, kept in memory", () => {
     const receipt = await mockApi.submitFeedback(request({ message: "kept after sign-out" }));
     await mockApi.signOut();
     expect(mockFeedbackMessages().some((m) => m.id === receipt.id)).toBe(true);
+  });
+});
+
+describe("invite link in the mock (same contract as the server)", () => {
+  it("records ref and src once at registration, drops the player's own code and malformed values, and serves the invite", async () => {
+    const api = new MockApi();
+    const challenge = await api.authChallenge({});
+    await api.authVerify({ nonce: challenge.nonce, address: "txch1invitemock", publicKey: "pk", signature: "sig", referralCode: "AAAA1111", source: "YouTube" });
+    expect(api.registrationRecord()).toEqual({ referredByCode: "aaaa1111", source: "youtube" });
+
+    const invite = await api.myInvite();
+    expect(invite.code).toMatch(/^[0-9a-f]{8}$/);
+    expect(invite.referredCount).toBe(0);
+    expect((await api.myInvite()).code).toBe(invite.code);
+
+    const second = await api.authChallenge({});
+    await api.authVerify({ nonce: second.nonce, address: "txch1invitemock2", publicKey: "pk", signature: "sig", referralCode: invite.code, source: "no way!" });
+    expect(api.registrationRecord()).toEqual({});
+
+    api.simulateInvited(2);
+    expect((await api.myInvite()).referredCount).toBe(2);
+  });
+
+  it("myInvite needs a signed-in player", async () => {
+    const api = new MockApi();
+    await expect(api.myInvite()).rejects.toMatchObject({ code: "NOT_SIGNED_IN" });
   });
 });
