@@ -7,7 +7,7 @@
 import { useMemo } from "react";
 import { useApi } from "./ApiContext";
 import { isEngineNotReady } from "./apiErrors";
-import type { Api, CategoryDto, EpochMs, MarketDto, MarketId, MarketsDto } from "./contract";
+import type { Api, CategoryDto, EconomyRulesDto, EpochMs, MarketDto, MarketId, MarketsDto } from "./contract";
 import { createPolledStore, storeFor, usePolledStore, type PolledStore } from "./polledStore";
 import { clientNowMs } from "./useClock";
 
@@ -61,6 +61,8 @@ export interface MarketsState {
   categories: readonly CategoryDto[];
   /** Active markets plus those closed within the last 10 minutes, in listing order. */
   markets: readonly MarketDto[];
+  /** The economy rules every market shares (`MarketsDto.economy`); null before the first response and from a server that sends none. */
+  economy: EconomyRulesDto | null;
   byId: ReadonlyMap<MarketId, MarketDto>;
   /** The server's clock at the last response; null before the first. */
   serverTimeMs: EpochMs | null;
@@ -84,6 +86,7 @@ export function useMarkets(): MarketsState {
       error: snapshot.error,
       categories: snapshot.data?.categories ?? NO_CATEGORIES,
       markets: snapshot.data?.markets ?? NO_MARKETS,
+      economy: snapshot.data?.economy ?? null,
       byId: snapshot.byId,
       serverTimeMs: snapshot.data?.serverTimeMs ?? null,
       serverOffsetMs: snapshot.offsetMs,

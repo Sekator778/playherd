@@ -45,6 +45,27 @@ afterEach(() => {
   setForcedReducedMotion(null);
 });
 
+describe("ResultMomentHost — staked → returned, with the fees", () => {
+  it("a moment that knows the fees adds them to the returned line; one that does not shows the line alone", () => {
+    render(
+      <MemoryRouter>
+        <ResultMomentHost />
+      </MemoryRouter>,
+    );
+    act(() => {
+      publish(event({ id: "f:p", roundId: "f", kind: "WIN", netPlay: 9.2, stakePlay: 100, feesPlay: 1.07, balanceBefore: 1000, balanceAfter: 1009.2 }));
+    });
+    expect(document.querySelector(".result-card__returned")?.textContent).toBe("Stake 100 → returned 109.20 PLAY · fees 1.07");
+    act(() => {
+      document.querySelector<HTMLElement>(".result-overlay")?.click();
+    });
+    act(() => {
+      publish(event({ id: "g:p", roundId: "g", kind: "LOSS", netPlay: -100, stakePlay: 100, balanceBefore: 1000, balanceAfter: 1000 }));
+    });
+    expect(document.querySelector(".result-card__returned")?.textContent).toBe("Stake 100 → returned 0 PLAY");
+  });
+});
+
 describe("ResultMomentHost — a queue of moments", () => {
   function renderHost() {
     return render(

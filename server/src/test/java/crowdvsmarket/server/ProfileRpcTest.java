@@ -204,7 +204,7 @@ class ProfileRpcTest extends LiveRpcTestBase {
         assertThat(history).hasSize(2);
         for (JsonNode entry : history) {
             assertKeys(entry, "roundId", "interval", "marketId", "asset", "durationSec", "kind", "settledAtMs", "direction",
-                    "leverage", "stake", "liquidated", "directionCorrect", "payout");
+                    "leverage", "stake", "liquidated", "directionCorrect", "payout", "fees");
             assertThat(entry.path("marketId").asText()).isEqualTo("T_PF_LEN");
             assertThat(entry.path("asset").asText()).isEqualTo("PRF");
             assertThat(entry.path("kind").asText()).as("the market's kind, so a row survives its market leaving markets()")
@@ -216,6 +216,12 @@ class ProfileRpcTest extends LiveRpcTestBase {
                 .findFirst().orElseThrow();
         assertThat(hourlyEntry.path("interval").asText()).isEqualTo("HOURLY");
         assertThat(hourlyEntry.path("durationSec").asLong()).isEqualTo(60);
+        assertThat(hourlyEntry.path("fees").asText()).as("the fees the bet was charged, kept at settlement")
+                .isEqualTo(crowdvsmarket.engine.economy.EconomyRules.fees(market.spec(), crowdvsmarket.engine.market.Interval.HOURLY, 2,
+                        crowdvsmarket.engine.ledger.PlayAmount.ofWholePlay(100)).total().toMoney().toPlainString());
+        assertThat(dailyEntry.path("fees").asText())
+                .isEqualTo(crowdvsmarket.engine.economy.EconomyRules.fees(market.spec(), crowdvsmarket.engine.market.Interval.DAILY, 2,
+                        crowdvsmarket.engine.ledger.PlayAmount.ofWholePlay(100)).total().toMoney().toPlainString());
         assertThat(dailyEntry.path("interval").asText()).isEqualTo("DAILY");
         assertThat(dailyEntry.path("durationSec").asLong()).isEqualTo(120);
 
@@ -223,7 +229,7 @@ class ProfileRpcTest extends LiveRpcTestBase {
         assertThat(unseen).hasSize(2);
         for (JsonNode entry : unseen) {
             assertKeys(entry, "roundId", "interval", "marketId", "asset", "durationSec", "kind", "settledAtMs", "direction",
-                    "leverage", "stake", "liquidated", "directionCorrect", "payout");
+                    "leverage", "stake", "liquidated", "directionCorrect", "payout", "fees");
             assertThat(entry.path("durationSec").asLong()).isEqualTo(entry.path("interval").asText().equals("DAILY") ? 120 : 60);
         }
     }
@@ -241,5 +247,21 @@ class ProfileRpcTest extends LiveRpcTestBase {
 
         assertThat(entry.has("durationSec")).isTrue();
         assertThat(entry.get("durationSec").isNull()).isTrue();
+        assertThat(entry.has("fees")).isTrue();
+        assertThat(entry.get("fees").isNull()).as("a row written before the fees were recorded has none").isTrue();
+    }
+
+    @Test
+    void aTieKeepsTheFeesInTheHistoryRowWhileTheStakeComesBack() throws Exception {
+        Market market = market("T_PF_TIE");
+        Session me = signIn("tie");
+        flat(market, me.playerId());
+
+        JsonNode entry = ok(me, "myProfile").path("history").get(0);
+
+        assertThat(entry.path("payout").asText()).isEqualTo(entry.path("stake").asText());
+        assertThat(entry.path("fees").asText()).isEqualTo(crowdvsmarket.engine.economy.EconomyRules.fees(market.spec(),
+                crowdvsmarket.engine.market.Interval.HOURLY, 2, crowdvsmarket.engine.ledger.PlayAmount.ofWholePlay(100))
+                .total().toMoney().toPlainString());
     }
 }

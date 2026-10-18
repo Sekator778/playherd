@@ -1067,7 +1067,8 @@ public class GameService implements MarketListener {
 
             historyRows.add(new RoundResultRepository.PlayerHistoryRow(outcome.playerId(), toDto(outcome.direction()),
                     outcome.leverage(), outcome.stake().mojos(), outcome.liquidated(), directionCorrect,
-                    PlayAmount.fromMoney(outcome.payout()).mojos()));
+                    PlayAmount.fromMoney(outcome.payout()).mojos(),
+                    outcome.fees() == null ? null : outcome.fees().total().mojos()));
         }
 
         CrowdAccount.RoundResult crowd = report.crowdResult();

@@ -29,6 +29,6 @@ public final class Identity {
     public record ProfileRoundEntryDto(String roundId, Enums.Interval interval, String marketId, String asset,
                                          Long durationSec, Enums.MarketKind kind, long settledAtMs,
                                          Enums.Direction direction, int leverage, String stake, boolean liquidated,
-                                         Boolean directionCorrect, String payout) {
+                                         Boolean directionCorrect, String payout, String fees) {
     }
 }

@@ -117,7 +117,8 @@ public class MarketViewService {
         if (cached == null || Math.abs(nowMs - cached.builtAtMs()) >= CACHE_MS) {
             return null;
         }
-        return new Markets.MarketsDto(nowMs, cached.dto().categories(), cached.dto().markets());
+        return new Markets.MarketsDto(nowMs, cached.dto().categories(), cached.dto().markets(),
+                cached.dto().economy());
     }
 
     private Markets.MarketsDto assembleMarkets(long nowMs) {
@@ -136,7 +137,16 @@ public class MarketViewService {
                 .filter(c -> activeByCategory.containsKey(c.id()))
                 .map(c -> new Markets.CategoryDto(c.id(), c.title(), activeByCategory.get(c.id())))
                 .toList();
-        return new Markets.MarketsDto(nowMs, categories, List.copyOf(shown));
+        return new Markets.MarketsDto(nowMs, categories, List.copyOf(shown), economyRules());
+    }
+
+    /** The rules every market shares, read from {@code EconomyRules} (Р-102): the clients show them, they hold no copy. */
+    static Markets.EconomyRulesDto economyRules() {
+        return new Markets.EconomyRulesDto(
+                crowdvsmarket.engine.economy.EconomyRules.NETWORK_FEE.toMoney().stripTrailingZeros().toPlainString(),
+                crowdvsmarket.engine.economy.EconomyRules.HERD_FEE_MAX_SHARE.movePointRight(2).stripTrailingZeros().toPlainString(),
+                crowdvsmarket.engine.economy.EconomyRules.stakeTiers().stream()
+                        .map(t -> new Markets.StakeTierDto(t.upToPlay(), t.divisor())).toList());
     }
 
     /** The registry's markets that are played here, in listing order: all in live mode, BTC in replay mode. */

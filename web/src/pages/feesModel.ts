@@ -2,26 +2,43 @@
  * The "All fees" table (Р-102, `docs/research/fee_display_venues_2026-10-18.md` §4): for each market and round length, the herd fee as a share
  * of the stake at x3, x10, x25 and the market's own highest leverage for a stake up to 250 PLAY.
  *
- * Nothing here is a fee of its own: `r_m` (`MarketSeriesDto.herdFeeBp`), `k` (`feeFactor`) and the cap (`maxLeverage`) are the server's, read from
- * `markets()`; the page only applies the server's formula `stake * min(20 %, k * r_m * L)`. A series the server did not describe fully (an older
- * server) is left out rather than guessed. The three constants below are the rules the server states in `EconomyRules` and nothing in
- * `markets()` carries them yet.
+ * Nothing here is a fee of its own: `r_m` (`MarketSeriesDto.herdFeeBp`), `k` (`feeFactor`), the cap (`maxLeverage`) and the shared rules (the network fee, the guard,
+ * the stake tiers: `MarketsDto.economy`) are the server's, read from `markets()`; the page only applies the server's formula
+ * `stake * min(guard, k * r_m * L)`. A series the server did not describe fully, or a server that sends no `economy`, gives no rows: no table,
+ * no constant of our own.
  */
-import type { Interval, MarketDto, MarketSeriesDto } from "../api/contract";
+import type { EconomyRulesDto, Interval, MarketDto, MarketSeriesDto } from "../api/contract";
 
 /** The leverages every row is priced at, besides the market's own highest. */
 export const FEE_TABLE_LEVERAGES = [3, 10, 25] as const;
-/** The flat network fee of a bet, PLAY (`EconomyRules`). */
-export const NETWORK_FEE_PLAY = "0.1";
-/** The guard on the herd fee: it never takes more than this share of the stake (`EconomyRules`). */
-export const HERD_FEE_GUARD_PERCENT = 20;
-/** The stake tiers (PLAY) and the share of the market's cap each allows: up to 250 the cap, up to 500 half, up to 1200 a fifth, above a tenth. */
-export const STAKE_TIERS = [
-  { upTo: 250, divisor: 1 },
-  { upTo: 500, divisor: 2 },
-  { upTo: 1200, divisor: 5 },
-  { upTo: null, divisor: 10 },
-] as const;
+
+/** The rules every market shares, read from `markets().economy` (the server's `EconomyRules`): the page holds no copy of them. */
+export interface FeeRules {
+  /** The flat network fee of a bet, PLAY. */
+  networkFee: string;
+  /** The guard on the herd fee: it never takes more than this share of the stake, in percent. */
+  guardPercent: number;
+  /** The three stake bounds (PLAY) of the bounded tiers, smallest first: up to `bounds[0]` the market's highest boost, up to `bounds[1]` 1/`divisors[1]` of it, and so on. */
+  bounds: [number, number, number];
+  /** The divisor of each of the four tiers, the last one open-ended (above `bounds[2]`). */
+  divisors: [number, number, number, number];
+}
+
+/** The server's rules, or null when the server did not send them completely (an older server, or a malformed answer): then there is no table. */
+export function feeRules(economy: EconomyRulesDto | null | undefined): FeeRules | null {
+  if (!economy) return null;
+  const guardPercent = Number(economy.herdFeeGuardPercent);
+  const tiers = economy.stakeTiers;
+  if (!(Number(economy.networkFeePlay) >= 0) || !(guardPercent > 0) || !Array.isArray(tiers) || tiers.length !== 4) return null;
+  const bounded = tiers.slice(0, 3).every((t) => typeof t.upToPlay === "number" && t.divisor >= 1);
+  if (!bounded || tiers[3].upToPlay !== null || !(tiers[3].divisor >= 1)) return null;
+  return {
+    networkFee: economy.networkFeePlay,
+    guardPercent,
+    bounds: [tiers[0].upToPlay as number, tiers[1].upToPlay as number, tiers[2].upToPlay as number],
+    divisors: [tiers[0].divisor, tiers[1].divisor, tiers[2].divisor, tiers[3].divisor],
+  };
+}
 
 export interface FeeCell {
   leverage: number;
@@ -45,9 +62,9 @@ export interface FeeRow {
   max: FeeCell;
 }
 
-/** `min(20 %, k * r_m * L)` as a percent of the stake. */
-export function herdFeePercent(rateBp: number, factor: number, leverage: number): number {
-  return Math.min(HERD_FEE_GUARD_PERCENT, (factor * rateBp * leverage) / 100);
+/** `min(guard, k * r_m * L)` as a percent of the stake; `guardPercent` is the server's (`FeeRules.guardPercent`). */
+export function herdFeePercent(rateBp: number, factor: number, leverage: number, guardPercent: number): number {
+  return Math.min(guardPercent, (factor * rateBp * leverage) / 100);
 }
 
 /** "0.105 %", "2.3 %", "20 %": up to three decimals below 1 %, two above, trailing zeros dropped. */
@@ -57,13 +74,13 @@ export function formatFeeShare(percent: number): string {
   return `${text.replace(/\.?0+$/, "")} %`;
 }
 
-function rowOf(market: MarketDto, series: MarketSeriesDto): FeeRow | null {
+function rowOf(market: MarketDto, series: MarketSeriesDto, guardPercent: number): FeeRow | null {
   const rateBp = Number(series.herdFeeBp);
   const factor = Number(series.feeFactor);
   const cap = series.maxLeverage;
   if (series.herdFeeBp == null || series.feeFactor == null || cap == null) return null;
   if (!Number.isFinite(rateBp) || !Number.isFinite(factor) || !(cap >= 1)) return null;
-  const cell = (leverage: number): FeeCell => ({ leverage, percent: herdFeePercent(rateBp, factor, leverage) });
+  const cell = (leverage: number): FeeCell => ({ leverage, percent: herdFeePercent(rateBp, factor, leverage, guardPercent) });
   return {
     marketId: market.id,
     symbol: market.symbol,
@@ -79,12 +96,13 @@ function rowOf(market: MarketDto, series: MarketSeriesDto): FeeRow | null {
 }
 
 /** The table's rows: open markets in the server's order, the short round before the long one. */
-export function feeRows(markets: readonly MarketDto[]): FeeRow[] {
+export function feeRows(markets: readonly MarketDto[], rules: FeeRules | null): FeeRow[] {
   const rows: FeeRow[] = [];
+  if (!rules) return rows;
   for (const market of markets) {
     if (market.status !== "ACTIVE") continue;
     for (const series of market.series ?? []) {
-      const row = rowOf(market, series);
+      const row = rowOf(market, series, rules.guardPercent);
       if (row) rows.push(row);
     }
   }

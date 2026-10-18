@@ -432,6 +432,9 @@ class WireFixturesTest extends LiveRpcTestBase {
         assertThat(history).hasSize(2);
         assertThat(history).extracting(h -> h.path("liquidated").asBoolean()).containsExactlyInAnyOrder(true, false);
         assertThat(history).allSatisfy(h -> assertThat(h.path("kind").asText()).isEqualTo("PERP"));
+        assertThat(history).as("a bet placed under the economy rules keeps its fees in the history").allSatisfy(
+                h -> assertThat(h.path("fees").asText()).matches("\\d+\\.\\d{3}"));
+        assertThat(answers.get("markets").path("economy").path("stakeTiers")).hasSize(4);
         assertThat(answers.get("publicProfile").path("streak").path("current").asInt()).isEqualTo(1);
         assertThat(elements(answers.get("unseenResults"))).hasSize(2);
         assertThat(elements(answers.get("crowdAccount").path("history"))).isNotEmpty();

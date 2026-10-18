@@ -172,6 +172,9 @@ export interface ProfileRoundEntryDto {
    *  (close == open), excluded from the "пророки" ratio's denominator (§4.6). */
   directionCorrect: boolean | null;
   payout: PlayAmountStr; // 0 on liquidation (Р-7)
+  /** The bet's total fees (herd + network) as charged when it was placed and kept at settlement (a tie keeps them too), PLAY. Absent or null for a
+   *  round settled before the server recorded them: the tiles then show no fees line. */
+  fees?: PlayAmountStr | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -854,6 +857,25 @@ export interface MarketsDto {
   /** Active markets, plus markets closed within the last 10 minutes (so a card can say why it
    *  left). Listing order. */
   markets: MarketDto[];
+  /** The economy rules every market shares (Р-102, `EconomyRules` on the server): the flat network fee, the guard on the herd fee and the stake
+   *  tiers. The per-market part (`herdFeeBp`, `feeFactor`, `maxLeverage`) is on each series. Absent from a server that predates it: a page
+   *  that needs them shows nothing rather than a copy of its own. */
+  economy?: EconomyRulesDto;
+}
+
+/** One stake tier: a stake up to `upToPlay` PLAY (null: any bigger one) may take the market's highest leverage divided by `divisor`. */
+export interface StakeTierDto {
+  upToPlay: number | null;
+  divisor: number;
+}
+
+export interface EconomyRulesDto {
+  /** The flat network fee per bet, PLAY ("0.1"). */
+  networkFeePlay: string;
+  /** The herd fee never takes more than this percent of the stake ("20"). */
+  herdFeeGuardPercent: string;
+  /** Smallest stake first; the last tier has `upToPlay: null`. */
+  stakeTiers: StakeTierDto[];
 }
 
 export interface PriceTickDto {

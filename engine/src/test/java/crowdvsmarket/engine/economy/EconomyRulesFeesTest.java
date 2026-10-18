@@ -58,4 +58,15 @@ class EconomyRulesFeesTest {
                 .as("0.0528 rounded up").isEqualTo(play("0.053"));
         assertThat(EconomyRules.fees(MarketSpec.BTC, Interval.DAILY, 10, STAKE).network()).isEqualTo(EconomyRules.NETWORK_FEE);
     }
+
+    @Test
+    void theStakeTiersAreReadableAndAgreeWithTheDivisorTheRulesApply() {
+        var tiers = EconomyRules.stakeTiers();
+        assertThat(tiers).extracting(EconomyRules.StakeTier::upToPlay).containsExactly(250L, 500L, 1200L, null);
+        assertThat(tiers).extracting(EconomyRules.StakeTier::divisor).containsExactly(1, 2, 5, 10);
+        for (var tier : tiers) {
+            long probe = tier.upToPlay() == null ? 5000 : tier.upToPlay();
+            assertThat(EconomyRules.tierDivisor(PlayAmount.ofWholePlay(probe))).isEqualTo(tier.divisor());
+        }
+    }
 }

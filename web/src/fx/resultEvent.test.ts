@@ -334,6 +334,15 @@ describe("resultEventFromHistoryEntry (fx/useAwayReplay.ts — 'while you were a
     expect(event.balanceAfter).toBe(10400);
   });
 
+  it("carries the bet's fees from the history row, and none when the row has none", () => {
+    const withFees = resultEventFromHistoryEntry(historyEntry({ payout: "109.200", stake: "100.000", fees: "1.070" }), PLAYER_ID, { balanceBefore: 1000, balanceAfter: 1009.2 });
+    expect(withFees.feesPlay).toBeCloseTo(1.07, 5);
+    const without = resultEventFromHistoryEntry(historyEntry({ payout: "109.200", stake: "100.000" }), PLAYER_ID, { balanceBefore: 1000, balanceAfter: 1009.2 });
+    expect(without.feesPlay).toBeUndefined();
+    const nulled = resultEventFromHistoryEntry(historyEntry({ payout: "0.000", stake: "100.000", fees: null, liquidated: true }), PLAYER_ID, { balanceBefore: 1000, balanceAfter: 1000 });
+    expect(nulled.feesPlay).toBeUndefined();
+  });
+
   it("LOSS: tier by stakeShare of the caller-supplied balanceBefore", () => {
     const entry = historyEntry({ payout: "80.150", stake: "100.000" }); // net -19.85
     const event = resultEventFromHistoryEntry(entry, PLAYER_ID, { balanceBefore: 100, balanceAfter: 80.15 });

@@ -417,11 +417,12 @@ function Example({
         {t(ex.afterFees ? "sheet.exLoseNet" : "sheet.exLose", { symbol, move: signedMove(-winFraction, stepText), amount: formatPlayAmount(ex.lose, { sign: true }) })}
       </li>
       <li className="outcome-lost bet-sheet__wipeout">
-        {t("sheet.exWipe", {
+        {t(ex.afterFees ? "sheet.exWipeFees" : "sheet.exWipe", {
           symbol,
           move: signedMove(wipeFraction, wipeFraction === 0 ? formatPercent(0) : formatMovePercent(ex.wipeoutMove)),
           price,
           stake: formatPlayAmount(stake),
+          fees: formatPlayAmount(fees ?? 0),
         })}
       </li>
     </ul>

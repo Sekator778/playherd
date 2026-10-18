@@ -65,6 +65,25 @@ describe("Profile — win streak (Р-71)", () => {
   });
 });
 
+describe("Profile — the fees of a round are on its tile", () => {
+  it("a row that carries fees says staked → returned and the fees; a row without them says no fees", async () => {
+    renderProfile(
+      profile({
+        history: [
+          entry({ roundId: "1h-1", stake: "100.000", payout: "109.200", fees: "1.070" }),
+          entry({ roundId: "1h-2", stake: "100.000", payout: "0.000", fees: null }),
+          entry({ roundId: "1h-3", stake: "100.000", payout: "50.000" }),
+        ],
+      }),
+    );
+    const rows = await screen.findAllByRole("link", { name: /PLAY/ });
+    expect(rows[0]).toHaveTextContent("Staked 100 → returned 109.20fees 1.07");
+    expect(rows[1]).toHaveTextContent("Staked 100 → returned 0");
+    expect(rows[1]).not.toHaveTextContent("fees");
+    expect(rows[2]).not.toHaveTextContent("fees");
+  });
+});
+
 describe("Profile — history rows name the market", () => {
   it("shows the market symbol and the series' real length, signed net result and the icon's word", async () => {
     renderProfile(

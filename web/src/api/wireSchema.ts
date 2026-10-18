@@ -40,6 +40,8 @@ import type {
   PriceSeriesDto,
   PriceTickDto,
   ProfileRoundEntryDto,
+  EconomyRulesDto,
+  StakeTierDto,
   ProphetEntryDto,
   PublicPositionDto,
   PublicProfileDto,
@@ -340,6 +342,7 @@ export const profileRoundEntry = obj<ProfileRoundEntryDto>({
   liquidated: bool,
   directionCorrect: nullable(bool),
   payout: play,
+  fees: opt(nullable(play)),
 });
 export const publicProfile = obj<PublicProfileDto>({
   player: playerSummary,
@@ -410,6 +413,13 @@ export const markets = obj<MarketsDto>({
   serverTimeMs: int,
   categories: arr(obj<CategoryDto>({ id: lit("crypto", "politics", "sports", "stocks", "indices", "commodities"), title: nonEmptyStr, marketCount: int })),
   markets: arr(market),
+  economy: opt(
+    obj<EconomyRulesDto>({
+      networkFeePlay: decimal(),
+      herdFeeGuardPercent: decimal(),
+      stakeTiers: arr(obj<StakeTierDto>({ upToPlay: nullable(int), divisor: int })),
+    }),
+  ),
 });
 
 export const supply = obj<SupplyDto>({

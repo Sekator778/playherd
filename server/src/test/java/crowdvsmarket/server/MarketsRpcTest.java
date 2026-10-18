@@ -103,7 +103,18 @@ class MarketsRpcTest extends LiveRpcTestBase {
 
         JsonNode answer = ok(null, "markets");
 
-        assertKeys(answer, "serverTimeMs", "categories", "markets");
+        assertKeys(answer, "serverTimeMs", "categories", "markets", "economy");
+        JsonNode economy = answer.path("economy");
+        assertKeys(economy, "networkFeePlay", "herdFeeGuardPercent", "stakeTiers");
+        assertThat(economy.path("networkFeePlay").asText()).isEqualTo("0.1");
+        assertThat(economy.path("herdFeeGuardPercent").asText()).isEqualTo("20");
+        assertThat(economy.path("stakeTiers")).hasSize(4);
+        assertThat(economy.path("stakeTiers").get(0).path("upToPlay").asLong()).isEqualTo(250);
+        assertThat(economy.path("stakeTiers").get(0).path("divisor").asInt()).isEqualTo(1);
+        assertThat(economy.path("stakeTiers").get(2).path("upToPlay").asLong()).isEqualTo(1200);
+        assertThat(economy.path("stakeTiers").get(2).path("divisor").asInt()).isEqualTo(5);
+        assertThat(economy.path("stakeTiers").get(3).get("upToPlay").isNull()).isTrue();
+        assertThat(economy.path("stakeTiers").get(3).path("divisor").asInt()).isEqualTo(10);
         assertThat(answer.path("serverTimeMs").asLong()).isBetween(now, now + 60_000L);
         for (JsonNode category : answer.path("categories")) {
             assertKeys(category, "id", "title", "marketCount");

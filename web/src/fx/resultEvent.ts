@@ -35,6 +35,9 @@ export interface ResultEvent {
   /** `payout - stake`, signed — the ONLY number the card's headline ever shows (§0, §5). */
   netPlay: number;
   stakePlay: number;
+  /** The bet's total fees (herd + network) as kept at settlement (`ProfileRoundEntryDto.fees`): the card adds "fees X" to its "Staked → returned" line.
+   *  Absent for a round recorded without them: no fees line. */
+  feesPlay?: number;
   leverage: number;
   balanceBefore: number;
   balanceAfter: number;
@@ -136,6 +139,7 @@ export function resultEventFromHistoryEntry(
     interval: entry.interval,
     durationSec: entry.durationSec,
     stakePlay: stake,
+    feesPlay: entry.fees != null && Number.isFinite(Number(entry.fees)) ? Number(entry.fees) : undefined,
     leverage: entry.leverage,
     balanceBefore: opts.balanceBefore,
     balanceAfter: opts.balanceAfter,

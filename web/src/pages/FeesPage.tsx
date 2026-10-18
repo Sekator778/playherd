@@ -5,7 +5,7 @@ import { ErrorState, Skeleton } from "../components/Common";
 import { formatDuration } from "../format";
 import { useT } from "../i18n";
 import { Rich } from "../i18n/Rich";
-import { FEE_TABLE_LEVERAGES, HERD_FEE_GUARD_PERCENT, NETWORK_FEE_PLAY, STAKE_TIERS, factorOf, feeRows, formatFeeShare, type FeeCell } from "./feesModel";
+import { FEE_TABLE_LEVERAGES, factorOf, feeRows, feeRules, formatFeeShare, type FeeCell } from "./feesModel";
 import "./FeesPage.css";
 
 /**
@@ -15,8 +15,9 @@ import "./FeesPage.css";
  */
 export function FeesPage() {
   const t = useT();
-  const { markets, loading, error, refresh } = useMarkets();
-  const rows = feeRows(markets);
+  const { markets, economy, loading, error, refresh } = useMarkets();
+  const rules = feeRules(economy);
+  const rows = feeRows(markets, rules);
   const short = rows.find((r) => r.interval === "HOURLY");
   const long = rows.find((r) => r.interval === "DAILY");
   const k = (value: number | null) => (value === null ? "—" : String(value));
@@ -25,16 +26,16 @@ export function FeesPage() {
   return (
     <div className="stack fees-page" style={{ gap: 20 }}>
       <h1>{t("fees.title")}</h1>
-      <p>{t("fees.intro", { network: NETWORK_FEE_PLAY })}</p>
+      {rules && <p>{t("fees.intro", { network: rules.networkFee })}</p>}
 
       {loading && error && <ErrorState message={t("fees.loadFail")} onRetry={refresh} />}
       {loading && !error && <Skeleton height={220} />}
       {!loading && rows.length === 0 && <p className="muted">{t("fees.none")}</p>}
 
-      {rows.length > 0 && (
+      {rules && rows.length > 0 && (
         <>
           <p className="fees-page__formula">
-            <Rich text={t("fees.formula", { guard: HERD_FEE_GUARD_PERCENT })} />
+            <Rich text={t("fees.formula", { guard: rules.guardPercent })} />
           </p>
           <p>
             {t("fees.factors", {
@@ -45,11 +46,20 @@ export function FeesPage() {
               kOdds: k(factorOf(rows, "DAILY", true)),
             })}
           </p>
-          <p>{t("fees.tiers", { a: STAKE_TIERS[0].upTo, b: STAKE_TIERS[1].upTo, c: STAKE_TIERS[2].upTo })}</p>
+          <p>
+            {t("fees.tiers", {
+              a: rules.bounds[0],
+              b: rules.bounds[1],
+              c: rules.bounds[2],
+              db: rules.divisors[1],
+              dc: rules.divisors[2],
+              dd: rules.divisors[3],
+            })}
+          </p>
 
-          <div className="fees-page__scroll" role="region" aria-label={t("fees.caption", { a: STAKE_TIERS[0].upTo })} tabIndex={0}>
+          <div className="fees-page__scroll" role="region" aria-label={t("fees.caption", { a: rules.bounds[0] })} tabIndex={0}>
             <table className="data-table fees-page__table">
-              <caption className="fees-page__caption">{t("fees.caption", { a: STAKE_TIERS[0].upTo })}</caption>
+              <caption className="fees-page__caption">{t("fees.caption", { a: rules.bounds[0] })}</caption>
               <thead>
                 <tr>
                   <th scope="col">{t("fees.colMarket")}</th>

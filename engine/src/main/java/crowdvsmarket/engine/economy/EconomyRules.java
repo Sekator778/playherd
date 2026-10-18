@@ -6,6 +6,8 @@ import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.market.MarketSpec;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The stage-A economy rules of a bet (Р-92, docs/product/economy_implementation_plan.md A3-A5), pure functions of
@@ -35,6 +37,19 @@ public final class EconomyRules {
     /** Stake-tier upper bounds in whole PLAY: up to 250 -> cap, 500 -> cap/2, 1200 -> cap/5, above -> cap/10. */
     private static final long[] TIER_UPPER_PLAY = {250, 500, 1_200};
     private static final int[] TIER_DIVISOR = {1, 2, 5, 10};
+
+    /** One stake tier: a stake up to {@code upToPlay} whole PLAY ({@code null}: any bigger stake) may take {@code cap / divisor}. */
+    public record StakeTier(Long upToPlay, int divisor) {
+    }
+
+    /** The tiers in order, smallest stake first, the last one open-ended: what {@link #tierDivisor} applies, for the clients to show. */
+    public static List<StakeTier> stakeTiers() {
+        List<StakeTier> tiers = new ArrayList<>();
+        for (int i = 0; i < TIER_DIVISOR.length; i++) {
+            tiers.add(new StakeTier(i < TIER_UPPER_PLAY.length ? TIER_UPPER_PLAY[i] : null, TIER_DIVISOR[i]));
+        }
+        return List.copyOf(tiers);
+    }
 
     /** A bet pays at most this many times its stake. */
     public static final int PAYOUT_MULTIPLE = 20;

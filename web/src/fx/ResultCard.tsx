@@ -277,6 +277,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
         {event.stakePlay > 0 && !event.midRound && (
           <p className="result-card__returned mono">
             {tr("results.returned", { stake: formatPlayAmount(event.stakePlay), returned: formatPlayAmount(Math.max(0, event.stakePlay + event.netPlay)) })}
+            {event.feesPlay != null && event.feesPlay > 0 && <span className="faint result-card__fees"> · {tr("results.fees", { fees: formatPlayAmount(event.feesPlay) })}</span>}
           </p>
         )}
         {/* Р-76: a round that ran on the backup exchange says whose prices settled it — one quiet line, under the figures. */}

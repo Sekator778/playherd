@@ -95,16 +95,17 @@ public class RoundResultRepository {
         for (PlayerHistoryRow row : perPlayerHistory) {
             db.update(c, """
                     INSERT INTO player_round_history (round_id, player_id, market, interval, settled_at_ms,
-                        direction, leverage, stake_mojos, liquidated, direction_correct, payout_mojos)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        direction, leverage, stake_mojos, liquidated, direction_correct, payout_mojos, fees_mojos)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     roundId, row.playerId(), marketId, interval.name(), settledAtMs, row.direction().name(),
-                    row.leverage(), row.stakeMojos(), row.liquidated(), row.directionCorrect(), row.payoutMojos());
+                    row.leverage(), row.stakeMojos(), row.liquidated(), row.directionCorrect(), row.payoutMojos(), row.feesMojos());
         }
     }
 
     public record PlayerHistoryRow(String playerId, Enums.Direction direction, int leverage, long stakeMojos,
-                                     boolean liquidated, Boolean directionCorrect, long payoutMojos) {
+                                     boolean liquidated, Boolean directionCorrect, long payoutMojos,
+                                     Long feesMojos) {
     }
 
     public void insertCancelled(Connection c, String marketId, String roundId, Interval interval, long windowStart,
@@ -191,7 +192,7 @@ public class RoundResultRepository {
     public List<Identity.ProfileRoundEntryDto> unseenResults(String playerId, int limit) {
         return db.read(c -> db.queryList(c, """
                 SELECT h.round_id, h.market, h.interval, h.settled_at_ms, h.direction, h.leverage, h.stake_mojos,
-                       h.liquidated, h.direction_correct, h.payout_mojos,
+                       h.liquidated, h.direction_correct, h.payout_mojos, h.fees_mojos,
                        r.window_end_ms - r.window_start_ms AS duration_ms
                 FROM player_round_history h LEFT JOIN round_results r ON r.round_id = h.round_id
                 WHERE h.player_id = ? AND h.acked_at_ms IS NULL
@@ -224,7 +225,7 @@ public class RoundResultRepository {
     public List<Identity.ProfileRoundEntryDto> playerHistory(String playerId, int limit) {
         return db.read(c -> db.queryList(c, """
                 SELECT h.round_id, h.market, h.interval, h.settled_at_ms, h.direction, h.leverage, h.stake_mojos,
-                       h.liquidated, h.direction_correct, h.payout_mojos,
+                       h.liquidated, h.direction_correct, h.payout_mojos, h.fees_mojos,
                        r.window_end_ms - r.window_start_ms AS duration_ms
                 FROM player_round_history h LEFT JOIN round_results r ON r.round_id = h.round_id
                 WHERE h.player_id = ? ORDER BY h.settled_at_ms DESC LIMIT ?
@@ -273,12 +274,14 @@ public class RoundResultRepository {
         // transaction), so null cannot happen — but "unknown" is better told than guessed.
         Long durationSec = rs.wasNull() ? null : durationMs / 1000L;
         Market market = market(marketId);
+        Long feesMojos = (Long) rs.getObject("fees_mojos");
         return new Identity.ProfileRoundEntryDto(rs.getString("round_id"),
                 Enums.Interval.valueOf(rs.getString("interval")), marketId, market.symbol(), durationSec,
                 kindOf(market), rs.getLong("settled_at_ms"), Enums.Direction.valueOf(rs.getString("direction")),
                 rs.getInt("leverage"), java.math.BigDecimal.valueOf(rs.getLong("stake_mojos"), 3).toPlainString(),
                 rs.getBoolean("liquidated"), (Boolean) rs.getObject("direction_correct"),
-                java.math.BigDecimal.valueOf(rs.getLong("payout_mojos"), 3).toPlainString());
+                java.math.BigDecimal.valueOf(rs.getLong("payout_mojos"), 3).toPlainString(),
+                feesMojos == null ? null : java.math.BigDecimal.valueOf(feesMojos, 3).toPlainString());
     }
 
     /** Markets are never deleted, so a row's market is always in the registry; its absence means

@@ -6,6 +6,7 @@ import type {
   CategoryDto,
   CategoryId,
   CrowdRoundPositionDto,
+  EconomyRulesDto,
   Interval,
   MarketDto,
   MarketsDto,
@@ -52,8 +53,20 @@ export function marketsOf(markets: MarketDto[], serverTimeMs = NOW): MarketsDto 
   const categories: CategoryDto[] = order
     .map((id) => ({ id, title: categoryTitle(id), marketCount: markets.filter((m) => m.category === id && m.status === "ACTIVE").length }))
     .filter((c) => c.marketCount > 0);
-  return { serverTimeMs, categories, markets };
+  return { serverTimeMs, categories, markets, economy: ECONOMY };
 }
+
+/** The shared economy rules as the server sends them in `markets()`. */
+export const ECONOMY: EconomyRulesDto = {
+  networkFeePlay: "0.1",
+  herdFeeGuardPercent: "20",
+  stakeTiers: [
+    { upToPlay: 250, divisor: 1 },
+    { upToPlay: 500, divisor: 2 },
+    { upToPlay: 1200, divisor: 5 },
+    { upToPlay: null, divisor: 10 },
+  ],
+};
 
 /** A small, varied catalogue: two crypto perps, a stock, a politics and a sports odds market, and a closed one. */
 export function catalogue(): MarketDto[] {

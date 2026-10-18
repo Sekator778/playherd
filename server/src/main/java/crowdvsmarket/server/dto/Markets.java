@@ -77,8 +77,21 @@ public final class Markets {
                               MarketPriceDto price, List<MarketSeriesDto> series, MarketCrowdBriefDto crowd) {
     }
 
-    /** The lobby in one call: active markets plus those closed within the last 10 minutes, in listing order. */
-    public record MarketsDto(long serverTimeMs, List<CategoryDto> categories, List<MarketDto> markets) {
+    /** One stake tier: a stake up to {@code upToPlay} PLAY ({@code null}: any bigger one) may take the market's leverage cap
+     *  divided by {@code divisor}. */
+    public record StakeTierDto(Long upToPlay, int divisor) {
+    }
+
+    /** The economy rules that are the same for every market (Р-102, {@code EconomyRules}): {@code networkFeePlay}: the flat network fee
+     *  per bet, PLAY; {@code herdFeeGuardPercent}: the herd fee never takes more than this percent of the stake; {@code stakeTiers}:
+     *  smallest stake first. The per-market part ({@code herdFeeBp}, {@code feeFactor}, {@code maxLeverage}) is on each series. */
+    public record EconomyRulesDto(String networkFeePlay, String herdFeeGuardPercent, List<StakeTierDto> stakeTiers) {
+    }
+
+    /** The lobby in one call: active markets plus those closed within the last 10 minutes, in listing order. {@code economy}: the
+     *  rules every market shares. */
+    public record MarketsDto(long serverTimeMs, List<CategoryDto> categories, List<MarketDto> markets,
+                               EconomyRulesDto economy) {
     }
 
     public record PriceTickDto(long atMs, String price) {

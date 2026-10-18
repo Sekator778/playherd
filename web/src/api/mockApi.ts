@@ -160,6 +160,14 @@ const MOCK_HERD_FEE_BP = "1.0";
 const MOCK_NETWORK_FEE = 0.1;
 const MOCK_HERD_FEE_CAP = 0.2;
 const MOCK_LONG_ROUND_FEE_FACTOR = 2.2;
+/** `k` of the long round of an ODDS market (the server's `MarketEconomy.ODDS_LONG_ROUND_FEE_FACTOR`). */
+const MOCK_ODDS_LONG_ROUND_FEE_FACTOR = 3.0;
+
+/** `k` for a round: 1 in the short one, 2.2 in the long one of a price market, 3.0 in the long one of an odds market. */
+function mockFeeFactor(spec: MockMarketSpec, interval: Interval): number {
+  if (interval === "HOURLY") return 1;
+  return spec.kind === "ODDS" ? MOCK_ODDS_LONG_ROUND_FEE_FACTOR : MOCK_LONG_ROUND_FEE_FACTOR;
+}
 
 type WithdrawalRecord = WithdrawalRequestDto;
 
@@ -237,6 +245,8 @@ class MockApi implements Api {
         liquidated: outcome.liquidated,
         directionCorrect: outcome.directionCorrect,
         payout: outcome.payout,
+        // what the bet was charged and keeps (a legacy mock bet has none)
+        fees: bet.feeHerd != null && bet.feeNetwork != null ? (Number(bet.feeHerd) + Number(bet.feeNetwork)).toFixed(3) : null,
       });
     }
   }
@@ -382,6 +392,17 @@ class MockApi implements Api {
         marketCount: activeByCategory.get(id)!,
       })),
       markets: listed.map((spec) => this.marketDto(spec, now)),
+      // the same rules the server states in EconomyRules (network fee, herd-fee guard, stake tiers)
+      economy: {
+        networkFeePlay: String(MOCK_NETWORK_FEE),
+        herdFeeGuardPercent: String(MOCK_HERD_FEE_CAP * 100),
+        stakeTiers: [
+          { upToPlay: 250, divisor: 1 },
+          { upToPlay: 500, divisor: 2 },
+          { upToPlay: 1200, divisor: 5 },
+          { upToPlay: null, divisor: 10 },
+        ],
+      },
     };
   }
 
@@ -439,7 +460,7 @@ class MockApi implements Api {
       majorityDirection: majorityDirection(bets),
       maxLeverage: spec.maxLeverage,
       herdFeeBp: MOCK_HERD_FEE_BP,
-      feeFactor: interval === "HOURLY" ? "1" : String(MOCK_LONG_ROUND_FEE_FACTOR),
+      feeFactor: String(mockFeeFactor(spec, interval)),
     };
   }
 
@@ -1002,7 +1023,7 @@ function requireLeverageForStake(leverage: number, stake: string, spec: MockMark
 /** Plan A4, Р-102: `fee_herd = stake * min(20 %, k * r_m * L)` (k = 1 in the HOURLY round, 2.2 in the DAILY one) and the flat network fee, each rounded UP to 0.001 PLAY (herd fee at least 0.001). */
 function mockCosts(stake: string, leverage: number, spec: MockMarketSpec, interval: Interval) {
   const up = (x: number) => Math.ceil(Math.round(x * 1e6) / 1e3) / 1e3;
-  const k = interval === "HOURLY" ? 1 : MOCK_LONG_ROUND_FEE_FACTOR;
+  const k = mockFeeFactor(spec, interval);
   const herd = Math.max(0.001, up(Number(stake) * Math.min(MOCK_HERD_FEE_CAP, k * Number(MOCK_HERD_FEE_BP) * 1e-4 * leverage)));
   const network = up(MOCK_NETWORK_FEE);
   return {

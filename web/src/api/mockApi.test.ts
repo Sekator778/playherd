@@ -341,6 +341,24 @@ describe("the account and the markets say what the economy adds (plan A4, B2, C1
     expect(eth.series[0]).toMatchObject({ maxLeverage: 25, herdFeeBp: "1.0" });
     expect((await mockApi.myAccount()).withdrawable).toBe("0.000");
   });
+
+  it("k of the long round: 1 short, 2.2 for a price market, 3.0 for an odds market; markets() carries the shared economy rules", async () => {
+    const markets = await mockApi.markets();
+    const price = markets.markets.find((m) => m.kind === "PERP")!;
+    const odds = markets.markets.find((m) => m.kind === "ODDS")!;
+    expect(price.series.map((s) => s.feeFactor)).toEqual(["1", "2.2"]);
+    expect(odds.series.find((s) => s.interval === "DAILY")?.feeFactor).toBe("3");
+    expect(markets.economy).toEqual({
+      networkFeePlay: "0.1",
+      herdFeeGuardPercent: "20",
+      stakeTiers: [
+        { upToPlay: 250, divisor: 1 },
+        { upToPlay: 500, divisor: 2 },
+        { upToPlay: 1200, divisor: 5 },
+        { upToPlay: null, divisor: 10 },
+      ],
+    });
+  });
 });
 
 describe("referencePrice / priceSeries — one price per instant", () => {
@@ -666,7 +684,7 @@ describe("the market that closes during a session (Т-10)", () => {
     const d = await bettingRoundOf(CLOSING.id, "DAILY");
     await mockApi.placeBet({ roundId: h.roundId, direction: "UP", leverage: 5, stake: "300.000" });
     await mockApi.placeBet({ roundId: d.roundId, direction: "DOWN", leverage: 7, stake: "200.000" });
-    expect((await mockApi.myAccount()).balance).toBe("9499.342"); // 500 staked, 0.658 in fees (0.15 + 0.308 herd, the DAILY one with k = 2.2; 2 x 0.1 network)
+    expect((await mockApi.myAccount()).balance).toBe("9499.230"); // 500 staked, 0.770 in fees (0.15 + 0.42 herd, the DAILY one of an odds market with k = 3.0; 2 x 0.1 network)
     expect((await mockApi.myPositions()).map((p) => p.marketId)).toEqual([CLOSING.id, CLOSING.id]);
 
     await advanceSimClockTo(MOCK_CLOSING_AT_MS + 60_000);
