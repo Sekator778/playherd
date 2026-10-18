@@ -1,0 +1,75 @@
+# Load-bench override for docker-compose.yml (docs/research/load_bench_design_2026-10-17.md §6, step 1 of §11).
+# docker-compose.yml itself is not edited. Used ONLY on the bench box, by tools/bench/bench-ctl.sh:
+#
+#   docker compose -p herdbench --env-file .env.bench -f docker-compose.yml -f tools/bench/docker-compose.bench.yml up -d db server
+#
+# What it changes against the stand (each item is a design decision, §6):
+#   - own names: network herdbench_default (172.30.98.0/24, internal: no route out, no published ports), volume herdbench_pg
+#     (the stand's fixed names herd_default / herd_pg_live are overridden, so nothing of the Herd stand on a machine can be hit);
+#   - chainsvc and web are put in profiles that are never activated (chainsvc stays off, §6.2; the bench has no browser);
+#   - server: depends_on db only, the three chain switches off, synthetic prices, bots off, no restart, own image
+#     (built on the Mac, shipped by tools/bench/ship.sh: the bench box cannot reach Maven Central), cores pinned (§6.3);
+#   - db: same image as the stand (postgres:16-alpine), pinned cores, stats on (track_wal_io_timing, pg_stat_statements).
+# Variables (all have defaults here; secrets come from .env.bench, written by bench-ctl.sh):
+#   HERD_BENCH_IMAGE      server image tag, e.g. herd-bench-server:<sha12>
+#   HERD_BENCH_DB_CPUS    cpuset of Postgres (default 0-7: node0, 8 physical cores)
+#   HERD_BENCH_SRV_CPUS   cpuset of the server (default 12-19: node1, 8 physical cores)
+# The cores 8-11,20-23,32-35,44-47 are meant for load generators; 24-31,36-43 stay for other sessions (README.md).
+
+name: herdbench
+
+networks:
+  default:
+    name: herdbench_default
+    internal: true
+    driver_opts: !reset {}
+    ipam: !override
+      config:
+        - subnet: 172.30.98.0/24
+          gateway: 172.30.98.1
+
+volumes:
+  herd_pg_live:
+    name: herdbench_pg
+
+services:
+  db:
+    command: !override
+      - postgres
+      - -c
+      - shared_buffers=${HERD_DB_SHARED_BUFFERS:-128MB}
+      - -c
+      - track_wal_io_timing=on
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+    cpuset: ${HERD_BENCH_DB_CPUS:-0-7}
+    restart: "no"
+
+  server:
+    image: ${HERD_BENCH_IMAGE:?set HERD_BENCH_IMAGE (bench-ctl.sh does)}
+    build: !reset null
+    cpuset: ${HERD_BENCH_SRV_CPUS:-12-19}
+    restart: "no"
+    depends_on: !override
+      db:
+        condition: service_healthy
+    environment:
+      HERD_PRICES_SOURCE: synthetic
+      HERD_BOTS_COUNT: ${HERD_BENCH_BOTS_COUNT:-0}
+      HERD_BOTS_ENGINE: ${HERD_BENCH_BOTS_ENGINE:-catalog}
+      HERD_GEOIP_ENABLED: "false"
+      HERD_MARKETS_POLYMARKET_ENABLED: "false"
+      # chain off (§6.2): a closed local port, no seq floor, no on-chain withdraw/deposit
+      HERD_CHAINSVC_URL: http://127.0.0.1:9
+      HERD_ORACLE_REQUIRE_SEQ_FLOOR: "false"
+      HERD_WITHDRAWAL_ENABLED: "false"
+      HERD_DEPOSIT_ENABLED: "false"
+      # profile tech (§2.4): treasury large enough that the exposure limits never reject
+      HERD_ECONOMY_TREASURY_OPENING_PLAY: "${HERD_BENCH_TREASURY_OPENING_PLAY:-1000000000000}"
+      HERD_REGISTRATION_MAX_PER_IP_PER_DAY: "${HERD_BENCH_REG_MAX_PER_IP:-1000000}"
+
+  # never started in the bench
+  chainsvc:
+    profiles: ["bench-disabled"]
+  web:
+    profiles: ["bench-disabled"]
