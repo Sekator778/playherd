@@ -37,3 +37,19 @@ Coinbase. "Win" is a payout above the stake; "net return" is payout over stake p
 
 Rules are mirrored from `engine/.../economy/EconomyRules.java`, `margin/LiquidationCalculator.java`,
 `round/PositionSimulator.java` and `game/GameEngine.java`; if they change, change this tool with them.
+
+## bot_stats.py and funnel.py (read-only, same connection as above)
+
+```
+tools/audit/bot_stats.py --hours 72 --out stats.md --csv stats.csv
+tools/audit/funnel.py --exclude <player_id>,<player_id> --detail      # cohort: humans created since T0
+```
+
+`bot_stats.py` — internal statistics per bot strategy family (`bollinger`, `rsi`, `ema`, `coin`, `donchian`, `momentum`, `crowd-follow`,
+`crowd-contrarian`, legacy names) and per full strategy name, per round length: bets, win % with a 95 % Wilson interval, difference vs the
+`coin` control (Newcombe interval), liquidation share, average leverage, PnL before / after fees, return on stake, verdict. Fees come from
+the `BetPlaced` events (`player_round_history.fees_mojos`, V14, is not on the stand at the time of writing).
+
+`funnel.py` — humans only: entered, bet >= 1, >= 3 and >= 5 rounds (old metric), played (new: bets of settled rounds in >= 5 different
+3-minute windows on >= 2 different UTC days), returned (a bet on a later UTC day). Definition: `docs/research/features_growth_2026-10-18.md` §4.
+First outputs: `docs/product/feedback/bot-stats-2026-10-18.md`.
