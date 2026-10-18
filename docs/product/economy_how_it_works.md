@@ -335,7 +335,7 @@
 - `docs/research/economy_variant_a_rules_2026-10-17.md` — правила 1–3, таблицы `a*`, шансы, тонкие рынки.
 - `docs/research/economy_1m_players_2y_2026-10-17.md` — модель 1 млн игроков, `κ`, граница Вилля, результаты прогонов.
 - `docs/research/game_economy_math.md` — волатильность, потолки плеча, тождество остатка.
-- `docs/research/economy_literature_2026-10-17.md` — опубликованные методы (Р-99): Глостен–Милгром 1985, Kyle 1985, Shin 1991/1992, Wille 1939, Pham 2007, PFMI P4/P6, Douceur 2002, Castronova 2001, Politis–Romano 1994, McNeil 1999.
+- `docs/research/economy_literature_2026-10-17.md` — опубликованные методы (Р-99): Глостен–Милгром 1985, Kyle 1985, Shin 1991/1992, Ville 1939, Pham 2007, PFMI P4/P6, Douceur 2002, Castronova 2001, Politis–Romano 1994, McNeil 1999.
 - `docs/research/play_reissue_options_2026-10-17.md` — выпуск 10¹².
 - `docs/product/game_economy_proposal.md`, `docs/product/economy_implementation_plan.md` — замысел и этапы A–B.
 - `docs/research/fee_display_venues_2026-10-18.md` — как площадки показывают комиссию игроку.
