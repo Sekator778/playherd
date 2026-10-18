@@ -4,6 +4,10 @@
 #   tools/bench/bench-ctl.sh down     stop and remove ONLY the containers and network of project herdbench
 #   tools/bench/bench-ctl.sh purge    down + remove the volume herdbench_pg (the bench database)
 #   tools/bench/bench-ctl.sh status   containers of the project, image, health
+#   tools/bench/bench-ctl.sh snap <label> [dir]   Postgres statistics now (pg_stat_wal, pg_stat_database, pg_stat_statements, settings)
+#                                      into <dir>/<label>.*.txt (default ~/herd-bench/results/snap); take one before and one after a run
+#   tools/bench/bench-ctl.sh jfr [dir] stop the server (the JVM writes its JFR recording on exit; the JRE image has no jcmd) and copy
+#                                      /tmp/herd.jfr to <dir> (default ~/herd-bench/results/snap); `up` starts it again
 # the bench box is shared: this script only ever touches objects of the compose project `herdbench`
 # (names herdbench-*, network herdbench_default, volume herdbench_pg). The lease is the caller's job (README.md).
 set -euo pipefail
@@ -51,5 +55,24 @@ case "${1:-status}" in
   status)
     docker ps -a --filter "label=com.docker.compose.project=$PROJECT" --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
     ;;
-  *) echo "usage: bench-ctl.sh {up|down|purge|status}" >&2; exit 2 ;;
+  snap)
+    label=${2:?usage: bench-ctl.sh snap <label> [dir]}
+    dir=${3:-$HOME/herd-bench/results/snap}
+    mkdir -p "$dir"
+    psql_db() { docker exec -e PGPASSWORD="$(sed -n 's/^HERD_DB_PASSWORD=//p' "$ENV_FILE")" herdbench-db-1 psql -h 127.0.0.1 -U herd -d herd -X "$@"; }
+    psql_db -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements" >/dev/null
+    psql_db -c "SELECT now() AS at, * FROM pg_stat_wal" > "$dir/$label.pg_stat_wal.txt"
+    psql_db -c "SELECT now() AS at, * FROM pg_stat_database WHERE datname = 'herd'" > "$dir/$label.pg_stat_database.txt"
+    psql_db -c "SELECT calls, round(total_exec_time::numeric, 1) AS total_ms, round(mean_exec_time::numeric, 3) AS mean_ms, rows, left(query, 100) AS query FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 25" > "$dir/$label.pg_stat_statements.txt"
+    psql_db -c "SELECT name, setting, unit FROM pg_settings WHERE name IN ('synchronous_commit','fsync','wal_sync_method','shared_buffers','wal_buffers','commit_delay','track_wal_io_timing','log_min_duration_statement','max_connections') ORDER BY name" > "$dir/$label.pg_settings.txt"
+    log "snapshot $label -> $dir"
+    ;;
+  jfr)
+    dir=${2:-$HOME/herd-bench/results/snap}
+    mkdir -p "$dir"
+    docker stop -t 60 herdbench-server-1 >/dev/null
+    docker cp herdbench-server-1:/tmp/herd.jfr "$dir/herd-$(date +%Y%m%d-%H%M%S).jfr"
+    log "JFR dump -> $dir"
+    ;;
+  *) echo "usage: bench-ctl.sh {up|down|purge|status|snap <label> [dir]|jfr [dir]}" >&2; exit 2 ;;
 esac

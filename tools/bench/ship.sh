@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ship a commit of this repo and its bench images from the Mac to the bench box (~/herd-bench/repo).
-#   tools/bench/ship.sh [--sha <commit>] [--no-image]
+#   tools/bench/ship.sh [--sha <commit>] [--no-image] [--worktree]
 # the bench box is air-gapped (no Maven Central, no registry), so the server image is built HERE for linux/amd64
 # (docker buildx, build stage on host network because this Mac's default bridge has no egress, see docker-compose.yml)
 # and loaded there with `docker load`. The repo tree is `git archive <sha>` (tracked files only, no dirty tree), plus
@@ -13,20 +13,29 @@ SSH_HOST=${BENCH_SSH_HOST:-stand}
 REMOTE=herd-bench
 SHA=$(git -C "$ROOT" rev-parse HEAD)
 BUILD_IMAGE=1
+WORKTREE=0
 while [ $# -gt 0 ]; do
   case $1 in
     --sha) SHA=$(git -C "$ROOT" rev-parse "$2"); shift 2 ;;
     --no-image) BUILD_IMAGE=0; shift ;;
-    *) echo "usage: ship.sh [--sha <commit>] [--no-image]" >&2; exit 2 ;;
+    --worktree) WORKTREE=1; shift ;;
+    *) echo "usage: ship.sh [--sha <commit>] [--no-image] [--worktree]" >&2; exit 2 ;;
   esac
 done
 SHA12=${SHA:0:12}
+# --worktree: the tree is the working tree (tracked and untracked, not ignored) instead of the commit, for a build that is not
+# committed yet (the instrumented code of design §5 before Alex commits it); the tag says so and the sha file says "-wt"
+[ "$WORKTREE" = 1 ] && SHA12="${SHA12}-wt"
 IMAGE="herd-bench-server:${SHA12}"
 log() { printf '[bench-ship] %s\n' "$*" >&2; }
 
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
-git -C "$ROOT" archive "$SHA" | tar -x -C "$STAGE"
+if [ "$WORKTREE" = 1 ]; then
+  (cd "$ROOT" && git ls-files -co --exclude-standard -z | COPYFILE_DISABLE=1 xargs -0 tar -c -f - 2>/dev/null) | tar -x -C "$STAGE"
+else
+  git -C "$ROOT" archive "$SHA" | tar -x -C "$STAGE"
+fi
 rm -rf "$STAGE/tools/bench" && mkdir -p "$STAGE/tools" && cp -R "$ROOT/tools/bench" "$STAGE/tools/bench"
 
 if [ "$BUILD_IMAGE" = 1 ]; then
@@ -36,7 +45,7 @@ fi
 
 log "syncing the tree of $SHA12 to $SSH_HOST:~/$REMOTE/repo"
 ssh "$SSH_HOST" "mkdir -p ~/$REMOTE/repo ~/$REMOTE/results"
-COPYFILE_DISABLE=1 tar -C "$STAGE" -c . | ssh "$SSH_HOST" "rm -rf ~/$REMOTE/repo/* && tar -x -C ~/$REMOTE/repo && echo $SHA > ~/$REMOTE/repo/.bench-sha"
+COPYFILE_DISABLE=1 tar -C "$STAGE" -c . | ssh "$SSH_HOST" "rm -rf ~/$REMOTE/repo/* && tar -x -C ~/$REMOTE/repo && echo $SHA12 > ~/$REMOTE/repo/.bench-sha"
 
 if ! ssh "$SSH_HOST" "docker image inspect postgres:16-alpine >/dev/null 2>&1"; then
   log "loading postgres:16-alpine (amd64)"

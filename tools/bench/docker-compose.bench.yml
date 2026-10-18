@@ -9,11 +9,18 @@
 #   - chainsvc and web are put in profiles that are never activated (chainsvc stays off, §6.2; the bench has no browser);
 #   - server: depends_on db only, the three chain switches off, synthetic prices, bots off, no restart, own image
 #     (built on the Mac, shipped by tools/bench/ship.sh: the bench box cannot reach Maven Central), cores pinned (§6.3);
-#   - db: same image as the stand (postgres:16-alpine), pinned cores, stats on (track_wal_io_timing, pg_stat_statements).
+#   - db: same image as the stand (postgres:16-alpine), pinned cores, stats on (track_wal_io_timing, pg_stat_statements),
+#     statements slower than HERD_BENCH_PG_SLOW_MS (default 50) in the log (design §5, I-8);
+#   - server JVM (design §5, I-7): JFR with tools/bench/bench.jfc (the Herd events of server/.../jfr/, GC, heap, JIT, CPU load) written
+#     to /tmp/herd.jfr in the container (written when the JVM exits: `bench-ctl.sh jfr` stops the server and copies it out; the JRE
+#     image has no jcmd). The product image and docker-compose.yml know nothing of it.
 # Variables (all have defaults here; secrets come from .env.bench, written by bench-ctl.sh):
 #   HERD_BENCH_IMAGE      server image tag, e.g. herd-bench-server:<sha12>
 #   HERD_BENCH_DB_CPUS    cpuset of Postgres (default 0-7: node0, 8 physical cores)
 #   HERD_BENCH_SRV_CPUS   cpuset of the server (default 12-19: node1, 8 physical cores)
+#   HERD_BENCH_JVM_OPTS   JDK_JAVA_OPTIONS of the server. UNSET = JFR with bench.jfc (the default below); SET TO THE EMPTY STRING
+#                         = no JFR (the "off" arm of the overhead run, design §5 I-0); anything else replaces the default
+#   HERD_BENCH_PG_SLOW_MS log_min_duration_statement of Postgres in ms (default 50; -1 = off)
 # The cores 8-11,20-23,32-35,44-47 are meant for load generators; 24-31,36-43 stay for other sessions (README.md).
 
 name: herdbench
@@ -42,6 +49,8 @@ services:
       - track_wal_io_timing=on
       - -c
       - shared_preload_libraries=pg_stat_statements
+      - -c
+      - log_min_duration_statement=${HERD_BENCH_PG_SLOW_MS:-50}
     cpuset: ${HERD_BENCH_DB_CPUS:-0-7}
     restart: "no"
 
@@ -53,7 +62,10 @@ services:
     depends_on: !override
       db:
         condition: service_healthy
+    volumes:
+      - ./tools/bench/bench.jfc:/bench/bench.jfc:ro
     environment:
+      JDK_JAVA_OPTIONS: "${HERD_BENCH_JVM_OPTS--XX:StartFlightRecording=settings=/bench/bench.jfc,filename=/tmp/herd.jfr,dumponexit=true,maxsize=2g}"
       HERD_PRICES_SOURCE: synthetic
       HERD_BOTS_COUNT: ${HERD_BENCH_BOTS_COUNT:-0}
       HERD_BOTS_ENGINE: ${HERD_BENCH_BOTS_ENGINE:-catalog}

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  JFR settings of the load bench (docs/research/load_bench_design_2026-10-17.md §5, I-7): the Herd events of
+  server/src/main/java/crowdvsmarket/server/jfr/ plus the JVM events the report needs (GC, heap, JIT, CPU load).
+  Used only through the bench compose override (JDK_JAVA_OPTIONS in tools/bench/docker-compose.bench.yml); the product
+  image and docker-compose.yml do not know it. No sampling of stacks (jdk.ExecutionSample is off: profiles come from
+  async-profiler, a separate run), so the cost of this file is the cost of the events below.
+-->
+<configuration version="2.0" label="Herd bench" description="Herd events, GC, heap, JIT, CPU load" provider="Herd">
+
+  <event name="herd.LockWait"><setting name="enabled">true</setting><setting name="stackTrace">true</setting><setting name="threshold">0 ms</setting></event>
+  <event name="herd.LockHold"><setting name="enabled">true</setting><setting name="stackTrace">true</setting><setting name="threshold">0 ms</setting></event>
+  <event name="herd.PlaceBet"><setting name="enabled">true</setting><setting name="stackTrace">false</setting><setting name="threshold">0 ms</setting></event>
+  <event name="herd.TxCommit"><setting name="enabled">true</setting><setting name="stackTrace">true</setting><setting name="threshold">0 ms</setting></event>
+  <event name="herd.Settle"><setting name="enabled">true</setting><setting name="stackTrace">false</setting><setting name="threshold">0 ms</setting></event>
+  <event name="herd.Rebuild"><setting name="enabled">true</setting><setting name="stackTrace">false</setting><setting name="threshold">0 ms</setting></event>
+  <event name="herd.Rpc"><setting name="enabled">true</setting><setting name="stackTrace">false</setting><setting name="threshold">0 ms</setting></event>
+  <event name="herd.Session"><setting name="enabled">true</setting><setting name="stackTrace">false</setting><setting name="threshold">0 ms</setting></event>
+
+  <event name="jdk.GarbageCollection"><setting name="enabled">true</setting><setting name="threshold">0 ms</setting></event>
+  <event name="jdk.GCPhasePause"><setting name="enabled">true</setting><setting name="threshold">0 ms</setting></event>
+  <event name="jdk.GCHeapSummary"><setting name="enabled">true</setting></event>
+  <event name="jdk.GCConfiguration"><setting name="enabled">true</setting><setting name="period">endChunk</setting></event>
+  <event name="jdk.ObjectCountAfterGC"><setting name="enabled">true</setting></event>
+  <event name="jdk.Compilation"><setting name="enabled">true</setting><setting name="threshold">100 ms</setting></event>
+  <event name="jdk.CPULoad"><setting name="enabled">true</setting><setting name="period">1 s</setting></event>
+  <event name="jdk.PhysicalMemory"><setting name="enabled">true</setting><setting name="period">endChunk</setting></event>
+  <event name="jdk.JVMInformation"><setting name="enabled">true</setting><setting name="period">beginChunk</setting></event>
+  <event name="jdk.InitialSystemProperty"><setting name="enabled">true</setting><setting name="period">endChunk</setting></event>
+
+</configuration>

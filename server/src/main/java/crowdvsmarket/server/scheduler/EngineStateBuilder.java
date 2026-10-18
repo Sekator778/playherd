@@ -9,6 +9,8 @@ import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.events.EventApplier;
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
+import crowdvsmarket.server.jfr.HerdRebuild;
+import crowdvsmarket.server.jfr.JfrClock;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketRegistry;
 import crowdvsmarket.server.service.BoundaryPrices;
@@ -79,9 +81,25 @@ public class EngineStateBuilder {
         for (Market market : markets) {
             hub.install(market); // a fresh hub: BTC's engines are rebuilt from the registry row, like every other market's
         }
+        HerdRebuild jfr = new HerdRebuild(); // I-5: the clock and the heap are read only while JFR records
+        boolean rec = jfr.isEnabled();
+        if (rec) {
+            jfr.begin();
+            jfr.heapBefore = usedHeap();
+        }
+        long t = JfrClock.nanos(rec);
         List<GameEvent> events = eventStore.loadAll();
+        jfr.loadNs = JfrClock.since(rec, t);
+        t = JfrClock.nanos(rec);
         for (GameEvent event : events) {
             applier.apply(event); // also keeps the hub's index of the windows that hold bets
+        }
+        if (rec) {
+            jfr.applyNs = JfrClock.since(rec, t);
+            jfr.events = events.size();
+            jfr.heapAfter = usedHeap();
+            jfr.end();
+            jfr.commit();
         }
         cancelRoundsOfClosedMarkets(applier, hub, markets, nowMs);
 
@@ -101,6 +119,11 @@ public class EngineStateBuilder {
         }
         return new Built(hub, betFeed, cursors, boundaryPrices.load(cursors), events.size(), markets.size(),
                 series.toString());
+    }
+
+    private static long usedHeap() {
+        Runtime runtime = Runtime.getRuntime();
+        return runtime.totalMemory() - runtime.freeMemory();
     }
 
     /** Restart safety net: a market was closed in the database but the process stopped before its

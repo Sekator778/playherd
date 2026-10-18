@@ -12,6 +12,7 @@ import crowdvsmarket.server.dto.Betting;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Feedback;
 import crowdvsmarket.server.dto.Paging;
+import crowdvsmarket.server.jfr.HerdRpc;
 import crowdvsmarket.server.service.CandleService;
 import crowdvsmarket.server.service.FeedbackService;
 import crowdvsmarket.server.service.GameService;
@@ -99,6 +100,29 @@ public class RpcResource {
     public Response call(@PathParam("method") String method, String body,
                           @CookieParam(SESSION_COOKIE) String sessionCookie,
                           @Context HttpServerRequest httpRequest) {
+        HerdRpc jfr = new HerdRpc(); // I-6: the server's own time for the call, to set against the client's (Little's law)
+        boolean rec = jfr.isEnabled();
+        if (rec) {
+            jfr.begin();
+            jfr.method = method;
+            jfr.result = "ERROR";
+        }
+        try {
+            Response response = dispatch(method, body, sessionCookie, httpRequest);
+            jfr.result = String.valueOf(response.getStatus());
+            return response;
+        } catch (ApiException e) {
+            jfr.result = e.code().name();
+            throw e;
+        } finally {
+            if (rec) {
+                jfr.end();
+                jfr.commit();
+            }
+        }
+    }
+
+    private Response dispatch(String method, String body, String sessionCookie, HttpServerRequest httpRequest) {
         if (RATE_LIMITED_METHODS.contains(method) && !rateLimiter.tryAcquire(clientIp(httpRequest) + ":" + method)) {
             throw ApiException.rateLimited();
         }

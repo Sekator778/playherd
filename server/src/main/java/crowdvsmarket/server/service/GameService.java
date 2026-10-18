@@ -52,6 +52,10 @@ import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketListener;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.jfr.HerdPlaceBet;
+import crowdvsmarket.server.jfr.HerdSettle;
+import crowdvsmarket.server.jfr.JfrClock;
+import crowdvsmarket.server.jfr.TimedEngineLock;
 import crowdvsmarket.server.persistence.Db;
 import crowdvsmarket.server.persistence.OracleRecordRepository;
 import crowdvsmarket.server.persistence.RoundResultRepository;
@@ -210,7 +214,7 @@ public class GameService implements MarketListener {
 
     /** See the class javadoc's "Locking" section. */
     private final java.util.concurrent.locks.ReadWriteLock engineLock =
-            new java.util.concurrent.locks.ReentrantReadWriteLock();
+            new TimedEngineLock();
 
     /** Used by {@code EngineRebuildService}: runs {@code action} holding this class's write lock, the
      *  exclusive access every mutating method below gets by holding it — the swap of a rebuilt state
@@ -790,7 +794,15 @@ public class GameService implements MarketListener {
     public Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
         RoundWindow.RoundRef ref = parseRoundId(req.roundId());
         marketRegistry.require(ref.market()); // MARKET_NOT_FOUND without waiting for the lock
+        HerdPlaceBet jfr = new HerdPlaceBet(); // I-2: phases of the call, the clock is read only while JFR records
+        boolean rec = jfr.isEnabled();
+        if (rec) {
+            jfr.begin();
+            jfr.outcome = "ERROR";
+        }
+        long t = JfrClock.nanos(rec);
         lockWrite();
+        jfr.waitNs = JfrClock.since(rec, t);
         try {
             // Read again under the lock: a close announced while this call waited for it wins.
             Market market = marketRegistry.require(ref.market());
@@ -815,9 +827,11 @@ public class GameService implements MarketListener {
             // §4 п.6: a round that already has a result row was cancelled by the operator before it
             // started — the cancellation refunded and cleared its bets, so a bet accepted now would
             // sit in the bet book with its stake debited and never be settled or refunded.
+            t = JfrClock.nanos(rec);
             if (roundResults.exists(bettingWindow.roundId())) {
                 throw ApiException.roundNotOpenForBetting(req.roundId());
             }
+            jfr.existsNs = JfrClock.since(rec, t);
             // Only registered players bet. A bot tick that started before the player directory was
             // reset (test DB cleanup between classes) otherwise waited for this lock and then
             // placed bets for bots that no longer exist — the ledger's ensureSeasonPack below
@@ -885,18 +899,34 @@ public class GameService implements MarketListener {
                         + " exceeds balance " + effectiveBalance);
             }
 
+            t = JfrClock.nanos(rec);
             requireExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), req.leverage(), stake);
+            jfr.exposureNs = JfrClock.since(rec, t);
+            jfr.roundBets = rec ? engine.betBook().betsFor(bettingWindow.roundId()).size() : 0;
             LiquidationParams liquidation = LiquidationParams.of(spec, ref.interval());
             GameEvent.BetPlaced event = new GameEvent.BetPlaced(playerId, ref.interval(), bettingWindow.startMs(),
                     bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs,
                     market.id(), fees.herd().mojos(), fees.network().mojos(), liquidation.cap(),
                     liquidation.kappa().toPlainString());
+            t = JfrClock.nanos(rec);
             persist(event, nowMs);
+            jfr.persistNs = JfrClock.since(rec, t);
+            t = JfrClock.nanos(rec);
             eventApplier.apply(event);
-            return betDto(playerId, bettingWindow.roundId(), req.direction(), req.leverage(), stake, fees, spec,
-                    ref.interval());
+            jfr.applyNs = JfrClock.since(rec, t);
+            Rounds.BetDto dto = betDto(playerId, bettingWindow.roundId(), req.direction(), req.leverage(), stake, fees,
+                    spec, ref.interval());
+            jfr.outcome = "OK";
+            return dto;
+        } catch (ApiException e) {
+            jfr.outcome = e.code().name();
+            throw e;
         } finally {
             engineLock.writeLock().unlock();
+            if (rec) {
+                jfr.end();
+                jfr.commit();
+            }
         }
     }
 
@@ -964,11 +994,24 @@ public class GameService implements MarketListener {
     public RoundReport resolveRound(RoundWindow window, long nowMs) throws PriceUnavailableException {
         requireReady(); // no point in asking the price source while the engine cannot take the result
         Market market = marketRegistry.require(window.market());
+        HerdSettle jfr = new HerdSettle(); // I-4: phases of the call, the clock is read only while JFR records
+        boolean rec = jfr.isEnabled();
+        if (rec) {
+            jfr.begin();
+            jfr.outcome = "ERROR";
+        }
         RoundPriceData fetched = resolvePrices(market, window); // phase 1 — no lock
 
+        long t = JfrClock.nanos(rec);
         lockWrite();
+        long locked = JfrClock.nanos(rec);
+        jfr.waitNs = locked - t;
         try {
-            if (roundResults.exists(window.roundId())) {
+            t = locked;
+            boolean alreadyDone = roundResults.exists(window.roundId());
+            jfr.existsNs = JfrClock.since(rec, t);
+            if (alreadyDone) {
+                jfr.outcome = "SKIPPED";
                 return null;
             }
             hub.ensureMarket(market);
@@ -984,15 +1027,23 @@ public class GameService implements MarketListener {
             AtomicBoolean touchedMemory = new AtomicBoolean();
             try {
                 RoundReport report = db.tx(c -> {
+                    long t0 = JfrClock.nanos(rec);
                     eventStore.append(c, event, nowMs);
+                    jfr.appendNs = JfrClock.since(rec, t0);
                     touchedMemory.set(true); // from here the engine may be ahead of the database
+                    t0 = JfrClock.nanos(rec);
                     RoundReport r = (RoundReport) eventApplier.apply(event);
-                    storeSettledResult(c, market, window, r, data.sourceTsMs(), data.venue());
+                    jfr.applyNs = JfrClock.since(rec, t0);
+                    t0 = JfrClock.nanos(rec);
+                    storeSettledResult(c, market, window, r, data.sourceTsMs(), data.venue(), jfr);
+                    jfr.storeNs = JfrClock.since(rec, t0);
+                    jfr.bets = r.playerOutcomes().size();
                     return r;
                 });
                 // only once it has committed; the close is the close on the exchange the round ran on (Р-76)
                 boundaries.settled(window, close.movePointRight(2).longValueExact(), data.venue());
                 rebuildService.recovered(window.roundId());
+                jfr.outcome = "SETTLED";
                 return report;
             } catch (RuntimeException | Error e) {
                 if (touchedMemory.get()) {
@@ -1001,7 +1052,12 @@ public class GameService implements MarketListener {
                 throw e;
             }
         } finally {
+            jfr.lockedNs = JfrClock.since(rec, locked);
             engineLock.writeLock().unlock();
+            if (rec) {
+                jfr.end();
+                jfr.commit();
+            }
         }
     }
 
@@ -1034,7 +1090,7 @@ public class GameService implements MarketListener {
      *  (Р-76) — in the canonical results JSON, so inside the hash that goes on chain, and in the result row; the oracle
      *  record's price is the close on that exchange; {@code null} for a market with one exchange: nothing changes for it. */
     private void storeSettledResult(Connection c, Market market, RoundWindow window, RoundReport report,
-                                    long sourceTsMs, String venue) throws SQLException {
+                                    long sourceTsMs, String venue, HerdSettle jfr) throws SQLException {
         MarketSpec spec = market.spec();
         Map<String, PlayerIdentity> identities = players.identitiesById();
         List<Rounds.PublicPositionDto> positionDtos = new ArrayList<>();
@@ -1092,7 +1148,10 @@ public class GameService implements MarketListener {
         roundResults.insertSettled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
                 window.endMs(), openCents, closeCents, positionDtos, crowdDto, canonical.hash(), canonical.json(),
                 settledAtMs, historyRows, venue);
+        boolean rec = jfr.isEnabled();
+        long t = JfrClock.nanos(rec);
         enqueueOracleRecord(c, market, window.roundId(), settledAtMs, sourceTsMs, closeCents, canonical.hash());
+        jfr.oracleNs = JfrClock.since(rec, t);
     }
 
     private static Boolean directionCorrect(crowdvsmarket.engine.round.Direction direction, BigDecimal openPrice,

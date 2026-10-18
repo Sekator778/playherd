@@ -1,6 +1,8 @@
 package crowdvsmarket.server.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import crowdvsmarket.server.jfr.HerdTxCommit;
+import crowdvsmarket.server.jfr.JfrClock;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.sql.Connection;
@@ -47,11 +49,19 @@ public class Db {
      * completely unchanged, exactly as before, so {@code ApiExceptionMapper} keeps seeing it.
      */
     public <T> T tx(SqlWork<T> work) {
+        HerdTxCommit jfr = new HerdTxCommit(); // I-3: the clock is read only while JFR records
+        boolean rec = jfr.isEnabled();
+        if (rec) {
+            jfr.begin();
+        }
         try (Connection c = dataSource.getConnection()) {
             c.setAutoCommit(false);
             try {
                 T result = work.run(c);
+                long t = JfrClock.nanos(rec);
                 c.commit();
+                jfr.commitNs = JfrClock.since(rec, t);
+                jfr.committed = true;
                 return result;
             } catch (SQLException e) {
                 c.rollback(); // a rollback failure here propagates to the outer catch below, which
@@ -63,6 +73,11 @@ public class Db {
             }
         } catch (SQLException e) {
             throw new RuntimeException("db connection failure", e);
+        } finally {
+            if (rec) {
+                jfr.end();
+                jfr.commit();
+            }
         }
     }
 

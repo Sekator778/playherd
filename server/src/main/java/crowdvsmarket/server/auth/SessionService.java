@@ -1,6 +1,7 @@
 package crowdvsmarket.server.auth;
 
 import crowdvsmarket.server.config.GameConfig;
+import crowdvsmarket.server.jfr.HerdSession;
 import crowdvsmarket.server.persistence.SessionRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -33,8 +34,18 @@ public class SessionService {
         if (sessionId == null || sessionId.isBlank()) {
             return Optional.empty();
         }
-        return repo.find(sessionId)
-                .filter(row -> row.expiresAtMs() > System.currentTimeMillis())
+        HerdSession jfr = new HerdSession(); // I-6: the SELECT of the session row
+        boolean rec = jfr.isEnabled();
+        if (rec) {
+            jfr.begin();
+        }
+        Optional<SessionRepository.Row> row = repo.find(sessionId);
+        if (rec) {
+            jfr.end();
+            jfr.found = row.isPresent();
+            jfr.commit();
+        }
+        return row.filter(r -> r.expiresAtMs() > System.currentTimeMillis())
                 .map(SessionRepository.Row::playerId);
     }
 
