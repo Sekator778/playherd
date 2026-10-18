@@ -439,6 +439,7 @@ class MockApi implements Api {
       majorityDirection: majorityDirection(bets),
       maxLeverage: spec.maxLeverage,
       herdFeeBp: MOCK_HERD_FEE_BP,
+      feeFactor: interval === "HOURLY" ? "1" : String(MOCK_LONG_ROUND_FEE_FACTOR),
     };
   }
 

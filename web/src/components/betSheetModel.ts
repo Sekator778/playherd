@@ -60,8 +60,11 @@ export function optionFor(options: readonly RiskOption[], id: RiskId): RiskOptio
 export interface Example {
   /** The price move the two example lines use, as a fraction (0.01 = 1%). */
   step: number;
+  /** What the player nets on the favourable move / on the unfavourable one. With `fees` known both are AFTER the fees (`afterFees`): the
+   *  fees are paid whatever happens, so a win is the gain minus the fees and a loss is the loss plus the fees. Without them, the gross figures. */
   win: number;
   lose: number;
+  afterFees: boolean;
   /** The move that wipes the bet out, as a fraction, and the side of the price it is on: the price rising ("up") or falling ("down"). */
   wipeoutMove: number;
   wipeoutSide: "up" | "down";
@@ -70,18 +73,22 @@ export interface Example {
 const SMALL_STEPS = [0.005, 0.002, 0.001, 0.0005, 0.0002, 0.0001];
 
 /**
- * The example's numbers. Wins and losses are the stake times the boost times the move. The move is 1% unless the wipeout line is nearer than
+ * The example's numbers. Wins and losses are the stake times the boost times the move, and — once the preview names the fees — net of them
+ * (win = gain − fees, loss = −loss − fees). The move is 1% unless the wipeout line is nearer than
  * 2% (a high boost): then it is the largest round move that is no more than half the way to the line, so the example never shows a loss
  * the wipeout would already have taken.
  */
-export function exampleFor(direction: Direction, stake: number, leverage: number, percentToLiquidation: number): Example {
+export function exampleFor(direction: Direction, stake: number, leverage: number, percentToLiquidation: number, fees: number | null = null): Example {
   let step = 0.01;
   if (percentToLiquidation < 0.02) step = SMALL_STEPS.find((s) => s <= percentToLiquidation / 2) ?? percentToLiquidation / 2;
   const amount = stake * leverage * step;
+  // The fee line comes from the server's preview (the sheet never works a fee out itself); here it only moves the two figures.
+  const paid = fees !== null && Number.isFinite(fees) && fees > 0 ? fees : null;
   return {
     step,
-    win: amount,
-    lose: -amount,
+    win: amount - (paid ?? 0),
+    lose: -amount - (paid ?? 0),
+    afterFees: paid !== null,
     wipeoutMove: percentToLiquidation,
     wipeoutSide: direction === "DOWN" ? "up" : "down",
   };

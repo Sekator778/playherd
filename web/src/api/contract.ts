@@ -783,6 +783,9 @@ export interface MarketSeriesDto {
    *  `BetDto.maxLeverageForStake`), and its herd-fee rate `r_m` in basis points (`fee = stake * min(20%, k * r_m * leverage), k = 1 in the 3-minute round, 2.2 (3.0 odds) in the 15-minute one`). */
   maxLeverage?: number | null;
   herdFeeBp?: string | null;
+  /** `k` of the herd fee for this round length: "1" in the 3-minute round, "2.2" in the 15-minute one ("3" in an odds market's) — the "All fees" page computes
+   *  its table from `herdFeeBp`, this and `maxLeverage`, never from numbers of its own. Absent from a server that predates it. */
+  feeFactor?: string | null;
 }
 
 /** A market's own crowd account (Р-5, Р-17, Т-6) in card form — how the herd is doing here. */

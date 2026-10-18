@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
 import { LEVERAGE_MAX, type Direction, type MarketDto, type RoundBetting } from "../api/contract";
@@ -14,7 +14,7 @@ import { FeeBreakdown } from "./BetSlip";
 import { announceDraftPlaced, betDraftFor, clearBetDraft, onDraftPlaced, saveBetDraft, revealBetSlip } from "./betDraft";
 import { announceCustomize, closeBetSheet, consumeAutoTestWallet, requestAutoTestWallet, useBetSheetRequest, type BetSheetRequest } from "./betSheetState";
 import { defaultRiskId, exampleFor, optionFor, riskOptions, RISK_WANTED, SHEET_STAKES, signedMove, stakeIsValid, type RiskId } from "./betSheetModel";
-import { defaultLeverage, formatMovePercent, sanitizeStakeInput } from "./betSlipModel";
+import { defaultLeverage, formatFeePercent, formatMovePercent, sanitizeStakeInput } from "./betSlipModel";
 import { DirectionGlyph } from "./icons";
 import { dialCeiling, effectiveLeverage } from "./leverageScale";
 import { setProMode } from "./proMode";
@@ -327,14 +327,18 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
             </fieldset>
 
             <div className="bet-sheet__example" aria-live="polite">
-              {preview && valid ? <Example market={market} symbol={symbol} direction={direction} stake={stakeNum} leverage={leverage} preview={preview} /> : <p className="faint">{t("sheet.exLoading")}</p>}
+              {preview && valid ? <Example market={market} symbol={symbol} direction={direction} stake={stakeNum} leverage={leverage} preview={preview} fees={fees} /> : <p className="faint">{t("sheet.exLoading")}</p>}
             </div>
 
             {fees !== null && preview && (
               <div className="bet-sheet__fees">
                 <button type="button" className="bet-sheet__fees-toggle" aria-expanded={feesOpen} title={t("sheet.feesAria")} onClick={() => setFeesOpen((v) => !v)}>
-                  {t("sheet.fees", { amount: formatPlayAmount(fees, { decimals: 2 }) })} <span aria-hidden="true">{feesOpen ? "▴" : "▾"}</span>
+                  {t("sheet.fees", { amount: formatPlayAmount(fees, { decimals: 3 }), percent: formatFeePercent(fees, stakeNum) })}{" "}
+                  <span aria-hidden="true">{feesOpen ? "▴" : "▾"}</span>
                 </button>
+                <Link to="/fees" className="bet-sheet__fees-all" onClick={() => closeBetSheet()}>
+                  {t("sheet.feesAll")}
+                </Link>
                 {feesOpen && <FeeBreakdown preview={preview} stake={stakeNum} />}
               </div>
             )}
@@ -381,6 +385,7 @@ function Example({
   stake,
   leverage,
   preview,
+  fees,
 }: {
   market: MarketDto | undefined;
   symbol: string;
@@ -388,9 +393,11 @@ function Example({
   stake: number;
   leverage: number;
   preview: NonNullable<ReturnType<typeof useLiquidationPreview>["preview"]>;
+  /** Herd fee + network fee of this bet, from the server's preview; null while the preview does not name them (then the figures are gross). */
+  fees: number | null;
 }) {
   const t = useT();
-  const ex = exampleFor(direction, stake, leverage, preview.percentToLiquidation);
+  const ex = exampleFor(direction, stake, leverage, preview.percentToLiquidation, fees);
   const stepText = formatMovePercent(ex.step);
   // The side that wins is the side of the bet: DOWN wins when the price falls.
   const winFraction = direction === "UP" ? ex.step : -ex.step;
@@ -398,8 +405,17 @@ function Example({
   const price = market ? formatPrice(preview.liquidationPrice, market) : preview.liquidationPrice;
   return (
     <ul className="bet-sheet__lines mono">
-      <li className="outcome-won">{t("sheet.exWin", { symbol, move: signedMove(winFraction, stepText), amount: formatPlayAmount(ex.win, { sign: true }) })}</li>
-      <li className="outcome-lost">{t("sheet.exLose", { symbol, move: signedMove(-winFraction, stepText), amount: formatPlayAmount(ex.lose, { sign: true }) })}</li>
+      {/* With the fees known the figures are net of them. A win smaller than the fees is told as a loss, never as a win. */}
+      <li className={ex.win < 0 ? "outcome-lost" : "outcome-won"}>
+        {t(!ex.afterFees ? "sheet.exWin" : ex.win < 0 ? "sheet.exWinUnder" : "sheet.exWinNet", {
+          symbol,
+          move: signedMove(winFraction, stepText),
+          amount: formatPlayAmount(ex.win, { sign: true }),
+        })}
+      </li>
+      <li className="outcome-lost">
+        {t(ex.afterFees ? "sheet.exLoseNet" : "sheet.exLose", { symbol, move: signedMove(-winFraction, stepText), amount: formatPlayAmount(ex.lose, { sign: true }) })}
+      </li>
       <li className="outcome-lost bet-sheet__wipeout">
         {t("sheet.exWipe", {
           symbol,

@@ -188,7 +188,8 @@ public class MarketViewService {
                     running.roundId(), running.endMs(), split.participantCount(),
                     split.upStake().toMoney().toPlainString(), split.downStake().toMoney().toPlainString(),
                     split.majorityDirection(), market.economy().capFor(interval),
-                    market.economy().herdFeeBp().stripTrailingZeros().toPlainString()));
+                    market.economy().herdFeeBp().stripTrailingZeros().toPlainString(),
+                    market.spec().feeFactorFor(interval).stripTrailingZeros().toPlainString()));
         }
         return out;
     }

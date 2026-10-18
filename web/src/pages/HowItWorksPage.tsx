@@ -62,6 +62,13 @@ export function HowItWorksPage() {
         </p>
       </section>
 
+      <section id="fees">
+        <h2>{t("howItWorks.feesTitle")}</h2>
+        <p>
+          <Rich text={t("howItWorks.fees1")} to="/fees" />
+        </p>
+      </section>
+
       <section>
         <h2>{t("howItWorks.ratingsTitle")}</h2>
         <p>

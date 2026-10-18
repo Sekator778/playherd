@@ -7,6 +7,7 @@ import { StatsPage } from "./pages/StatsPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { MyProfilePage } from "./pages/MyProfilePage";
 import { WalletPage } from "./pages/WalletPage";
+import { FeesPage } from "./pages/FeesPage";
 import { HowItWorksPage } from "./pages/HowItWorksPage";
 import { StatusPage } from "./pages/StatusPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="/profile/:playerId" element={<ProfilePage />} />
         <Route path="/wallet" element={<WalletPage />} />
         <Route path="/how-it-works" element={<HowItWorksPage />} />
+        <Route path="/fees" element={<FeesPage />} />
         <Route path="/status" element={<StatusPage />} />
         {/* Hidden design lab (implementation-plan.md §5) — intentionally not in any nav; reachable
          *  only by knowing the URL. */}

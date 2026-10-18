@@ -54,7 +54,8 @@
             "downStake": "0.000",
             "majorityDirection": "UP",
             "maxLeverage": 1200,
-            "herdFeeBp": "0.92"
+            "herdFeeBp": "0.92",
+            "feeFactor": "1"
           },
           {
             "interval": "DAILY",
@@ -68,7 +69,8 @@
             "downStake": "0.000",
             "majorityDirection": null,
             "maxLeverage": 500,
-            "herdFeeBp": "0.92"
+            "herdFeeBp": "0.92",
+            "feeFactor": "2.2"
           }
         ],
         "crowd": {
@@ -117,7 +119,8 @@
             "downStake": "400.000",
             "majorityDirection": "DOWN",
             "maxLeverage": 25,
-            "herdFeeBp": "1"
+            "herdFeeBp": "1",
+            "feeFactor": "1"
           },
           {
             "interval": "DAILY",
@@ -131,7 +134,8 @@
             "downStake": "0.000",
             "majorityDirection": null,
             "maxLeverage": 25,
-            "herdFeeBp": "1"
+            "herdFeeBp": "1",
+            "feeFactor": "2.2"
           }
         ],
         "crowd": {
@@ -180,7 +184,8 @@
             "downStake": "0.000",
             "majorityDirection": "UP",
             "maxLeverage": 10,
-            "herdFeeBp": "2.5"
+            "herdFeeBp": "2.5",
+            "feeFactor": "1"
           },
           {
             "interval": "DAILY",
@@ -194,7 +199,8 @@
             "downStake": "0.000",
             "majorityDirection": null,
             "maxLeverage": 10,
-            "herdFeeBp": "2.5"
+            "herdFeeBp": "2.5",
+            "feeFactor": "3"
           }
         ],
         "crowd": {

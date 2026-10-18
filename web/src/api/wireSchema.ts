@@ -373,6 +373,7 @@ const marketSeries = obj<MarketSeriesDto>({
   majorityDirection: nullable(direction),
   maxLeverage: opt(int),
   herdFeeBp: opt(decimal()),
+  feeFactor: opt(decimal()),
 });
 const marketCrowd = obj<MarketCrowdBriefDto>({
   capital: usd,

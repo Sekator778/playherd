@@ -40,6 +40,9 @@ export function ResultTile({
   dateLabel,
   odds = false,
   source,
+  stake,
+  payout,
+  fees,
 }: {
   roundId: RoundId;
   /** The market's ticker ("BTC", "NVDA", "GER") — which market the round was played in (Р-69). */
@@ -61,6 +64,12 @@ export function ResultTile({
   /** The market's source, when its market is still on the list (a history row carries none): the tag's hover text names
    *  whose odds they are only then — an unknown source is not called "Polymarket". */
   source?: MarketDto["source"];
+  /** What the player staked and what came back (`ProfileRoundEntryDto.stake`/`payout`): the tile says "Staked 100 → returned 109.2". The headline net is
+   *  `payout − stake` and does NOT contain the fees (they were charged on top of the stake when the bet was placed). */
+  stake?: string;
+  payout?: string;
+  /** The fees paid on this bet (herd + network), PLAY, when the caller knows them: a small "fees 1.07" under the line. `ProfileRoundEntryDto` carries none yet. */
+  fees?: number | null;
 }) {
   const t = useT();
   const kind = resultKind(net, liquidated);
@@ -109,6 +118,12 @@ export function ResultTile({
           )}
           {dateLabel}
         </span>
+        {stake !== undefined && payout !== undefined && (
+          <span className="result-tile__money mono">
+            {t("resultTile.returned", { stake: formatPlayAmount(stake), payout: formatPlayAmount(payout) })}
+            {fees != null && fees > 0 && <span className="faint result-tile__fees">{t("resultTile.fees", { fees: formatPlayAmount(fees) })}</span>}
+          </span>
+        )}
       </span>
       <span className={`result-tile__net ${NET_CLASS[kind]}`}>
         {formatPlayAmount(net, { sign: true })} PLAY

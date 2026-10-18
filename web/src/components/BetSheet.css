@@ -208,6 +208,26 @@
   font-weight: 800;
 }
 
+.bet-sheet__fees {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.bet-sheet__fees > .bet-fees {
+  flex: 1 0 100%;
+}
+
+.bet-sheet__fees-all {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13px;
+  text-decoration: underline;
+}
+
 .bet-sheet__fees-toggle {
   min-height: 44px;
   padding: 0;

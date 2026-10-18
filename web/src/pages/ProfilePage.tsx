@@ -168,6 +168,8 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
               direction={h.direction}
               leverage={h.leverage}
               net={netFromPayoutAndStake(h.payout, h.stake)}
+              stake={h.stake}
+              payout={h.payout}
               liquidated={h.liquidated}
               dateLabel={formatDateTime(h.settledAtMs)}
               odds={(h.kind ?? byId.get(h.marketId)?.kind) === "ODDS"}

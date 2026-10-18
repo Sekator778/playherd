@@ -140,7 +140,9 @@ class MarketsRpcTest extends LiveRpcTestBase {
         JsonNode series = node.path("series");
         assertThat(series).hasSize(2);
         assertKeys(series.get(0), "interval", "durationSec", "bettingRoundId", "bettingClosesAtMs", "runningRoundId",
-                "runningEndsAtMs", "participantCount", "upStake", "downStake", "majorityDirection", "maxLeverage", "herdFeeBp");
+                "runningEndsAtMs", "participantCount", "upStake", "downStake", "majorityDirection", "maxLeverage", "herdFeeBp", "feeFactor");
+        assertThat(series.get(0).path("feeFactor").asText()).as("k of the 3-minute round").isEqualTo("1");
+        assertThat(series.get(1).path("feeFactor").asText()).as("k of the 15-minute round of a price market").isEqualTo("2.2");
         assertThat(series.get(0).path("interval").asText()).isEqualTo("HOURLY");
         assertThat(series.get(0).path("durationSec").asLong()).isEqualTo(60);
         assertThat(series.get(1).path("interval").asText()).isEqualTo("DAILY");

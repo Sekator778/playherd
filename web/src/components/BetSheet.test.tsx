@@ -31,9 +31,11 @@ interface Options {
   signedIn?: boolean;
   kind?: "PERP" | "ODDS";
   placeBet?: Api["placeBet"];
+  /** A preview that does not name the fees (an older server). */
+  noFees?: boolean;
 }
 
-function setup({ cap = 40, tierAt500, signedIn = true, kind = "PERP", placeBet }: Options = {}) {
+function setup({ cap = 40, tierAt500, signedIn = true, kind = "PERP", placeBet, noFees = false }: Options = {}) {
   const start = Date.now() + HOUR;
   const round = bettingRoundOf("BTC", "BTC", { roundId: `BTC-1h-${start}`, window: { interval: "HOURLY", startMs: start, endMs: start + HOUR } });
   let player: typeof TEST_PLAYER | null = signedIn ? TEST_PLAYER : null;
@@ -56,9 +58,7 @@ function setup({ cap = 40, tierAt500, signedIn = true, kind = "PERP", placeBet }
         entryPriceUsed: "100.00",
         liquidationPrice: req.direction === "DOWN" ? (100 * (1 + 0.9 / req.leverage)).toFixed(2) : (100 * (1 - 0.9 / req.leverage)).toFixed(2),
         percentToLiquidation: 0.9 / req.leverage,
-        feeHerd: "0.250",
-        feeNetwork: "0.100",
-        totalDebit: (stake + 0.35).toFixed(3),
+        ...(noFees ? {} : { feeHerd: "0.250", feeNetwork: "0.100", totalDebit: (stake + 0.35).toFixed(3) }),
         maxLeverageForStake: max,
       };
     },
@@ -92,6 +92,44 @@ afterEach(() => {
   clearBetDraft();
 });
 
+describe("the sheet, fees (Р-102, fee_display_venues §4)", () => {
+  it("opens the breakdown with the server's numbers and says where the money goes: the HERD account", async () => {
+    const { open, user } = setup();
+    open("DOWN");
+    const dialog = await sheet();
+    const line = await within(dialog).findByRole("button", { name: /Fees 0\.350 PLAY/ });
+    expect(line).toHaveAttribute("aria-expanded", "false");
+    expect(within(dialog).queryByText("Cost of this bet")).not.toBeInTheDocument();
+    await user.click(line);
+    expect(line).toHaveAttribute("aria-expanded", "true");
+    const costs = within(dialog).getByLabelText("Cost of this bet");
+    expect(costs).toHaveTextContent("Herd fee0.250 PLAY (0.25%)");
+    expect(costs).toHaveTextContent("Network fee0.100 PLAY (0.10%)");
+    expect(costs).toHaveTextContent("Total debit100.350 PLAY");
+    expect(costs).toHaveTextContent("Both fees are paid to the HERD account.");
+    expect(costs).not.toHaveTextContent(/treasury/i);
+  });
+
+  it("links to the public table of all fees and closes the sheet on the way", async () => {
+    const { open, user } = setup();
+    open("DOWN");
+    const dialog = await sheet();
+    const link = await within(dialog).findByRole("link", { name: "All fees" });
+    expect(link).toHaveAttribute("href", "/fees");
+    await user.click(link);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Place a bet" })).not.toBeInTheDocument());
+  });
+
+  it("a preview without fees (an older server) keeps the gross example and shows no fee line", async () => {
+    const { open } = setup({ noFees: true });
+    open("DOWN");
+    const dialog = await sheet();
+    expect(await within(dialog).findByText(/BTC −1% → you win \+10$/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/BTC \+1% → you lose -10$/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Fees/ })).not.toBeInTheDocument();
+  });
+});
+
 describe("the sheet, signed in", () => {
   it("opens on 100 and Normal x10, says the bet in plain words with real numbers, and ONE button places exactly that", async () => {
     const { place, open, user, round } = setup();
@@ -102,10 +140,11 @@ describe("the sheet, signed in", () => {
     expect(pressed(within(dialog).getByRole("button", { name: /Normal/ }))).toBe(true);
 
     // x10 on 100 PLAY: a 1% move is 10 PLAY; the wipeout is 9% away (the stub's price); DOWN wins when the price falls.
-    expect(await within(dialog).findByText(/BTC −1% → you win \+10/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/BTC \+1% → you lose -10/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/BTC −1% → you win \+9\.65 after fees/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/BTC \+1% → you lose -10\.35 with fees/)).toBeInTheDocument();
     expect(within(dialog).getByText(/BTC \+9% \(\$109\.00\) → you lose the whole 100/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: /Fees 0\.35 PLAY/ })).toBeInTheDocument();
+    // The line names the total in PLAY and as a share of the stake (the server's preview numbers: 0.250 + 0.100 on 100).
+    expect(within(dialog).getByRole("button", { name: /Fees 0\.350 PLAY \(0\.35%\)/ })).toBeInTheDocument();
 
     const go = within(dialog).getByRole("button", { name: "BET 100 ON DOWN" });
     await user.click(go);
@@ -118,8 +157,8 @@ describe("the sheet, signed in", () => {
     const { open } = setup();
     open("UP");
     const dialog = await sheet();
-    expect(await within(dialog).findByText(/BTC \+1% → you win \+10/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/BTC −1% → you lose -10/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/BTC \+1% → you win \+9\.65 after fees/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/BTC −1% → you lose -10\.35 with fees/)).toBeInTheDocument();
     expect(within(dialog).getByText(/BTC −9% \(\$91\.00\) → you lose the whole 100/)).toBeInTheDocument();
   });
 
@@ -131,7 +170,7 @@ describe("the sheet, signed in", () => {
     await user.click(within(dialog).getByRole("button", { name: /Bold/ }));
     const go = await within(dialog).findByRole("button", { name: "BET 500 ON UP" });
     // the example follows the choice: x25 on 500 PLAY, 1% = 125 (the wipeout is 3.6% away, so 1% still fits inside it)
-    expect(await within(dialog).findByText(/you win \+125/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/you win \+124\.65 after fees/)).toBeInTheDocument();
     await user.click(go);
     expect(place).toHaveBeenCalledTimes(1);
     expect(place).toHaveBeenCalledWith({ roundId: round.roundId, direction: "UP", leverage: 25, stake: "500.000" });
@@ -242,7 +281,7 @@ describe("signed out: the first step is in the sheet, and the choice survives th
     const sheetDialog = await sheet();
     await user.click(within(sheetDialog).getByRole("button", { name: "500" }));
     await user.click(within(sheetDialog).getByRole("button", { name: /Bold/ }));
-    await within(sheetDialog).findByText(/you win \+125/);
+    await within(sheetDialog).findByText(/you win \+124\.65 after fees/);
     await user.click(within(sheetDialog).getByRole("button", { name: "Continue with test wallet" }));
 
     // The sign-in dialog opens on its way already: the nickname, not "Connect your wallet" again.

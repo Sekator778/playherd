@@ -2403,6 +2403,16 @@ footer.app-footer .footer-link {
   color: var(--text-faint);
   margin-top: 2px;
 }
+.result-tile__fees {
+  display: block;
+  font-size: 11px;
+}
+.result-tile__money {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
 .nowrap {
   white-space: nowrap;
 }

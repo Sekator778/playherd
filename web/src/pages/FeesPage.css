@@ -1,0 +1,53 @@
+.fees-page__formula {
+  font-size: 16px;
+}
+
+.fees-page__formula strong {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+}
+
+/* The table is wider than a phone: it scrolls sideways inside its own box, the page does not. */
+.fees-page__scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.fees-page__table {
+  min-width: 440px;
+}
+
+.fees-page__table th,
+.fees-page__table td {
+  padding: 8px 8px;
+  white-space: nowrap;
+}
+
+.fees-page__caption {
+  caption-side: top;
+  padding: 8px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.fees-page__table tbody th {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 14px;
+  color: inherit;
+  font-weight: 400;
+  position: sticky;
+  left: 0;
+  background: var(--bg);
+}
+
+.fees-page__num {
+  text-align: right !important;
+}
+
+.fees-page__round {
+  color: var(--text-muted);
+  font-size: 12px;
+}

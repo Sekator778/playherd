@@ -69,6 +69,28 @@ describe("exampleFor — plain numbers", () => {
   });
 });
 
+describe("exampleFor — net of the fees", () => {
+  it("a win is the gain minus the fees, a loss is the loss plus the fees", () => {
+    const e = exampleFor("DOWN", 100, 10, 0.09, 1.07);
+    expect(e.afterFees).toBe(true);
+    expect(e.win).toBeCloseTo(10 - 1.07);
+    expect(e.lose).toBeCloseTo(-10 - 1.07);
+  });
+
+  it("without the fees (the preview did not name them) the figures stay gross", () => {
+    for (const none of [null, 0, Number.NaN]) {
+      const e = exampleFor("UP", 100, 10, 0.09, none);
+      expect(e.afterFees).toBe(false);
+      expect(e.win).toBeCloseTo(10);
+      expect(e.lose).toBeCloseTo(-10);
+    }
+  });
+
+  it("fees bigger than the gain make the 'win' negative — the sheet words that as a loss", () => {
+    expect(exampleFor("UP", 100, 3, 0.9, 5).win).toBeLessThan(0);
+  });
+});
+
 describe("small helpers", () => {
   it("stakeIsValid wants a number of at least the minimum stake", () => {
     expect(stakeIsValid("100")).toBe(true);

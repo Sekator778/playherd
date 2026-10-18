@@ -32,3 +32,32 @@ describe("ResultTile — the odds tag names whose odds they are only when the ti
     expect(screen.queryByText("ODDS")).not.toBeInTheDocument();
   });
 });
+
+describe("ResultTile — staked → returned, fees below (Р-98 step 3, fee_display_venues §4)", () => {
+  it("says what was staked and what came back, next to the net that excludes the fees", () => {
+    tile({ stake: "100.000", payout: "109.200", net: 9.2 });
+    expect(screen.getByRole("link")).toHaveTextContent("Staked 100 → returned 109.2");
+    expect(screen.getByText("+9.20 PLAY")).toBeInTheDocument();
+  });
+
+  it("a loss reads the same way: nothing is hidden when little came back", () => {
+    tile({ stake: "100.000", payout: "80.150", net: -19.85 });
+    expect(screen.getByRole("link")).toHaveTextContent("Staked 100 → returned 80.15");
+    expect(screen.getByText("-19.85 PLAY")).toBeInTheDocument();
+  });
+
+  it("a liquidation returns nothing", () => {
+    tile({ stake: "100.000", payout: "0.000", net: -100, liquidated: true });
+    expect(screen.getByRole("link")).toHaveTextContent("Staked 100 → returned 0");
+  });
+
+  it("the fees, when the caller knows them, are a small line after it", () => {
+    tile({ stake: "100.000", payout: "109.200", net: 9.2, fees: 1.07 });
+    expect(screen.getByRole("link")).toHaveTextContent("Staked 100 → returned 109.20fees 1.07");
+  });
+
+  it("without a stake and a payout the tile has no such line (nothing is made up)", () => {
+    tile();
+    expect(screen.queryByText(/Staked/)).not.toBeInTheDocument();
+  });
+});

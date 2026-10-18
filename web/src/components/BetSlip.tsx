@@ -378,6 +378,7 @@ export function FeeBreakdown({ preview, stake }: { preview: LiquidationPreviewDt
           <Rich text={t("betSlip.maxForStake", { max: preview.maxLeverageForStake })} />
         </p>
       )}
+      <p className="faint bet-fees__note">{t("betSlip.feeWhere")}</p>
       <p className="faint bet-fees__note">{t("betSlip.feeRefund")}</p>
     </div>
   );
