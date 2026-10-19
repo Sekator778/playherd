@@ -2,7 +2,7 @@
   "method": "authVerify",
   "args": [
     {
-      "nonce": "5DqFoE_ZBauJDtYBX0ATy_gOJHxnsmpy",
+      "nonce": "we38GAB63uQdhP5TnxLotPZID3mqjaRg",
       "address": "txch1carol0wire0player0000000000000000000000000000000000000q9m2ztu",
       "publicKey": "0xabababababababababababababababababababababababababababababababababababababababababababababababab",
       "signature": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
@@ -10,7 +10,7 @@
   ],
   "response": {
     "player": {
-      "playerId": "d218927a-a495-492c-ad2e-47b1e1a07c4f",
+      "playerId": "3832a2bb-1d3c-477b-9ec9-fea44b567c5a",
       "nickname": "txch1c…2ztu",
       "walletAddress": "txch1carol0wire0player0000000000000000000000000000000000000q9m2ztu",
       "displayName": "txch1c…2ztu (txch1c…2ztu)",

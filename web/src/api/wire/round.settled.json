@@ -1,14 +1,14 @@
 {
   "method": "round",
   "args": [
-    "T_WIRE_PERP-1h-1792058760000"
+    "T_WIRE_PERP-1h-1792445760000"
   ],
   "response": {
-    "roundId": "T_WIRE_PERP-1h-1792058760000",
+    "roundId": "T_WIRE_PERP-1h-1792445760000",
     "window": {
       "interval": "HOURLY",
-      "startMs": 1792058760000,
-      "endMs": 1792058820000
+      "startMs": 1792445760000,
+      "endMs": 1792445820000
     },
     "marketId": "T_WIRE_PERP",
     "asset": "WPR",
@@ -20,8 +20,8 @@
     "closePrice": "2412.000",
     "positions": [
       {
-        "playerId": "4494220a-da20-40a8-9a2f-b95edf3714ab",
-        "roundId": "T_WIRE_PERP-1h-1792058760000",
+        "playerId": "d210bce1-5450-4439-837b-339920702dcf",
+        "roundId": "T_WIRE_PERP-1h-1792445760000",
         "direction": "UP",
         "leverage": 5,
         "size": "0.06250000",
@@ -30,7 +30,7 @@
         "pnl": "7.500",
         "stake": "300.000",
         "player": {
-          "playerId": "4494220a-da20-40a8-9a2f-b95edf3714ab",
+          "playerId": "d210bce1-5450-4439-837b-339920702dcf",
           "nickname": "Alice_Wire",
           "walletAddress": "txch1alice0wire0player0000000000000000000000000000000000000q2k7ar",
           "displayName": "Alice_Wire (txch1a…k7ar)",
@@ -41,8 +41,8 @@
         "directionCorrect": true
       },
       {
-        "playerId": "7da2f1b2-588c-4ce1-8612-36585ffef8bf",
-        "roundId": "T_WIRE_PERP-1h-1792058760000",
+        "playerId": "cb21e8f5-8b52-41a5-baf3-42eb0b711c79",
+        "roundId": "T_WIRE_PERP-1h-1792445760000",
         "direction": "UP",
         "leverage": 25,
         "size": "0.10416667",
@@ -51,7 +51,7 @@
         "pnl": "-100.000",
         "stake": "100.000",
         "player": {
-          "playerId": "7da2f1b2-588c-4ce1-8612-36585ffef8bf",
+          "playerId": "cb21e8f5-8b52-41a5-baf3-42eb0b711c79",
           "nickname": "Bob_Wire",
           "walletAddress": "txch1bob0wire0player000000000000000000000000000000000000000q5h3xm",
           "displayName": "Bob_Wire (txch1b…h3xm)",
@@ -63,7 +63,7 @@
       }
     ],
     "crowd": {
-      "roundId": "T_WIRE_PERP-1h-1792058760000",
+      "roundId": "T_WIRE_PERP-1h-1792445760000",
       "traded": true,
       "direction": "UP",
       "leverage": 10,
@@ -73,7 +73,7 @@
       "capitalBefore": "90357.44",
       "capitalAfter": "90809.23"
     },
-    "resultsHash": "0x3d183f2d56f41c4eb73d3dac096a57b4c5a21678f0d8c87a5812595a4fcfed28",
+    "resultsHash": "0xee71d7b9dc93dbefc87d8b25ac7b6f8c28b6280eb1653e0829cc28b90af2eebf",
     "oracleAnchor": {
       "seq": 74,
       "state": "unknown",

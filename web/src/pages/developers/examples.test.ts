@@ -19,10 +19,18 @@ function serverKeyMethods(): string[] {
   return [...match[1].matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]);
 }
 
-/** Every key of `excerpt` is in `whole` with the same value (arrays: element by element, the excerpt may be shorter). */
+/** The kind of a JSON value: null, string, number, boolean, array or object. */
+function kind(value: unknown): string {
+  return value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+}
+
+/** Every key of `excerpt` is in `whole` with a value of the same kind (arrays: element by element, the excerpt may be shorter).
+ *  Kinds, not values: ids, times and amounts change every time the fixtures are recorded again, the shape must not. */
 function differences(excerpt: unknown, whole: unknown, path: string): string[] {
   if (excerpt === null || typeof excerpt !== "object") {
-    return excerpt === whole ? [] : [`${path}: the page says ${JSON.stringify(excerpt)}, the recorded answer ${JSON.stringify(whole)}`];
+    return kind(excerpt) === kind(whole)
+      ? []
+      : [`${path}: the page has a ${kind(excerpt)} (${JSON.stringify(excerpt)}), the recorded answer a ${kind(whole)} (${JSON.stringify(whole)})`];
   }
   if (whole === null || typeof whole !== "object") return [`${path}: the page has an object, the recorded answer ${JSON.stringify(whole)}`];
   if (Array.isArray(excerpt)) {
@@ -89,9 +97,10 @@ describe("docs/api/bots.md", () => {
     expect(text).toContain(PYTHON_BOT);
   });
 
-  it("keeps a marked place for the payout modes, and says an absent mode is today's", () => {
+  it("describes both payout modes, and says an absent mode is the percentage mode", () => {
     expect(text).toContain("## 8. Payout modes");
-    expect(text).toMatch(/WITHOUT `mode`[^\n]*percentage mode/);
+    expect(text).toContain('**`"PERCENTAGE"`** (or no `mode` at all');
+    expect(text).toContain('**`"FIXED"`** ("Win or lose")');
   });
 
   it("calls the game's money PLAY and never describes it as a plaything", () => {

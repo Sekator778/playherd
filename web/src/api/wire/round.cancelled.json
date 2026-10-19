@@ -1,14 +1,14 @@
 {
   "method": "round",
   "args": [
-    "T_WIRE_GAME-1h-1792058880000"
+    "T_WIRE_GAME-1h-1792445880000"
   ],
   "response": {
-    "roundId": "T_WIRE_GAME-1h-1792058880000",
+    "roundId": "T_WIRE_GAME-1h-1792445880000",
     "window": {
       "interval": "HOURLY",
-      "startMs": 1792058880000,
-      "endMs": 1792058940000
+      "startMs": 1792445880000,
+      "endMs": 1792445940000
     },
     "marketId": "T_WIRE_GAME",
     "asset": "GER",
@@ -17,14 +17,14 @@
     "source": "polymarket",
     "phase": "CANCELLED",
     "cancellation": {
-      "roundId": "T_WIRE_GAME-1h-1792058880000",
+      "roundId": "T_WIRE_GAME-1h-1792445880000",
       "marketId": "T_WIRE_GAME",
       "asset": "GER",
       "reason": "market closed: The source market ended",
-      "cancelledAtMs": 1792059249966,
+      "cancelledAtMs": 1792446301534,
       "refundedBetCount": 1
     },
-    "resultsHash": "0x1ae4d348c31d2521f26c898dca9c944e9faa25bc1062af0e0205ee8d55bab412",
+    "resultsHash": "0xf4f86efdc2f7799008625547b6d8c7bffd9e420102135ae2ee537e6eb126c99b",
     "oracleAnchor": null
   }
 }

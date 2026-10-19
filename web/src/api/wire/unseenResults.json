@@ -3,13 +3,13 @@
   "args": [],
   "response": [
     {
-      "roundId": "T_WIRE_PERP-1h-1792310160000",
+      "roundId": "T_WIRE_PERP-1h-1792445760000",
       "interval": "HOURLY",
       "marketId": "T_WIRE_PERP",
       "asset": "WPR",
       "durationSec": 60,
       "kind": "PERP",
-      "settledAtMs": 1792310219999,
+      "settledAtMs": 1792445819999,
       "direction": "UP",
       "leverage": 5,
       "stake": "300.000",
@@ -19,13 +19,13 @@
       "fees": "0.250"
     },
     {
-      "roundId": "T_WIRE_PERP-1h-1792310100000",
+      "roundId": "T_WIRE_PERP-1h-1792445700000",
       "interval": "HOURLY",
       "marketId": "T_WIRE_PERP",
       "asset": "WPR",
       "durationSec": 60,
       "kind": "PERP",
-      "settledAtMs": 1792310159999,
+      "settledAtMs": 1792445759999,
       "direction": "UP",
       "leverage": 25,
       "stake": "100.000",

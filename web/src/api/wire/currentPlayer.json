@@ -2,7 +2,7 @@
   "method": "currentPlayer",
   "args": [],
   "response": {
-    "playerId": "4494220a-da20-40a8-9a2f-b95edf3714ab",
+    "playerId": "d210bce1-5450-4439-837b-339920702dcf",
     "nickname": "Alice_Wire",
     "walletAddress": "txch1alice0wire0player0000000000000000000000000000000000000q2k7ar",
     "displayName": "Alice_Wire (txch1a…k7ar)",

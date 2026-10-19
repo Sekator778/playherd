@@ -5,11 +5,11 @@
   ],
   "response": {
     "bot": {
-      "playerId": "api-5d2cf395-d45a-48cc-8819-f6a9e0f5ae27",
+      "playerId": "api-a1a8d377-ef46-4158-bcbb-6a12f6c63b54",
       "nickname": "Wire Bot",
-      "keyHint": "herd_...6hIs",
+      "keyHint": "herd_...NrsA",
       "keyActive": true,
-      "createdAtMs": 1792403621732
+      "createdAtMs": 1792446302992
     },
     "apiKey": "herd_EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEE"
   }

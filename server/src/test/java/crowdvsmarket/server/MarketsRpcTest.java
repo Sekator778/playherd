@@ -105,7 +105,8 @@ class MarketsRpcTest extends LiveRpcTestBase {
 
         assertKeys(answer, "serverTimeMs", "categories", "markets", "economy");
         JsonNode economy = answer.path("economy");
-        assertKeys(economy, "networkFeePlay", "herdFeeGuardPercent", "stakeTiers");
+        assertKeys(economy, "networkFeePlay", "herdFeeGuardPercent", "stakeTiers", "fixedPlatformFeePercent");
+        assertThat(economy.path("fixedPlatformFeePercent").asText()).isEqualTo("3");
         assertThat(economy.path("networkFeePlay").asText()).isEqualTo("0.1");
         assertThat(economy.path("herdFeeGuardPercent").asText()).isEqualTo("20");
         assertThat(economy.path("stakeTiers")).hasSize(4);
