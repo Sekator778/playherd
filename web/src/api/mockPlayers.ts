@@ -2,7 +2,7 @@
  * Deterministically generated NPC players — the "~40 players, a season of history" the task
  * asks for. Every function here is a pure function of a seed, so the same player has the same
  * nickname/address/history on every render and every reload (Р-9 already tells us ratings can be
- * gamed in this toy-money MVP, so reproducible-but-fake history is an honest match for that).
+ * gamed in this PLAY MVP, so reproducible-but-fake history is an honest match for that).
  *
  * The signed-in demo player (via mock wallet connect, see `mockApi.ts`) is intentionally NOT one
  * of these NPCs — every connect is a brand-new player (`AuthSessionDto.isNewPlayer = true`), so

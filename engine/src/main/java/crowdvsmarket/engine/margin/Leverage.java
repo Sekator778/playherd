@@ -9,7 +9,7 @@ import java.math.BigDecimal;
  * <p>The plain constructor enforces exactly that fixed range — BTC's absolute bounds, confirmed
  * live ({@code meta.universe[BTC].maxLeverage=40}, doc section 1.10). {@link #forNotional} additionally
  * enforces the margin-tier cap for a given position notional (doc section 1.4/2.1): for any
- * notional realistic in this MVP (toy-money demo, far under the 150M USDC tier1 threshold) that
+ * notional realistic in this MVP (PLAY demo, far under the 150M USDC tier1 threshold) that
  * cap is the same 40, so the two checks coincide in practice, but {@code forNotional} is the one
  * that is actually tier-aware.
  *

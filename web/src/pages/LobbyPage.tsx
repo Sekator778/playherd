@@ -60,7 +60,7 @@ const SORT_NOTE = {
 } as const;
 
 /** What this is, in one small line above the markets, for a visitor who has not signed in (first tester pass, D10: nothing on the
- *  first screen said what the app is or that the money is toy money — that came after eighteen cards). A signed-in player knows,
+ *  first screen said what the app is or what the money is — that came after eighteen cards). A signed-in player knows,
  *  and a session still being read is not guessed at: no flash of it for a returning player.
  *
  *  OFF: `LobbyPage`'s `intro` flag defaults to false. Р-63 took lines of this kind off the screens on Alex's word, so whether the
