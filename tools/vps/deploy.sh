@@ -320,9 +320,16 @@ external_checks() {
     if ((hits == 0)); then
       c_warn "rate limit: ${burst} calls never got 429 (HERD_RATELIMIT_CAPACITY raised? then this check says nothing)"
     else
-      second="$(curl_code -X POST -H 'Content-Type: application/json' -H "CF-Connecting-IP: ${spoof_b}" -d '{"args":["x"]}' "https://${domain}/api/rpc/cancelBet")"
+      # three calls, not one: the bucket refills (0.5 a second by default) while the burst runs, so the first call after it can
+      # find a token and get 401 although the bucket is shared; a fresh bucket (capacity 30) would answer all three without 429
+      second=""
+      for ((i = 0; i < 3; i++)); do
+        code="$(curl_code -X POST -H 'Content-Type: application/json' -H "CF-Connecting-IP: ${spoof_b}" -d '{"args":["x"]}' "https://${domain}/api/rpc/cancelBet")"
+        second="${second:+${second} }${code}"
+        [[ "${code}" == 429 ]] && break
+      done
       first="${hits}"
-      if [[ "${second}" == 429 ]]; then
+      if [[ "${second}" == *429* ]]; then
         c_ok "rate limit: limited after a burst (${first} x 429), and a forged CF-Connecting-IP does not give a fresh bucket"
       else
         c_fail "rate limit: a call with a forged CF-Connecting-IP got ${second}, not 429 -- Caddy does not overwrite that header"
