@@ -54,6 +54,8 @@ public final class LedgerBook {
     private PlayAmount herd = PlayAmount.ZERO;
     /** Stakes reserved for bets that are neither settled nor refunded yet: out of the players' balances, in no account. */
     private PlayAmount openStakes = PlayAmount.ZERO;
+    /** The sum of all the players' balances, kept by {@link #applyDelta} — the only place a balance changes (architecture plan F2). */
+    private PlayAmount playersTotal = PlayAmount.ZERO;
     /** What the opening of the TREASURY account made the total of all accounts: the on-chain treasury coin at the cutover. */
     private PlayAmount openingTotal = PlayAmount.ZERO;
     /** Money that crossed the boundary of the game (deposits in, withdrawals out, operator corrections) - ever, and at the cutover. */
@@ -739,11 +741,7 @@ public final class LedgerBook {
 
     /** The sum of all the players' balances (retired bots included, open stakes not). */
     public PlayAmount playersTotal() {
-        PlayAmount total = PlayAmount.ZERO;
-        for (PlayerAccount acc : accounts.values()) {
-            total = total.plus(acc.balance());
-        }
-        return total;
+        return playersTotal;
     }
 
     public PlayAmount openingTotal() {
@@ -884,6 +882,7 @@ public final class LedgerBook {
             throw new IllegalStateException("balance would go negative for player " + playerId + ": " + newBalance);
         }
         accounts.put(playerId, new PlayerAccount(playerId, newBalance, acc.currentSeason(), acc.seasons()));
+        playersTotal = playersTotal.plus(delta);
         entries.add(new LedgerEntry(++sequence, playerId, type, delta, roundId, now.toEpochMilli()));
     }
 

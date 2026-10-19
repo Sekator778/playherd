@@ -82,7 +82,7 @@ public class SeriesSeeder {
         BetBook book = engines.get().engine(interval).betBook();
         List<RoundWindow> pending = new ArrayList<>();
         for (RoundWindow window : hub.betWindows().of(market.id(), interval)) {
-            if (book.betsFor(window.roundId()).isEmpty()) {
+            if (book.count(window.roundId()) == 0) {
                 hub.betWindows().closed(window);
             } else if (!hub.closedRounds().isClosed(window)) {
                 pending.add(window);

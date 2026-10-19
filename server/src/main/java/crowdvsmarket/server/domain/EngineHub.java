@@ -145,8 +145,8 @@ public final class EngineHub {
 
     /** Whether {@code playerId} has a bet on round {@code roundId} of {@code marketId}'s {@code interval} series. */
     public boolean hasBet(String marketId, Interval interval, String roundId, String playerId) {
-        return findMarket(marketId).map(m -> m.engine(interval).betBook().betsFor(roundId).stream()
-                .anyMatch(b -> b.playerId().equals(playerId))).orElse(false);
+        return findMarket(marketId).map(m -> m.engine(interval).betBook().find(roundId, playerId).isPresent())
+                .orElse(false);
     }
 
     /** @throws IllegalStateException when the market has no engines — a programming error for a

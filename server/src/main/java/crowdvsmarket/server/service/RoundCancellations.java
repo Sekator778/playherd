@@ -100,7 +100,7 @@ public class RoundCancellations {
      */
     public Rounds.CancellationDto cancel(EventApplier applier, EngineHub hub, Market market, RoundWindow window,
                                          String reason, long nowMs, AtomicBoolean touchedState) {
-        int refundedBetCount = hub.engine(market.id(), window.interval()).betBook().betsFor(window.roundId()).size();
+        int refundedBetCount = hub.engine(market.id(), window.interval()).betBook().count(window.roundId());
         GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
                 window.endMs(), reason, nowMs, market.id());
         // the exchange the round had been decided to run on, if it had (Р-76): the cancelled round says so too

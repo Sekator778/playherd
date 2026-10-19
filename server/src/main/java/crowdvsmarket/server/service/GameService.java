@@ -904,7 +904,7 @@ public class GameService implements MarketListener {
 
     private boolean hasBetsLocked(RoundWindow window) {
         return hub.findMarket(window.market())
-                .map(m -> !m.engine(window.interval()).betBook().betsFor(window.roundId()).isEmpty())
+                .map(m -> m.engine(window.interval()).betBook().count(window.roundId()) > 0)
                 .orElse(false);
     }
 
@@ -1029,8 +1029,7 @@ public class GameService implements MarketListener {
             }
             GameEngine engine = hub.engine(market.id(), ref.interval());
             PlayAmount currentBalance = ledger.balance(playerId);
-            Optional<Bet> existing = engine.betBook().betsFor(bettingWindow.roundId()).stream()
-                    .filter(b -> b.playerId().equals(playerId)).findFirst();
+            Optional<Bet> existing = engine.betBook().find(bettingWindow.roundId(), playerId);
             // a bet being replaced is refunded first, its fees too (a legacy bet has none)
             PlayAmount effectiveBalance = existing
                     .map(b -> currentBalance.plus(b.stake()).plus(b.isLegacy() ? PlayAmount.ZERO : b.fees().total()))
@@ -1044,7 +1043,7 @@ public class GameService implements MarketListener {
             t = JfrClock.nanos(rec);
             requireExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), req.leverage(), stake);
             jfr.exposureNs = JfrClock.since(rec, t);
-            jfr.roundBets = rec ? engine.betBook().betsFor(bettingWindow.roundId()).size() : 0;
+            jfr.roundBets = rec ? engine.betBook().count(bettingWindow.roundId()) : 0;
             LiquidationParams liquidation = LiquidationParams.of(spec, ref.interval());
             GameEvent.BetPlaced event = new GameEvent.BetPlaced(playerId, ref.interval(), bettingWindow.startMs(),
                     bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs,
@@ -2724,13 +2723,7 @@ public class GameService implements MarketListener {
     private BigDecimal openNotional(String marketId, Interval interval, RoundWindow window,
                                     crowdvsmarket.engine.round.Direction direction, String exceptPlayer) {
         String roundId = new RoundWindow(marketId, interval, window.startMs(), window.endMs()).roundId();
-        BigDecimal total = BigDecimal.ZERO;
-        for (Bet bet : hub.engine(marketId, interval).betBook().betsFor(roundId)) {
-            if (bet.direction() == direction && !bet.playerId().equals(exceptPlayer)) {
-                total = total.add(bet.stake().toMoney().multiply(BigDecimal.valueOf(bet.leverage().value())));
-            }
-        }
-        return total;
+        return hub.engine(marketId, interval).betBook().openNotional(roundId, direction, exceptPlayer);
     }
 
     /**

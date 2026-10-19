@@ -75,6 +75,6 @@ public class OpenBets {
     }
 
     private static Optional<Bet> betOf(GameEngine engine, String roundId, String playerId) {
-        return engine.betBook().betsFor(roundId).stream().filter(b -> b.playerId().equals(playerId)).findFirst();
+        return engine.betBook().find(roundId, playerId);
     }
 }
