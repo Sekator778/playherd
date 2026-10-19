@@ -102,17 +102,22 @@ public class RoundResultRepository {
         for (PlayerHistoryRow row : perPlayerHistory) {
             db.update(c, """
                     INSERT INTO player_round_history (round_id, player_id, market, interval, settled_at_ms,
-                        direction, leverage, stake_mojos, liquidated, direction_correct, payout_mojos, fees_mojos)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        direction, leverage, stake_mojos, liquidated, direction_correct, payout_mojos, fees_mojos, mode)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     roundId, row.playerId(), marketId, interval.name(), settledAtMs, row.direction().name(),
-                    row.leverage(), row.stakeMojos(), row.liquidated(), row.directionCorrect(), row.payoutMojos(), row.feesMojos());
+                    row.leverage(), row.stakeMojos(), row.liquidated(), row.directionCorrect(), row.payoutMojos(), row.feesMojos(), row.mode());
         }
     }
 
     public record PlayerHistoryRow(String playerId, Enums.Direction direction, int leverage, long stakeMojos,
                                      boolean liquidated, Boolean directionCorrect, long payoutMojos,
-                                     Long feesMojos) {
+                                     Long feesMojos, String mode) {
+
+        public PlayerHistoryRow(String playerId, Enums.Direction direction, int leverage, long stakeMojos,
+                                boolean liquidated, Boolean directionCorrect, long payoutMojos, Long feesMojos) {
+            this(playerId, direction, leverage, stakeMojos, liquidated, directionCorrect, payoutMojos, feesMojos, "PERCENTAGE");
+        }
     }
 
     public void insertCancelled(Connection c, String marketId, String roundId, Interval interval, long windowStart,
@@ -199,7 +204,7 @@ public class RoundResultRepository {
     public List<Identity.ProfileRoundEntryDto> unseenResults(String playerId, int limit) {
         return db.read(c -> db.queryList(c, """
                 SELECT h.round_id, h.market, h.interval, h.settled_at_ms, h.direction, h.leverage, h.stake_mojos,
-                       h.liquidated, h.direction_correct, h.payout_mojos, h.fees_mojos,
+                       h.liquidated, h.direction_correct, h.payout_mojos, h.fees_mojos, h.mode,
                        r.window_end_ms - r.window_start_ms AS duration_ms
                 FROM player_round_history h LEFT JOIN round_results r ON r.round_id = h.round_id
                 WHERE h.player_id = ? AND h.acked_at_ms IS NULL
@@ -232,7 +237,7 @@ public class RoundResultRepository {
     public List<Identity.ProfileRoundEntryDto> playerHistory(String playerId, int limit) {
         return db.read(c -> db.queryList(c, """
                 SELECT h.round_id, h.market, h.interval, h.settled_at_ms, h.direction, h.leverage, h.stake_mojos,
-                       h.liquidated, h.direction_correct, h.payout_mojos, h.fees_mojos,
+                       h.liquidated, h.direction_correct, h.payout_mojos, h.fees_mojos, h.mode,
                        r.window_end_ms - r.window_start_ms AS duration_ms
                 FROM player_round_history h LEFT JOIN round_results r ON r.round_id = h.round_id
                 WHERE h.player_id = ? ORDER BY h.settled_at_ms DESC LIMIT ?
@@ -288,7 +293,8 @@ public class RoundResultRepository {
                 rs.getInt("leverage"), java.math.BigDecimal.valueOf(rs.getLong("stake_mojos"), 3).toPlainString(),
                 rs.getBoolean("liquidated"), (Boolean) rs.getObject("direction_correct"),
                 java.math.BigDecimal.valueOf(rs.getLong("payout_mojos"), 3).toPlainString(),
-                feesMojos == null ? null : java.math.BigDecimal.valueOf(feesMojos, 3).toPlainString());
+                feesMojos == null ? null : java.math.BigDecimal.valueOf(feesMojos, 3).toPlainString(),
+                "FIXED".equals(rs.getString("mode")) ? Enums.BetMode.FIXED : null);
     }
 
     /** Markets are never deleted, so a row's market is always in the registry; its absence means

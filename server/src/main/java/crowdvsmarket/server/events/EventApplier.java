@@ -9,6 +9,7 @@ import crowdvsmarket.engine.market.Candle;
 import crowdvsmarket.engine.ledger.DepositRequest;
 import crowdvsmarket.engine.ledger.WithdrawalRequest;
 import crowdvsmarket.engine.round.Bet;
+import crowdvsmarket.engine.round.BetMode;
 import crowdvsmarket.engine.round.RoundPrices;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.domain.BetFeed;
@@ -76,7 +77,12 @@ public final class EventApplier {
             case GameEvent.BetPlaced e -> {
                 EngineHub.MarketEngines market = marketOf(e, e.market());
                 RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
-                if (e.hasFees()) {
+                if (e.betMode() == BetMode.FIXED) { // Р-106: the leverage in the event is a placeholder, there is no liquidation
+                    market.engine(e.interval()).replayBet(e.playerId(), window, e.direction(), Bet.FIXED_LEVERAGE,
+                            new PlayAmount(e.stakeMojos()),
+                            new Fees(new PlayAmount(e.feeHerdMojos()), new PlayAmount(e.feeNetMojos())),
+                            null, BetMode.FIXED, Instant.ofEpochMilli(e.atMs()));
+                } else if (e.hasFees()) {
                     market.engine(e.interval()).replayBet(e.playerId(), window, e.direction(),
                             new Leverage(e.leverage()), new PlayAmount(e.stakeMojos()),
                             new Fees(new PlayAmount(e.feeHerdMojos()), new PlayAmount(e.feeNetMojos())),
@@ -208,7 +214,7 @@ public final class EventApplier {
         boolean isBot = row != null && row.displaysAsBot();
         String stake = new PlayAmount(e.stakeMojos()).toMoney().toPlainString();
         betFeed.record(roundId, e.playerId(), displayName, isBot, Enums.Direction.valueOf(e.direction().name()),
-                stake, e.leverage(), e.atMs());
+                stake, e.leverage(), e.atMs(), Enums.BetMode.wire(e.betMode()));
     }
 
     public static List<Candle> toCandles(List<GameEvent.CandleData> raw) {

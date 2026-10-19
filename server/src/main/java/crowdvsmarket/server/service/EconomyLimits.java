@@ -25,6 +25,14 @@ public final class EconomyLimits {
     public static final BigDecimal MARKET_SHARE = new BigDecimal("0.0025");
     /** Share of TREASURY one side of one round of all crypto markets together may put at risk at their stress moves: 1%. */
     public static final BigDecimal CRYPTO_BUCKET_SHARE = new BigDecimal("0.01");
+    /**
+     * Fixed-payout mode (Р-106, docs/product/fixed_payout_rules.md point 5): the worst outcome of a fixed bet for the treasury is its
+     * stake, so the sum of the stakes on one side of one round of one market may not exceed 0.1% of TREASURY (what one percentage-mode
+     * bet may win at most, {@code min(20 x stake, 0.1% of the treasury)}).
+     */
+    public static final BigDecimal FIXED_MARKET_SHARE = new BigDecimal("0.001");
+    /** Fixed-payout mode: the stakes on one side of one round of all crypto markets together, 0.4% of TREASURY (the 1 to 4 of 0.25% and 1%). */
+    public static final BigDecimal FIXED_CRYPTO_BUCKET_SHARE = new BigDecimal("0.004");
     /** With the circuit breaker open a bet may take at most {@code cap / BREAKER_DIVISOR}. */
     public static final int BREAKER_DIVISOR = 4;
 
@@ -59,8 +67,34 @@ public final class EconomyLimits {
     }
 
     /**
+     * The check of a fixed-payout bet (Р-106): the stakes already open on this side, without the bet being replaced, plus the new stake
+     * stay within {@link #FIXED_MARKET_SHARE} of the treasury, and (a crypto market, {@code bucketOpen} not {@code null}) the stakes of
+     * this side over all crypto markets, this one included, within {@link #FIXED_CRYPTO_BUCKET_SHARE}. All amounts in PLAY.
+     *
+     * @param roomStake the stake (PLAY) that can still be added to this side - the smaller of the market's own room and the bucket's, at least 0
+     */
+    public record FixedExposure(boolean ok, BigDecimal roomStake, boolean bucketLimited) {
+    }
+
+    public static FixedExposure checkFixedExposure(PlayAmount treasury, BigDecimal openStake, BigDecimal newStake,
+            BigDecimal bucketOpen) {
+        BigDecimal room = treasury.toMoney().multiply(FIXED_MARKET_SHARE).setScale(3, RoundingMode.DOWN)
+                .subtract(openStake).max(BigDecimal.ZERO);
+        boolean bucketLimited = false;
+        if (bucketOpen != null) {
+            BigDecimal bucketRoom = treasury.toMoney().multiply(FIXED_CRYPTO_BUCKET_SHARE).setScale(3, RoundingMode.DOWN)
+                    .subtract(bucketOpen).max(BigDecimal.ZERO);
+            if (bucketRoom.compareTo(room) < 0) {
+                room = bucketRoom;
+                bucketLimited = true;
+            }
+        }
+        return new FixedExposure(newStake.compareTo(room) <= 0, room, bucketLimited);
+    }
+
+    /**
      * @param treasury        TREASURY now
-     * @param stress          the stress move of this market and round length (a fraction of price)
+     * @param stress         the stress move of this market and round length (a fraction of price)
      * @param openNotional    the notional already open on this side of this round of this market, without the bet being replaced
      * @param newNotional     the notional of the bet
      * @param bucketRisk      {@code sum(notional x stress)} already open on this side of this round over the crypto markets (this one

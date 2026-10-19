@@ -19,6 +19,24 @@ public final class Enums {
         UP, DOWN
     }
 
+    /**
+     * contract.ts `BetMode` (Р-106) - mirrors {@code crowdvsmarket.engine.round.BetMode}. {@code PERCENTAGE}: the payout follows
+     * stake x leverage x the price move; {@code FIXED}: a right direction pays twice the stake, a wrong one nothing, a tie gives the stake back.
+     */
+    public enum BetMode {
+        PERCENTAGE, FIXED;
+
+        /** The mode as the DTOs carry it: {@code FIXED}, or {@code null} (an absent field) for the percentage mode - the answers of
+         *  a percentage-mode bet stay what they were before the fixed mode existed. */
+        public static BetMode wire(crowdvsmarket.engine.round.BetMode mode) {
+            return mode == crowdvsmarket.engine.round.BetMode.FIXED ? FIXED : null;
+        }
+
+        public crowdvsmarket.engine.round.BetMode toEngine() {
+            return this == FIXED ? crowdvsmarket.engine.round.BetMode.FIXED : crowdvsmarket.engine.round.BetMode.PERCENTAGE;
+        }
+    }
+
     /** contract.ts `RoundPhase`. */
     public enum RoundPhase {
         BETTING, RUNNING, SETTLED, CANCELLED

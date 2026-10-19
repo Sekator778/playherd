@@ -17,7 +17,32 @@ import crowdvsmarket.engine.margin.Leverage;
  * placed with, used to settle it whatever the market's parameters are by then; {@code null} when the event did not store them.
  */
 public record Bet(String playerId, String roundId, Direction direction, Leverage leverage, PlayAmount stake, Fees fees,
-                  LiquidationParams liquidation) {
+                  LiquidationParams liquidation, BetMode mode) {
+
+    /** The leverage a {@link BetMode#FIXED} bet carries: it has none, the record needs a valid value, and the crowd account weighs it as the lowest. */
+    public static final Leverage FIXED_LEVERAGE = new Leverage(Leverage.MIN);
+
+    public Bet {
+        java.util.Objects.requireNonNull(mode, "mode");
+        if (mode == BetMode.FIXED && (fees == null || liquidation != null || leverage.value() != Leverage.MIN)) {
+            throw new IllegalArgumentException("a fixed-payout bet has fees, no liquidation parameters and no leverage");
+        }
+    }
+
+    /** A percentage-mode bet (the original one) with fees and stored liquidation parameters. */
+    public Bet(String playerId, String roundId, Direction direction, Leverage leverage, PlayAmount stake, Fees fees,
+               LiquidationParams liquidation) {
+        this(playerId, roundId, direction, leverage, stake, fees, liquidation, BetMode.PERCENTAGE);
+    }
+
+    /** A fixed-payout bet (Р-106): no leverage, no liquidation; {@code fees} are charged on top of the stake. */
+    public static Bet fixed(String playerId, String roundId, Direction direction, PlayAmount stake, Fees fees) {
+        return new Bet(playerId, roundId, direction, FIXED_LEVERAGE, stake, fees, null, BetMode.FIXED);
+    }
+
+    public boolean isFixed() {
+        return mode == BetMode.FIXED;
+    }
 
     /** A legacy bet (no fees, original rules). */
     public Bet(String playerId, String roundId, Direction direction, Leverage leverage, PlayAmount stake) {

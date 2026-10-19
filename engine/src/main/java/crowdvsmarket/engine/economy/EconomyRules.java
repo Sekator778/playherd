@@ -107,7 +107,27 @@ public final class EconomyRules {
         return new Fees(herdFee, NETWORK_FEE);
     }
 
-    /** The most a bet of {@code stake} can be paid back in total (A5): {@code min(20 * stake, 0.1% of the treasury)}. */
+    /** The platform fee of a fixed-payout bet (Р-106, docs/product/fixed_payout_rules.md point 3): 3% of the stake. */
+    public static final BigDecimal FIXED_PLATFORM_FEE_RATE = new BigDecimal("0.03");
+
+    /**
+     * The fees of a fixed-payout bet (Р-106): the platform fee, 3% of the stake rounded up to 0.001 PLAY (kept in {@link Fees#herd()}, the
+     * ledger account of the percentage mode's fee), and the same flat network fee of 0.1 PLAY. Charged on top of the stake, kept on every outcome.
+     */
+    public static Fees fixedFees(PlayAmount stake) {
+        BigDecimal platform = stake.toMoney().multiply(FIXED_PLATFORM_FEE_RATE).setScale(3, RoundingMode.CEILING);
+        return new Fees(PlayAmount.fromMoney(platform), NETWORK_FEE);
+    }
+
+    /** What a fixed-payout bet is paid back (Р-106): twice the stake for the right direction, nothing for the wrong one, the stake on a tie ({@code cmp}: close compared to open). */
+    public static PlayAmount fixedPayout(PlayAmount stake, boolean up, int closeVsOpen) {
+        if (closeVsOpen == 0) {
+            return stake;
+        }
+        return (closeVsOpen > 0) == up ? new PlayAmount(Math.multiplyExact(stake.mojos(), 2L)) : PlayAmount.ZERO;
+    }
+
+    /** The most a bet of {@code stake} can be paid back in total (A5):{@code min(20 * stake, 0.1% of the treasury)}. */
     public static PlayAmount maxPayout(PlayAmount stake) {
         return maxPayout(stake, TREASURY_FALLBACK);
     }

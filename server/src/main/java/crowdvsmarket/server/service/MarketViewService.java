@@ -146,7 +146,8 @@ public class MarketViewService {
                 crowdvsmarket.engine.economy.EconomyRules.NETWORK_FEE.toMoney().stripTrailingZeros().toPlainString(),
                 crowdvsmarket.engine.economy.EconomyRules.HERD_FEE_MAX_SHARE.movePointRight(2).stripTrailingZeros().toPlainString(),
                 crowdvsmarket.engine.economy.EconomyRules.stakeTiers().stream()
-                        .map(t -> new Markets.StakeTierDto(t.upToPlay(), t.divisor())).toList());
+                        .map(t -> new Markets.StakeTierDto(t.upToPlay(), t.divisor())).toList(),
+                crowdvsmarket.engine.economy.EconomyRules.FIXED_PLATFORM_FEE_RATE.movePointRight(2).stripTrailingZeros().toPlainString());
     }
 
     /** The registry's markets that are played here, in listing order: all in live mode, BTC in replay mode. */
@@ -256,7 +257,9 @@ public class MarketViewService {
         boolean liquidated = false;
         if (running) {
             Optional<RoundPriceData> prices = gameService.soFar(market, window, nowMs);
-            if (prices.isPresent()) {
+            if (prices.isPresent() && entry.bet().isFixed()) {
+                entryPrice = market.rawString(prices.get().open()); // Р-106: no position, no liquidation price, no size
+            } else if (prices.isPresent()) {
                 BigDecimal open = prices.get().open();
                 List<Candle> path = prices.get().path().isEmpty()
                         ? List.of(GameService.singleCandle(window, open, open)) : prices.get().path();
@@ -273,7 +276,8 @@ public class MarketViewService {
                 Enums.Interval.valueOf(entry.interval().name()), (window.endMs() - window.startMs()) / 1000L,
                 entry.phase(), Enums.Direction.valueOf(entry.bet().direction().name()),
                 entry.bet().leverage().value(), entry.bet().stake().toMoney().toPlainString(), entryPrice,
-                liquidationPrice, size, liquidated, running ? window.endMs() : window.startMs());
+                liquidationPrice, size, liquidated, running ? window.endMs() : window.startMs(),
+                Enums.BetMode.wire(entry.bet().mode()));
     }
 
     // ---------------------------------------------------------------------------------------

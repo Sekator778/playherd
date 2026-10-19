@@ -45,6 +45,21 @@ class ResultsHasherTest {
     }
 
     @Test
+    void aFixedPayoutPositionAddsTheModeKeyAndAnyOtherPositionKeepsItsBytes() {
+        var plain = new ResultsHasher.PositionEntry("p1", "UP", 10, 500, "SETTLED", 1200);
+        var fixed = new ResultsHasher.PositionEntry("p1", "UP", 2, 500, "SETTLED", 1000, "FIXED");
+
+        var withPlain = ResultsHasher.build("1h-1", "HOURLY", "SETTLED", 100L, 110L, List.of(plain), null);
+        var withFixed = ResultsHasher.build("1h-1", "HOURLY", "SETTLED", 100L, 110L, List.of(fixed), null);
+
+        assertThat(withPlain.json()).doesNotContain("mode");
+        assertThat(withPlain.json()).contains("{\"direction\":\"UP\",\"leverage\":10,\"outcome\":\"SETTLED\",\"payoutMojos\":1200,"
+                + "\"playerId\":\"p1\",\"stakeMojos\":500}");
+        assertThat(withFixed.json()).contains("{\"direction\":\"UP\",\"leverage\":2,\"mode\":\"FIXED\",\"outcome\":\"SETTLED\","
+                + "\"payoutMojos\":1000,\"playerId\":\"p1\",\"stakeMojos\":500}");
+    }
+
+    @Test
     void hashIsSha256OfExactJsonBytesWithHexPrefix() throws Exception {
         var result = ResultsHasher.build("1h-1", "HOURLY", "SETTLED", 100L, 110L, List.of(), null);
         assertThat(result.hash()).startsWith("0x").hasSize(2 + 64);

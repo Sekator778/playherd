@@ -17,40 +17,57 @@ import java.util.Optional;
  * {@link #cancel}, {@link #clear}), so {@link #openNotional} and {@link #find} cost the same with one bet in the round as
  * with ten thousand. The sums are whole mojos ({@code long}), exact like the {@code BigDecimal} sum they replace: the
  * state is a function of the bets alone, so a live run and a replay of its journal end with the same numbers.
- * The aggregates live here, not in a separate class, because the book is the single owner of the bets and every mutation
+ * The same holds for the stake of each side's fixed-payout bets (Р-106), which count for the fixed-mode treasury limits and not
+ * for the notional. The aggregates live here, not in a separate class, because the book is the single owner of the bets and every mutation
  * of them (live, replay, a state built aside) already goes through these methods.
  */
 public final class BetBook {
 
-    /** One round's bets and the notional of each side, in mojos of PLAY. */
+    /** One round's bets, the notional of each side (percentage-mode bets) and the stake of each side (fixed-payout bets), in mojos of PLAY. */
     private static final class RoundBets {
         final Map<String, Bet> bets = new LinkedHashMap<>();
         long upNotional;
         long downNotional;
+        long upFixed;
+        long downFixed;
 
         void add(Bet bet) {
-            shift(bet, notionalOf(bet));
+            shift(bet, 1);
         }
 
         void remove(Bet bet) {
-            shift(bet, -notionalOf(bet));
+            shift(bet, -1);
         }
 
-        private void shift(Bet bet, long notional) {
+        private void shift(Bet bet, int sign) {
+            long notional = sign * notionalOf(bet);
+            long fixed = sign * fixedStakeOf(bet);
             if (bet.direction() == Direction.UP) {
                 upNotional = Math.addExact(upNotional, notional);
+                upFixed = Math.addExact(upFixed, fixed);
             } else {
                 downNotional = Math.addExact(downNotional, notional);
+                downFixed = Math.addExact(downFixed, fixed);
             }
         }
 
         long side(Direction direction) {
             return direction == Direction.UP ? upNotional : downNotional;
         }
+
+        long fixedSide(Direction direction) {
+            return direction == Direction.UP ? upFixed : downFixed;
+        }
     }
 
+    /** What a bet adds to the open notional: {@code stake x leverage} for a percentage-mode bet, nothing for a fixed-payout one (it has no leverage). */
     private static long notionalOf(Bet bet) {
-        return Math.multiplyExact(bet.stake().mojos(), (long) bet.leverage().value());
+        return bet.isFixed() ? 0L : Math.multiplyExact(bet.stake().mojos(), (long) bet.leverage().value());
+    }
+
+    /** What a bet adds to the fixed-payout stake of its side: its stake if it is fixed-payout, else nothing. */
+    private static long fixedStakeOf(Bet bet) {
+        return bet.isFixed() ? bet.stake().mojos() : 0L;
     }
 
     private final Map<String, RoundBets> byRound = new LinkedHashMap<>();
@@ -110,6 +127,25 @@ public final class BetBook {
             Bet own = round.bets.get(exceptPlayer);
             if (own != null && own.direction() == direction) {
                 total -= notionalOf(own);
+            }
+        }
+        return total == 0 ? BigDecimal.ZERO : BigDecimal.valueOf(total, 3);
+    }
+
+    /**
+     * The stake (PLAY, scale 3) of the fixed-payout bets (Р-106) open on {@code direction}'s side of the round, without
+     * {@code exceptPlayer}'s bet ({@code null} for none) - O(1), like {@link #openNotional}.
+     */
+    public BigDecimal openFixedStake(String roundId, Direction direction, String exceptPlayer) {
+        RoundBets round = byRound.get(roundId);
+        if (round == null) {
+            return BigDecimal.ZERO;
+        }
+        long total = round.fixedSide(direction);
+        if (exceptPlayer != null) {
+            Bet own = round.bets.get(exceptPlayer);
+            if (own != null && own.direction() == direction) {
+                total -= fixedStakeOf(own);
             }
         }
         return total == 0 ? BigDecimal.ZERO : BigDecimal.valueOf(total, 3);

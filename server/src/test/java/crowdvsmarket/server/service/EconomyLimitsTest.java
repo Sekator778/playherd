@@ -73,6 +73,26 @@ class EconomyLimitsTest {
     }
 
     @Test
+    void theFixedModeLimitsAreATenthOfAPercentPerMarketSideAndFourTenthsForTheCryptoBucket() {
+        PlayAmount treasury = PlayAmount.ofWholePlay(1_000_000);
+
+        EconomyLimits.FixedExposure fits = EconomyLimits.checkFixedExposure(treasury, new BigDecimal("400"), new BigDecimal("600"), null);
+        EconomyLimits.FixedExposure over = EconomyLimits.checkFixedExposure(treasury, new BigDecimal("400"), new BigDecimal("600.001"), null);
+        EconomyLimits.FixedExposure bucket = EconomyLimits.checkFixedExposure(treasury, new BigDecimal("100"), new BigDecimal("500"),
+                new BigDecimal("3700"));
+
+        assertThat(fits.ok()).isTrue();
+        assertThat(over.ok()).isFalse();
+        assertThat(over.roomStake()).isEqualByComparingTo("600");
+        assertThat(over.bucketLimited()).isFalse();
+        assertThat(bucket.ok()).as("the market has 900 left, the bucket 300").isFalse();
+        assertThat(bucket.roomStake()).isEqualByComparingTo("300");
+        assertThat(bucket.bucketLimited()).isTrue();
+        assertThat(EconomyLimits.checkFixedExposure(treasury, new BigDecimal("2000"), BigDecimal.ONE, null).roomStake())
+                .as("no room is never negative").isEqualByComparingTo("0");
+    }
+
+    @Test
     void theBreakerTakesAQuarterOfTheCapButNeverLessThanTheMinimumLeverage() {
         assertThat(EconomyLimits.breakerMaxLeverage(1200)).isEqualTo(300);
         assertThat(EconomyLimits.breakerMaxLeverage(500)).isEqualTo(125);

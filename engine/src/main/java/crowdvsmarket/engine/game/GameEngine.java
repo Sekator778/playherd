@@ -11,6 +11,7 @@ import crowdvsmarket.engine.market.Candle;
 import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.BetBook;
+import crowdvsmarket.engine.round.BetMode;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.engine.round.Position;
 import crowdvsmarket.engine.round.LiquidationParams;
@@ -152,6 +153,32 @@ public final class GameEngine {
         return bet;
     }
 
+    /**
+     * Р-106: places (or replaces) {@code playerId}'s fixed-payout bet (docs/product/fixed_payout_rules.md): no leverage, no liquidation;
+     * the balance is debited {@code stake + fees.herd + fees.network}, a replaced bet (of either mode) is refunded with its fees; the bet
+     * pays 2 x stake, nothing or the stake back ({@link #runRound}). {@code fees} is what {@link EconomyRules#fixedFees} computed.
+     */
+    public Bet placeFixedBet(
+            String playerId, RoundWindow bettingWindow, Direction direction, PlayAmount stake, Fees fees, Instant now) {
+        return replayBet(playerId, bettingWindow, direction, Bet.FIXED_LEVERAGE, stake, fees, null, BetMode.FIXED, now);
+    }
+
+    /**
+     * {@link #replayBet(String, RoundWindow, Direction, Leverage, PlayAmount, Fees, LiquidationParams, Instant)} with the mode of the
+     * bet from the event log ({@link BetMode#FIXED}: {@code leverage} is {@link Bet#FIXED_LEVERAGE} and {@code liquidation} {@code null}).
+     */
+    public Bet replayBet(
+            String playerId, RoundWindow bettingWindow, Direction direction, Leverage leverage, PlayAmount stake,
+            Fees fees, LiquidationParams liquidation, BetMode mode, Instant now) {
+        requireOwnMarket(bettingWindow);
+        String roundId = bettingWindow.roundId();
+        Bet bet = new Bet(playerId, roundId, direction, leverage, stake, fees, liquidation, mode);
+        refundPrevious(playerId, roundId, now);
+        ledger.reserveStake(playerId, roundId, stake, fees, now);
+        betBook.place(bet);
+        return bet;
+    }
+
     /** Cancels {@code playerId}'s bet on {@code bettingWindow}, if any, refunding its stake (Р-13) and its fees (plan A4). */
     public void cancelBet(String playerId, RoundWindow bettingWindow, Instant now) {
         refundPrevious(playerId, bettingWindow.roundId(), now);
@@ -195,6 +222,16 @@ public final class GameEngine {
 
         List<PlayerRoundOutcome> outcomes = new ArrayList<>();
         for (Bet bet : bets) {
+            if (bet.isFixed()) {
+                // Р-106: no position, no liquidation - 2 x stake / 0 / stake back by the close against the open; the fees stay with the game
+                int closeVsOpen = closePrice.compareTo(openPrice);
+                PlayAmount fixedPayout = EconomyRules.fixedPayout(bet.stake(), bet.direction() == Direction.UP, closeVsOpen);
+                ledger.settleRound(bet.playerId(), roundId, bet.stake(), fixedPayout,
+                        directionCorrect(bet.direction(), openPrice, closePrice), settledAt);
+                outcomes.add(new PlayerRoundOutcome(bet.playerId(), bet.direction(), bet.leverage().value(), bet.stake(), false,
+                        fixedPayout.toMoney(), bet.fees(), null, BetMode.FIXED));
+                continue;
+            }
             boolean legacy = bet.isLegacy();
             // legacy bets keep the original single cap and l = 1/(2 cap); new ones use the round length's cap and l = kappa / cap
             MarketSpec positionSpec = bet.specFor(spec, window.interval());

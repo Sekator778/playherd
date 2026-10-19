@@ -1160,9 +1160,6 @@ public class GameService implements MarketListener {
     // ---------------------------------------------------------------------------------------
 
     public Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
-        if (req.mode() != null && !Betting.MODE_PERCENT.equals(req.mode())) {
-            throw ApiException.badRequest("unknown bet mode - omit \"mode\" (or send \"" + Betting.MODE_PERCENT + "\") for the percentage mode");
-        }
         RoundWindow.RoundRef ref = parseRoundId(req.roundId());
         marketRegistry.require(ref.market()); // MARKET_NOT_FOUND without waiting for the lock
         HerdPlaceBet jfr = new HerdPlaceBet(); // I-2: phases of the call, the clock is read only while JFR records
@@ -1225,14 +1222,24 @@ public class GameService implements MarketListener {
             // Economy stage A (Р-92): 2..the cap of this market for this round length (plan A2), lowered by the size of the
             // stake (plan A3); the message names the highest leverage allowed for this stake. The fees follow the leverage (A4).
             MarketSpec spec = market.spec();
-            Leverage leverage;
-            try {
-                EconomyRules.requireLeverageAllowed(spec, ref.interval(), req.leverage(), stake);
-                leverage = new Leverage(req.leverage());
-            } catch (IllegalArgumentException e) {
-                throw ApiException.invalidLeverage(e.getMessage());
+            // Р-106: the fixed-payout mode has no leverage; it is for every market but the odds markets (rules point 4)
+            boolean fixed = req.isFixed();
+            if (fixed && market.kind() == crowdvsmarket.server.markets.MarketKind.ODDS) {
+                throw ApiException.badRequest("the win-or-lose (fixed payout) mode is not available on odds markets - "
+                        + market.id() + " takes percentage-mode bets only");
             }
-            Fees fees = EconomyRules.fees(spec, ref.interval(), req.leverage(), stake);
+            Fees fees;
+            if (fixed) {
+                fees = EconomyRules.fixedFees(stake);
+            } else {
+                try {
+                    EconomyRules.requireLeverageAllowed(spec, ref.interval(), req.leverage(), stake);
+                    new Leverage(req.leverage());
+                } catch (IllegalArgumentException e) {
+                    throw ApiException.invalidLeverage(e.getMessage());
+                }
+                fees = EconomyRules.fees(spec, ref.interval(), req.leverage(), stake);
+            }
 
             LedgerBook ledger = hub.ledger();
             Instant now = Instant.ofEpochMilli(nowMs);
@@ -1242,7 +1249,7 @@ public class GameService implements MarketListener {
             // Economy stage B (plan B6): with TREASURY more than 10% below its 30-day maximum a new bet takes at most cap/4
             boolean breaker = ledger.circuitBreakerOpen(now);
             noteBreaker(breaker, ledger, now);
-            if (breaker) {
+            if (breaker && !fixed) { // the breaker lowers the leverage cap; a fixed-payout bet has none
                 int allowedNow = Math.min(EconomyRules.maxLeverage(spec, ref.interval(), stake),
                         EconomyLimits.breakerMaxLeverage(spec.capFor(ref.interval())));
                 if (req.leverage() > allowedNow) {
@@ -1270,22 +1277,33 @@ public class GameService implements MarketListener {
             }
 
             t = JfrClock.nanos(rec);
-            requireExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), req.leverage(), stake);
+            if (fixed) {
+                requireFixedExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), stake);
+            } else {
+                requireExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), req.leverage(), stake);
+            }
             jfr.exposureNs = JfrClock.since(rec, t);
             jfr.roundBets = rec ? engine.betBook().count(bettingWindow.roundId()) : 0;
-            LiquidationParams liquidation = LiquidationParams.of(spec, ref.interval());
-            GameEvent.BetPlaced event = new GameEvent.BetPlaced(playerId, ref.interval(), bettingWindow.startMs(),
-                    bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs,
-                    market.id(), fees.herd().mojos(), fees.network().mojos(), liquidation.cap(),
-                    liquidation.kappa().toPlainString());
+            GameEvent.BetPlaced event;
+            if (fixed) {
+                event = GameEvent.BetPlaced.fixed(playerId, ref.interval(), bettingWindow.startMs(), bettingWindow.endMs(),
+                        toEngine(req.direction()), stake.mojos(), nowMs, market.id(), fees.herd().mojos(), fees.network().mojos());
+            } else {
+                LiquidationParams liquidation = LiquidationParams.of(spec, ref.interval());
+                event = new GameEvent.BetPlaced(playerId, ref.interval(), bettingWindow.startMs(),
+                        bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs,
+                        market.id(), fees.herd().mojos(), fees.network().mojos(), liquidation.cap(),
+                        liquidation.kappa().toPlainString());
+            }
             t = JfrClock.nanos(rec);
             persist(event, nowMs);
             jfr.persistNs = JfrClock.since(rec, t);
             t = JfrClock.nanos(rec);
             eventApplier.apply(event);
             jfr.applyNs = JfrClock.since(rec, t);
-            Rounds.BetDto dto = betDto(playerId, bettingWindow.roundId(), req.direction(), req.leverage(), stake, fees,
-                    spec, ref.interval());
+            Rounds.BetDto dto = betDto(playerId, bettingWindow.roundId(), req.direction(),
+                    fixed ? Bet.FIXED_LEVERAGE.value() : req.leverage(), stake, fees, spec, ref.interval(),
+                    fixed ? crowdvsmarket.engine.round.BetMode.FIXED : crowdvsmarket.engine.round.BetMode.PERCENTAGE);
             jfr.outcome = "OK";
             return dto;
         } catch (ApiException e) {
@@ -1303,11 +1321,14 @@ public class GameService implements MarketListener {
     /** A bet as the client sees it: with the fees charged and the highest leverage allowed for its stake when it was
      *  placed under the economy rules ({@code fees} {@code null} for a legacy bet: those fields are then {@code null}). */
     private static Rounds.BetDto betDto(String playerId, String roundId, Enums.Direction direction, int leverage,
-                                        PlayAmount stake, Fees fees, MarketSpec spec, Interval interval) {
+                                        PlayAmount stake, Fees fees, MarketSpec spec, Interval interval,
+                                        crowdvsmarket.engine.round.BetMode mode) {
+        boolean fixed = mode == crowdvsmarket.engine.round.BetMode.FIXED;
         return new Rounds.BetDto(playerId, roundId, direction, leverage, stake.toMoney().toPlainString(),
                 fees == null ? null : fees.herd().toMoney().toPlainString(),
                 fees == null ? null : fees.network().toMoney().toPlainString(),
-                fees == null ? null : EconomyRules.maxLeverage(spec, interval, stake));
+                fees == null || fixed ? null : EconomyRules.maxLeverage(spec, interval, stake),
+                Enums.BetMode.wire(mode));
     }
 
     /** Р-13: cancels the player's bet on a round open for betting and refunds it; no bet — nothing persisted (§4 п.18). */
@@ -1640,27 +1661,31 @@ public class GameService implements MarketListener {
             Identity.PlayerSummaryDto playerSummary = identity == null
                     ? new Identity.PlayerSummaryDto(outcome.playerId(), outcome.playerId(), "", outcome.playerId(), null)
                     : summary(outcome.playerId());
-            Position position = Position.openFromMargin(outcome.playerId(), window.roundId(),
+            boolean fixed = outcome.mode() == crowdvsmarket.engine.round.BetMode.FIXED;
+            Position position = fixed ? null : Position.openFromMargin(outcome.playerId(), window.roundId(),
                     toEngine(toDto(outcome.direction())), new Leverage(outcome.leverage()),
                     outcome.stake().toMoney(), entryPrice,
                     crowdvsmarket.engine.round.Bet.specFor(outcome.fees() == null, outcome.liquidation(), spec, window.interval()));
             BigDecimal pnl = outcome.payout().subtract(outcome.stake().toMoney());
             Boolean directionCorrect = directionCorrect(outcome.direction(), report.openPrice(), report.closePrice());
 
+            // a fixed-payout position has no size and no liquidation price (Р-106)
             positionDtos.add(new Rounds.PublicPositionDto(outcome.playerId(), window.roundId(), toDto(outcome.direction()),
-                    outcome.leverage(), position.size().toPlainString(), entryRaw,
-                    market.rawString(position.liquidationPrice()), pnl.toPlainString(),
+                    outcome.leverage(), fixed ? "0" : position.size().toPlainString(), entryRaw,
+                    fixed ? null : market.rawString(position.liquidationPrice()), pnl.toPlainString(),
                     outcome.stake().toMoney().toPlainString(), playerSummary, outcome.liquidated(),
-                    PlayAmount.fromMoney(outcome.payout()).toMoney().toPlainString(), directionCorrect));
+                    PlayAmount.fromMoney(outcome.payout()).toMoney().toPlainString(), directionCorrect,
+                    Enums.BetMode.wire(outcome.mode())));
 
             hashEntries.add(new crowdvsmarket.server.util.ResultsHasher.PositionEntry(outcome.playerId(),
                     toDto(outcome.direction()).name(), outcome.leverage(), outcome.stake().mojos(),
-                    outcome.liquidated() ? "LIQUIDATED" : "SETTLED", PlayAmount.fromMoney(outcome.payout()).mojos()));
+                    outcome.liquidated() ? "LIQUIDATED" : "SETTLED", PlayAmount.fromMoney(outcome.payout()).mojos(),
+                    fixed ? "FIXED" : null));
 
             historyRows.add(new RoundResultRepository.PlayerHistoryRow(outcome.playerId(), toDto(outcome.direction()),
                     outcome.leverage(), outcome.stake().mojos(), outcome.liquidated(), directionCorrect,
                     PlayAmount.fromMoney(outcome.payout()).mojos(),
-                    outcome.fees() == null ? null : outcome.fees().total().mojos()));
+                    outcome.fees() == null ? null : outcome.fees().total().mojos(), outcome.mode().name()));
         }
 
         CrowdAccount.RoundResult crowd = report.crowdResult();
@@ -1843,12 +1868,12 @@ public class GameService implements MarketListener {
                 .filter(b -> b.playerId().equals(viewerPlayerIdOrNull))
                 .findFirst()
                 .map(b -> betDto(b.playerId(), window.roundId(), toDto(b.direction()), b.leverage().value(), b.stake(),
-                        b.fees(), market.spec(), window.interval()))
+                        b.fees(), market.spec(), window.interval(), b.mode()))
                 .orElse(null);
         LiveSplit split = buildLiveSplit(bets, market.spec(), window.interval());
         List<Rounds.LiveBetDto> recentBets = betFeedStore.latest(window.roundId(), RECENT_BETS_LIMIT).stream()
                 .map(e -> new Rounds.LiveBetDto(summaryOrFallback(e.playerId()), e.direction(), e.leverage(),
-                        e.stake(), e.atMs()))
+                        e.stake(), e.atMs(), e.mode()))
                 .toList();
         return new Rounds.RoundBetting(window.roundId(), new Rounds.RoundWindowDto(toDto(window.interval()),
                 window.startMs(), window.endMs()), market.id(), market.symbol(), kindOf(market),
@@ -1942,20 +1967,26 @@ public class GameService implements MarketListener {
         List<Bet> upBets = new ArrayList<>();
         List<Bet> downBets = new ArrayList<>();
         for (Bet bet : bets) {
-            Position position = Position.openFromMargin(bet.playerId(), window.roundId(), bet.direction(),
-                    bet.leverage(), bet.stake().toMoney(), openPrice, bet.specFor(spec, window.interval()));
-            PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, pathSoFar);
-            boolean liquidatedSoFar = outcome instanceof PositionSimulator.Outcome.Liquidated;
-            BigDecimal pnl = liquidatedSoFar ? null
-                    : ((PositionSimulator.Outcome.Settled) outcome).pnl();
             PlayerIdentity identity = identities.get(bet.playerId());
             Identity.PlayerSummaryDto playerSummary = identity == null
                     ? new Identity.PlayerSummaryDto(bet.playerId(), bet.playerId(), "", bet.playerId(), null)
                     : summary(bet.playerId());
-            positions.add(new Rounds.PublicPositionDto(bet.playerId(), window.roundId(), toDto(bet.direction()),
-                    bet.leverage().value(), position.size().toPlainString(), openRaw,
-                    market.rawString(position.liquidationPrice()), pnl == null ? null : pnl.toPlainString(),
-                    bet.stake().toMoney().toPlainString(), playerSummary, liquidatedSoFar, null, null));
+            if (bet.isFixed()) { // Р-106: no position to simulate - the bet is won or lost by the close against the open; nothing to report mid-round
+                positions.add(new Rounds.PublicPositionDto(bet.playerId(), window.roundId(), toDto(bet.direction()),
+                        bet.leverage().value(), "0", openRaw, null, null, bet.stake().toMoney().toPlainString(),
+                        playerSummary, false, null, null, Enums.BetMode.FIXED));
+            } else {
+                Position position = Position.openFromMargin(bet.playerId(), window.roundId(), bet.direction(),
+                        bet.leverage(), bet.stake().toMoney(), openPrice, bet.specFor(spec, window.interval()));
+                PositionSimulator.Outcome outcome = PositionSimulator.simulate(position, pathSoFar);
+                boolean liquidatedSoFar = outcome instanceof PositionSimulator.Outcome.Liquidated;
+                BigDecimal pnl = liquidatedSoFar ? null
+                        : ((PositionSimulator.Outcome.Settled) outcome).pnl();
+                positions.add(new Rounds.PublicPositionDto(bet.playerId(), window.roundId(), toDto(bet.direction()),
+                        bet.leverage().value(), position.size().toPlainString(), openRaw,
+                        market.rawString(position.liquidationPrice()), pnl == null ? null : pnl.toPlainString(),
+                        bet.stake().toMoney().toPlainString(), playerSummary, liquidatedSoFar, null, null));
+            }
             BigDecimal stake = bet.stake().toMoney();
             if (bet.direction() == crowdvsmarket.engine.round.Direction.UP) {
                 upStake = upStake.add(stake);
@@ -2058,7 +2089,7 @@ public class GameService implements MarketListener {
             crowdvsmarket.server.domain.BetFeed.Result result = betFeedStore.since(roundId, sinceSeq);
             List<Rounds.BetFeedEntryDto> entries = result.entries().stream()
                     .map(e -> new Rounds.BetFeedEntryDto(e.seq(), e.atMs(), e.playerDisplayName(), e.isBot(),
-                            e.direction(), e.stake(), e.leverage()))
+                            e.direction(), e.stake(), e.leverage(), e.mode()))
                     .toList();
             return new Rounds.BetFeedDto(roundId, market.id(), market.symbol(), entries, result.hasMore());
         } finally {
@@ -2960,6 +2991,46 @@ public class GameService implements MarketListener {
                     + " a stake of at most " + maxStake.stripTrailingZeros().toPlainString() + " PLAY. Try a lower leverage, a "
                     + "smaller stake or the other side.");
         }
+    }
+
+    /**
+     * Р-106 (rules point 5): a fixed-payout bet must fit under the treasury limit of its mode - the stakes of the fixed bets on its side of
+     * its round of its market (0.1% of TREASURY), and (crypto) of all crypto markets together (0.4%). Nothing is checked before the cutover,
+     * like {@link #requireExposureRoom}; the error is the same kind, naming the room left in PLAY. O(1) in the bets of the round.
+     */
+    private void requireFixedExposureRoom(Market market, Interval interval, RoundWindow window, String playerId,
+                                          crowdvsmarket.engine.round.Direction direction, PlayAmount stake) {
+        LedgerBook ledger = hub.ledger();
+        if (!ledger.economyActive()) {
+            return;
+        }
+        BigDecimal open = openFixedStake(market.id(), interval, window, direction, playerId);
+        BigDecimal bucketOpen = null;
+        if (Category.CRYPTO.equals(market.category())) {
+            bucketOpen = BigDecimal.ZERO;
+            for (Market other : marketRegistry.active()) {
+                if (!Category.CRYPTO.equals(other.category()) || hub.findMarket(other.id()).isEmpty()) {
+                    continue;
+                }
+                bucketOpen = bucketOpen.add(other.id().equals(market.id()) ? open
+                        : openFixedStake(other.id(), interval, window, direction, null));
+            }
+        }
+        EconomyLimits.FixedExposure exposure = EconomyLimits.checkFixedExposure(ledger.treasury(), open, stake.toMoney(), bucketOpen);
+        if (!exposure.ok()) {
+            throw ApiException.exposureLimitExceeded("this bet is over the limit the treasury sets on win-or-lose bets on " + market.id()
+                    + " " + (direction == crowdvsmarket.engine.round.Direction.UP ? "UP" : "DOWN") + " in this round"
+                    + (exposure.bucketLimited() ? " (the crypto markets share one limit)" : "") + ": your stake is "
+                    + stake.toMoney().stripTrailingZeros().toPlainString() + " PLAY, the room left is "
+                    + exposure.roomStake().stripTrailingZeros().toPlainString() + " PLAY of stake. Try a smaller stake or the other side.");
+        }
+    }
+
+    /** The stakes (PLAY) of the fixed-payout bets open on one side of a round of a market, without {@code exceptPlayer}'s bet. */
+    private BigDecimal openFixedStake(String marketId, Interval interval, RoundWindow window,
+                                      crowdvsmarket.engine.round.Direction direction, String exceptPlayer) {
+        String roundId = new RoundWindow(marketId, interval, window.startMs(), window.endMs()).roundId();
+        return hub.engine(marketId, interval).betBook().openFixedStake(roundId, direction, exceptPlayer);
     }
 
     /** The notional (stake x leverage, PLAY) open on one side of a round of a market, without {@code exceptPlayer}'s bet. */

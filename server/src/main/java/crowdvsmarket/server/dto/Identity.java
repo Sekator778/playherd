@@ -1,5 +1,6 @@
 package crowdvsmarket.server.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
 
 /** contract.ts §"Identity / profile". */
@@ -25,10 +26,12 @@ public final class Identity {
     /** {@code asset}: the market's symbol ("BTC", "NVDA"), {@code marketId}: its id; {@code durationSec}: the
      *  real length of the round (its window in {@code round_results}), so a row can be labelled "3 MIN" even
      *  after its market has left {@code markets()}; {@code kind}: the market's kind, for the same reason (a
-     *  row of an {@code ODDS} market is worded as odds) — all contract.ts. */
+     *  row of an {@code ODDS} market is worded as odds) — all contract.ts. {@code mode} (Р-106): how the bet was paid; for a
+     *  {@code FIXED} one {@code leverage} is a placeholder and {@code liquidated} false. */
     public record ProfileRoundEntryDto(String roundId, Enums.Interval interval, String marketId, String asset,
                                          Long durationSec, Enums.MarketKind kind, long settledAtMs,
                                          Enums.Direction direction, int leverage, String stake, boolean liquidated,
-                                         Boolean directionCorrect, String payout, String fees) {
+                                         Boolean directionCorrect, String payout, String fees,
+                                         @JsonInclude(JsonInclude.Include.NON_NULL) Enums.BetMode mode) {
     }
 }

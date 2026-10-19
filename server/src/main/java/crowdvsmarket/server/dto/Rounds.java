@@ -1,5 +1,6 @@
 package crowdvsmarket.server.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
 
 /**
@@ -27,12 +28,19 @@ public final class Rounds {
      * {@code feeHerd}, {@code feeNetwork}, {@code maxLeverageForStake}: economy stage A (Р-92) — the two fees charged on top
      * of {@code stake} when the bet was placed (PLAY, scale 3) and the highest leverage the market allows for this stake in
      * this round length (cap, lowered by the stake tier). All {@code null} for a bet placed before the economy change.
+     * {@code mode} (Р-106): {@code FIXED} for a fixed-payout bet - its {@code leverage} is a placeholder, {@code maxLeverageForStake}
+     * {@code null}, {@code feeHerd} the platform fee (3% of the stake, rounded up to 0.001), {@code feeNetwork} 0.1 PLAY.
      */
     public record BetDto(String playerId, String roundId, Enums.Direction direction, int leverage, String stake,
-                           String feeHerd, String feeNetwork, Integer maxLeverageForStake) {
+                           String feeHerd, String feeNetwork, Integer maxLeverageForStake, @JsonInclude(JsonInclude.Include.NON_NULL) Enums.BetMode mode) {
 
         public BetDto(String playerId, String roundId, Enums.Direction direction, int leverage, String stake) {
-            this(playerId, roundId, direction, leverage, stake, null, null, null);
+            this(playerId, roundId, direction, leverage, stake, null, null, null, null);
+        }
+
+        public BetDto(String playerId, String roundId, Enums.Direction direction, int leverage, String stake,
+                      String feeHerd, String feeNetwork, Integer maxLeverageForStake) {
+            this(playerId, roundId, direction, leverage, stake, feeHerd, feeNetwork, maxLeverageForStake, null);
         }
     }
 
@@ -48,7 +56,15 @@ public final class Rounds {
     public record PublicPositionDto(String playerId, String roundId, Enums.Direction direction, int leverage,
                                       String size, String entryPrice, String liquidationPrice, String pnl,
                                       String stake, Identity.PlayerSummaryDto player, boolean liquidated,
-                                      String payout, Boolean directionCorrect) {
+                                      String payout, Boolean directionCorrect, @JsonInclude(JsonInclude.Include.NON_NULL) Enums.BetMode mode) {
+
+        public PublicPositionDto(String playerId, String roundId, Enums.Direction direction, int leverage,
+                                 String size, String entryPrice, String liquidationPrice, String pnl,
+                                 String stake, Identity.PlayerSummaryDto player, boolean liquidated,
+                                 String payout, Boolean directionCorrect) {
+            this(playerId, roundId, direction, leverage, size, entryPrice, liquidationPrice, pnl, stake, player, liquidated,
+                    payout, directionCorrect, null);
+        }
     }
 
     public record CrowdRoundPositionDto(String roundId, Enums.Direction direction, int leverage, String margin,
@@ -73,7 +89,7 @@ public final class Rounds {
      *  direction/leverage/stake shape as a settled position already exposes
      *  ({@code PublicPositionDto}), just for a bet that hasn't reached round start yet. */
     public record LiveBetDto(Identity.PlayerSummaryDto player, Enums.Direction direction, int leverage, String stake,
-                               long atMs) {
+                               long atMs, @JsonInclude(JsonInclude.Include.NON_NULL) Enums.BetMode mode) {
     }
 
     /** Additive (Р-62): one row of the public, paginated "who bet what" live feed
@@ -86,7 +102,7 @@ public final class Rounds {
      *  {@code oracle_records.seq}), used for {@code betFeed(roundId, sinceSeq)} pagination — unlike
      *  {@link LiveBetDto}'s small newest-first embed, this is the full, cursor-paginated history. */
     public record BetFeedEntryDto(long seq, long atMs, String playerDisplayName, boolean isBot,
-                                    Enums.Direction direction, String stake, int leverage) {
+                                    Enums.Direction direction, String stake, int leverage, @JsonInclude(JsonInclude.Include.NON_NULL) Enums.BetMode mode) {
     }
 
     /** Additive (Р-62). {@code entries}: oldest-first among those with {@code seq > sinceSeq},

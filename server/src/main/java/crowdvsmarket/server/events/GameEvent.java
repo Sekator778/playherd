@@ -70,10 +70,20 @@ public sealed interface GameEvent {
                        @JsonInclude(JsonInclude.Include.NON_NULL) Long feeHerdMojos,
                        @JsonInclude(JsonInclude.Include.NON_NULL) Long feeNetMojos,
                        @JsonInclude(JsonInclude.Include.NON_NULL) Integer liqCap,
-                       @JsonInclude(JsonInclude.Include.NON_NULL) String liqKappa) implements GameEvent {
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String liqKappa,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String mode) implements GameEvent {
 
         public BetPlaced {
             market = marketOrBtc(market);
+            if (mode != null) {
+                crowdvsmarket.engine.round.BetMode.fromWire(mode); // refuses a name that is not a mode
+                if (!"FIXED".equals(mode)) {
+                    throw new IllegalArgumentException("mode is written only for the fixed-payout mode, the percentage mode is an absent field");
+                }
+                if (feeHerdMojos == null || liqCap != null) {
+                    throw new IllegalArgumentException("a fixed-payout bet has fees and no liquidation parameters");
+                }
+            }
             if ((feeHerdMojos == null) != (feeNetMojos == null)) {
                 throw new IllegalArgumentException("feeHerdMojos and feeNetMojos are both set or both absent");
             }
@@ -86,6 +96,30 @@ public sealed interface GameEvent {
             if (liqCap != null && feeHerdMojos == null) {
                 throw new IllegalArgumentException("liquidation parameters belong to a bet placed under the economy rules (with fees)");
             }
+        }
+
+        /** The shape before the fixed-payout mode (Р-106): a percentage-mode bet, the {@code mode} key absent. */
+        public BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
+                           int leverage, long stakeMojos, long atMs, String market, Long feeHerdMojos, Long feeNetMojos,
+                           Integer liqCap, String liqKappa) {
+            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, market, feeHerdMojos,
+                    feeNetMojos, liqCap, liqKappa, null);
+        }
+
+        /**
+         * A fixed-payout bet (Р-106, docs/product/fixed_payout_rules.md): no leverage (the lowest value is written as a placeholder),
+         * fees, no liquidation parameters, {@code "mode":"FIXED"}.
+         */
+        public static BetPlaced fixed(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
+                                      long stakeMojos, long atMs, String market, long feeHerdMojos, long feeNetMojos) {
+            return new BetPlaced(playerId, interval, windowStart, windowEnd, direction,
+                    crowdvsmarket.engine.round.Bet.FIXED_LEVERAGE.value(), stakeMojos, atMs, market, feeHerdMojos, feeNetMojos,
+                    null, null, "FIXED");
+        }
+
+        /** The mode of the bet: an absent field is the percentage mode. */
+        public crowdvsmarket.engine.round.BetMode betMode() {
+            return crowdvsmarket.engine.round.BetMode.fromWire(mode);
         }
 
         /** Stage-A shape: fees, but no stored liquidation parameters (replayed with the market's current cap and kappa). */

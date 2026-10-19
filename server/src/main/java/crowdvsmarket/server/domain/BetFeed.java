@@ -52,7 +52,7 @@ public final class BetFeed {
      *  (nested identity) — the dedicated {@code betFeed} RPC's own {@code BetFeedEntryDto} shape
      *  flattens to just {@code playerDisplayName}/{@code isBot} and never exposes it. */
     public record Entry(long seq, long atMs, String playerId, String playerDisplayName, boolean isBot,
-                          Enums.Direction direction, String stake, int leverage) {
+                          Enums.Direction direction, String stake, int leverage, Enums.BetMode mode) {
     }
 
     public record Result(List<Entry> entries, boolean hasMore) {
@@ -84,11 +84,17 @@ public final class BetFeed {
      *  {@code BetPlaced} case, live or replayed, so a bet edit (Р-13: a new bet by the same player
      *  replacing their still-pending one) shows as a new feed row too, never rewriting/removing the
      *  earlier one. */
+    public void record(String roundId, String playerId, String playerDisplayName, boolean isBot,
+                       Enums.Direction direction, String stake, int leverage, long atMs) {
+        record(roundId, playerId, playerDisplayName, isBot, direction, stake, leverage, atMs, null);
+    }
+
+    /** {@link #record(String, String, String, boolean, Enums.Direction, String, int, long)} with the mode of the bet (Р-106). */
     public synchronized void record(String roundId, String playerId, String playerDisplayName, boolean isBot,
-                                     Enums.Direction direction, String stake, int leverage, long atMs) {
+                                     Enums.Direction direction, String stake, int leverage, long atMs, Enums.BetMode mode) {
         Deque<Entry> entries = byRound.computeIfAbsent(roundId, r -> new ArrayDeque<>());
         entries.addLast(new Entry(seqCounter.incrementAndGet(), atMs, playerId, playerDisplayName, isBot, direction,
-                stake, leverage));
+                stake, leverage, mode));
         while (entries.size() > MAX_ENTRIES_PER_ROUND) {
             entries.removeFirst();
         }

@@ -383,14 +383,14 @@ class ApiBotsTest extends LiveRpcTestBase {
         Response none = asBot(key, "placeBet", Map.of("roundId", betting.roundId(), "direction", "UP", "leverage", 2, "stake", "100.000"));
         assertThat(none.statusCode()).as(none.asString()).isEqualTo(200);
         Response percent = asBot(key, "placeBet", Map.of("roundId", betting.roundId(), "direction", "UP", "leverage", 2,
-                "stake", "100.000", "mode", "PERCENT"));
+                "stake", "100.000", "mode", "PERCENTAGE"));
         assertThat(percent.statusCode()).as(percent.asString()).isEqualTo(200);
         assertThat(percent.asString()).as("the answer has the same shape either way").isEqualTo(none.asString());
 
-        Response fixed = asBot(key, "placeBet", Map.of("roundId", betting.roundId(), "direction", "UP", "leverage", 2,
-                "stake", "100.000", "mode", "FIXED"));
-        assertThat(fixed.statusCode()).isEqualTo(400);
-        assertThat(errorCode(fixed)).isEqualTo("BAD_REQUEST");
+        Response unknown = asBot(key, "placeBet", Map.of("roundId", betting.roundId(), "direction", "UP", "leverage", 2,
+                "stake", "100.000", "mode", "TURBO"));
+        assertThat(unknown.statusCode()).as(unknown.asString()).isEqualTo(400);
+        assertThat(errorCode(unknown)).isEqualTo("BAD_REQUEST");
         assertThat(RpcClient.ok(asBot(key, "myPositions"))).as("the refused bet changed nothing").hasSize(1);
     }
 

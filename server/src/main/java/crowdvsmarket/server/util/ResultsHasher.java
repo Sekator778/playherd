@@ -47,8 +47,17 @@ public final class ResultsHasher {
     private ResultsHasher() {
     }
 
+    /**
+     * {@code mode} (Р-106): {@code "FIXED"} for a fixed-payout position, which adds the key {@code "mode"} to its entry; {@code null}
+     * (the percentage mode) leaves it out, so the entry of any other position is the same bytes it always was.
+     */
     public record PositionEntry(String playerId, String direction, int leverage, long stakeMojos, String outcome,
-                                  long payoutMojos) {
+                                  long payoutMojos, String mode) {
+
+        public PositionEntry(String playerId, String direction, int leverage, long stakeMojos, String outcome,
+                             long payoutMojos) {
+            this(playerId, direction, leverage, stakeMojos, outcome, payoutMojos, null);
+        }
     }
 
     public record CrowdEntry(String direction, int leverage, long marginUsdCents, long pnlUsdCents) {
@@ -117,6 +126,9 @@ public final class ResultsHasher {
         m.put("stakeMojos", p.stakeMojos());
         m.put("outcome", p.outcome());
         m.put("payoutMojos", p.payoutMojos());
+        if (p.mode() != null) {
+            m.put("mode", p.mode());
+        }
         return m;
     }
 

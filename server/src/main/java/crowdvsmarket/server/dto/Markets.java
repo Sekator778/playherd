@@ -1,5 +1,6 @@
 package crowdvsmarket.server.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
 
 /**
@@ -84,8 +85,10 @@ public final class Markets {
 
     /** The economy rules that are the same for every market (Р-102, {@code EconomyRules}): {@code networkFeePlay}: the flat network fee
      *  per bet, PLAY; {@code herdFeeGuardPercent}: the herd fee never takes more than this percent of the stake; {@code stakeTiers}:
-     *  smallest stake first. The per-market part ({@code herdFeeBp}, {@code feeFactor}, {@code maxLeverage}) is on each series. */
-    public record EconomyRulesDto(String networkFeePlay, String herdFeeGuardPercent, List<StakeTierDto> stakeTiers) {
+     *  smallest stake first; {@code fixedPlatformFeePercent} (Р-106): the platform fee of a fixed-payout bet, percent of the stake, rounded up to
+     *  0.001 PLAY, on top of {@code networkFeePlay}. The per-market part ({@code herdFeeBp}, {@code feeFactor}, {@code maxLeverage}) is on each series. */
+    public record EconomyRulesDto(String networkFeePlay, String herdFeeGuardPercent, List<StakeTierDto> stakeTiers,
+                                  String fixedPlatformFeePercent) {
     }
 
     /** The lobby in one call: active markets plus those closed within the last 10 minutes, in listing order. {@code economy}: the
@@ -114,12 +117,14 @@ public final class Markets {
      * {@code entryPrice}, {@code liquidationPrice} and {@code size} are {@code null} in {@code BETTING} and
      * while the opening price of a running round is not known yet; {@code size}: lots, 8 decimals.
      * {@code untilMs}: when the round starts ({@code BETTING}) or ends ({@code RUNNING}). {@code phase}
-     * is only ever {@code BETTING} or {@code RUNNING}.
+     * is only ever {@code BETTING} or {@code RUNNING}. {@code mode} (Р-106): a {@code FIXED} bet has a placeholder {@code leverage},
+     * and no {@code liquidationPrice} or {@code size}.
      */
     public record MyPositionDto(String marketId, String symbol, String roundId, Enums.Interval interval,
                                   long durationSec, Enums.RoundPhase phase, Enums.Direction direction, int leverage,
                                   String stake, String entryPrice, String liquidationPrice, String size,
-                                  boolean liquidated, long untilMs) {
+                                  boolean liquidated, long untilMs,
+                                  @JsonInclude(JsonInclude.Include.NON_NULL) Enums.BetMode mode) {
     }
 
     /** One row of the crowd overview; a closed market keeps its row. */
