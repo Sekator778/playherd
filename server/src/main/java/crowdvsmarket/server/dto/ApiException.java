@@ -157,6 +157,28 @@ public final class ApiException extends RuntimeException {
                 "the game engine is recovering — nothing was changed, please try again in a moment");
     }
 
+    /** Р-106: the API key sent as {@code Authorization: Bearer} is unknown, malformed or revoked. */
+    public static ApiException apiKeyInvalid() {
+        return new ApiException(Enums.ApiErrorCode.API_KEY_INVALID, 401, "the API key is not valid (unknown, malformed or revoked)");
+    }
+
+    /** Р-106: a call an API key may not make; {@code method} is the RPC name the client asked for. */
+    public static ApiException apiCallNotAllowed(String method) {
+        return new ApiException(Enums.ApiErrorCode.API_CALL_NOT_ALLOWED, 403,
+                "the call " + method + " is not available with an API key - it is for a signed-in person");
+    }
+
+    /** Р-106: the owner has the most API bots already; {@code message} names the number. */
+    public static ApiException botLimitReached(String message) {
+        return new ApiException(Enums.ApiErrorCode.BOT_LIMIT_REACHED, 409, message);
+    }
+
+    /** Р-106: an API bot asks (or is asked) to withdraw PLAY to a wallet. */
+    public static ApiException botWithdrawalNotAllowed() {
+        return new ApiException(Enums.ApiErrorCode.BOT_WITHDRAWAL_NOT_ALLOWED, 403,
+                "an API bot cannot withdraw PLAY to a wallet - its balance stays in the game");
+    }
+
     public Enums.ApiErrorCode code() {
         return code;
     }

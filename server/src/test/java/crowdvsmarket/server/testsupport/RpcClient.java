@@ -39,6 +39,15 @@ public final class RpcClient {
         return request.post("/api/rpc/" + method);
     }
 
+    /** Р-106: the call of an API bot - {@code Authorization: Bearer <key>} instead of a session cookie. */
+    public static Response rpcWithKey(String key, String method, Object... args) {
+        var request = given().contentType(ContentType.JSON).body(Map.of("args", Arrays.asList(args)));
+        if (key != null) {
+            request = request.header("Authorization", "Bearer " + key);
+        }
+        return request.post("/api/rpc/" + method);
+    }
+
     /** The body of a 200 answer as a JSON tree; any other status fails the test with the body in the message. */
     public static JsonNode ok(Response response) throws Exception {
         assertThat(response.statusCode()).as(response.asString()).isEqualTo(200);

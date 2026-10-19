@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.NullNode;
 import crowdvsmarket.server.auth.AuthService;
 import crowdvsmarket.server.auth.SessionService;
 import crowdvsmarket.server.config.GameConfig;
+import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Auth;
 import crowdvsmarket.server.dto.Betting;
@@ -22,6 +23,7 @@ import crowdvsmarket.server.service.ServerInfoService;
 import io.vertx.core.http.HttpServerRequest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.CookieParam;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -64,6 +66,21 @@ public class RpcResource {
     private static final Set<String> RATE_LIMITED_METHODS =
             Set.of("authChallenge", "authVerify", "placeBet", "cancelBet");
 
+    /**
+     * Р-106: the calls an API key may make ({@code Authorization: Bearer <key>}) - what a bot needs to read the game and to bet: the
+     * markets, rounds and prices (public for everyone), the bet and its cancellation, and the bot's own positions, account, ledger and
+     * history. Everything else - creating bots, keys, withdrawals and deposits, the nickname, sign-in and sign-out, feedback, the
+     * "while you were away" results - is for a signed-in person and answers 403 {@code API_CALL_NOT_ALLOWED} with a key. An allow
+     * list, not a deny list: a call added to this class later is closed to keys until someone decides to open it here.
+     */
+    static final Set<String> API_KEY_METHODS = Set.of(
+            "markets", "priceSeries", "candles", "crowdOverview", "rounds", "round", "betFeed", "btcReferencePrice",
+            "referencePrice", "previewLiquidation", "placeBet", "cancelBet", "myPositions", "currentPlayer", "myAccount",
+            "mySeasonRecord", "myLedger", "myProfile", "publicProfile", "crowdAccount", "ratings", "botRatings",
+            "cancellations", "serverInfo", "supply");
+
+    private static final String BEARER = "Bearer ";
+
     /** Р-81: in-app feedback. Open to everyone (a visitor who is not signed in can send it) and written to the database,
      *  so it has a per-IP budget of its own, far stricter than the shared one ({@code herd.feedback.rate-limit.*}); a cap
      *  on everyone together per day is {@code FeedbackService}'s. Not in {@link #RATE_LIMITED_METHODS}: that set is the
@@ -99,6 +116,7 @@ public class RpcResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response call(@PathParam("method") String method, String body,
                           @CookieParam(SESSION_COOKIE) String sessionCookie,
+                          @HeaderParam("Authorization") String authorization,
                           @Context HttpServerRequest httpRequest) {
         HerdRpc jfr = new HerdRpc(); // I-6: the server's own time for the call, to set against the client's (Little's law)
         boolean rec = jfr.isEnabled();
@@ -108,7 +126,7 @@ public class RpcResource {
             jfr.result = "ERROR";
         }
         try {
-            Response response = dispatch(method, body, sessionCookie, httpRequest);
+            Response response = dispatch(method, body, sessionCookie, authorization, httpRequest);
             jfr.result = String.valueOf(response.getStatus());
             return response;
         } catch (ApiException e) {
@@ -122,17 +140,26 @@ public class RpcResource {
         }
     }
 
-    private Response dispatch(String method, String body, String sessionCookie, HttpServerRequest httpRequest) {
-        if (RATE_LIMITED_METHODS.contains(method) && !rateLimiter.tryAcquire(clientIp(httpRequest) + ":" + method)) {
-            throw ApiException.rateLimited();
-        }
-        if (FEEDBACK_METHOD.equals(method) && !rateLimiter.tryAcquire(clientIp(httpRequest) + ":" + method,
-                config.feedbackRateLimitCapacity(), config.feedbackRateLimitRefillPerHour() / 3600.0)) {
-            throw ApiException.rateLimited();
+    private Response dispatch(String method, String body, String sessionCookie, String authorization,
+                              HttpServerRequest httpRequest) {
+        long now = System.currentTimeMillis();
+        String keyToken = bearerToken(authorization);
+        String keyPlayerId = null;
+        if (keyToken != null) {
+            // Р-106: a request with a key acts as that bot and only as that bot (a cookie sent along is ignored); its budget is the
+            // key's own, not the address's, so a developer's bots behind one address do not share the visitors' buckets.
+            keyPlayerId = authenticateKey(keyToken, method, httpRequest, now);
+        } else {
+            if (RATE_LIMITED_METHODS.contains(method) && !rateLimiter.tryAcquire(clientIp(httpRequest) + ":" + method)) {
+                throw ApiException.rateLimited();
+            }
+            if (FEEDBACK_METHOD.equals(method) && !rateLimiter.tryAcquire(clientIp(httpRequest) + ":" + method,
+                    config.feedbackRateLimitCapacity(), config.feedbackRateLimitRefillPerHour() / 3600.0)) {
+                throw ApiException.rateLimited();
+            }
         }
         JsonNode args = argsArray(body);
-        String playerId = sessions.playerIdFor(sessionCookie).orElse(null);
-        long now = System.currentTimeMillis();
+        String playerId = keyPlayerId != null ? keyPlayerId : sessions.playerIdFor(sessionCookie).orElse(null);
 
         Object result;
         NewCookie setCookie = null;
@@ -263,6 +290,24 @@ public class RpcResource {
             case "serverInfo" -> result = serverInfoService.serverInfo();
             // Economy stage C (C5): public, no session; the supply and where it sits, never HERD on its own (Р-90)
             case "supply" -> result = gameService.supply(now);
+            // Р-106: API bots. The first four are for a signed-in person only (not in API_KEY_METHODS); `botRatings` is public.
+            case "myBots" -> {
+                requireSignedIn(playerId);
+                result = gameService.myApiBots(playerId);
+            }
+            case "createBot" -> {
+                requireSignedIn(playerId);
+                result = gameService.createApiBot(playerId, str(args, 0), now);
+            }
+            case "regenerateBotKey" -> {
+                requireSignedIn(playerId);
+                result = gameService.regenerateApiKey(playerId, str(args, 0));
+            }
+            case "revokeBotKey" -> {
+                requireSignedIn(playerId);
+                result = gameService.revokeApiKey(playerId, str(args, 0));
+            }
+            case "botRatings" -> result = gameService.botRatings(str(args, 0));
             default -> throw ApiException.notFound("unknown RPC method: " + method);
         }
 
@@ -278,6 +323,44 @@ public class RpcResource {
             builder.cookie(clearCookie);
         }
         return builder.build();
+    }
+
+    /** The key of an {@code Authorization: Bearer <key>} header; {@code null} when there is no such header (another scheme is not ours). */
+    private static String bearerToken(String authorization) {
+        if (authorization == null) {
+            return null;
+        }
+        String header = authorization.strip();
+        if (header.equalsIgnoreCase("Bearer")) {
+            return ""; // the scheme with no key: a client that meant to use one and sent an empty value
+        }
+        if (header.length() < BEARER.length() || !header.regionMatches(true, 0, BEARER, 0, BEARER.length())) {
+            return null;
+        }
+        return header.substring(BEARER.length()).strip();
+    }
+
+    /**
+     * Р-106: the bot a key opens, after the checks a keyed request goes through in this order: the key exists (a wrong one is counted
+     * against the ADDRESS's bucket, so guessing keys is throttled), the call is one a key may make, the key's own bucket has a token.
+     * Also gives the bot its starter pack when this is its first call of a season.
+     */
+    private String authenticateKey(String token, String method, HttpServerRequest httpRequest, long now) {
+        PlayerDirectory.Row bot = gameService.apiBotForKey(token).orElse(null);
+        if (bot == null) {
+            if (!rateLimiter.tryAcquire(clientIp(httpRequest) + ":apiKey")) {
+                throw ApiException.rateLimited();
+            }
+            throw ApiException.apiKeyInvalid();
+        }
+        if (!API_KEY_METHODS.contains(method)) {
+            throw ApiException.apiCallNotAllowed(method);
+        }
+        if (!rateLimiter.tryAcquire("key:" + bot.playerId(), config.botRateLimitCapacity(), config.botRateLimitRefillPerSecond())) {
+            throw ApiException.rateLimited();
+        }
+        gameService.touchApiBot(bot.playerId(), now);
+        return bot.playerId();
     }
 
     private static void requireSignedIn(String playerId) {

@@ -107,6 +107,14 @@ public class GameConfig {
     @ConfigProperty(name = "herd.ratelimit.refill-per-sec")
     double rateLimitRefillPerSecond;
 
+    /** Р-106: the token bucket of ONE API key (a bot), separate from the per-address one above: capacity is the burst a bot may make,
+     *  the refill is what flows back every second. Every call a key makes takes one token, reads included. */
+    @ConfigProperty(name = "herd.ratelimit.bot.capacity", defaultValue = "60")
+    int botRateLimitCapacity;
+
+    @ConfigProperty(name = "herd.ratelimit.bot.refill-per-sec", defaultValue = "5")
+    double botRateLimitRefillPerSecond;
+
     /** Р-81: the per-IP token bucket of {@code submitFeedback} — its own budget, far stricter than the shared one above
      *  (a feedback message is written to the database and read by a person). Capacity: how many messages one address
      *  may send in a burst. */
@@ -267,6 +275,14 @@ public class GameConfig {
 
     public double rateLimitRefillPerSecond() {
         return rateLimitRefillPerSecond;
+    }
+
+    public int botRateLimitCapacity() {
+        return botRateLimitCapacity;
+    }
+
+    public double botRateLimitRefillPerSecond() {
+        return botRateLimitRefillPerSecond;
     }
 
     public int feedbackRateLimitCapacity() {

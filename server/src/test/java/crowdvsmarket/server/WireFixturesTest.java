@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.chain.ChainSvcClient;
@@ -240,6 +241,19 @@ class WireFixturesTest extends LiveRpcTestBase {
         keep(new Taken(name, method, Arrays.asList(args), status, body));
     }
 
+    /** What the files hold in place of a real API key: a key is shown once and is a secret, a fixture is committed. Same shape (herd_ and 43 characters). */
+    private static final String PLACEHOLDER_KEY = "herd_" + "EXAMPLE".repeat(6) + "E";
+
+    /** {@link #capture} for an answer that carries a key ({@code apiKey}): the key is checked, then written as {@link #PLACEHOLDER_KEY}. */
+    private void captureWithKey(String name, Session session, String method, Object... args) throws Exception {
+        Response response = rpc(session, method, args);
+        assertThat(response.statusCode()).as("%s: %s", name, response.asString()).isEqualTo(200);
+        JsonNode body = JSON.readTree(response.asString());
+        assertThat(body.path("apiKey").asText()).as(name).matches("herd_[A-Za-z0-9_-]{43}");
+        ((ObjectNode) body).put("apiKey", PLACEHOLDER_KEY);
+        keep(new Taken(name, method, Arrays.asList(args), 200, body));
+    }
+
     private void keep(Taken answer) {
         taken.add(answer);
         answers.put(answer.name(), answer.body());
@@ -289,6 +303,22 @@ class WireFixturesTest extends LiveRpcTestBase {
         // credited (AuthSessionDto.starterPackGranted: the web app tells a player about a pack on it)
         RpcClient.SignIn signIn = RpcClient.signInWithAnswer(chainSvcClient, CAROL);
         keep(new Taken("authVerify", "authVerify", List.of(signIn.request()), 200, signIn.answer()));
+
+        // Р-106: API bots - the owner's calls, the bots' board, and the two refusals a key meets
+        Session botOwner = RpcClient.signIn(chainSvcClient, "wirebots");
+        captureWithKey("createBot", botOwner, "createBot", "Wire Bot");
+        capture("myBots", botOwner, "myBots");
+        String botId = ok(botOwner, "myBots").get(0).path("playerId").asText();
+        captureWithKey("regenerateBotKey", botOwner, "regenerateBotKey", botId);
+        capture("revokeBotKey", botOwner, "revokeBotKey", botId);
+        capture("botRatings", null, "botRatings", (Object) null);
+        String liveKey = ok(botOwner, "regenerateBotKey", botId).path("apiKey").asText();
+        Response notAllowed = RpcClient.rpcWithKey(liveKey, "createBot", "Child Bot");
+        assertThat(notAllowed.statusCode()).as(notAllowed.asString()).isEqualTo(403);
+        keep(new Taken("error.apiCallNotAllowed", "createBot", List.of("Child Bot"), 403, JSON.readTree(notAllowed.asString())));
+        Response badKey = RpcClient.rpcWithKey("herd_" + "0".repeat(43), "myAccount");
+        assertThat(badKey.statusCode()).as(badKey.asString()).isEqualTo(401);
+        keep(new Taken("error.apiKeyInvalid", "myAccount", List.of(), 401, JSON.readTree(badKey.asString())));
 
         captureError("error.notSignedIn", null, 401, "NOT_SIGNED_IN", "myAccount");
         captureError("error.marketNotFound", null, 404, "MARKET_NOT_FOUND", "referencePrice", "NOPE");

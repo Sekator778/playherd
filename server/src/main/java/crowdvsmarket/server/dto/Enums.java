@@ -139,6 +139,15 @@ public final class Enums {
         REGISTRATION_LIMIT,
         /** Economy stage B (plan B5): the bet would take the open notional of its (market, side, round), or of the crypto bucket,
          *  over the treasury limit; the message names the room that is left. 422. Additive, like {@link #REGISTRATION_LIMIT}. */
-        EXPOSURE_LIMIT_EXCEEDED
+        EXPOSURE_LIMIT_EXCEEDED,
+        /** Р-106: the {@code Authorization: Bearer} key is unknown, malformed or revoked. 401. (Named by contract.ts' union, like the
+         *  three below; the developers' page lists them.) */
+        API_KEY_INVALID,
+        /** Р-106: the call is not one an API key may make (creating bots, withdrawals, profile changes, ...). 403. */
+        API_CALL_NOT_ALLOWED,
+        /** Р-106: the person already owns the most API bots allowed. 409. */
+        BOT_LIMIT_REACHED,
+        /** Р-106: an API bot's PLAY cannot be withdrawn to a wallet. 403. */
+        BOT_WITHDRAWAL_NOT_ALLOWED
     }
 }

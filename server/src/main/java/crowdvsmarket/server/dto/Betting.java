@@ -35,6 +35,19 @@ public final class Betting {
         }
     }
 
-    public record PlaceBetRequest(String roundId, Enums.Direction direction, int leverage, String stake) {
+    /** The payout mode of today: the payout follows the stake, the leverage and the size of the price move (Р-106 (2)). */
+    public static final String MODE_PERCENT = "PERCENT";
+
+    /**
+     * {@code mode} (Р-106): how the bet pays. Absent or {@code null} means {@value #MODE_PERCENT}, today's mode, so every client written
+     * before the field existed keeps working as it is. A second mode (fixed win/lose) is being designed; until it exists the server
+     * answers any other value with 400 {@code BAD_REQUEST} instead of ignoring it, so a client that asks for a mode this server does
+     * not know never gets a bet in a mode it did not choose.
+     */
+    public record PlaceBetRequest(String roundId, Enums.Direction direction, int leverage, String stake, String mode) {
+
+        public PlaceBetRequest(String roundId, Enums.Direction direction, int leverage, String stake) {
+            this(roundId, direction, leverage, stake, null);
+        }
     }
 }

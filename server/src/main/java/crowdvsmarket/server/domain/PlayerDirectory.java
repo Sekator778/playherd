@@ -39,22 +39,46 @@ public final class PlayerDirectory {
         /** Р-53: reverse lookup for the deposit poller — chainsvc's {@code GET /v1/play/deposits}
          *  reports each coin's {@code playerIndex}, never a {@code playerId}. */
         final Map<Integer, String> idByPlayerIndex = new ConcurrentHashMap<>();
+        /** Р-106: the live API keys, by the SHA-256 of the key. */
+        final Map<String, String> idByKeyHash = new ConcurrentHashMap<>();
 
         void put(Row row) {
-            byId.put(row.playerId(), row);
+            Row previous = byId.put(row.playerId(), row);
             idByWallet.put(row.walletAddress(), row.playerId());
             idByPlayerIndex.put(row.playerIndex(), row.playerId());
+            if (previous != null && previous.keyHash() != null) {
+                idByKeyHash.remove(previous.keyHash(), row.playerId());
+            }
+            if (row.keyHash() != null) {
+                idByKeyHash.put(row.keyHash(), row.playerId());
+            }
         }
     }
 
     private volatile Maps maps = new Maps();
 
+    /** What kind of player a row is (column {@code kind}, V17). {@code is_bot} stays what it was: the house's own bots only. */
+    public static final String KIND_HUMAN = "HUMAN";
+    public static final String KIND_HOUSE_BOT = "HOUSE_BOT";
+    /** Р-106: a bot of an outside developer, owned by a person and played through the API with a key. */
+    public static final String KIND_API_BOT = "API_BOT";
+
     /**
      * {@code retiredAtMs}: when a bot retired (economy stage B4), {@code null} for everyone else; {@code replaced}: a new bot has taken
      * the place of a retired one. A retired bot is in no list.
+     *
+     * <p>{@code kind}, {@code ownerId}, {@code keyHash}, {@code keyHint} (Р-106): only an API bot has an owner and a key; {@code keyHash}
+     * is {@code null} for a bot whose key was revoked and never leaves the server (the DTOs carry {@code keyHint} only).
      */
     public record Row(String playerId, String walletAddress, String nickname, boolean isBot, String botStrategy,
-                        int playerIndex, long createdAtMs, Long retiredAtMs, boolean replaced) {
+                        int playerIndex, long createdAtMs, Long retiredAtMs, boolean replaced,
+                        String kind, String ownerId, String keyHash, String keyHint) {
+
+        public Row(String playerId, String walletAddress, String nickname, boolean isBot, String botStrategy,
+                   int playerIndex, long createdAtMs, Long retiredAtMs, boolean replaced) {
+            this(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, createdAtMs, retiredAtMs, replaced,
+                    isBot ? KIND_HOUSE_BOT : KIND_HUMAN, null, null, null);
+        }
 
         public Row(String playerId, String walletAddress, String nickname, boolean isBot, String botStrategy,
                    int playerIndex, long createdAtMs) {
@@ -63,6 +87,40 @@ public final class PlayerDirectory {
 
         public boolean isRetired() {
             return retiredAtMs != null;
+        }
+
+        public boolean isApiBot() {
+            return KIND_API_BOT.equals(kind);
+        }
+
+        /** Whether the web app badges this player as a bot: the house's bots and the API bots alike. */
+        public boolean displaysAsBot() {
+            return isBot || isApiBot();
+        }
+
+        Row withNickname(String value) {
+            return new Row(playerId, walletAddress, value, isBot, botStrategy, playerIndex, createdAtMs, retiredAtMs, replaced,
+                    kind, ownerId, keyHash, keyHint);
+        }
+
+        Row withRetiredAt(Long value) {
+            return new Row(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, createdAtMs, value, replaced,
+                    kind, ownerId, keyHash, keyHint);
+        }
+
+        Row withReplaced(boolean value) {
+            return new Row(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, createdAtMs, retiredAtMs, value,
+                    kind, ownerId, keyHash, keyHint);
+        }
+
+        Row withBotStrategy(String value) {
+            return new Row(playerId, walletAddress, nickname, isBot, value, playerIndex, createdAtMs, retiredAtMs, replaced,
+                    kind, ownerId, keyHash, keyHint);
+        }
+
+        Row withKey(String hash, String hint) {
+            return new Row(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, createdAtMs, retiredAtMs, replaced,
+                    kind, ownerId, hash, hint);
         }
 
         public PlayerIdentity identity() {
@@ -81,10 +139,12 @@ public final class PlayerDirectory {
     public synchronized void reload() {
         List<Row> rows = db.read(c -> db.queryList(c,
                 "SELECT player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, created_at_ms, "
-                        + "retired_at_ms, replaced FROM players",
+                        + "retired_at_ms, replaced, kind, owner_player_id, api_key_hash, api_key_hint FROM players",
                 rs -> new Row(rs.getString("player_id"), rs.getString("wallet_address"), rs.getString("nickname"),
                         rs.getBoolean("is_bot"), rs.getString("bot_strategy"), rs.getInt("player_index"),
-                        rs.getLong("created_at_ms"), (Long) rs.getObject("retired_at_ms"), rs.getBoolean("replaced"))));
+                        rs.getLong("created_at_ms"), (Long) rs.getObject("retired_at_ms"), rs.getBoolean("replaced"),
+                        rs.getString("kind"), rs.getString("owner_player_id"), rs.getString("api_key_hash"),
+                        rs.getString("api_key_hint"))));
         Maps fresh = new Maps();
         for (Row row : rows) {
             fresh.put(row);
@@ -107,6 +167,18 @@ public final class PlayerDirectory {
         return Optional.ofNullable(maps.idByPlayerIndex.get(playerIndex));
     }
 
+    /** Р-106: the API bot a live key belongs to, by the SHA-256 (hex) of the key; empty for an unknown or revoked key. */
+    public Optional<Row> byKeyHash(String keyHash) {
+        String id = maps.idByKeyHash.get(keyHash);
+        return id == null ? Optional.empty() : byId(id);
+    }
+
+    /** Р-106: the API bots a person owns (revoked keys included: a bot is never deleted), oldest first. */
+    public List<Row> apiBotsOf(String ownerId) {
+        return maps.byId.values().stream().filter(r -> r.isApiBot() && ownerId.equals(r.ownerId()))
+                .sorted(java.util.Comparator.comparingLong(Row::createdAtMs).thenComparing(Row::playerId)).toList();
+    }
+
     public Collection<Row> all() {
         return List.copyOf(maps.byId.values());
     }
@@ -127,6 +199,33 @@ public final class PlayerDirectory {
         return new Row(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, atMs);
     }
 
+    /** Р-106: inserts an API bot (not a house bot: {@code is_bot} stays false) with its first key, within the caller's transaction;
+     *  the cache gets the row through {@link #cache} after the commit. */
+    public Row insertApiBot(Connection c, String playerId, String walletAddress, String nickname, int playerIndex,
+                            String ownerId, String keyHash, String keyHint, long atMs) throws SQLException {
+        db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, "
+                        + "created_at_ms, kind, owner_player_id, api_key_hash, api_key_hint) "
+                        + "VALUES (?, ?, ?, FALSE, NULL, ?, ?, ?, ?, ?, ?)",
+                playerId, walletAddress, nickname, playerIndex, atMs, KIND_API_BOT, ownerId, keyHash, keyHint);
+        return new Row(playerId, walletAddress, nickname, false, null, playerIndex, atMs, null, false, KIND_API_BOT, ownerId,
+                keyHash, keyHint);
+    }
+
+    /** Writes a bot's key (a new one, or {@code null} for a revoked one) within the caller's transaction ({@link #cacheKey} after the commit). */
+    public void updateKey(Connection c, String playerId, String keyHash, String keyHint) throws SQLException {
+        db.update(c, "UPDATE players SET api_key_hash = ?, api_key_hint = ? WHERE player_id = ? AND kind = ?",
+                keyHash, keyHint, playerId, KIND_API_BOT);
+    }
+
+    /** The cache's side of {@link #updateKey}, after the commit: the old hash stops opening the bot at once. */
+    public void cacheKey(String playerId, String keyHash, String keyHint) {
+        Maps current = maps;
+        Row prev = current.byId.get(playerId);
+        if (prev != null) {
+            current.put(prev.withKey(keyHash, keyHint));
+        }
+    }
+
     /** Puts a row {@link #insert} returned into the cache — after its transaction has committed. */
     public void cache(Row row) {
         maps.put(row);
@@ -141,9 +240,7 @@ public final class PlayerDirectory {
     /** The cache's side of {@link #updateNickname}, after the commit. */
     public void cacheNickname(String playerId, String nickname) {
         Maps current = maps;
-        current.byId.computeIfPresent(playerId, (id, prev) -> new Row(prev.playerId(), prev.walletAddress(), nickname,
-                prev.isBot(), prev.botStrategy(), prev.playerIndex(), prev.createdAtMs(), prev.retiredAtMs(),
-                prev.replaced()));
+        current.byId.computeIfPresent(playerId, (id, prev) -> prev.withNickname(nickname));
     }
 
     /** Writes the retirement of a bot within the caller's transaction ({@link #cacheRetired} after the commit). */
@@ -153,8 +250,7 @@ public final class PlayerDirectory {
 
     /** The cache's side of {@link #updateRetired}, after the commit. */
     public void cacheRetired(String playerId, long atMs) {
-        maps.byId.computeIfPresent(playerId, (id, prev) -> new Row(prev.playerId(), prev.walletAddress(), prev.nickname(),
-                prev.isBot(), prev.botStrategy(), prev.playerIndex(), prev.createdAtMs(), atMs, prev.replaced()));
+        maps.byId.computeIfPresent(playerId, (id, prev) -> prev.withRetiredAt(atMs));
     }
 
     /** Writes that a new bot has taken the place of the retired {@code playerId}, within the caller's transaction. */
@@ -164,8 +260,7 @@ public final class PlayerDirectory {
 
     /** The cache's side of {@link #updateReplaced}, after the commit. */
     public void cacheReplaced(String playerId) {
-        maps.byId.computeIfPresent(playerId, (id, prev) -> new Row(prev.playerId(), prev.walletAddress(), prev.nickname(),
-                prev.isBot(), prev.botStrategy(), prev.playerIndex(), prev.createdAtMs(), prev.retiredAtMs(), true));
+        maps.byId.computeIfPresent(playerId, (id, prev) -> prev.withReplaced(true));
     }
 
     /** Writes the strategy (catalog id) of a bot within the caller's transaction ({@link #cacheBotStrategy} after the commit). */
@@ -175,8 +270,7 @@ public final class PlayerDirectory {
 
     /** The cache's side of {@link #updateBotStrategy}, after the commit. */
     public void cacheBotStrategy(String playerId, String botStrategy) {
-        maps.byId.computeIfPresent(playerId, (id, prev) -> new Row(prev.playerId(), prev.walletAddress(), prev.nickname(),
-                prev.isBot(), botStrategy, prev.playerIndex(), prev.createdAtMs(), prev.retiredAtMs(), prev.replaced()));
+        maps.byId.computeIfPresent(playerId, (id, prev) -> prev.withBotStrategy(botStrategy));
     }
 
     public Map<String, PlayerIdentity> identitiesById() {

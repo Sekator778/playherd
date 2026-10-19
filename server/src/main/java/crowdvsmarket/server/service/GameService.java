@@ -34,7 +34,9 @@ import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.domain.WinStreak;
 import crowdvsmarket.server.dto.ApiException;
+import crowdvsmarket.server.auth.ApiKeys;
 import crowdvsmarket.server.dto.Betting;
+import crowdvsmarket.server.dto.Bots;
 import crowdvsmarket.server.dto.Crowd;
 import crowdvsmarket.server.dto.Economy;
 import crowdvsmarket.server.dto.Enums;
@@ -715,6 +717,132 @@ public class GameService implements MarketListener {
         }
     }
 
+    // ---------------------------------------------------------------------------------------
+    // API bots (Р-106): bots of outside developers, owned by a person, played through the API with a key
+    // ---------------------------------------------------------------------------------------
+
+    /** The most API bots one person may own (Р-106). Revoking a key does not free a place: a bot is never deleted. */
+    public static final int MAX_API_BOTS_PER_OWNER = 3;
+
+    /** The season each API bot was last checked against, so a key call costs the engine lock only once per bot and season. */
+    private final ConcurrentHashMap<String, String> apiBotSeasonTouched = new ConcurrentHashMap<>();
+
+    private Bots.ApiBotDto toDto(PlayerDirectory.Row row) {
+        return new Bots.ApiBotDto(row.playerId(), row.nickname(), row.keyHint(), row.keyHash() != null, row.createdAtMs());
+    }
+
+    private PlayerDirectory.Row requireOwnedApiBot(String ownerId, String botId) {
+        return players.byId(botId == null ? "" : botId)
+                .filter(r -> r.isApiBot() && ownerId.equals(r.ownerId()))
+                .orElseThrow(() -> ApiException.notFound("unknown bot " + botId));
+    }
+
+    /**
+     * Creates an API bot for {@code ownerId}: its own player (the {@code PlayerRegistered} event credits the normal starter pack, like any
+     * player's) marked {@code kind=API_BOT} with {@code is_bot} left false, and its first key. At most {@value #MAX_API_BOTS_PER_OWNER} per
+     * owner, counted under the engine lock so two simultaneous calls cannot both take the last place. The key is returned in full, once.
+     */
+    public Bots.ApiBotKeyDto createApiBot(String ownerId, String name, long nowMs) {
+        String nickname = name == null ? "" : name.strip();
+        if (!NICKNAME_PATTERN.matcher(nickname).matches()) {
+            throw ApiException.invalidNickname("bot name must be 3-24 characters: letters, digits, space, '_', '.', '-' only");
+        }
+        lockWrite();
+        try {
+            PlayerDirectory.Row owner = players.byId(ownerId).orElseThrow(() -> ApiException.notFound("unknown player " + ownerId));
+            if (owner.isBot() || owner.isApiBot()) {
+                throw ApiException.apiCallNotAllowed("createBot");
+            }
+            if (players.apiBotsOf(ownerId).size() >= MAX_API_BOTS_PER_OWNER) {
+                throw ApiException.botLimitReached("you already have " + MAX_API_BOTS_PER_OWNER
+                        + " API bots - that is the most one person can create");
+            }
+            String playerId = "api-" + UUID.randomUUID();
+            String walletAddress = "txapi1" + playerId.replace("-", "").substring(3);
+            int playerIndex = serverMeta.reserveNextPlayerIndex();
+            String key = ApiKeys.generate();
+            String hash = ApiKeys.hash(key);
+            String hint = ApiKeys.hint(key);
+            PlayerDirectory.Row row = db.tx(c -> players.insertApiBot(c, playerId, walletAddress, nickname, playerIndex, ownerId,
+                    hash, hint, nowMs));
+            players.cache(row);
+            appendPlayerRegistered(playerId, nowMs);
+            apiBotSeasonTouched.put(playerId, Season.of(Instant.ofEpochMilli(nowMs)).id());
+            return new Bots.ApiBotKeyDto(toDto(row), key);
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
+    /** The API bots {@code ownerId} owns, oldest first. */
+    public List<Bots.ApiBotDto> myApiBots(String ownerId) {
+        return players.apiBotsOf(ownerId).stream().map(this::toDto).toList();
+    }
+
+    /** A new key for the bot; the old one stops opening it at once. Returned in full, once. */
+    public Bots.ApiBotKeyDto regenerateApiKey(String ownerId, String botId) {
+        lockWrite();
+        try {
+            requireOwnedApiBot(ownerId, botId);
+            String key = ApiKeys.generate();
+            String hash = ApiKeys.hash(key);
+            String hint = ApiKeys.hint(key);
+            db.tx(c -> {
+                players.updateKey(c, botId, hash, hint);
+                return null;
+            });
+            players.cacheKey(botId, hash, hint);
+            return new Bots.ApiBotKeyDto(toDto(players.byId(botId).orElseThrow()), key);
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
+    /** Revokes the bot's key: nothing opens the bot until a new key is generated. Idempotent. */
+    public Bots.ApiBotDto revokeApiKey(String ownerId, String botId) {
+        lockWrite();
+        try {
+            requireOwnedApiBot(ownerId, botId);
+            db.tx(c -> {
+                players.updateKey(c, botId, null, null);
+                return null;
+            });
+            players.cacheKey(botId, null, null);
+            return toDto(players.byId(botId).orElseThrow());
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
+    /** The API bot a key opens: the SHA-256 of the key is looked up; empty for an unknown or revoked key. */
+    public Optional<PlayerDirectory.Row> apiBotForKey(String key) {
+        if (!ApiKeys.wellFormed(key)) {
+            return Optional.empty();
+        }
+        return players.byKeyHash(ApiKeys.hash(key)).filter(PlayerDirectory.Row::isApiBot);
+    }
+
+    /**
+     * The first call of an API bot in a season credits that season's starter pack, the way a person's first sign-in of a season does
+     * (the same {@code PlayerRegistered} event, the same no-op when the season is already touched). Free after the first call of a
+     * season: the check is remembered in memory.
+     */
+    public void touchApiBot(String playerId, long nowMs) {
+        Season season = Season.of(Instant.ofEpochMilli(nowMs));
+        if (season.id().equals(apiBotSeasonTouched.get(playerId))) {
+            return;
+        }
+        lockWrite();
+        try {
+            if (hub.ledger().seasonRecord(playerId, season).isEmpty()) {
+                appendPlayerRegistered(playerId, nowMs);
+            }
+            apiBotSeasonTouched.put(playerId, season.id());
+        } finally {
+            engineLock.writeLock().unlock();
+        }
+    }
+
     /** A player's PLAY balance, empty for a player the ledger does not know (a bot's view of its own account, {@code bots.ServerBotPorts}). */
     public Optional<PlayAmount> balanceOf(String playerId) {
         lockRead();
@@ -782,7 +910,7 @@ public class GameService implements MarketListener {
                 .orElseThrow(() -> ApiException.notFound("unknown player " + playerId));
         PlayerIdentity identity = row.identity();
         return new Identity.PlayerSummaryDto(playerId, identity.nickname(), row.walletAddress(),
-                identity.displayName(), row.isBot());
+                identity.displayName(), row.displaysAsBot());
     }
 
     /** Wave-1 finding: trimmed, 3–24 chars, allow-list {@code [A-Za-z0-9 _.-]} — the allow-list
@@ -1032,6 +1160,9 @@ public class GameService implements MarketListener {
     // ---------------------------------------------------------------------------------------
 
     public Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
+        if (req.mode() != null && !Betting.MODE_PERCENT.equals(req.mode())) {
+            throw ApiException.badRequest("unknown bet mode - omit \"mode\" (or send \"" + Betting.MODE_PERCENT + "\") for the percentage mode");
+        }
         RoundWindow.RoundRef ref = parseRoundId(req.roundId());
         marketRegistry.require(ref.market()); // MARKET_NOT_FOUND without waiting for the lock
         HerdPlaceBet jfr = new HerdPlaceBet(); // I-2: phases of the call, the clock is read only while JFR records
@@ -2166,6 +2297,10 @@ public class GameService implements MarketListener {
      */
     public Ledger.WithdrawalRequestDto requestWithdrawal(String playerId, String amount, long nowMs) {
         requireReady();
+        // Р-106: an API bot's PLAY stays in the game - the starter packs it was given must not leave the treasury through it
+        if (players.byId(playerId).map(PlayerDirectory.Row::isApiBot).orElse(false)) {
+            throw ApiException.botWithdrawalNotAllowed();
+        }
         if (!config.withdrawalEnabled()) {
             throw ApiException.withdrawalUnavailable();
         }
@@ -2590,14 +2725,28 @@ public class GameService implements MarketListener {
     // Ratings (Р-9, Р-18, Р-28, Р-30)
     // ---------------------------------------------------------------------------------------
 
+    /** The people's boards (and the house's bots, as before): the API bots of Р-106 are not in them, they have {@link #botRatings}. */
     public Ratings.RatingsDto ratings(String seasonIdOrNull) {
+        return ratings(seasonIdOrNull, false);
+    }
+
+    /** Р-106: the boards of the API bots only - the same season, the same threshold of rounds and the same two rankings (Р-28). */
+    public Ratings.RatingsDto botRatings(String seasonIdOrNull) {
+        return ratings(seasonIdOrNull, true);
+    }
+
+    private Ratings.RatingsDto ratings(String seasonIdOrNull, boolean apiBots) {
         Season season = seasonIdOrNull == null ? Season.of(Instant.now()) : parseSeason(seasonIdOrNull);
         lockRead();
         try {
             RatingBook ratingBook = new RatingBook(hub.ledger());
             Map<String, PlayerIdentity> identities = players.identitiesById();
-            List<RatingBook.RichEntry> rich = ratingBook.richList(season, identities);
-            List<RatingBook.ProphetEntry> prophets = ratingBook.prophetList(season, identities);
+            java.util.function.Predicate<String> onThisBoard =
+                    id -> players.byId(id).map(PlayerDirectory.Row::isApiBot).orElse(false) == apiBots;
+            List<RatingBook.RichEntry> rich = ratingBook.richList(season, identities).stream()
+                    .filter(e -> onThisBoard.test(e.playerId())).toList();
+            List<RatingBook.ProphetEntry> prophets = ratingBook.prophetList(season, identities).stream()
+                    .filter(e -> onThisBoard.test(e.playerId())).toList();
             List<Ratings.RichEntryDto> richDtos = new ArrayList<>();
             for (int i = 0; i < rich.size(); i++) {
                 RatingBook.RichEntry e = rich.get(i);

@@ -205,7 +205,7 @@ public final class EventApplier {
     private void recordBetFeedEntry(String roundId, GameEvent.BetPlaced e) {
         PlayerDirectory.Row row = players.byId(e.playerId()).orElse(null);
         String displayName = row == null ? e.playerId() : row.identity().displayName();
-        boolean isBot = row != null && row.isBot();
+        boolean isBot = row != null && row.displaysAsBot();
         String stake = new PlayAmount(e.stakeMojos()).toMoney().toPlainString();
         betFeed.record(roundId, e.playerId(), displayName, isBot, Enums.Direction.valueOf(e.direction().name()),
                 stake, e.leverage(), e.atMs());
