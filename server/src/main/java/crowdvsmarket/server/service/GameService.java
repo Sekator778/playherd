@@ -1671,7 +1671,7 @@ public class GameService implements MarketListener {
 
             // a fixed-payout position has no size and no liquidation price (Р-106)
             positionDtos.add(new Rounds.PublicPositionDto(outcome.playerId(), window.roundId(), toDto(outcome.direction()),
-                    outcome.leverage(), fixed ? "0" : position.size().toPlainString(), entryRaw,
+                    outcome.leverage(), fixed ? "0.00000000" : position.size().toPlainString(), entryRaw,
                     fixed ? null : market.rawString(position.liquidationPrice()), pnl.toPlainString(),
                     outcome.stake().toMoney().toPlainString(), playerSummary, outcome.liquidated(),
                     PlayAmount.fromMoney(outcome.payout()).toMoney().toPlainString(), directionCorrect,
@@ -1973,7 +1973,7 @@ public class GameService implements MarketListener {
                     : summary(bet.playerId());
             if (bet.isFixed()) { // Р-106: no position to simulate - the bet is won or lost by the close against the open; nothing to report mid-round
                 positions.add(new Rounds.PublicPositionDto(bet.playerId(), window.roundId(), toDto(bet.direction()),
-                        bet.leverage().value(), "0", openRaw, null, null, bet.stake().toMoney().toPlainString(),
+                        bet.leverage().value(), "0.00000000", openRaw, null, null, bet.stake().toMoney().toPlainString(),
                         playerSummary, false, null, null, Enums.BetMode.FIXED));
             } else {
                 Position position = Position.openFromMargin(bet.playerId(), window.roundId(), bet.direction(),

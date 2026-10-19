@@ -1,0 +1,85 @@
+{
+  "method": "round",
+  "args": [
+    "T_WIRE_FIXED-1h-1792418100000"
+  ],
+  "response": {
+    "roundId": "T_WIRE_FIXED-1h-1792418100000",
+    "window": {
+      "interval": "HOURLY",
+      "startMs": 1792418100000,
+      "endMs": 1792418160000
+    },
+    "marketId": "T_WIRE_FIXED",
+    "asset": "WFX",
+    "kind": "PERP",
+    "priceDecimals": 3,
+    "source": "synthetic",
+    "phase": "SETTLED",
+    "openPrice": "100.000",
+    "closePrice": "101.000",
+    "positions": [
+      {
+        "playerId": "5528c850-529a-48f5-b8c2-3300ffb585b7",
+        "roundId": "T_WIRE_FIXED-1h-1792418100000",
+        "direction": "UP",
+        "leverage": 2,
+        "size": "0.00000000",
+        "entryPrice": "100.000",
+        "liquidationPrice": null,
+        "pnl": "200.000",
+        "stake": "200.000",
+        "player": {
+          "playerId": "5528c850-529a-48f5-b8c2-3300ffb585b7",
+          "nickname": "txch1a…k7ar",
+          "walletAddress": "txch1alice0wire0fixed00000000000000000000000000000000000000q2k7ar",
+          "displayName": "txch1a…k7ar (txch1a…k7ar)",
+          "isBot": false
+        },
+        "liquidated": false,
+        "payout": "400.000",
+        "directionCorrect": true,
+        "mode": "FIXED"
+      },
+      {
+        "playerId": "0b339fb6-13c6-4a3b-ba07-71bbea137c8e",
+        "roundId": "T_WIRE_FIXED-1h-1792418100000",
+        "direction": "DOWN",
+        "leverage": 2,
+        "size": "0.00000000",
+        "entryPrice": "100.000",
+        "liquidationPrice": null,
+        "pnl": "-200.000",
+        "stake": "200.000",
+        "player": {
+          "playerId": "0b339fb6-13c6-4a3b-ba07-71bbea137c8e",
+          "nickname": "txch1b…h3xm",
+          "walletAddress": "txch1bob0wire0fixed0000000000000000000000000000000000000000q5h3xm",
+          "displayName": "txch1b…h3xm (txch1b…h3xm)",
+          "isBot": false
+        },
+        "liquidated": false,
+        "payout": "0.000",
+        "directionCorrect": false,
+        "mode": "FIXED"
+      }
+    ],
+    "crowd": {
+      "roundId": "T_WIRE_FIXED-1h-1792418100000",
+      "traded": false,
+      "direction": null,
+      "leverage": null,
+      "margin": null,
+      "entryPrice": null,
+      "liquidated": false,
+      "capitalBefore": "100000.00",
+      "capitalAfter": "100000.00"
+    },
+    "resultsHash": "0x9053b1cab9add7665d0f18f9c29962b4413d5f2af2fdf5587f70df7fe2897105",
+    "oracleAnchor": {
+      "seq": 3,
+      "state": "unknown",
+      "height": null
+    }
+  }
+}

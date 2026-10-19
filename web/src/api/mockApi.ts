@@ -162,6 +162,8 @@ const INTERVALS: readonly Interval[] = ["HOURLY", "DAILY"];
  *  and `k`, the herd-fee factor of the long (DAILY, 15-minute) round of a price market (the short round has k = 1). */
 const MOCK_HERD_FEE_BP = "1.0";
 const MOCK_NETWORK_FEE = 0.1;
+/** Р-106: the platform fee of a fixed-payout bet, percent of the stake. */
+const MOCK_FIXED_FEE_PERCENT = 3;
 const MOCK_HERD_FEE_CAP = 0.2;
 const MOCK_LONG_ROUND_FEE_FACTOR = 2.2;
 /** `k` of the long round of an ODDS market (the server's `MarketEconomy.ODDS_LONG_ROUND_FEE_FACTOR`). */
@@ -255,6 +257,7 @@ export class MockApi implements Api {
         payout: outcome.payout,
         // what the bet was charged and keeps (a legacy mock bet has none)
         fees: bet.feeHerd != null && bet.feeNetwork != null ? (Number(bet.feeHerd) + Number(bet.feeNetwork)).toFixed(3) : null,
+        ...(bet.mode === "FIXED" ? { mode: "FIXED" as const } : {}),
       });
     }
   }
@@ -508,6 +511,7 @@ export class MockApi implements Api {
       economy: {
         networkFeePlay: String(MOCK_NETWORK_FEE),
         herdFeeGuardPercent: String(MOCK_HERD_FEE_CAP * 100),
+        fixedPlatformFeePercent: String(MOCK_FIXED_FEE_PERCENT),
         stakeTiers: [
           { upToPlay: 250, divisor: 1 },
           { upToPlay: 500, divisor: 2 },
@@ -626,6 +630,7 @@ export class MockApi implements Api {
         direction: bet.direction,
         leverage: bet.leverage,
         stake: bet.stake,
+        ...(bet.mode === "FIXED" ? { mode: "FIXED" as const } : {}),
       };
       if (now < window.startMs) {
         positions.push({
@@ -750,13 +755,17 @@ export class MockApi implements Api {
     if (!parsed || !spec || currentBettingId !== req.roundId) {
       throw new ApiRequestError("ROUND_NOT_OPEN_FOR_BETTING", "Betting just closed for this round.");
     }
-    requireValidLeverage(req.leverage, spec);
+    const fixed = req.mode === "FIXED";
+    if (fixed && spec.kind === "ODDS") {
+      throw new ApiRequestError("OTHER", `the win-or-lose (fixed payout) mode is not available on odds markets - ${spec.id} takes percentage-mode bets only`);
+    }
+    if (!fixed) requireValidLeverage(req.leverage, spec);
     const stakeNum = Number(req.stake);
     if (stakeNum < Number(MIN_STAKE_PLAY)) {
       throw new ApiRequestError("STAKE_BELOW_MINIMUM", "Minimum stake is 100 PLAY.");
     }
-    requireLeverageForStake(req.leverage, req.stake, spec);
-    const costs = mockCosts(req.stake, req.leverage, spec, parsed.interval);
+    if (!fixed) requireLeverageForStake(req.leverage, req.stake, spec);
+    const costs = fixed ? mockFixedCosts(req.stake) : mockCosts(req.stake, req.leverage, spec, parsed.interval);
     const debit = Number(costs.totalDebit);
     // GameEngine.placeBet always refunds any prior bet on this round before reserving the new
     // one (round_engine_design.md §4.9) — so an increased stake against the freed balance isn't
@@ -779,11 +788,12 @@ export class MockApi implements Api {
       playerId: player.playerId,
       roundId: req.roundId,
       direction: req.direction,
-      leverage: req.leverage,
+      leverage: fixed ? LEVERAGE_MIN : req.leverage,
       stake: stakeNum.toFixed(3),
       feeHerd: costs.feeHerd,
       feeNetwork: costs.feeNetwork,
       maxLeverageForStake: costs.maxLeverageForStake,
+      ...(fixed ? { mode: "FIXED" as const } : {}),
     };
     this.myBets.set(req.roundId, bet);
     return bet;
@@ -1143,6 +1153,19 @@ function mockCosts(stake: string, leverage: number, spec: MockMarketSpec, interv
     feeNetwork: network.toFixed(3),
     totalDebit: (Number(stake) + herd + network).toFixed(3),
     maxLeverageForStake: maxLeverageForStake(stake, spec),
+  };
+}
+
+/** Р-106: the fees of a fixed-payout bet - 3 % of the stake rounded UP to 0.001 PLAY, and the flat network fee; no leverage, so no leverage limit. */
+function mockFixedCosts(stake: string) {
+  const mojos = Math.round(Number(stake) * 1000);
+  const herd = Math.ceil((mojos * MOCK_FIXED_FEE_PERCENT) / 100) / 1000;
+  const network = MOCK_NETWORK_FEE;
+  return {
+    feeHerd: herd.toFixed(3),
+    feeNetwork: network.toFixed(3),
+    totalDebit: (mojos / 1000 + herd + network).toFixed(3),
+    maxLeverageForStake: null as number | null,
   };
 }
 

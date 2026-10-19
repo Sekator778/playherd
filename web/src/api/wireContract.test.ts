@@ -33,6 +33,11 @@ const CASES: Record<Exclude<WireName, `error.${string}`>, Case> = {
   "round.running": { call: (api, a) => api.round(a[0] as string), check: schema.round },
   "round.settled": { call: (api, a) => api.round(a[0] as string), check: schema.round },
   "round.cancelled": { call: (api, a) => api.round(a[0] as string), check: schema.round },
+  "round.betting.fixed": { call: (api, a) => api.round(a[0] as string), check: schema.round },
+  "round.running.fixed": { call: (api, a) => api.round(a[0] as string), check: schema.round },
+  "round.settled.fixed": { call: (api, a) => api.round(a[0] as string), check: schema.round },
+  "myPositions.fixed": { call: (api) => api.myPositions(), check: (v, p, pr) => schema.arr(schema.myPosition)(v, p, pr) },
+  "unseenResults.fixed": { call: (api) => api.unseenResults!(), check: (v, p, pr) => schema.arr(schema.profileRoundEntry)(v, p, pr) },
   betFeed: { call: (api, a) => api.betFeed!(a[0] as string, orUndefined<number>(a[1])), check: schema.betFeed },
   myPositions: { call: (api) => api.myPositions(), check: (v, p, pr) => schema.arr(schema.myPosition)(v, p, pr) },
   myAccount: { call: (api) => api.myAccount(), check: schema.playerAccount },
@@ -90,7 +95,7 @@ describe("the wire fixtures are there", () => {
 describe("RealApi over the server's real answers — each one is what contract.ts says it is", () => {
   it.each(DATA_NAMES)("%s: decoded by RealApi, equal to the server's JSON, and valid against the contract", async (name) => {
     const file = wire(name);
-    const fetchStub = wireFetch();
+    const fetchStub = wireFetch(name.endsWith(".fixed") ? { [file.method]: () => ({ body: file.response }) } : {});
     vi.stubGlobal("fetch", fetchStub);
     const decoded = await CASES[name].call(realApi, file.args);
     // RealApi decodes the JSON and hands it on as typed: nothing is dropped or renamed on the way.

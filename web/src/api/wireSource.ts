@@ -28,6 +28,11 @@ export const WIRE_NAMES = [
   "round.running",
   "round.settled",
   "round.cancelled",
+  "round.betting.fixed",
+  "round.running.fixed",
+  "round.settled.fixed",
+  "myPositions.fixed",
+  "unseenResults.fixed",
   "betFeed",
   "myPositions",
   "myAccount",
@@ -150,7 +155,7 @@ const NOT_FOUND = (message: string): WireReply => ({ status: 404, body: { error:
 
 /** The round fixture whose `round(<id>)` this is. */
 function roundReply(id: unknown): WireReply {
-  for (const name of ["round.betting", "round.running", "round.settled", "round.cancelled"] as const) {
+  for (const name of ["round.betting", "round.running", "round.settled", "round.cancelled", "round.betting.fixed", "round.running.fixed", "round.settled.fixed"] as const) {
     if (wire(name).args[0] === id) return { body: wire(name).response };
   }
   return NOT_FOUND(`unknown round ${String(id)}`);

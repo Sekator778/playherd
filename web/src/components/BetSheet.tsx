@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
-import { LEVERAGE_MAX, type Direction, type MarketDto, type RoundBetting } from "../api/contract";
-import { useMarket } from "../api/useMarkets";
+import { LEVERAGE_MAX, LEVERAGE_MIN, type BetMode, type Direction, type MarketDto, type RoundBetting } from "../api/contract";
+import { useMarket, useMarkets } from "../api/useMarkets";
+import { effectiveBetMode, fixedModeAvailable, fixedQuote, isFixedMode, loadBetMode, saveBetMode } from "./betModeModel";
 import { useMyPositions } from "../api/useMyPositions";
 import { usePoll } from "../api/usePoll";
 import { useServerInfo } from "../api/useServerInfo";
@@ -66,16 +67,31 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
   const [otherOpen, setOtherOpen] = useState(false);
   const [riskChoice, setRiskChoice] = useState<RiskId | null>(null);
   const [feesOpen, setFeesOpen] = useState(false);
+  // "Win or lose" (Р-106, fixed payout) or "%" (the boost): the first sheet a new player sees is "Win or lose"; the last choice is kept.
+  // Odds markets take the percentage mode only, and the switch is not shown there.
+  const { economy } = useMarkets();
+  const [chosenMode, setChosenMode] = useState<BetMode>(() => loadBetMode());
+  const modeOffered = fixedModeAvailable(market?.kind);
+  const mode = effectiveBetMode(chosenMode, market?.kind);
+  const fixed = mode === "FIXED";
+  const pickMode = (next: BetMode) => {
+    setChosenMode(next);
+    saveBetMode(next);
+  };
 
   const cap = market?.series?.find((s) => s.interval === interval)?.maxLeverage ?? market?.maxLeverage ?? LEVERAGE_MAX;
   const riskId = riskChoice ?? defaultRiskId(cap);
   // What the level asks for within the market's cap; the stake's tier (`stakeMax`, from the preview) lowers it further.
   const wanted = optionFor(riskOptions(cap, null), riskId).leverage;
-  const { preview, stakeMax } = useLiquidationPreview(marketId, direction, wanted, stake, interval, stakeIsValid(stake));
+  const asked = useLiquidationPreview(marketId, direction, wanted, stake, interval, stakeIsValid(stake) && !fixed);
+  const preview = fixed ? null : asked.preview;
+  const stakeMax = fixed ? null : asked.stakeMax;
   const options = riskOptions(cap, stakeMax);
   const selected = optionFor(options, riskId);
-  const leverage = effectiveLeverage(selected.leverage, defaultLeverage(cap), cap, false, stakeMax);
+  // a fixed-payout bet has no leverage: the lowest value is the placeholder the API and the journal carry
+  const leverage = fixed ? LEVERAGE_MIN : effectiveLeverage(selected.leverage, defaultLeverage(cap), cap, false, stakeMax);
   const stakeNum = Number(stake) || 0;
+  const quote = fixed ? fixedQuote(stakeNum, economy) : null;
   const ceiling = dialCeiling(cap, false, stakeMax);
   const clamped = ceiling < RISK_WANTED[RISK_WANTED.length - 1].wanted;
 
@@ -98,20 +114,21 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
   // An edit refunds the old bet and its fees first (the slip's rule): that money counts as free.
   const existingCost = existing ? Number(existing.stake) + Number(existing.feeHerd ?? 0) + Number(existing.feeNetwork ?? 0) : 0;
   const free = balance === null ? null : balance + existingCost;
-  const needed = preview?.totalDebit != null ? Number(preview.totalDebit) : stakeNum;
+  const needed = fixed ? (quote?.totalDebit ?? stakeNum) : preview?.totalDebit != null ? Number(preview.totalDebit) : stakeNum;
   const overBalance = free !== null && needed > free;
 
   // --- the choice survives the sign-in: while signed out the draft follows every change (and the round, when it rolls over) ---
   const roundId = round?.roundId ?? null;
-  const totalDebit = preview?.totalDebit ?? null;
+  const totalDebit = fixed ? (quote ? quote.totalDebit.toFixed(3) : null) : (preview?.totalDebit ?? null);
+  const draftMode: BetMode | undefined = fixed ? "FIXED" : undefined;
   const saveDraft = () => {
     if (roundId === null) return;
-    saveBetDraft({ roundId, marketId, direction, leverageChoice: leverage, high: false, stake, leverage, totalDebit, fromSheet: true });
+    saveBetDraft({ roundId, marketId, direction, leverageChoice: leverage, high: false, stake, leverage, totalDebit, fromSheet: true, mode: draftMode });
   };
   useEffect(() => {
     if (player || roundId === null) return;
-    saveBetDraft({ roundId, marketId, direction, leverageChoice: leverage, high: false, stake, leverage, totalDebit, fromSheet: true });
-  }, [player, roundId, marketId, direction, leverage, stake, totalDebit]);
+    saveBetDraft({ roundId, marketId, direction, leverageChoice: leverage, high: false, stake, leverage, totalDebit, fromSheet: true, mode: draftMode });
+  }, [player, roundId, marketId, direction, leverage, stake, totalDebit, draftMode]);
 
   // --- closing ---
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -173,7 +190,7 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
     setError(null);
     try {
       const sent = stakeNum.toFixed(3);
-      await api.placeBet({ roundId: round.roundId, direction, leverage, stake: sent });
+      await api.placeBet({ roundId: round.roundId, direction, leverage, stake: sent, ...(fixed ? { mode: "FIXED" as const } : {}) });
       notification("success");
       // The room (if it is the one open) reads its round again at once and says the bet is placed; the dock finds the bet on its next read.
       announceDraftPlaced({ roundId: round.roundId, direction, leverage, stake: sent });
@@ -211,7 +228,7 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
   const otherStakeValue = !SHEET_STAKES.some((s) => String(s) === stake);
   const showOtherInput = otherOpen || otherStakeValue;
   const closesIn = round ? formatCountdown(round.window.startMs - nowMs) : null;
-  const fees = preview?.feeHerd != null && preview.feeNetwork != null ? Number(preview.feeHerd) + Number(preview.feeNetwork) : null;
+  const fees = fixed ? null : preview?.feeHerd != null && preview.feeNetwork != null ? Number(preview.feeHerd) + Number(preview.feeNetwork) : null;
 
   return (
     <div
@@ -256,8 +273,25 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
           <div className="bet-sheet__body">
             {existing && (
               <p className="bet-sheet__existing">
-                {t("sheet.existing", { side: existing.direction, leverage: existing.leverage, stake: formatPlayAmount(existing.stake) })}
+                {isFixedMode(existing)
+                  ? t("mode.existing", { side: existing.direction, stake: formatPlayAmount(existing.stake) })
+                  : t("sheet.existing", { side: existing.direction, leverage: existing.leverage, stake: formatPlayAmount(existing.stake) })}
               </p>
+            )}
+
+            {modeOffered && (
+              <fieldset className="bet-sheet__group bet-sheet__mode">
+                <legend className="visually-hidden">{t("mode.aria")}</legend>
+                <div className="bet-sheet__chips" role="group" aria-label={t("mode.aria")}>
+                  <button type="button" className="bet-sheet__chip" aria-pressed={fixed} onClick={() => pickMode("FIXED")}>
+                    {t("mode.winOrLose")}
+                  </button>
+                  <button type="button" className="bet-sheet__chip mono" aria-pressed={!fixed} onClick={() => pickMode("PERCENTAGE")}>
+                    {t("mode.percent")}
+                  </button>
+                </div>
+                <p className="faint bet-sheet__mode-hint">{t(fixed ? "mode.winOrLoseHint" : "mode.percentHint")}</p>
+              </fieldset>
             )}
 
             <fieldset className="bet-sheet__group">
@@ -307,6 +341,7 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
               {overBalance && valid && <p className="field-error">{t("sheet.notEnough", { have: formatPlayAmount(free ?? 0) })}</p>}
             </fieldset>
 
+            {!fixed && (
             <fieldset className="bet-sheet__group">
               <legend>{t("sheet.boostLabel")}</legend>
               <div className="bet-sheet__chips">
@@ -325,10 +360,35 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
               </div>
               {clamped && <p className="faint bet-sheet__cap">{t("sheet.capNote", { max: ceiling })}</p>}
             </fieldset>
+            )}
 
+            {fixed ? (
+              <div className="bet-sheet__example" aria-live="polite">
+                {quote && valid ? (
+                  <>
+                    <p className="bet-sheet__quote mono">
+                      {t("mode.quote", {
+                        win: formatPlayAmount(quote.win),
+                        lose: formatPlayAmount(-quote.lose),
+                        fee: formatPlayAmount(quote.fee, { decimals: 3 }),
+                      })}
+                    </p>
+                    <p className="faint bet-sheet__quote-note">
+                      {t("mode.feeNote", { platform: formatPlayAmount(quote.platformFee, { decimals: 3 }), network: formatPlayAmount(quote.networkFee, { decimals: 3 }) })}{" "}
+                      <Link to="/fees" onClick={() => closeBetSheet()}>
+                        {t("sheet.feesAll")}
+                      </Link>
+                    </p>
+                  </>
+                ) : (
+                  <p className="faint">{t("sheet.exLoading")}</p>
+                )}
+              </div>
+            ) : (
             <div className="bet-sheet__example" aria-live="polite">
               {preview && valid ? <Example market={market} symbol={symbol} direction={direction} stake={stakeNum} leverage={leverage} preview={preview} fees={fees} /> : <p className="faint">{t("sheet.exLoading")}</p>}
             </div>
+            )}
 
             {fees !== null && preview && (
               <div className="bet-sheet__fees">

@@ -1,0 +1,75 @@
+{
+  "method": "round",
+  "args": [
+    "T_WIRE_FIXED-1h-1792418160000"
+  ],
+  "response": {
+    "roundId": "T_WIRE_FIXED-1h-1792418160000",
+    "window": {
+      "interval": "HOURLY",
+      "startMs": 1792418160000,
+      "endMs": 1792418220000
+    },
+    "marketId": "T_WIRE_FIXED",
+    "asset": "WFX",
+    "kind": "PERP",
+    "priceDecimals": 3,
+    "source": "synthetic",
+    "phase": "RUNNING",
+    "openPrice": "101.000",
+    "positions": [
+      {
+        "playerId": "5528c850-529a-48f5-b8c2-3300ffb585b7",
+        "roundId": "T_WIRE_FIXED-1h-1792418160000",
+        "direction": "UP",
+        "leverage": 2,
+        "size": "0.00000000",
+        "entryPrice": "101.000",
+        "liquidationPrice": null,
+        "pnl": null,
+        "stake": "300.000",
+        "player": {
+          "playerId": "5528c850-529a-48f5-b8c2-3300ffb585b7",
+          "nickname": "txch1a…k7ar",
+          "walletAddress": "txch1alice0wire0fixed00000000000000000000000000000000000000q2k7ar",
+          "displayName": "txch1a…k7ar (txch1a…k7ar)",
+          "isBot": false
+        },
+        "liquidated": false,
+        "payout": null,
+        "directionCorrect": null,
+        "mode": "FIXED"
+      },
+      {
+        "playerId": "0b339fb6-13c6-4a3b-ba07-71bbea137c8e",
+        "roundId": "T_WIRE_FIXED-1h-1792418160000",
+        "direction": "DOWN",
+        "leverage": 2,
+        "size": "0.00000000",
+        "entryPrice": "101.000",
+        "liquidationPrice": null,
+        "pnl": null,
+        "stake": "100.000",
+        "player": {
+          "playerId": "0b339fb6-13c6-4a3b-ba07-71bbea137c8e",
+          "nickname": "txch1b…h3xm",
+          "walletAddress": "txch1bob0wire0fixed0000000000000000000000000000000000000000q5h3xm",
+          "displayName": "txch1b…h3xm (txch1b…h3xm)",
+          "isBot": false
+        },
+        "liquidated": false,
+        "payout": null,
+        "directionCorrect": null,
+        "mode": "FIXED"
+      }
+    ],
+    "crowd": {
+      "roundId": "T_WIRE_FIXED-1h-1792418160000",
+      "direction": "UP",
+      "leverage": 2,
+      "margin": "10000.00",
+      "entryPrice": "101.000",
+      "liquidationPrice": "50.703"
+    }
+  }
+}

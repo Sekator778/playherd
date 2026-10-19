@@ -257,11 +257,11 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             />
           )}
         </div>
-        {event.kind === "EVEN" && <p className="result-card__secondary">{tr("results.noGainNoLoss")}</p>}
+        {event.kind === "EVEN" && <p className="result-card__secondary">{tr(event.fixed ? "mode.tie" : "results.noGainNoLoss")}</p>}
         {event.kind !== "EVEN" && (
           <p className="result-card__secondary">
             <strong className="result-card__symbol">{event.symbol}</strong>
-            {odds ? ` ${tr("results.oddsSuffix")}` : ""} · {tr("results.stakeLine", { stake: formatPlayAmount(event.stakePlay), leverage: event.leverage })}
+            {odds ? ` ${tr("results.oddsSuffix")}` : ""} · {event.fixed ? tr("mode.stakeLine", { stake: formatPlayAmount(event.stakePlay) }) : tr("results.stakeLine", { stake: formatPlayAmount(event.stakePlay), leverage: event.leverage })}
             {seriesLabel ? ` · ${tr("results.lengthRound", { length: seriesLabel })}` : ""}
           </p>
         )}
@@ -342,7 +342,7 @@ function ResultLine({ event }: { event: ResultEvent }) {
       <span className={resultClass(event)}>{formatPlayAmount(event.netPlay, { sign: true })} PLAY</span>{" "}
       <span className="muted">
         {event.kind === "LIQUIDATION" ? `${tr("results.liquidatedPrefix")} · ` : ""}
-        {event.symbol} · x{event.leverage}
+        {event.symbol} · {event.fixed ? tr("mode.winOrLose") : `x${event.leverage}`}
       </span>
     </>
   );

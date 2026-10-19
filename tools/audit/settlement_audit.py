@@ -16,6 +16,9 @@ What is checked for every settled position (bots included), mirroring the engine
                                              then capped at min(20*S, 0.1 % of the treasury) (not for legacy bets)
   fees                                     - herd = ceil3(S * min(guard, k*r_m*L)) (at least 0.001), network = 0.1, with the
                                              rate history of the herd fee (before / after the switch of 2026-10-18 ~07:53 UTC)
+  fixed-payout bets (BetPlaced "mode":"FIXED", Р-106)
+                                           - no size / liquidation / tier; payout 2*S when the close is on the bet's side of the
+                                             open, 0 on the other side, S when close = open; fee ceil3(3 % of S) + 0.1 PLAY
   bet                                      - leverage inside the stake tier (cap, cap/2, cap/5, cap/10), placed before the round
   round                                    - entry price = round open, path first open / last close = round open / close
   coinbase (spot_* with venue coinbase)    - round open/close against Coinbase public 1-minute candles, engine path range
@@ -117,7 +120,7 @@ select jsonb_build_object('round', r.round_id, 'market', r.market, 'interval', r
        'we', r.window_end_ms, 'player', e->>'playerId', 'bot', coalesce((e->'player'->>'isBot')::boolean, false),
        'dir', e->>'direction', 'lev', e->'leverage', 'stake', e->>'stake', 'payout', e->>'payout',
        'liquidated', e->'liquidated', 'entry', e->>'entryPrice', 'liqPrice', e->>'liquidationPrice', 'size', e->>'size',
-       'dirCorrect', e->'directionCorrect', 'bet', bp.p)::text
+       'dirCorrect', e->'directionCorrect', 'mode', e->>'mode', 'bet', bp.p)::text
 from round_results r cross join lateral jsonb_array_elements(r.positions_json) e
 left join bp on bp.m = r.market and bp.iv = r.interval and bp.ws = r.window_start_ms and bp.pid = e->>'playerId'
 where r.status = 'SETTLED' and %s;""" % (since_ms, until_ms, window), env)]
@@ -164,6 +167,48 @@ def expected_fees(market, interval, lev, stake_play, bet_at_ms):
     herd = (stake_play * share).quantize(D("0.001"), rounding=ROUND_CEILING)
     herd = max(herd, D("0.001"))
     return int(herd * 1000), NETWORK_FEE_MOJOS
+
+
+FIXED_FEE_RATE = D("0.03")   # Р-106: the platform fee of a fixed-payout bet, 3 % of the stake
+FIXED_LEVERAGE = 2           # the placeholder leverage of a fixed-payout bet (Leverage.MIN)
+
+
+def expected_fixed_fees(stake_play):
+    """Platform fee = 3 % of the stake rounded UP to 0.001 PLAY, network fee 0.1 PLAY (mojos)."""
+    herd = (stake_play * FIXED_FEE_RATE).quantize(D("0.001"), rounding=ROUND_CEILING)
+    return int(herd * 1000), NETWORK_FEE_MOJOS
+
+
+def expected_fixed_payout(stake_play, side, lot_open, lot_close):
+    """Р-106: 2 x stake for the right direction, 0 for the wrong one, the stake back when the close equals the open."""
+    if lot_close == lot_open:
+        return stake_play
+    return stake_play * 2 if (lot_close > lot_open) == (side == 1) else D(0)
+
+
+def audit_fixed_position(p, bet, rnd, side, stake, lot_open, F):
+    """The checks of a fixed-payout position (no size, no liquidation price, no tier; the leverage in the data is the placeholder)."""
+    rid, pid = p["round"], p["player"]
+    if p.get("mode") != "FIXED":
+        F.add(True, "fixed-mode", rid, pid, "BetPlaced says FIXED, the settled position says %s" % p.get("mode"))
+    if int(p["lev"]) != FIXED_LEVERAGE or int(bet["leverage"]) != FIXED_LEVERAGE:
+        F.add(True, "fixed-leverage", rid, pid, "leverage %s / %s, the placeholder is %d" % (p["lev"], bet["leverage"], FIXED_LEVERAGE))
+    if "liqCap" in bet or "liqKappa" in bet:
+        F.add(True, "fixed-liquidation-params", rid, pid, "a fixed-payout bet stores no liquidation parameters")
+    if bool(p["liquidated"]):
+        F.add(True, "fixed-liquidated", rid, pid, "a fixed-payout position cannot be liquidated")
+    if "feeHerdMojos" not in bet:
+        F.add(True, "fixed-fees-missing", rid, pid, "a fixed-payout bet carries its fees")
+        return None
+    expected = expected_fixed_payout(stake, side, lot_open, D(rnd["close"]))
+    if expected != D(p["payout"]):
+        F.add(True, "payout", rid, pid, "expected %s stored %s (fixed, stake %s %s, open %s close %s)" % (
+            expected, p["payout"], p["stake"], p["dir"], rnd["open"], rnd["close"]))
+    herd, net = int(bet["feeHerdMojos"]), int(bet["feeNetMojos"])
+    eh, en = expected_fixed_fees(stake)
+    if herd != eh or net != en:
+        F.add(True, "fee", rid, pid, "fixed: platform fee expected %d stored %d mojos, network expected %d stored %d" % (eh, herd, en, net))
+    return D(herd + net) / 1000
 
 
 def open_position(stake_play, lev, side, price, rate):
@@ -266,6 +311,14 @@ def audit_positions(markets, positions, rounds, treasury, F):
                 bet["direction"], bet["leverage"], bet["stakeMojos"], p["dir"], lev, p["stake"]))
         if bet["atMs"] >= p["ws"]:
             F.add(True, "bet-after-start", rid, pid, "bet at %d, round starts %d" % (bet["atMs"], p["ws"]))
+        if bet.get("mode") == "FIXED" or p.get("mode") == "FIXED":
+            fees = audit_fixed_position(p, bet, rnd, side, stake, lot_open, F) if bet.get("mode") == "FIXED" else None
+            if bet.get("mode") != "FIXED":
+                F.add(True, "fixed-mode", rid, pid, "the settled position says FIXED, BetPlaced says %s" % bet.get("mode"))
+            rows.append(dict(market=p["market"], interval=p["interval"], bot=p["bot"], lev=lev, cap=lev, legacy=False, fixed=True,
+                             stake=stake, payout=D(p["payout"]), liquidated=False, side=side, fees=fees or D(0), tier=lev,
+                             correct=p["dirCorrect"]))
+            continue
         # parameters of the liquidation
         has_params = "liqCap" in bet
         if legacy:
@@ -414,6 +467,8 @@ def summary(rows, cb_stats, out):
     out.append("|---|---|---|---:|---:|---:|---:|")
     groups = defaultdict(list)
     for r in rows:
+        if r.get("fixed"):
+            continue  # no leverage: the fixed-payout positions have their own table below
         ratio = r["lev"] / r["tier"] if r["tier"] else 0
         bucket = "cap" if r["lev"] >= r["tier"] else ("near" if ratio >= 0.8 else "low")
         groups[(r["market"], r["interval"], bucket)].append(r)
@@ -432,8 +487,8 @@ def summary(rows, cb_stats, out):
     out.append("| group | positions | liquidated | win (payout > stake) | stake back (payout = stake) | loss | direction right | net return |")
     out.append("|---|---:|---:|---:|---:|---:|---:|---:|")
     for name, flt in (("people", lambda r: not r["bot"]), ("bots", lambda r: r["bot"]),
-                      ("people at the tier cap", lambda r: not r["bot"] and r["lev"] >= r["tier"]),
-                      ("bots at the tier cap", lambda r: r["bot"] and r["lev"] >= r["tier"])):
+                      ("people at the tier cap", lambda r: not r["bot"] and not r.get("fixed") and r["lev"] >= r["tier"]),
+                      ("bots at the tier cap", lambda r: r["bot"] and not r.get("fixed") and r["lev"] >= r["tier"])):
         g = [r for r in rows if flt(r)]
         n = len(g)
         decided = [r for r in g if r["correct"] is not None]
@@ -443,6 +498,24 @@ def summary(rows, cb_stats, out):
             pct(sum(x["payout"] == x["stake"] for x in g), n), pct(sum(x["payout"] < x["stake"] for x in g), n),
             pct(sum(1 for x in decided if x["correct"]), len(decided)),
             "%.4f" % (sum(x["payout"] for x in g) / stake) if stake else "-"))
+    fixed_rows = [r for r in rows if r.get("fixed")]
+    if fixed_rows:
+        out.append("")
+        out.append("## Fixed-payout (Win or lose) positions")
+        out.append("")
+        out.append("| market | round | positions | win (2 x stake) | tie (stake back) | loss (0) | fees kept | net return (payout / (stake+fees)) |")
+        out.append("|---|---|---:|---:|---:|---:|---:|---:|")
+        by = defaultdict(list)
+        for r in fixed_rows:
+            by[(r["market"], r["interval"])].append(r)
+        for key in sorted(by):
+            g = by[key]
+            n = len(g)
+            stake = sum(x["stake"] + x["fees"] for x in g)
+            out.append("| %s | %s | %d | %s | %s | %s | %s | %s |" % (
+                key[0], INTERVALS[key[1]], n, pct(sum(x["payout"] > x["stake"] for x in g), n),
+                pct(sum(x["payout"] == x["stake"] for x in g), n), pct(sum(x["payout"] < x["stake"] for x in g), n),
+                "%.3f" % sum(x["fees"] for x in g), "%.4f" % (sum(x["payout"] for x in g) / stake) if stake else "-"))
     if cb_stats:
         out.append("")
         out.append("## Round prices against Coinbase 1-minute candles (basis points)")

@@ -33,9 +33,11 @@ interface Options {
   placeBet?: Api["placeBet"];
   /** A preview that does not name the fees (an older server). */
   noFees?: boolean;
+  /** Called with each liquidation preview asked for (the Win or lose view asks for none). */
+  onPreview?: (req: LiquidationPreviewRequest) => void;
 }
 
-function setup({ cap = 40, tierAt500, signedIn = true, kind = "PERP", placeBet, noFees = false }: Options = {}) {
+function setup({ cap = 40, tierAt500, signedIn = true, kind = "PERP", placeBet, noFees = false, onPreview }: Options = {}) {
   const start = Date.now() + HOUR;
   const round = bettingRoundOf("BTC", "BTC", { roundId: `BTC-1h-${start}`, window: { interval: "HOURLY", startMs: start, endMs: start + HOUR } });
   let player: typeof TEST_PLAYER | null = signedIn ? TEST_PLAYER : null;
@@ -52,6 +54,7 @@ function setup({ cap = 40, tierAt500, signedIn = true, kind = "PERP", placeBet, 
     markets: async () => marketsOf([market("BTC", { kind, maxLeverage: cap, series: [seriesDto({ maxLeverage: cap })] })], Date.now()),
     rounds: async () => ({ interval: "HOURLY" as const, betting: round, running: runningRoundOf("BTC", "BTC") }),
     previewLiquidation: async (req: LiquidationPreviewRequest) => {
+      onPreview?.(req);
       const stake = Number(req.stake);
       const max = tierAt500 !== undefined && stake >= 500 ? tierAt500 : cap;
       return {
@@ -85,6 +88,8 @@ const pressed = (el: HTMLElement) => el.getAttribute("aria-pressed") === "true";
 
 beforeEach(() => {
   window.localStorage.clear();
+  // the sheet opens on "Win or lose" for a player who never chose (Р-106); these tests are about the "%" mode, so that is the choice made
+  window.localStorage.setItem("herd.betMode", "PERCENTAGE");
   setProMode(false);
 });
 afterEach(() => {
@@ -311,5 +316,83 @@ describe("signed out: the first step is in the sheet, and the choice survives th
     expect(place).not.toHaveBeenCalled();
     const again = await sheet();
     expect(await within(again).findByRole("button", { name: "BET 1,000 ON UP" })).toBeEnabled();
+  });
+});
+
+describe("the sheet, Win or lose (Р-106)", () => {
+  beforeEach(() => {
+    window.localStorage.removeItem("herd.betMode"); // a player who never chose
+  });
+
+  it("opens on Win or lose for a new player: UP/DOWN, stake chips, the quote line, no boost, no wipeout", async () => {
+    const { open } = setup();
+    open("UP");
+    const dialog = await sheet();
+    expect(pressed(await within(dialog).findByRole("button", { name: "Win or lose" }))).toBe(true);
+    expect(pressed(within(dialog).getByRole("button", { name: "%" }))).toBe(false);
+    expect(dialog).toHaveTextContent("UP on BTC");
+    expect(pressed(within(dialog).getByRole("button", { name: "100" }))).toBe(true);
+    expect(await within(dialog).findByText("Win +100 PLAY · Lose −100 PLAY · Fee 3.100 PLAY")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Normal/ })).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/you lose most or all/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^Fees/ })).not.toBeInTheDocument();
+  });
+
+  it("the quote follows the stake", async () => {
+    const { open, user } = setup();
+    open("UP");
+    const dialog = await sheet();
+    await user.click(await within(dialog).findByRole("button", { name: "500" }));
+    expect(await within(dialog).findByText("Win +500 PLAY · Lose −500 PLAY · Fee 15.100 PLAY")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "other" }));
+    const input = within(dialog).getByRole("textbox");
+    await user.clear(input);
+    await user.type(input, "250");
+    expect(await within(dialog).findByText("Win +250 PLAY · Lose −250 PLAY · Fee 7.600 PLAY")).toBeInTheDocument();
+  });
+
+  it("places a fixed bet: mode FIXED, the lowest leverage as the placeholder, exactly the stake chosen, and no liquidation preview is asked", async () => {
+    const onPreview = vi.fn();
+    const { place, open, user } = setup({ onPreview });
+    open("DOWN");
+    const dialog = await sheet();
+    await user.click(await within(dialog).findByRole("button", { name: "BET 100 ON DOWN" }));
+    await waitFor(() => expect(place).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(place).mock.calls[0][0]).toMatchObject({ direction: "DOWN", stake: "100.000", mode: "FIXED", leverage: 2 });
+    expect(onPreview).not.toHaveBeenCalled();
+  });
+
+  it("the switch moves to the % mode (boost, example, fees) and the choice is kept for next time", async () => {
+    const { place, open, user } = setup();
+    open("UP");
+    const dialog = await sheet();
+    await user.click(await within(dialog).findByRole("button", { name: "%" }));
+    expect(pressed(await within(dialog).findByRole("button", { name: /Normal/ }))).toBe(true);
+    expect(window.localStorage.getItem("herd.betMode")).toBe("PERCENTAGE");
+    await user.click(await within(dialog).findByRole("button", { name: "BET 100 ON UP" }));
+    await waitFor(() => expect(place).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(place).mock.calls[0][0]).toMatchObject({ leverage: 10 });
+    expect(vi.mocked(place).mock.calls[0][0]).not.toHaveProperty("mode");
+  });
+
+  it("is not offered on an odds market: no switch, the % view only", async () => {
+    const { open } = setup({ kind: "ODDS" });
+    open("UP");
+    const dialog = await sheet();
+    expect((await within(dialog).findAllByRole("button", { name: /Safer|Normal/ })).length).toBeGreaterThan(0);
+    expect(within(dialog).queryByRole("button", { name: "Win or lose" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "%" })).not.toBeInTheDocument();
+  });
+
+  it("counts the fees in what the balance must cover", async () => {
+    const { open, user } = setup();
+    open("UP");
+    const dialog = await sheet();
+    await user.click(await within(dialog).findByRole("button", { name: "other" }));
+    const input = within(dialog).getByRole("textbox");
+    await user.clear(input);
+    await user.type(input, "9900"); // 9900 + 297 + 0.1 is over the 10 000 held
+    expect(await within(dialog).findByText(/more than you have/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /^BET 9,900 ON UP/ })).toBeDisabled();
   });
 });

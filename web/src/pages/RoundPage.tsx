@@ -14,6 +14,7 @@ import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, RoundVen
 import { MarketIcon } from "../components/MarketIcon";
 import { roundPriceInfo } from "../components/marketModel";
 import { OwnPositionCard } from "../components/OwnPositionCard";
+import { isFixedMode } from "../components/betModeModel";
 import { CancellationNotice, CrowdPositionCard, PositionsList } from "../components/RoundParts";
 import { useServerNow } from "../components/useServerNow";
 import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
@@ -158,7 +159,7 @@ export function RoundPage() {
             return (
               <div className="card card--hero own-outcome">
                 <div className="net-result">
-                  <span className={outcomeClassName(outcomeFromNet(net))}>{formatPlayAmount(net, { sign: true })} PLAY</span>
+                  <span className={outcomeClassName(outcomeFromNet(net))}>{isFixedMode(ownPosition) && net === 0 ? t("mode.tie") : `${formatPlayAmount(net, { sign: true })} PLAY`}</span>
                 </div>
                 <p className="net-result__secondary">
                   {t("round.stakePaid", { stake: formatPlayAmount(stake), paid: formatPlayAmount(ownPosition.payout) })}

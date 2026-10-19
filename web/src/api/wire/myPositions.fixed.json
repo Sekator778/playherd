@@ -1,0 +1,40 @@
+{
+  "method": "myPositions",
+  "args": [],
+  "response": [
+    {
+      "marketId": "T_WIRE_FIXED",
+      "symbol": "WFX",
+      "roundId": "T_WIRE_FIXED-1h-1792418160000",
+      "interval": "HOURLY",
+      "durationSec": 60,
+      "phase": "RUNNING",
+      "direction": "UP",
+      "leverage": 2,
+      "stake": "300.000",
+      "entryPrice": "101.000",
+      "liquidationPrice": null,
+      "size": null,
+      "liquidated": false,
+      "untilMs": 1792418220000,
+      "mode": "FIXED"
+    },
+    {
+      "marketId": "T_WIRE_FIXED",
+      "symbol": "WFX",
+      "roundId": "T_WIRE_FIXED-1h-1792418220000",
+      "interval": "HOURLY",
+      "durationSec": 60,
+      "phase": "BETTING",
+      "direction": "UP",
+      "leverage": 2,
+      "stake": "250.000",
+      "entryPrice": null,
+      "liquidationPrice": null,
+      "size": null,
+      "liquidated": false,
+      "untilMs": 1792418220000,
+      "mode": "FIXED"
+    }
+  ]
+}

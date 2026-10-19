@@ -1,10 +1,11 @@
 import { Link } from "react-router-dom";
-import type { Direction, MarketDto, RoundId } from "../api/contract";
+import type { BetMode, Direction, MarketDto, RoundId } from "../api/contract";
 import { outcomeFromNet } from "../api/outcome";
 import { formatPlayAmount } from "../format";
 import { useT } from "../i18n";
 import { CrackIcon, DirectionGlyph, MinusDiscIcon, TrophyIcon } from "./icons";
 import { oddsMarketPhrase } from "./marketModel";
+import { isFixedMode } from "./betModeModel";
 
 /**
  * A settled round as one result tile — icon + signed net + context, never a table row with the
@@ -43,6 +44,7 @@ export function ResultTile({
   stake,
   payout,
   fees,
+  mode,
 }: {
   roundId: RoundId;
   /** The market's ticker ("BTC", "NVDA", "GER") — which market the round was played in (Р-69). */
@@ -70,9 +72,13 @@ export function ResultTile({
   payout?: string;
   /** The fees paid on this bet (herd + network), PLAY, when the caller knows them: a small "fees 1.07" under the line. `ProfileRoundEntryDto` carries none yet. */
   fees?: number | null;
+  /** Р-106: how the bet was paid; "FIXED" shows "Win or lose" in place of the boost and words a tie as "Tie — stake back". */
+  mode?: BetMode | null;
 }) {
   const t = useT();
   const kind = resultKind(net, liquidated);
+  const fixed = isFixedMode({ mode });
+  const boost = fixed ? t("mode.winOrLose") : `x${leverage}`;
   return (
     <Link to={`/round/${roundId}`} className={`result-tile result-tile--${kind}`}>
       <span className="result-tile__icon">
@@ -102,7 +108,7 @@ export function ResultTile({
             <>
               {seriesLabel && `${seriesLabel} · `}
               <span className="nowrap">
-                <DirectionGlyph direction={direction} /> {direction} · x{leverage}
+                <DirectionGlyph direction={direction} /> {direction} · {boost}
               </span>
             </>
           )}
@@ -111,7 +117,7 @@ export function ResultTile({
           {symbol && (
             <>
               <span className="nowrap">
-                <DirectionGlyph direction={direction} /> {direction} · x{leverage}
+                <DirectionGlyph direction={direction} /> {direction} · {boost}
               </span>
               {dateLabel && " · "}
             </>
@@ -126,7 +132,7 @@ export function ResultTile({
         )}
       </span>
       <span className={`result-tile__net ${NET_CLASS[kind]}`}>
-        {formatPlayAmount(net, { sign: true })} PLAY
+        {fixed && kind === "even" ? t("mode.tie") : `${formatPlayAmount(net, { sign: true })} PLAY`}
         {liquidated && <span className="result-tile__tag"> · {t("resultTile.liq")}</span>}
       </span>
     </Link>

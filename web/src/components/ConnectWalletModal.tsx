@@ -148,7 +148,7 @@ export function ConnectWalletModal() {
     setPlaceError(null);
     try {
       const stake = (Number(draft.stake) || 0).toFixed(3);
-      await api.placeBet({ roundId: draft.roundId, direction: draft.direction, leverage: draft.leverage, stake });
+      await api.placeBet({ roundId: draft.roundId, direction: draft.direction, leverage: draft.leverage, stake, ...(draft.mode === "FIXED" ? { mode: "FIXED" as const } : {}) });
       announceDraftPlaced({ roundId: draft.roundId, direction: draft.direction, leverage: draft.leverage, stake });
       if (attemptIdRef.current !== attemptId) return;
       closeInRoom();
@@ -483,7 +483,7 @@ export function ConnectWalletModal() {
               // The bet from the slip, in one line — what the main button places, nothing else.
               <div className="card card--tight" aria-label={t("betSlip.yourBet")}>
                 <p style={{ margin: 0 }}>
-                  {t("betSlip.yourBet")} <DirectionGlyph direction={draft.direction} /> {draft.direction} · x{draft.leverage} ·{" "}
+                  {t("betSlip.yourBet")} <DirectionGlyph direction={draft.direction} /> {draft.direction} · {draft.mode === "FIXED" ? t("mode.winOrLose") : `x${draft.leverage}`} ·{" "}
                   {formatPlayAmount(draft.stake)} PLAY
                 </p>
                 {draft.totalDebit != null && (

@@ -185,7 +185,9 @@ export interface PositionLinesInput {
   direction: "UP" | "DOWN";
   leverage: number;
   entryPrice: string;
-  liquidationPrice: string;
+  /** Null for a fixed-payout position ("Win or lose", Р-106): it has no wipeout line. */
+  liquidationPrice: string | null;
+  mode?: "PERCENTAGE" | "FIXED" | null;
 }
 
 export interface ChartLine {
@@ -224,16 +226,16 @@ export function buildChartLines(
     const entryIsOpen = own !== null && ownEntry !== null && sameLevel(ownEntry, open);
     lines.push({
       id: "open",
-      label: entryIsOpen ? t("lines.openEntry", { glyph: glyph(own.direction), leverage: own.leverage }) : t("lines.open"),
+      label: entryIsOpen ? (own.mode === "FIXED" ? t("mode.openEntry", { glyph: glyph(own.direction) }) : t("lines.openEntry", { glyph: glyph(own.direction), leverage: own.leverage })) : t("lines.open"),
       price: open,
       tone: entryIsOpen ? "entry" : "open",
       faint: false,
     });
   }
   if (own && ownEntry !== null && Number.isFinite(ownEntry) && !(openOk && sameLevel(ownEntry, open))) {
-    lines.push({ id: "own-entry", label: t("lines.yourEntry", { glyph: glyph(own.direction), leverage: own.leverage }), price: ownEntry, tone: "entry", faint: false });
+    lines.push({ id: "own-entry", label: own.mode === "FIXED" ? t("mode.yourEntry", { glyph: glyph(own.direction) }) : t("lines.yourEntry", { glyph: glyph(own.direction), leverage: own.leverage }), price: ownEntry, tone: "entry", faint: false });
   }
-  if (own) {
+  if (own && own.liquidationPrice !== null) {
     const liq = Number(own.liquidationPrice);
     if (Number.isFinite(liq)) lines.push({ id: "own-liq", label: t("lines.yourLiq"), price: liq, tone: "liq", faint: false });
   }

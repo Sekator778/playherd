@@ -2,6 +2,7 @@ import type { MyPositionDto } from "../api/contract";
 import { formatPlayAmount } from "../format";
 import { useT } from "../i18n";
 import { DirectionGlyph } from "./icons";
+import { isFixedMode } from "./betModeModel";
 import "./WaitingForOpen.css";
 
 /**
@@ -48,14 +49,14 @@ export function OwnBetWaiting({
   position,
   hero = false,
 }: {
-  position: Pick<MyPositionDto, "direction" | "leverage" | "stake" | "symbol">;
+  position: Pick<MyPositionDto, "direction" | "leverage" | "stake" | "symbol" | "mode">;
   hero?: boolean;
 }) {
   const t = useT();
   return (
     <div className={`card ${hero ? "card--hero" : ""} own-outcome waiting-open waiting-open--own`} role="status">
       <p className="faint">
-        {t("betSlip.yourBet")} <DirectionGlyph direction={position.direction} /> {position.direction} · x{position.leverage} · {position.symbol} ·{" "}
+        {t("betSlip.yourBet")} <DirectionGlyph direction={position.direction} /> {position.direction} · {isFixedMode(position) ? t("mode.winOrLose") : `x${position.leverage}`} · {position.symbol} ·{" "}
         {formatPlayAmount(position.stake)} PLAY
       </p>
       <div className="waiting-open__head">

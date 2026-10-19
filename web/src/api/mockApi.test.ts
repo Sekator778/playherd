@@ -178,7 +178,7 @@ describe("rounds / round — per market", () => {
         expect(pair.running.openPrice.split(".")[1]).toHaveLength(spec.priceDecimals);
         for (const p of pair.running.positions) {
           expect(p.entryPrice).toBe(pair.running.openPrice);
-          expect(p.liquidationPrice.split(".")[1]).toHaveLength(spec.priceDecimals);
+          expect(p.liquidationPrice!.split(".")[1]).toHaveLength(spec.priceDecimals);
           expect(p.leverage).toBeLessThanOrEqual(spec.maxLeverage);
         }
       }
@@ -351,6 +351,7 @@ describe("the account and the markets say what the economy adds (plan A4, B2, C1
     expect(markets.economy).toEqual({
       networkFeePlay: "0.1",
       herdFeeGuardPercent: "20",
+      fixedPlatformFeePercent: "3",
       stakeTiers: [
         { upToPlay: 250, divisor: 1 },
         { upToPlay: 500, divisor: 2 },
@@ -437,6 +438,17 @@ describe("referencePrice / priceSeries — one price per instant", () => {
 describe("placeBet and the player's positions across markets", () => {
   beforeEach(async () => {
     await signIn();
+  });
+
+  it("a Win or lose bet (Р-106): no leverage check, fees 3 % up to 0.001 + 0.1, mode FIXED in the bet and the positions; refused on an odds market", async () => {
+    const eth = await bettingRoundOf("ETH");
+    const bet = await mockApi.placeBet({ roundId: eth.roundId, direction: "UP", leverage: 0, stake: "133.333", mode: "FIXED" });
+    expect(bet).toMatchObject({ mode: "FIXED", leverage: 2, stake: "133.333", feeHerd: "4.000", feeNetwork: "0.100", maxLeverageForStake: null });
+    const mine = (await mockApi.myPositions()).find((p) => p.roundId === eth.roundId);
+    expect(mine).toMatchObject({ mode: "FIXED", leverage: 2 });
+    const odds = MOCK_MARKETS.find((m) => m.kind === "ODDS" && m.id !== CLOSING.id)!;
+    const oddsRound = await bettingRoundOf(odds.id);
+    await expectApiError(mockApi.placeBet({ roundId: oddsRound.roundId, direction: "UP", leverage: 2, stake: MIN_STAKE_PLAY, mode: "FIXED" }), "OTHER");
   });
 
   it("a bet above the market's leverage cap is INVALID_LEVERAGE; at the cap it is accepted", async () => {

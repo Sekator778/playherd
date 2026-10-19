@@ -101,6 +101,7 @@ apk: web-deps ## Android debug APK (Capacitor); HERD_APP_URL=https://host points
 test-tools: ## tests of tools/stand.sh, of the tools/e2e runs (a fake stand) and of herd-operator.sh feedback; no docker, no network
 	bash tools/test-stand.sh
 	node --test tools/e2e/*.test.mjs tools/operator.test.mjs
+	$(PYTHON) -m unittest tools/audit/test_settlement_audit.py
 
 stand-up: ## start the local stand on :8480
 	tools/stand.sh up

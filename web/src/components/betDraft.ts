@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { Direction } from "../api/contract";
+import type { BetMode, Direction } from "../api/contract";
 
 /**
  * The bet a signed-out player set up in the preview slip (`BetSlipPreview`), kept across the sign-in so it is not lost
@@ -21,6 +21,8 @@ export interface BetDraft {
   /** Set by the bet sheet (Р-98): it can be opened from the lobby, where there is no room whose path would tell the sign-in dialog the draft is
    *  the player's to place. */
   fromSheet?: boolean;
+  /** `FIXED` for a "Win or lose" bet from the sheet (Р-106): no leverage then (`leverage` is the placeholder). Absent: the percentage mode. */
+  mode?: BetMode;
 }
 
 /** What the sign-in dialog placed for the player: the slip shows it as its own placed bet. */

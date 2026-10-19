@@ -14,6 +14,7 @@ import { isWaitingForOpen, liveReadOfPosition, type LiveRead } from "./livePosit
 import { useT, type TFn } from "../i18n";
 import { positionRoomPath, readStripCollapsed, writeStripCollapsed } from "./positionsStripModel";
 import { useServerNow } from "./useServerNow";
+import { isFixedMode } from "./betModeModel";
 import "./PositionsStrip.css";
 
 /** "3 MIN" — the position's own round length (`MyPositionDto.durationSec`), so the label survives the market
@@ -32,8 +33,11 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
   const liquidated = position.phase === "RUNNING" && position.liquidated;
   const pulse = read ? liquidationLiveCardClass(read.roomFraction) : "";
   const sideClass = position.direction.toLowerCase();
+  const fixed = isFixedMode(position);
   const label =
-    t("pos.ariaBase", { symbol: position.symbol, direction: position.direction, leverage: position.leverage, stake: formatPlayAmount(position.stake) }) +
+    (fixed
+      ? t("mode.ariaBase", { symbol: position.symbol, direction: position.direction, stake: formatPlayAmount(position.stake) })
+      : t("pos.ariaBase", { symbol: position.symbol, direction: position.direction, leverage: position.leverage, stake: formatPlayAmount(position.stake) })) +
     (liquidated
       ? `, ${t("pos.ariaLiquidated")}`
       : betting
@@ -53,7 +57,7 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
         <span className={`pos-card__side pos-card__side--${sideClass}`}>
           <DirectionGlyph direction={position.direction} /> {position.symbol}
         </span>
-        <span className="pos-card__lev mono">x{position.leverage}</span>
+        <span className="pos-card__lev mono">{fixed ? t("mode.short") : `x${position.leverage}`}</span>
         <span className="pos-card__time mono">{betting ? t("pos.starts", { time: timeLeft }) : t("pos.ends", { time: timeLeft })}</span>
       </span>
 
@@ -74,6 +78,11 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
             <span className="pos-card__waiting-dot" aria-hidden="true" />
             {t("waiting.title")}
           </span>
+        </span>
+      ) : fixed ? (
+        // Р-106, "Win or lose": no live P&L and no wipeout meter - what a win and a loss are worth, and where the price stands
+        <span className="pos-card__pnl pos-card__pnl--wait">
+          <span className="pos-card__note mono">{t("mode.ownRunning", { win: formatPlayAmount(position.stake), lose: formatPlayAmount(position.stake) })}</span>
         </span>
       ) : read ? (
         <>

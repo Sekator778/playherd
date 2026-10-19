@@ -175,7 +175,8 @@ export const playerSummary = obj<PlayerSummaryDto>({ playerId: nonEmptyStr, nick
 /** `starterPackGranted` is optional in the contract (the mock and an older server leave it out), but a server of this repo sends it: `wireContract.test.ts` says so. */
 export const authSession = obj<AuthSessionDto>({ player: playerSummary, isNewPlayer: bool, starterPackGranted: opt(bool) });
 
-const bet = obj<BetDto>({ playerId: nonEmptyStr, roundId: nonEmptyStr, direction, leverage: int, stake: play, feeHerd: opt(play), feeNetwork: opt(play), maxLeverageForStake: opt(int) });
+const betMode = opt(lit("PERCENTAGE", "FIXED"));
+const bet = obj<BetDto>({ playerId: nonEmptyStr, roundId: nonEmptyStr, direction, leverage: int, stake: play, feeHerd: opt(play), feeNetwork: opt(play), maxLeverageForStake: opt(int), mode: betMode });
 
 const window_ = obj<RoundWindowDto>({ interval, startMs: int, endMs: int });
 
@@ -186,7 +187,7 @@ const publicPosition = obj<PublicPositionDto>({
   leverage: int,
   size: decimal(8),
   entryPrice: price,
-  liquidationPrice: price,
+  liquidationPrice: nullable(price),
   // USD while the round runs (2 dp), PLAY once settled (3 dp): the one field with two scales
   pnl: nullable(decimal([2, 3])),
   stake: opt(play),
@@ -194,6 +195,7 @@ const publicPosition = obj<PublicPositionDto>({
   liquidated: bool,
   payout: nullable(play),
   directionCorrect: nullable(bool),
+  mode: betMode,
 });
 
 const crowdRunning = obj<CrowdRoundPositionDto>({ roundId: nonEmptyStr, direction, leverage: int, margin: usd, entryPrice: price, liquidationPrice: price });
@@ -211,7 +213,7 @@ const crowdResult = obj<CrowdRoundResultDto>({
 
 export const cancellation = obj<CancellationDto>({ roundId: nonEmptyStr, marketId: opt(nonEmptyStr), asset: opt(nonEmptyStr), reason: nonEmptyStr, cancelledAtMs: int, refundedBetCount: int });
 const oracleAnchor = obj<OracleAnchorDto>({ seq: int, state: nonEmptyStr, height: nullable(int) });
-const liveBet = obj<LiveBetDto>({ player: playerSummary, direction, leverage: int, stake: play, atMs: int });
+const liveBet = obj<LiveBetDto>({ player: playerSummary, direction, leverage: int, stake: play, atMs: int, mode: betMode });
 
 /** What every round carries (`RoundBase`). */
 const roundBase = {
@@ -257,7 +259,7 @@ export const betFeed = obj<BetFeedDto>({
   roundId: nonEmptyStr,
   marketId: nonEmptyStr,
   asset: nonEmptyStr,
-  entries: arr(obj<BetFeedEntryDto>({ seq: int, atMs: int, playerDisplayName: nonEmptyStr, isBot: bool, direction, stake: play, leverage: int })),
+  entries: arr(obj<BetFeedEntryDto>({ seq: int, atMs: int, playerDisplayName: nonEmptyStr, isBot: bool, direction, stake: play, leverage: int, mode: betMode })),
   hasMore: bool,
 });
 
@@ -276,6 +278,7 @@ export const myPosition = obj<MyPositionDto>({
   size: opt(decimal(8)),
   liquidated: bool,
   untilMs: int,
+  mode: betMode,
 });
 
 export const playerAccount = obj<PlayerAccountDto>({ playerId: nonEmptyStr, balance: play, currentSeason: nonEmptyStr, inPlay: opt(play), withdrawable: opt(play) });
@@ -355,6 +358,7 @@ export const profileRoundEntry = obj<ProfileRoundEntryDto>({
   directionCorrect: nullable(bool),
   payout: play,
   fees: opt(nullable(play)),
+  mode: betMode,
 });
 export const publicProfile = obj<PublicProfileDto>({
   player: playerSummary,
@@ -430,6 +434,7 @@ export const markets = obj<MarketsDto>({
       networkFeePlay: decimal(),
       herdFeeGuardPercent: decimal(),
       stakeTiers: arr(obj<StakeTierDto>({ upToPlay: nullable(int), divisor: int })),
+      fixedPlatformFeePercent: opt(decimal()),
     }),
   ),
 });
@@ -501,7 +506,7 @@ export function roundPriceScaleProblems(round: Record<string, unknown>, path: st
   expectScale(round.closePrice, decimals, `${path}.closePrice`, problems);
   for (const [i, p] of ((round.positions as Array<Record<string, unknown>> | undefined) ?? []).entries()) {
     expectScale(p.entryPrice, decimals, `${path}.positions[${i}].entryPrice`, problems);
-    expectScale(p.liquidationPrice, decimals, `${path}.positions[${i}].liquidationPrice`, problems);
+    if (p.liquidationPrice !== null) expectScale(p.liquidationPrice, decimals, `${path}.positions[${i}].liquidationPrice`, problems);
   }
   const crowd = round.crowd as Record<string, unknown> | null | undefined;
   if (crowd) {

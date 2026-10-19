@@ -105,6 +105,15 @@ function playerFor(playerId: string, own?: OwnBetInfo | null): PlayerSummaryDto 
   return { playerId, nickname: playerId, walletAddress: "", displayName: playerId };
 }
 
+/** Р-106: what a fixed-payout bet is paid back at the close of its round: twice the stake for the right direction, nothing for the wrong one, the stake on a tie. */
+export function fixedPayout(bet: BetDto, ohlc: RoundOhlc): number {
+  const stake = Number(bet.stake);
+  const open = Number(ohlc.open);
+  const close = Number(ohlc.close);
+  if (close === open) return stake;
+  return (close > open) === (bet.direction === "UP") ? stake * 2 : 0;
+}
+
 function toPublicPosition(
   spec: MockMarketSpec,
   bet: BetDto,
@@ -113,6 +122,27 @@ function toPublicPosition(
   own?: OwnBetInfo | null,
 ): PublicPositionDto {
   const side = directionSide(bet.direction);
+  if (bet.mode === "FIXED") {
+    const open = Number(ohlc.open);
+    const close = Number(ohlc.close);
+    const payout = settled ? fixedPayout(bet, ohlc) : null;
+    return {
+      playerId: bet.playerId,
+      roundId: bet.roundId,
+      direction: bet.direction,
+      leverage: bet.leverage,
+      size: (0).toFixed(8),
+      entryPrice: ohlc.open,
+      liquidationPrice: null,
+      pnl: payout === null ? null : (payout - Number(bet.stake)).toFixed(3),
+      stake: bet.stake,
+      player: playerFor(bet.playerId, own),
+      liquidated: false,
+      payout: payout === null ? null : payout.toFixed(3),
+      directionCorrect: !settled || close === open ? null : side === LONG ? close > open : close < open,
+      mode: "FIXED",
+    };
+  }
   const size = sizeForMargin(bet.stake, bet.leverage, ohlc.open, spec);
   const liqPrice = liquidationPrice(size, ohlc.open, bet.leverage, side, spec);
   const liquidated = isLiquidatedInRange(side, liqPrice, ohlc.low, ohlc.high);
@@ -398,6 +428,11 @@ export function settleOwnBet(
 ): { liquidated: boolean; payout: string; directionCorrect: boolean | null } {
   const ohlc = ohlcFor(spec, window);
   const side = directionSide(bet.direction);
+  if (bet.mode === "FIXED") {
+    const o = Number(ohlc.open);
+    const c = Number(ohlc.close);
+    return { liquidated: false, payout: fixedPayout(bet, ohlc).toFixed(3), directionCorrect: c === o ? null : side === LONG ? c > o : c < o };
+  }
   const size = sizeForMargin(bet.stake, bet.leverage, ohlc.open, spec);
   const liqPrice = liquidationPrice(size, ohlc.open, bet.leverage, side, spec);
   const liquidated = isLiquidatedInRange(side, liqPrice, ohlc.low, ohlc.high);
@@ -418,10 +453,11 @@ export function ownRunningPosition(
   bet: BetDto,
   window: RoundWindowDto,
   nowMs: EpochMs,
-): { entryPrice: string; liquidationPrice: string; size: string; liquidated: boolean } | null {
+): { entryPrice: string; liquidationPrice: string | null; size: string; liquidated: boolean } | null {
   if (!openingPriceKnown(spec, window.startMs)) return null;
   const ohlc = ohlcFor(spec, window, nowMs);
   const side = directionSide(bet.direction);
+  if (bet.mode === "FIXED") return { entryPrice: ohlc.open, liquidationPrice: null, size: (0).toFixed(8), liquidated: false };
   const size = sizeForMargin(bet.stake, bet.leverage, ohlc.open, spec);
   const liqPrice = liquidationPrice(size, ohlc.open, bet.leverage, side, spec);
   return {

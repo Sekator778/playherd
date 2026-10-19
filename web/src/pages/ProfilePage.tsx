@@ -209,6 +209,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
               stake={h.stake}
               payout={h.payout}
               fees={h.fees != null ? Number(h.fees) : null}
+              mode={h.mode}
               liquidated={h.liquidated}
               dateLabel={formatDateTime(h.settledAtMs)}
               odds={(h.kind ?? byId.get(h.marketId)?.kind) === "ODDS"}

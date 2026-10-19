@@ -152,7 +152,7 @@ export interface PublicProfileDto {
   streak?: { current: number; best: number };
 }
 
-export interface ProfileRoundEntryDto {
+export interface ProfileRoundEntryDto extends WithBetMode {
   roundId: RoundId;
   interval: Interval;
   marketId: MarketId;
@@ -281,7 +281,15 @@ export type RoundPhase = "BETTING" | "RUNNING" | "SETTLED" | "CANCELLED";
 /** Bet.java — a pending stake before the round starts. No entry/liquidation price yet: those
  *  only exist once the round opens a `Position` at the fixed round-start price (Р-8). Never
  *  shown for another player before round start (Р-22) — only via `RoundBetting.myBet`. */
-export interface BetDto {
+export type BetMode = "PERCENTAGE" | "FIXED";
+
+/** How a bet is paid (Р-106, `docs/product/fixed_payout_rules.md`). `FIXED`: a right direction pays 2 x stake, a wrong one 0, a tie gives the
+ *  stake back; no leverage (the `leverage` field is a placeholder), no liquidation. Absent or null = `PERCENTAGE`, the original mode. */
+export interface WithBetMode {
+  mode?: BetMode | null;
+}
+
+export interface BetDto extends WithBetMode {
   playerId: string;
   roundId: RoundId;
   direction: Direction;
@@ -303,7 +311,8 @@ export interface PositionDto {
   leverage: Leverage;
   size: string; // position size in lots, 8dp (PositionSizing.SIZE_SCALE; one lot = 10^(priceDecimals-2) units, Т-3)
   entryPrice: PriceStr;
-  liquidationPrice: PriceStr;
+  /** Null for a fixed-payout position (`mode: "FIXED"`): it cannot be liquidated. */
+  liquidationPrice: PriceStr | null;
   /** Signed, in PLAY (1 PLAY of stake is 1 USD of margin). RUNNING: the unrealised P&L at the
    *  latest price, 2 decimals — null once the position is liquidated on the path so far. SETTLED:
    *  `payout - stake` exactly, 3 decimals. */
@@ -324,7 +333,7 @@ export interface PositionDto {
 
 /** A position as shown to OTHER players once revealed at round start (Р-22): identity attached,
  *  plus the resolved outcome once known. */
-export interface PublicPositionDto extends PositionDto {
+export interface PublicPositionDto extends PositionDto, WithBetMode {
   player: PlayerSummaryDto;
   liquidated: boolean;
   /** Set once the round settles; PLAY, not USD (`PlayerRoundOutcome.payout` via `PlayAmount`).
@@ -446,7 +455,7 @@ export interface RoundBetting extends RoundBase {
 /** One row of Р-62's live bet feed — same identity/direction/leverage/stake shape as a settled
  *  position already exposes (`PublicPositionDto`), just for a bet that hasn't reached round start
  *  yet. */
-export interface LiveBetDto {
+export interface LiveBetDto extends WithBetMode {
   player: PlayerSummaryDto;
   direction: Direction;
   leverage: Leverage;
@@ -464,7 +473,7 @@ export interface LiveBetDto {
  * new row too, same as a Twitch Predictions viewer changing their vote never erases the earlier
  * one).
  */
-export interface BetFeedEntryDto {
+export interface BetFeedEntryDto extends WithBetMode {
   seq: number;
   atMs: EpochMs;
   playerDisplayName: string;
@@ -591,7 +600,7 @@ export interface LiquidationPreviewDto {
   maxLeverageForStake?: number | null;
 }
 
-export interface PlaceBetRequest {
+export interface PlaceBetRequest extends WithBetMode {
   roundId: RoundId;
   direction: Direction;
   leverage: Leverage;
@@ -912,6 +921,8 @@ export interface EconomyRulesDto {
   herdFeeGuardPercent: string;
   /** Smallest stake first; the last tier has `upToPlay: null`. */
   stakeTiers: StakeTierDto[];
+  /** Р-106: the platform fee of a fixed-payout bet, percent of the stake ("3"), rounded up to 0.001 PLAY, charged on top of `networkFeePlay`. */
+  fixedPlatformFeePercent?: string;
 }
 
 export interface PriceTickDto {
@@ -947,7 +958,7 @@ export interface CandlesDto {
 /** One pending bet or open position of the signed-in player, in any market — the "my positions"
  *  strip (Р-71). Live P&L is computed client-side from `markets()` prices with
  *  `api/liquidation.ts`. */
-export interface MyPositionDto {
+export interface MyPositionDto extends WithBetMode {
   marketId: MarketId;
   symbol: string;
   roundId: RoundId;

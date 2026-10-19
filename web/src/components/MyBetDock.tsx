@@ -16,6 +16,7 @@ import { myBetState, newestPosition, otherPositions } from "./myBetModel";
 import { useMyBetDockVisible } from "./useMyBetDockVisible";
 import { positionRoomPath } from "./positionsStripModel";
 import { useServerNow } from "./useServerNow";
+import { isFixedMode } from "./betModeModel";
 import "./MyBetDock.css";
 
 /** Plain USD with cents — what a price is printed with before the market list has arrived. */
@@ -97,7 +98,9 @@ function DockBody({ positions }: { positions: readonly MyPositionDto[] }) {
       ? t("dock.wipedOut")
       : state.kind === "live"
         ? t(state.mood === "winning" ? "dock.winning" : state.mood === "losing" ? "dock.losing" : "dock.even")
-        : null;
+        : state.kind === "fixed" && state.standing !== null
+          ? t(state.standing === "ahead" ? "dock.winning" : state.standing === "behind" ? "dock.losing" : "dock.even")
+          : null;
   const moodClass =
     state.kind === "wiped" ? "outcome-lost" : state.kind === "live" ? outcomeClassName(outcomeFromNet(state.read.pnl)) : "";
 
@@ -120,7 +123,7 @@ function DockBody({ positions }: { positions: readonly MyPositionDto[] }) {
             <DirectionGlyph direction={position.direction} /> {position.direction}
           </span>
           <span className="my-bet-dock__what mono">
-            {position.symbol} · {stakeText} PLAY · {t("dock.boost", { leverage: position.leverage })}
+            {position.symbol} · {stakeText} PLAY · {isFixedMode(position) ? t("mode.winOrLose") : t("dock.boost", { leverage: position.leverage })}
           </span>
           {moodWord && state.kind !== "live" && (
             <span className={`my-bet-dock__mood ${moodClass}`}>
@@ -157,7 +160,12 @@ function DockBody({ positions }: { positions: readonly MyPositionDto[] }) {
             </span>
           </>
         )}
-        {state.kind === "waiting" && <span className="my-bet-dock__note">{t("dock.placedStarts", { time: timeLeft })}</span>}
+        {state.kind === "fixed" && (
+          <span className="my-bet-dock__note mono">
+            {t("mode.ownRunning", { win: stakeText, lose: stakeText })}
+          </span>
+        )}
+        {state.kind === "waiting" &&<span className="my-bet-dock__note">{t("dock.placedStarts", { time: timeLeft })}</span>}
         {state.kind === "waitingOpen" && <span className="my-bet-dock__note">{t("dock.waitingOpen")}</span>}
         {state.kind === "noPrice" && <span className="my-bet-dock__note">{t("dock.waitingPrice")}</span>}
         {state.kind === "wiped" && (
@@ -205,7 +213,7 @@ function DockBody({ positions }: { positions: readonly MyPositionDto[] }) {
                 {others.map((o) => (
                   <li key={o.roundId}>
                     <Link to={positionRoomPath(o)} className="mono">
-                      <DirectionGlyph direction={o.direction} /> {o.direction} · {o.symbol} · {formatPlayAmount(o.stake)} PLAY · {t("dock.boost", { leverage: o.leverage })}
+                      <DirectionGlyph direction={o.direction} /> {o.direction} · {o.symbol} · {formatPlayAmount(o.stake)} PLAY · {isFixedMode(o) ? t("mode.winOrLose") : t("dock.boost", { leverage: o.leverage })}
                     </Link>
                   </li>
                 ))}

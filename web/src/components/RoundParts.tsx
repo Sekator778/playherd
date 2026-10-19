@@ -14,6 +14,7 @@ import { LONG, SHORT, percentToLiquidation, sizeForMargin, unrealizedPnl, type S
 import { netFromPayoutAndStake, outcomeClassName, outcomeFromNet, positionStakeStr } from "../api/outcome";
 import { formatPercent, formatPlayAmount, formatPrice, formatUsd, type PriceFormatMarket } from "../format";
 import { Avatar } from "./Avatar";
+import { isFixedMode } from "./betModeModel";
 import { BotBadge, EmptyState, ResultsHashLine, RoundStatusBadge } from "./Common";
 import { DirectionGlyph } from "./icons";
 import { RollingDigits } from "../fx/RollingDigits";
@@ -155,7 +156,7 @@ function StagePanel({
             const stake = positionStakeStr(p);
             const net = settled && p.payout !== null ? netFromPayoutAndStake(p.payout, stake) : null;
             const live =
-              !settled && referencePrice
+              !settled && referencePrice && !isFixedMode(p)
                 ? unrealizedPnl(p.size, p.entryPrice, p.direction === "UP" ? LONG : SHORT, referencePrice.price, market)
                 : null;
             const value = settled && net !== null ? net : live ? live.toNumber() : null;
@@ -170,12 +171,12 @@ function StagePanel({
                   {p.player.displayName}
                 </Link>
                 <BotBadge isBot={p.player.isBot} />
-                <span className="player-chip__lev mono">x{p.leverage}</span>
+                <span className="player-chip__lev mono">{isFixedMode(p) ? t("mode.short") : `x${p.leverage}`}</span>
                 {/* Р-90: the showcase shows winners. The player sees their own result either way; another player's result is shown
                     only when it is a gain — no one else's loss, ruin or liquidation is listed. */}
                 {value !== null && (p.playerId === me?.playerId || (value > 0 && !p.liquidated)) && (
                   <span className={`player-chip__result ${p.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(value))}`}>
-                    {formatPlayAmount(value, { sign: true })}
+                    {isFixedMode(p) && value === 0 ? t("mode.tie") : formatPlayAmount(value, { sign: true })}
                     {p.liquidated && ` · ${t("common.liqShort")}`}
                   </span>
                 )}

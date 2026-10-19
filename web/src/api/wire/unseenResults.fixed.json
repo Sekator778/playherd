@@ -1,0 +1,23 @@
+{
+  "method": "unseenResults",
+  "args": [],
+  "response": [
+    {
+      "roundId": "T_WIRE_FIXED-1h-1792418100000",
+      "interval": "HOURLY",
+      "marketId": "T_WIRE_FIXED",
+      "asset": "WFX",
+      "durationSec": 60,
+      "kind": "PERP",
+      "settledAtMs": 1792418159999,
+      "direction": "UP",
+      "leverage": 2,
+      "stake": "200.000",
+      "liquidated": false,
+      "directionCorrect": true,
+      "payout": "400.000",
+      "fees": "6.100",
+      "mode": "FIXED"
+    }
+  ]
+}

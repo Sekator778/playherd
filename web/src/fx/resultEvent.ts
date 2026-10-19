@@ -39,6 +39,8 @@ export interface ResultEvent {
    *  Absent for a round recorded without them: no fees line. */
   feesPlay?: number;
   leverage: number;
+  /** Р-106: a "Win or lose" bet - the card names no boost, and words a tie as "Tie — stake back". Absent for the percentage mode. */
+  fixed?: true;
   balanceBefore: number;
   balanceAfter: number;
   atMs: number;
@@ -141,6 +143,7 @@ export function resultEventFromHistoryEntry(
     stakePlay: stake,
     feesPlay: entry.fees != null && Number.isFinite(Number(entry.fees)) ? Number(entry.fees) : undefined,
     leverage: entry.leverage,
+    ...(entry.mode === "FIXED" ? { fixed: true as const } : {}),
     balanceBefore: opts.balanceBefore,
     balanceAfter: opts.balanceAfter,
     atMs: entry.settledAtMs,
@@ -221,6 +224,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       netPlay: -stake,
       stakePlay: stake,
       leverage: currPos.leverage,
+      ...(currPos.mode === "FIXED" ? { fixed: true as const } : {}),
       balanceBefore: currentBalance,
       balanceAfter: currentBalance, // no change here — already debited at placeBet (§2)
       atMs: nowMs,
@@ -250,6 +254,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       netPlay: net,
       stakePlay: stake,
       leverage: currPos.leverage,
+      ...(currPos.mode === "FIXED" ? { fixed: true as const } : {}),
       balanceBefore,
       balanceAfter: currentBalance,
       atMs: nowMs,

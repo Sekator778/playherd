@@ -5,6 +5,19 @@
 import type { MyPositionDto } from "../api/contract";
 import { isWaitingForOpen, liveReadOfPosition, type LiveRead } from "./livePosition";
 import type { MarketParams } from "../api/liquidation";
+import { isFixedMode } from "./betModeModel";
+
+/** Where the price stands against the round's open for a "Win or lose" bet: ahead when it moved the bet's way, behind when against, level when it has not moved. */
+export function fixedStanding(
+  position: Pick<MyPositionDto, "direction" | "entryPrice">,
+  currentPrice: string | null | undefined,
+): "ahead" | "behind" | "level" | null {
+  if (position.entryPrice === null || !currentPrice) return null;
+  const move = Math.sign(Number(currentPrice) - Number(position.entryPrice));
+  if (!Number.isFinite(move)) return null;
+  if (move === 0) return "level";
+  return (move > 0) === (position.direction === "UP") ? "ahead" : "behind";
+}
 
 /** When the bet's round starts (or started): for a round still open for bets the moment it starts, for a running one its end less its length. */
 function startOf(position: MyPositionDto): number {
@@ -34,12 +47,15 @@ export type MyBetState =
   | { kind: "waitingOpen" }
   | { kind: "wiped" }
   | { kind: "noPrice" }
+  /** Р-106, "Win or lose": no live P&L and no wipeout line - only where the price stands against the open (`null`: no price yet). */
+  | { kind: "fixed"; standing: "ahead" | "behind" | "level" | null }
   | { kind: "live"; read: LiveRead; mood: "winning" | "losing" | "even"; near: boolean };
 
 export function myBetState(position: MyPositionDto, currentPrice: string | null | undefined, market: MarketParams | undefined): MyBetState {
   if (position.phase === "BETTING") return { kind: "waiting" };
   if (position.liquidated) return { kind: "wiped" };
   if (isWaitingForOpen(position)) return { kind: "waitingOpen" };
+  if (isFixedMode(position)) return { kind: "fixed", standing: fixedStanding(position, currentPrice) };
   const read = liveReadOfPosition(position, currentPrice, market);
   if (!read) return { kind: "noPrice" };
   const rounded = Math.round(read.pnl * 100) / 100;
