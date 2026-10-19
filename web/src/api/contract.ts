@@ -605,10 +605,6 @@ export interface PlaceBetRequest extends WithBetMode {
   direction: Direction;
   leverage: Leverage;
   stake: PlayAmountStr;
-  /** Additive (Р-106): how the bet pays. Absent means `"PERCENT"`, today's mode (the payout follows the stake, the leverage and the
-   *  size of the price move); a second mode is being designed. The server answers any other value with 400 `BAD_REQUEST` rather than
-   *  ignore it. The web app does not send it yet. */
-  mode?: "PERCENT";
 }
 
 // ---------------------------------------------------------------------------

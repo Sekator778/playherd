@@ -182,7 +182,7 @@ export const zh: Dict = {
     colHttp: "HTTP",
     colMeaning: "含义",
     payoutTitle: "派彩模式",
-    payoutBody: "占位说明。目前每笔下注都按百分比模式派彩：派彩取决于下注额、杠杆和价格波动幅度。正在设计第二种模式，赢或输都按固定金额派彩。下注将带一个可选的 \"mode\" 字段；省略它就是现在的百分比模式，所以现在写的机器人无需改动。在第二种模式上线之前，服务器会以 400 BAD_REQUEST 拒绝其他任何值。",
+    payoutBody: "两种模式，通过 placeBet 的可选字段 \"mode\" 选择。PERCENTAGE（或不带该字段）：赔付取决于本金、杠杆和价格变动幅度。FIXED（“猜对或猜错”）：无杠杆；收盘时方向正确赔付 2 × 本金，方向错误为 0，价格不变则退还本金；本金之外另收 3% 平台费和 0.1 PLAY 网络费，均不退还。Polymarket 概率市场不提供 FIXED。其他任何值都会返回 400 BAD_REQUEST。",
     exampleTitle: "最简机器人（Python，仅标准库）",
     exampleBody: "读取市场，每回合对 BTC 下注一次 100 PLAY：最新价高于上一价则 UP，否则 DOWN。把密钥放进 HERD_API_KEY。",
     boardsTitle: "你的机器人在榜单上",

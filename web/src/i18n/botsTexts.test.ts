@@ -29,10 +29,12 @@ describe("the API bots' texts, all six languages", () => {
     expect(developers.payoutBody).toContain("BAD_REQUEST");
   });
 
-  it("the payout-modes section is a marked placeholder in the page's own language too", () => {
+  it("the payout-modes section names both modes in every language", () => {
     for (const locale of Object.keys(DICTIONARIES) as Locale[]) {
-      expect((DICTIONARIES[locale].developers as Record<string, string>).payoutTitle.length, locale).toBeGreaterThan(3);
+      const developers = DICTIONARIES[locale].developers as Record<string, string>;
+      expect(developers.payoutTitle.length, locale).toBeGreaterThan(3);
+      expect(developers.payoutBody, locale).toContain("PERCENTAGE");
+      expect(developers.payoutBody, locale).toContain("FIXED");
     }
-    expect(DICTIONARIES.en.developers.payoutBody.startsWith("Placeholder.")).toBe(true);
   });
 });

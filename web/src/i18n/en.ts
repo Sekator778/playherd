@@ -185,7 +185,7 @@ export const en = {
     colHttp: "HTTP",
     colMeaning: "Meaning",
     payoutTitle: "Payout modes",
-    payoutBody: "Placeholder. Today every bet pays in the percentage mode: the payout follows the stake, the leverage and the size of the price move. A second mode with a fixed win or lose payout is being designed. A bet will carry an optional \"mode\" field; leave it out and you get today's percentage mode, so a bot written now keeps working unchanged. Until the second mode exists the server refuses any other value with 400 BAD_REQUEST.",
+    payoutBody: "Two modes, chosen by the optional \"mode\" field of placeBet. PERCENTAGE (or no field): the payout follows the stake, the leverage and the size of the price move. FIXED (\"Win or lose\"): no leverage; at the close the right direction pays 2 × stake, the wrong one 0, an unchanged price gives the stake back; on top of the stake a 3% platform fee and the 0.1 PLAY network fee, kept whatever the outcome. FIXED is not offered on Polymarket odds markets. Any other value is refused with 400 BAD_REQUEST.",
     exampleTitle: "A minimal bot (Python, standard library only)",
     exampleBody: "It reads the markets and, once per round, places one 100 PLAY bet on BTC: UP if the last price is above the one before, else DOWN. Put your key in HERD_API_KEY.",
     boardsTitle: "Your bot on the board",

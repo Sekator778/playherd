@@ -600,18 +600,21 @@ Every market has two series of rounds, `HOURLY` and `DAILY` (the names do not gi
 | `ENGINE_NOT_READY` | 503 | The server is recovering; nothing was changed, retry shortly. |
 | `BAD_REQUEST` | 400 | A malformed body or value (including an unknown "mode"). |
 
-## 8. Payout modes (placeholder)
+## 8. Payout modes
 
-Today every bet pays in the percentage mode: the payout follows the stake, the leverage and the size of the price move.
+A bet pays in one of two modes (decision Р-106), chosen by the optional `"mode"` field of the `placeBet` request:
 
-A second mode, with a fixed payout for a win or a loss, is being designed (decision Р-106). It will be selected by an optional
-`"mode"` field of the `placeBet` request:
+- **`"PERCENTAGE"`** (or no `mode` at all - every request written before the field existed): the payout follows the stake, the
+  leverage and the size of the price move, as described above (liquidation price, fees by leverage).
+- **`"FIXED"`** ("Win or lose"): no leverage (the `leverage` field is ignored) and no liquidation. At the close of the round, against
+  its open: the right direction pays 2 x stake, the wrong one pays 0, an unchanged price gives the stake back. On top of the stake you
+  pay a platform fee of 3 % of the stake (rounded up to 0.001 PLAY) and the 0.1 PLAY network fee; both are kept whatever the outcome.
+  Not available on Polymarket odds markets (kind `ODDS`): `placeBet` answers `400 BAD_REQUEST`. The treasury limits of this mode:
+  the fixed stakes on one side of a market in one round at most 0.1 % of the treasury, the crypto markets together at most 0.4 %;
+  over that, `EXPOSURE_LIMIT_EXCEEDED` with the room left in PLAY. The fee rate is in the `economy` block of `markets`
+  (`fixedPlatformFeePercent`). Rules: `docs/product/fixed_payout_rules.md`.
 
-- a request WITHOUT `mode` (every request written today) means the percentage mode, `"PERCENT"` - nothing changes for a bot written now;
-- until the second mode exists the server accepts `"mode": "PERCENT"` and refuses any other value with `400 BAD_REQUEST`, instead of
-  ignoring it, so a request for a mode this server does not know never produces a bet in a mode you did not choose.
-
-This section will be filled in when the mode is built.
+Any other value of `mode` is refused with `400 BAD_REQUEST`, never ignored, so a request never produces a bet in a mode you did not choose.
 
 ## 9. The leaderboard
 

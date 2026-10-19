@@ -90,7 +90,7 @@ describe("docs/api/bots.md", () => {
   });
 
   it("keeps a marked place for the payout modes, and says an absent mode is today's", () => {
-    expect(text).toContain("## 8. Payout modes (placeholder)");
+    expect(text).toContain("## 8. Payout modes");
     expect(text).toMatch(/WITHOUT `mode`[^\n]*percentage mode/);
   });
 

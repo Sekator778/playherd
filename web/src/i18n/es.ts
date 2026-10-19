@@ -182,7 +182,7 @@ export const es: Dict = {
     colHttp: "HTTP",
     colMeaning: "Significado",
     payoutTitle: "Modos de pago",
-    payoutBody: "Provisional. Hoy toda apuesta paga en el modo porcentual: el pago depende de la apuesta, el apalancamiento y el tamaño del movimiento del precio. Se está diseñando un segundo modo con pago fijo por ganar o perder. La apuesta llevará un campo opcional \"mode\"; si lo omites rige el modo porcentual de hoy, así que un bot escrito ahora sigue funcionando sin cambios. Mientras no exista el segundo modo, el servidor rechaza cualquier otro valor con 400 BAD_REQUEST.",
+    payoutBody: "Dos modos, elegidos con el campo opcional \"mode\" de placeBet. PERCENTAGE (o sin el campo): el pago depende de la apuesta, el apalancamiento y el tamaño del movimiento del precio. FIXED («Ganar o perder»): sin apalancamiento; al cierre, la dirección correcta paga 2 × la apuesta, la incorrecta 0, y si el precio no cambia se devuelve la apuesta; además de la apuesta, una comisión de la plataforma del 3 % y la comisión de red de 0,1 PLAY, que no se devuelven. FIXED no está disponible en los mercados de probabilidades de Polymarket. Cualquier otro valor se rechaza con 400 BAD_REQUEST.",
     exampleTitle: "Un bot mínimo (Python, solo biblioteca estándar)",
     exampleBody: "Lee los mercados y, una vez por ronda, apuesta 100 PLAY en BTC: UP si el último precio supera al anterior, si no DOWN. Pon tu clave en HERD_API_KEY.",
     boardsTitle: "Tu bot en la clasificación",
