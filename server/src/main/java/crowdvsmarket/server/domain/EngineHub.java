@@ -73,10 +73,17 @@ public final class EngineHub {
      *  {@link #adopt} swaps in one step. An engine is built over the ledger of ITS state, so the two never
      *  mix, and the index describes the bet books of the engines beside it. */
     private static final class State {
-        final LedgerBook ledger = new LedgerBook();
+        /** Keeps no history of its own (architecture plan F3): every movement goes to {@link #ledgerOutbox}, from where
+         *  {@code GameService} writes it to the {@code ledger_entries} table. */
+        final LedgerBook ledger = new LedgerBook(false);
+        final LedgerOutbox ledgerOutbox = new LedgerOutbox();
         final ConcurrentHashMap<String, MarketEngines> markets = new ConcurrentHashMap<>();
         final BetWindows betWindows = new BetWindows();
         final ClosedRounds closedRounds = new ClosedRounds();
+
+        State() {
+            ledger.addListener(ledgerOutbox);
+        }
     }
 
     private volatile State state;
@@ -126,6 +133,12 @@ public final class EngineHub {
 
     public LedgerBook ledger() {
         return state.ledger;
+    }
+
+    /** The ledger movements not yet written to the {@code ledger_entries} table; that of the hub in use, so a hub built aside
+     *  brings its own when it is adopted. */
+    public LedgerOutbox ledgerOutbox() {
+        return state.ledgerOutbox;
     }
 
     /** The windows that may still hold a bet ({@link BetWindows}); kept by {@code EventApplier}. */

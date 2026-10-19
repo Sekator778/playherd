@@ -37,9 +37,9 @@ class StarterPackGrantedTest extends LiveRpcTestBase {
 
     /** How many starter packs the ledger has credited to the player — the fact the flag has to agree with. */
     private long packsCredited(String playerId) {
-        return hub.ledger().entries().stream()
-                .filter(e -> e.playerId().equals(playerId) && e.type() == LedgerEntryType.STARTER_PACK)
-                .count();
+        gameService.flushLedgerRows(); // the ledger keeps no history of its own: it is the ledger_entries table
+        return db.read(c -> db.queryOne(c, "SELECT COUNT(*) AS n FROM ledger_entries WHERE player_id = ? AND type = ?",
+                rs -> rs.getLong("n"), playerId, LedgerEntryType.STARTER_PACK.name()));
     }
 
     @Test

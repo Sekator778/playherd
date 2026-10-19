@@ -79,7 +79,7 @@ class EventApplierEconomyTest {
         assertThat(report.playerOutcomes().get(0).fees()).isNull();
         assertThat(report.economyRules()).isFalse();
         assertThat(balanceMojos()).isEqualTo(10_000_000L - 200_000L);
-        assertThat(hub.ledger().entries()).extracting(e -> e.type())
+        assertThat(hub.ledgerOutbox().drain()).extracting(e -> e.type())
                 .doesNotContain(LedgerEntryType.FEE_HERD, LedgerEntryType.FEE_NETWORK);
     }
 
@@ -88,7 +88,7 @@ class EventApplierEconomyTest {
         applier.apply(new GameEvent.BetPlaced("p1", Interval.HOURLY, START, END, Direction.UP, 10, 100_000L, START - 500));
         applier.apply(new GameEvent.BetCancelled("p1", Interval.HOURLY, START, END, START - 400));
         assertThat(balanceMojos()).isEqualTo(10_000_000L);
-        assertThat(hub.ledger().entries()).extracting(e -> e.type())
+        assertThat(hub.ledgerOutbox().drain()).extracting(e -> e.type())
                 .doesNotContain(LedgerEntryType.FEE_HERD_REFUND, LedgerEntryType.FEE_NETWORK_REFUND);
     }
 
@@ -134,7 +134,7 @@ class EventApplierEconomyTest {
                 "TST", 500L, 100L));
         applier.apply(new GameEvent.BetCancelled("p1", Interval.HOURLY, START, END, START - 400, "TST"));
         assertThat(balanceMojos()).isEqualTo(10_000_000L);
-        assertThat(hub.ledger().entries()).extracting(e -> e.type()).contains(LedgerEntryType.STAKE_REFUND,
+        assertThat(hub.ledgerOutbox().drain()).extracting(e -> e.type()).contains(LedgerEntryType.STAKE_REFUND,
                 LedgerEntryType.FEE_HERD_REFUND, LedgerEntryType.FEE_NETWORK_REFUND);
     }
 

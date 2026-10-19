@@ -163,7 +163,7 @@ public class AdminResource {
             }
         }
         return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker, botDays(),
-                gameService.missingRows());
+                gameService.missingRows(), gameService.ledgerRowsStatus());
     }
 
     /**
@@ -250,12 +250,23 @@ public class AdminResource {
      *  before fees), {@code retirements}, {@code botsCreated} (first bots and replacements together) and the {@code starterPacks}
      *  they were paid; {@code null} while the database does not answer. {@code missingRoundRows}: rounds that are resolved in the
      *  journal and whose result rows could not be written so far ({@code roundId}, {@code failures}, {@code sinceMs}, {@code lastError}),
-     *  each retried in the background; empty when all is written. Not part of {@code contract.ts}: the operator's own page. */
+     *  each retried in the background; empty when all is written. {@code ledgerRows}: the projection of the ledger history into
+     *  {@code ledger_entries} - {@code pending} movements not written yet (a few at most when healthy), {@code failures} writes in a row
+     *  that failed, since when ({@code sinceMs}) and why ({@code lastError}). Not part of {@code contract.ts}: the operator's own page. */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                                    java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
                                    java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
                                    java.util.List<BotMetrics.Day> botDays,
-                                   java.util.List<GameService.MissingRows> missingRoundRows) {
+                                   java.util.List<GameService.MissingRows> missingRoundRows,
+                                   GameService.LedgerRowsStatus ledgerRows) {
+
+        public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
+                              java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
+                              java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
+                              java.util.List<BotMetrics.Day> botDays, java.util.List<GameService.MissingRows> missingRoundRows) {
+            this(server, recentCancellations, recentLedgerCorrections, priceFeeds, circuitBreakerOpen, botDays,
+                    missingRoundRows, null);
+        }
 
         public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                               java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,

@@ -14,6 +14,7 @@ import crowdvsmarket.server.jfr.HerdRebuild;
 import crowdvsmarket.server.jfr.JfrClock;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.persistence.LedgerEntryRepository;
 import crowdvsmarket.server.persistence.RoundResultRepository;
 import crowdvsmarket.server.service.BoundaryPrices;
 import crowdvsmarket.server.service.GameService;
@@ -67,6 +68,11 @@ public class EngineStateBuilder {
     GameService gameService;
     @Inject
     RoundResultRepository roundResults;
+    @Inject
+    LedgerEntryRepository ledgerRows;
+
+    /** How many ledger movements a replay collects before it writes them to the table (a first start with an empty table). */
+    static final int LEDGER_SPILL_BATCH = 5_000;
 
     /** A finished build: ready to be swapped in. {@code cursors} holds one window per running series;
      *  {@code boundaries} the closes of the settled rounds those cursors may open at; {@code description}
@@ -95,6 +101,11 @@ public class EngineStateBuilder {
             jfr.begin();
             jfr.heapBefore = usedHeap();
         }
+        // The ledger keeps no history in memory: the movements the replay produces and the ledger_entries table lacks (all of
+        // them on the first start after V16, the tail a crash or a failed write left otherwise) are written from here in
+        // batches; a write that fails leaves them in the hub's outbox, where the live flush takes them over.
+        hub.ledgerOutbox().skipStored(ledgerRows.stored()::has);
+        hub.ledgerOutbox().spillTo(ledgerRows::insertBatch, LEDGER_SPILL_BATCH);
         long t = JfrClock.nanos(rec);
         List<GameEvent> events = eventStore.loadAll();
         jfr.loadNs = JfrClock.since(rec, t);
@@ -133,6 +144,7 @@ public class EngineStateBuilder {
             }
         }
         cancelRoundsOfClosedMarkets(applier, hub, markets, nowMs);
+        hub.ledgerOutbox().endReplay();
 
         Map<RoundProgress.SeriesKey, RoundWindow> cursors = new LinkedHashMap<>();
         StringBuilder series = new StringBuilder();

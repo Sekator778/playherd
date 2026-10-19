@@ -188,6 +188,15 @@ public class GameService implements MarketListener {
     MarketPrices marketPrices;
     @Inject
     RoundResultRepository roundResults;
+    @Inject
+    crowdvsmarket.server.persistence.LedgerEntryRepository ledgerRows;
+    /** Serialises the writes of the ledger movements, so a batch that failed goes back in front of the next one and the
+     *  table is filled in order. */
+    private final java.util.concurrent.locks.ReentrantLock ledgerFlushLock = new java.util.concurrent.locks.ReentrantLock();
+    private volatile int ledgerFlushFailures;
+    private volatile String ledgerFlushError;
+    private volatile long ledgerFailingSinceMs;
+    private final FailureLog ledgerFailureLog = new FailureLog(60_000L);
     /** Rounds whose {@code RoundResolved} event is committed and applied (the journal and the engine have them as
      *  resolved: {@link crowdvsmarket.server.domain.ClosedRounds}) but whose derived rows ({@code round_results},
      *  {@code player_round_history}, the oracle record) are not written yet. Entered under the write lock right after the
@@ -241,6 +250,88 @@ public class GameService implements MarketListener {
         }
         out.sort(java.util.Comparator.comparing(MissingRows::roundId));
         return out;
+    }
+
+    /** The ledger movements the {@code ledger_entries} table is behind by ({@code pending}), and how it fares: {@code failures}
+     *  writes in a row that failed ({@code 0}: the last one went through), since when ({@code sinceMs}) and why ({@code lastError}).
+     *  The operator's signal for the projection of the ledger history ({@code /api/admin/status}). */
+    public record LedgerRowsStatus(int pending, int failures, long sinceMs, String lastError) {
+    }
+
+    /** What the projection of the ledger history is doing right now. */
+    public LedgerRowsStatus ledgerRowsStatus() {
+        int failures = ledgerFlushFailures;
+        return new LedgerRowsStatus(hub.ledgerOutbox().size(), failures, failures > 0 ? ledgerFailingSinceMs : 0,
+                failures > 0 ? ledgerFlushError : null);
+    }
+
+    /**
+     * Writes the ledger movements the engine produced to the {@code ledger_entries} table - the projection of the journal
+     * that {@link #myLedger} reads - <b>without the engine lock</b>: the lock is held only to take the collected movements
+     * out of the hub's outbox (a free read lock means no operation is half way, so every movement taken is committed or
+     * belongs to a hub that is gone). One transaction, idempotent ({@code ON CONFLICT DO NOTHING}). A write that fails
+     * does not stop the game: the batch goes back in front of the outbox, the failure is an ERROR in the log (a stack
+     * once, then a line a minute) and a {@link #ledgerRowsStatus}, and the next call - the scheduled one, a second later,
+     * or a read of a ledger - tries again; a rebuild writes whatever a stop left missing. Does nothing while the engine is
+     * not ready.
+     *
+     * @return {@code true} when nothing is left to write
+     */
+    public boolean flushLedgerRows() {
+        if (!rebuildService.isReady()) {
+            return false;
+        }
+        if (hub.ledgerOutbox().size() == 0) {
+            return true; // the usual second: nothing to write, no lock taken
+        }
+        ledgerFlushLock.lock();
+        try {
+            crowdvsmarket.server.domain.LedgerOutbox outbox;
+            List<LedgerEntry> batch;
+            engineLock.readLock().lock();
+            try {
+                outbox = hub.ledgerOutbox();
+                batch = outbox.drain();
+            } finally {
+                engineLock.readLock().unlock();
+            }
+            if (batch.isEmpty()) {
+                return outbox.size() == 0;
+            }
+            try {
+                ledgerRows.insertBatch(batch);
+            } catch (RuntimeException e) {
+                outbox.requeueFront(batch);
+                ledgerFlushFailed(e);
+                return false;
+            }
+            if (ledgerFlushFailures > 0) {
+                LOG.infof("the ledger history is written again after %d failed attempt(s)", ledgerFlushFailures);
+                ledgerFailureLog.clear("ledger");
+            }
+            ledgerFlushFailures = 0;
+            ledgerFlushError = null;
+            return outbox.size() == 0;
+        } finally {
+            ledgerFlushLock.unlock();
+        }
+    }
+
+    private void ledgerFlushFailed(RuntimeException cause) {
+        if (ledgerFlushFailures == 0) {
+            ledgerFailingSinceMs = System.currentTimeMillis();
+        }
+        ledgerFlushFailures++;
+        ledgerFlushError = cause.toString();
+        switch (ledgerFailureLog.next("ledger", System.currentTimeMillis())) {
+            case STACK_TRACE -> LOG.errorf(cause, "the ledger history (ledger_entries) could not be written - the game goes on "
+                    + "and the movements wait in memory; retrying every second");
+            case LINE -> LOG.errorf("the ledger history still cannot be written (%d attempts, since %s): %s",
+                    ledgerFlushFailures, java.time.Instant.ofEpochMilli(ledgerFailingSinceMs), cause);
+            case NOTHING -> {
+                // already said this minute
+            }
+        }
     }
 
     /** The delays of the background retry of a failed rows write ({@link #rowsFailed}): the first and the longest.
@@ -313,11 +404,18 @@ public class GameService implements MarketListener {
      *  must never interleave with any other read or write of {@link EngineHub} through this class. Not
      *  gated by the engine being ready: this is how it becomes ready. */
     public void runExclusively(Runnable action) {
-        engineLock.writeLock().lock();
+        // the ledger flush first (the order of the flush itself: its lock, then the engine's): a write of the old state's
+        // movements that is under way ends before the action replaces that state, and the table it may reset is not written meanwhile
+        ledgerFlushLock.lock();
         try {
-            action.run();
+            engineLock.writeLock().lock();
+            try {
+                action.run();
+            } finally {
+                engineLock.writeLock().unlock();
+            }
         } finally {
-            engineLock.writeLock().unlock();
+            ledgerFlushLock.unlock();
         }
     }
 
@@ -2001,30 +2099,26 @@ public class GameService implements MarketListener {
         }
     }
 
+    /**
+     * A player's ledger, newest movement first. Read from the {@code ledger_entries} table (the ledger book keeps no history
+     * of its own, architecture plan F3), after the movements the engine has produced so far were written to it, so a movement
+     * the caller has seen the effect of is in the answer: when that write fails the table's own content is answered and the
+     * failure is the operator's signal ({@link #ledgerRowsStatus}).
+     */
     public Paging.Page<Ledger.LedgerEntryDto> myLedger(String playerId, Paging.PageParams params) {
         long before = params.before() == null ? Long.MAX_VALUE : params.before();
         int limit = params.limitOrDefault();
-        lockRead();
-        try {
-            List<LedgerEntry> all = hub.ledger().entries();
-            List<Ledger.LedgerEntryDto> filtered = new ArrayList<>();
-            for (int i = all.size() - 1; i >= 0; i--) {
-                LedgerEntry e = all.get(i);
-                if (!e.playerId().equals(playerId) || e.atEpochMs() >= before) {
-                    continue;
-                }
-                filtered.add(new Ledger.LedgerEntryDto(e.sequence(), Enums.LedgerEntryType.valueOf(e.type().name()),
-                        e.delta().toMoney().toPlainString(), e.roundId(), e.atEpochMs()));
-                if (filtered.size() > limit) {
-                    break;
-                }
-            }
-            boolean hasMore = filtered.size() > limit;
-            List<Ledger.LedgerEntryDto> page = hasMore ? filtered.subList(0, limit) : filtered;
-            return new Paging.Page<>(page, hasMore);
-        } finally {
-            engineLock.readLock().unlock();
+        requireReady();
+        flushLedgerRows();
+        List<LedgerEntry> rows = ledgerRows.newestFirst(playerId, before, limit + 1);
+        List<Ledger.LedgerEntryDto> filtered = new ArrayList<>();
+        for (LedgerEntry e : rows) {
+            filtered.add(new Ledger.LedgerEntryDto(e.sequence(), Enums.LedgerEntryType.valueOf(e.type().name()),
+                    e.delta().toMoney().toPlainString(), e.roundId(), e.atEpochMs()));
         }
+        boolean hasMore = filtered.size() > limit;
+        List<Ledger.LedgerEntryDto> page = hasMore ? filtered.subList(0, limit) : filtered;
+        return new Paging.Page<>(page, hasMore);
     }
 
     // ---------------------------------------------------------------------------------------

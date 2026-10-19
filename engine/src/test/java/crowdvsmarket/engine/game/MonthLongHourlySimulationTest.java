@@ -183,7 +183,11 @@ class MonthLongHourlySimulationTest {
     void fullAprilOfHourlyRoundsHoldsAllInvariants() {
         CandleSeries hourlyFixture = CandleSeries.loadFromClasspath("/fixtures/hl_btc_1h.csv", Interval.HOURLY);
         RoundPrices prices = new CandleSeriesRoundPrices(hourlyFixture);
-        GameEngine engine = new GameEngine();
+        // the ledger keeps no entries of its own (as on the server); the conservation checks get them through a listener
+        List<LedgerEntry> ledgerLog = new ArrayList<>();
+        LedgerBook book = new LedgerBook(false);
+        book.addListener(ledgerLog::add);
+        GameEngine engine = new GameEngine(book, new CrowdAccount());
 
         List<RoundWindow> windows = new ArrayList<>(ROUND_COUNT);
         for (int i = 0; i < ROUND_COUNT; i++) {
@@ -245,7 +249,7 @@ class MonthLongHourlySimulationTest {
 
         // --- invariant: conservation, replay #1 -- the ledger's own append-only log reproduces its live balances ---
         Map<String, PlayAmount> replayedBalances = new HashMap<>();
-        for (LedgerEntry entry : engine.ledger().entries()) {
+        for (LedgerEntry entry : ledgerLog) {
             replayedBalances.merge(entry.playerId(), entry.delta(), PlayAmount::plus);
         }
         for (String playerId : engine.ledger().playerIds()) {

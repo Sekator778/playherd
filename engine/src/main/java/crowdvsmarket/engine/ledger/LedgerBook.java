@@ -20,8 +20,9 @@ import java.util.function.UnaryOperator;
  * The in-game PLAY ledger: balances, starter packs, stakes, settlements and withdraw/deposit
  * requests (Р-2, Р-3, Р-6, Р-7, Р-12, Р-16). Single-threaded, functional-core-mutable-shell: every
  * {@link PlayerAccount}/{@link SeasonRecord} is an immutable snapshot, replaced wholesale on each
- * mutation; every mutation also appends one {@link LedgerEntry} to an append-only audit log
- * ({@link #entries()}), which is what {@code MonthLongHourlySimulationTest} replays to check the
+ * mutation; every mutation also produces one {@link LedgerEntry}, handed to the {@link LedgerListener}s
+ * ({@link #addListener}) and, when the book retains them ({@link #LedgerBook()}), kept in an append-only audit log
+ * ({@link #entries()}). {@code MonthLongHourlySimulationTest} replays the entries to check the
  * engine's conservation invariant: <b>the only PLAY the house mints is starter packs and
  * net settlement gains; the only PLAY it burns is net settlement losses — including a full loss of
  * the stake on liquidation (Р-7)</b>. Deposits/withdrawals move PLAY across the on/off-chain
@@ -38,7 +39,9 @@ public final class LedgerBook {
     public static final PlayAmount MIN_STAKE = PlayAmount.ofWholePlay(100);
 
     private final Map<String, PlayerAccount> accounts = new LinkedHashMap<>();
-    private final List<LedgerEntry> entries = new ArrayList<>();
+    /** The audit log; {@code null} when the book does not retain its entries ({@link #LedgerBook(boolean)}). */
+    private final List<LedgerEntry> entries;
+    private final List<LedgerListener> listeners = new ArrayList<>();
     private final Map<String, WithdrawalRequest> withdrawals = new LinkedHashMap<>();
     private final Map<String, DepositRequest> deposits = new LinkedHashMap<>();
     private final List<LedgerCorrection> corrections = new ArrayList<>();
@@ -76,6 +79,30 @@ public final class LedgerBook {
     private static final long MILLIS_PER_DAY = 86_400_000L;
     /** The window of the circuit breaker's maximum, in days (B6). */
     public static final int BREAKER_WINDOW_DAYS = 30;
+
+    /** A book that keeps every entry in memory ({@link #entries()}): for simulations and tests, whose runs are bounded. */
+    public LedgerBook() {
+        this(true);
+    }
+
+    /**
+     * @param retainEntries {@code false}: the entries are only handed to the {@link LedgerListener}s and not kept, so the
+     *        memory of the book is O(players), not O(movements ever made) (architecture plan F3); {@link #entries()} then
+     *        throws. The server runs its book this way - the history lives in the {@code ledger_entries} table.
+     */
+    public LedgerBook(boolean retainEntries) {
+        this.entries = retainEntries ? new ArrayList<>() : null;
+    }
+
+    /** Hands every entry the book produces from now on to {@code listener}, in order, right after the balance changed. */
+    public void addListener(LedgerListener listener) {
+        listeners.add(java.util.Objects.requireNonNull(listener, "listener"));
+    }
+
+    /** The sequence number of the last entry produced (0: none yet) - the next one is this plus one. */
+    public long lastSequence() {
+        return sequence;
+    }
 
     // --- reads ---
 
@@ -121,8 +148,16 @@ public final class LedgerBook {
         return List.copyOf(accounts.keySet());
     }
 
-    /** The full append-only movement log, in order — see the class-level conservation note. */
+    /**
+     * The full append-only movement log, in order — see the class-level conservation note.
+     *
+     * @throws IllegalStateException when the book was built not to retain its entries ({@link #LedgerBook(boolean)});
+     *         listen with {@link #addListener} instead
+     */
     public List<LedgerEntry> entries() {
+        if (entries == null) {
+            throw new IllegalStateException("this ledger does not retain its entries; use addListener");
+        }
         return List.copyOf(entries);
     }
 
@@ -883,7 +918,13 @@ public final class LedgerBook {
         }
         accounts.put(playerId, new PlayerAccount(playerId, newBalance, acc.currentSeason(), acc.seasons()));
         playersTotal = playersTotal.plus(delta);
-        entries.add(new LedgerEntry(++sequence, playerId, type, delta, roundId, now.toEpochMilli()));
+        LedgerEntry entry = new LedgerEntry(++sequence, playerId, type, delta, roundId, now.toEpochMilli());
+        if (entries != null) {
+            entries.add(entry);
+        }
+        for (LedgerListener listener : listeners) {
+            listener.onEntry(entry);
+        }
     }
 
     private void updateCurrentSeasonRecord(String playerId, UnaryOperator<SeasonRecord> fn) {

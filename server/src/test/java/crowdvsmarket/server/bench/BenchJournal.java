@@ -365,7 +365,7 @@ public final class BenchJournal {
         List<String> tables = new ArrayList<>();
         for (String t : List.of("game_events", "players", "round_results", "player_round_history", "withdrawal_requests",
                 "deposit_requests", "auth_challenges", "sessions", "oracle_records", "player_deposit_addresses",
-                "deposit_confirmations", "price_snapshots", "round_venues", "feedback", "registration_ips")) {
+                "deposit_confirmations", "price_snapshots", "round_venues", "feedback", "registration_ips", "ledger_entries")) {
             try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT to_regclass('" + t + "') IS NOT NULL")) {
                 rs.next();
                 if (rs.getBoolean(1)) {

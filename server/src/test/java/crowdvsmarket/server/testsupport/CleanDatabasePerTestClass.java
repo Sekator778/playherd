@@ -66,7 +66,7 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
     private static final String TRUNCATE_SQL = "TRUNCATE TABLE game_events, players, round_results, "
             + "player_round_history, withdrawal_requests, deposit_requests, auth_challenges, sessions, "
             + "oracle_records, player_deposit_addresses, deposit_confirmations, price_snapshots, round_venues, "
-            + "feedback, registration_ips RESTART IDENTITY CASCADE";
+            + "feedback, registration_ips, ledger_entries RESTART IDENTITY CASCADE";
 
     /** V7's {@code markets} table: every market a test listed goes, but BTC's row (id 0, created by the
      *  migration, always present) stays — back to ACTIVE in case a test closed it. */
