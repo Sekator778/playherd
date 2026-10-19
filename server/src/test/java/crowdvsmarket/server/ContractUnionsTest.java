@@ -117,6 +117,7 @@ class ContractUnionsTest {
     private static final List<Pairing> PAIRINGS = List.of(
             pair("Interval", enumSide(Enums.Interval.class), enumSide(crowdvsmarket.engine.market.Interval.class)),
             pair("Direction", enumSide(Enums.Direction.class), enumSide(crowdvsmarket.engine.round.Direction.class)),
+            pair("BetMode", enumSide(Enums.BetMode.class), enumSide(crowdvsmarket.engine.round.BetMode.class)),
             pair("RoundPhase", enumSide(Enums.RoundPhase.class)),
             pair("MarketKind", enumSide(Enums.MarketKind.class),
                     enumSide(crowdvsmarket.server.markets.MarketKind.class)),
