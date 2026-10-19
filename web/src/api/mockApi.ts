@@ -39,6 +39,9 @@ import {
   type AuthChallengeRequest,
   type AuthSessionDto,
   type AuthVerifyRequest,
+  type ApiBotDto,
+  type ApiBotKeyDto,
+  MAX_API_BOTS,
   type InviteDto,
   type BetDto,
   type BetFeedDto,
@@ -379,6 +382,72 @@ export class MockApi implements Api {
     return { code: this.inviteCodeOf(player.playerId), referredCount: this.invitedCount + fromUrl };
   }
 
+  // --- bots of outside developers (Р-106): kept in memory for the signed-in mock player; the key is shown once, as on the server ---
+
+  private bots: ApiBotDto[] = [];
+  private botKeyCounter = 0;
+
+  private newBotKey(): string {
+    this.botKeyCounter += 1;
+    return `herd_MockKey${this.botKeyCounter.toString(36).padStart(36, "0")}`;
+  }
+
+  private hintOf(key: string): string {
+    return `herd_...${key.slice(-4)}`;
+  }
+
+  async myBots(): Promise<ApiBotDto[]> {
+    this.requireSignedIn();
+    return this.bots.map((b) => ({ ...b }));
+  }
+
+  async createBot(name: string): Promise<ApiBotKeyDto> {
+    this.requireSignedIn();
+    const trimmed = name.trim();
+    if (!/^[A-Za-z0-9 _.-]{3,24}$/.test(trimmed)) {
+      throw new ApiRequestError("INVALID_NICKNAME", "bot name must be 3-24 characters: letters, digits, space, '_', '.', '-' only");
+    }
+    if (this.bots.length >= MAX_API_BOTS) {
+      throw new ApiRequestError("BOT_LIMIT_REACHED", `you already have ${MAX_API_BOTS} API bots - that is the most one person can create`);
+    }
+    const apiKey = this.newBotKey();
+    const bot: ApiBotDto = {
+      playerId: `api-mock-${this.bots.length + 1}`,
+      nickname: trimmed,
+      keyHint: this.hintOf(apiKey),
+      keyActive: true,
+      createdAtMs: Date.now(),
+    };
+    this.bots.push(bot);
+    return { bot: { ...bot }, apiKey };
+  }
+
+  private botIndex(botId: string): number {
+    const index = this.bots.findIndex((b) => b.playerId === botId);
+    if (index === -1) throw new ApiRequestError("NOT_FOUND", `unknown bot ${botId}`);
+    return index;
+  }
+
+  async regenerateBotKey(botId: string): Promise<ApiBotKeyDto> {
+    this.requireSignedIn();
+    const index = this.botIndex(botId);
+    const apiKey = this.newBotKey();
+    this.bots[index] = { ...this.bots[index], keyHint: this.hintOf(apiKey), keyActive: true };
+    return { bot: { ...this.bots[index] }, apiKey };
+  }
+
+  async revokeBotKey(botId: string): Promise<ApiBotDto> {
+    this.requireSignedIn();
+    const index = this.botIndex(botId);
+    this.bots[index] = { ...this.bots[index], keyHint: null, keyActive: false };
+    return { ...this.bots[index] };
+  }
+
+  /** The mock has no API bots playing: the boards are empty (a season with nobody past the threshold). */
+  async botRatings(season?: SeasonId): Promise<RatingsDto> {
+    return { season: season ?? CURRENT_SEASON, roundsThreshold: RATING_ROUNDS_THRESHOLD, rich: [], prophets: [] };
+  }
+
   /** Test/demo helper (not part of `Api`): pretend `n` more players registered through this player's link. */
   simulateInvited(n: number): void {
     this.invitedCount += n;
@@ -409,6 +478,7 @@ export class MockApi implements Api {
     this.player = null;
     this.registration = {};
     this.invitedCount = 0;
+    this.bots = [];
     this.resetPlayerState();
     this.withdrawals.clear();
     this.depositAddress = null;

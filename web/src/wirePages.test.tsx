@@ -9,6 +9,7 @@
  * If a listed wire file is missing, every test here fails with the name of the file and what to run.
  */
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import App from "./App";
@@ -508,6 +509,55 @@ describe("Profile — a player's round history", () => {
   it("an unknown player is 'Player not found, or no longer playing.' — by the server's code", async () => {
     renderApp("/profile/nobody", { signedIn: false, overrides: { publicProfile: () => ({ status: 404, body: { error: { code: "NOT_FOUND", message: "unknown player nobody" } } }) } });
     expect(await screen.findByText("Player not found, or no longer playing.")).toBeInTheDocument();
+  });
+});
+
+describe("API bots (Р-106), on the server's own answers", () => {
+  it("the own profile lists the bots the server recorded, each with its key hint and nothing broken", async () => {
+    const bots = wireResponse<Array<{ nickname: string; keyHint: string }>>("myBots");
+    renderApp("/profile/me");
+    expect(await screen.findByRole("heading", { name: "Your bots" })).toBeInTheDocument();
+    const list = await screen.findByRole("list", { name: "Your bots" });
+    expect(list).toHaveTextContent(bots[0].nickname);
+    expect(list).toHaveTextContent(`Key ${bots[0].keyHint}`);
+    expect(screen.getByRole("link", { name: "API documentation" })).toHaveAttribute("href", "/developers");
+    await settle(300);
+    expectCleanPage("profile, bots");
+  });
+
+  it("creating a bot shows the key from the server's answer once, in a box that closes", async () => {
+    const created = wireResponse<{ apiKey: string }>("createBot");
+    renderApp("/profile/me", { overrides: { myBots: () => ({ body: [] }) } });
+    await screen.findByRole("heading", { name: "Your bots" });
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Bot name"), "Wire Bot");
+    await user.click(screen.getByRole("button", { name: "Create bot key" }));
+    const key = await screen.findByLabelText("API key of Wire Bot");
+    expect((key as HTMLInputElement).value).toBe(created.apiKey);
+    await user.click(screen.getByRole("button", { name: "I have saved the key" }));
+    await waitFor(() => expect(screen.queryByLabelText("API key of Wire Bot")).not.toBeInTheDocument());
+    expect(document.body.textContent).not.toContain(created.apiKey);
+  });
+
+  it("the developers page: every call a key may make, the auth header, the placeholder for the payout modes", async () => {
+    renderApp("/developers", { signedIn: false });
+    expect(await screen.findByRole("heading", { level: 1, name: "Bot API" })).toBeInTheDocument();
+    expect(screen.getByText(/Authorization: Bearer herd_/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Payout modes" })).toBeInTheDocument();
+    expect(document.querySelectorAll(".dev-call").length).toBeGreaterThanOrEqual(20);
+    // The reference prints JSON, where `null` is a value (`"args": [null]`): everything else a broken page prints is still checked.
+    expect(document.body.textContent ?? "").not.toMatch(/\bNaN\b|\bundefined\b|Invalid Date|\[object Object\]|Infinity/);
+    expect(unnamed(document.body), "developers: controls or headings with no name").toEqual([]);
+    expect(consoleError.mock.calls).toEqual([]);
+  });
+
+  it("the ratings have a tab for the bots", async () => {
+    renderApp("/stats/ratings", { signedIn: false });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "Bots" }));
+    expect(await screen.findByText(/Bots written by other developers/)).toBeInTheDocument();
+    expect(await screen.findByText(/No one has qualified yet/)).toBeInTheDocument();
+    expectCleanPage("ratings, bots");
   });
 });
 

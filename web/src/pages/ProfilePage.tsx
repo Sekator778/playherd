@@ -9,6 +9,7 @@ import { seasonHistory } from "../api/seasonStats";
 import { inviteLink } from "../api/referral";
 import { useMarkets } from "../api/useMarkets";
 import { Avatar } from "../components/Avatar";
+import { BotsBlock } from "../components/BotsBlock";
 import { BotBadge, CopyButton, ErrorState, Skeleton } from "../components/Common";
 import { ResultTile } from "../components/ResultTile";
 import { StreakBadge } from "../components/StreakBadge";
@@ -183,6 +184,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
       )}
 
       {isOwn && <InviteBlock />}
+      {isOwn && !profile.player.isBot && <BotsBlock />}
 
       <h2>{t("profile.roundHistory")}</h2>
       {history.length === 0 ? (

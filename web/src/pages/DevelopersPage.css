@@ -1,0 +1,59 @@
+.dev-page h1,
+.dev-page h2,
+.dev-page p {
+  margin: 0;
+}
+.dev-code {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  line-height: 1.45;
+  white-space: pre;
+}
+.dev-code--long {
+  max-height: 520px;
+  overflow: auto;
+}
+.dev-calls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dev-call {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+}
+.dev-call summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.dev-call__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dev-table-wrap {
+  overflow-x: auto;
+}
+.dev-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.dev-table th,
+.dev-table td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}

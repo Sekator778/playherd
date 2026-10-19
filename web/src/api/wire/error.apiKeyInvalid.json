@@ -1,0 +1,11 @@
+{
+  "method": "myAccount",
+  "args": [],
+  "status": 401,
+  "response": {
+    "error": {
+      "code": "API_KEY_INVALID",
+      "message": "the API key is not valid (unknown, malformed or revoked)"
+    }
+  }
+}

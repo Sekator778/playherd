@@ -223,6 +223,26 @@ export interface InviteDto {
   referredCount: number;
 }
 
+/** Р-106: a bot of an outside developer, as its owner sees it. `keyHint` is the key's prefix and last four characters (`herd_...ab12`),
+ *  `null` once the key is revoked; `keyActive` says whether a key opens the bot now. The key itself is never in this object. */
+export interface ApiBotDto {
+  playerId: string;
+  nickname: string;
+  keyHint: string | null;
+  keyActive: boolean;
+  createdAtMs: EpochMs;
+}
+
+/** What creating a bot and regenerating a key answer: the bot and its key in full. The key is sent this once and is not stored in
+ *  readable form anywhere, on the server or here - show it, let the owner copy it, then drop it. */
+export interface ApiBotKeyDto {
+  bot: ApiBotDto;
+  apiKey: string;
+}
+
+/** The most API bots one person can own (`GameService.MAX_API_BOTS_PER_OWNER`, Р-106). */
+export const MAX_API_BOTS = 3;
+
 export interface AuthSessionDto {
   player: PlayerSummaryDto;
   /** True on a brand-new player — the UI must immediately continue into the nickname-pick step
@@ -576,6 +596,10 @@ export interface PlaceBetRequest {
   direction: Direction;
   leverage: Leverage;
   stake: PlayAmountStr;
+  /** Additive (Р-106): how the bet pays. Absent means `"PERCENT"`, today's mode (the payout follows the stake, the leverage and the
+   *  size of the price move); a second mode is being designed. The server answers any other value with 400 `BAD_REQUEST` rather than
+   *  ignore it. The web app does not send it yet. */
+  mode?: "PERCENT";
 }
 
 // ---------------------------------------------------------------------------
@@ -1197,6 +1221,14 @@ export type ApiErrorCode =
   | "NOT_FOUND"
   /** HTTP 400: the nickname is not 3–24 characters of letters, digits, space, `_`, `.`, `-`. */
   | "INVALID_NICKNAME"
+  /** HTTP 409 (Р-106): the person already owns the most API bots allowed ({@link MAX_API_BOTS}). */
+  | "BOT_LIMIT_REACHED"
+  /** HTTP 401 (Р-106): an `Authorization: Bearer` key that is unknown, malformed or revoked. Seen by a bot, never by the web app itself. */
+  | "API_KEY_INVALID"
+  /** HTTP 403 (Р-106): a call an API key may not make (creating bots, withdrawals, profile changes, ...). */
+  | "API_CALL_NOT_ALLOWED"
+  /** HTTP 403 (Р-106): an API bot's PLAY cannot be withdrawn to a wallet. */
+  | "BOT_WITHDRAWAL_NOT_ALLOWED"
   /** Any other server code: the message is still the server's own text and is shown as is. */
   | "OTHER";
 
@@ -1230,6 +1262,19 @@ export interface Api {
   signOut(): Promise<void>;
   /** The signed-in player's invite code and how many players came through it. */
   myInvite(): Promise<InviteDto>;
+
+  // --- bots of outside developers (Р-106): for a signed-in person only; a bot itself plays through the API with its key ---
+  /** The signed-in person's API bots, oldest first. */
+  myBots(): Promise<ApiBotDto[]>;
+  /** A new API bot (its own player with a starter pack) and its key. Rejects with `BOT_LIMIT_REACHED` past {@link MAX_API_BOTS}
+   *  (message shown as is), `INVALID_NICKNAME` for a name that is not 3-24 letters, digits, space, `_`, `.`, `-`. */
+  createBot(name: string): Promise<ApiBotKeyDto>;
+  /** A new key for the bot; the old one stops working at once. */
+  regenerateBotKey(botId: string): Promise<ApiBotKeyDto>;
+  /** Revokes the bot's key: nothing opens the bot until a new key is generated. */
+  revokeBotKey(botId: string): Promise<ApiBotDto>;
+  /** The boards of the API bots only (same season and threshold rules as `ratings`, which leaves them out). */
+  botRatings(season?: SeasonId): Promise<RatingsDto>;
 
   // --- markets (Р-69, Р-70) ---
   markets(): Promise<MarketsDto>;

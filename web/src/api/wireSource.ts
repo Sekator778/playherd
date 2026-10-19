@@ -45,9 +45,16 @@ export const WIRE_NAMES = [
   "home",
   "currentPlayer",
   "authVerify",
+  "myBots",
+  "createBot",
+  "regenerateBotKey",
+  "revokeBotKey",
+  "botRatings",
   "error.notSignedIn",
   "error.marketNotFound",
   "error.engineNotReady",
+  "error.apiCallNotAllowed",
+  "error.apiKeyInvalid",
 ] as const;
 
 export type WireName = (typeof WIRE_NAMES)[number];
@@ -179,6 +186,11 @@ function defaultReply(method: string, args: unknown[]): WireReply {
     case "authVerify":
     case "unseenResults":
     case "cancellations":
+    case "myBots":
+    case "createBot":
+    case "regenerateBotKey":
+    case "revokeBotKey":
+    case "botRatings":
       return { body: wire(method as WireName).response };
     case "rounds":
       return { body: wire("rounds.hourly").response };

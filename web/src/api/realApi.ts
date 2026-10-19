@@ -32,6 +32,8 @@ import {
   type AuthChallengeRequest,
   type AuthSessionDto,
   type AuthVerifyRequest,
+  type ApiBotDto,
+  type ApiBotKeyDto,
   type InviteDto,
   type BetDto,
   type BetFeedDto,
@@ -91,6 +93,10 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<Exclude<ApiErrorCode, "OT
   "ENGINE_NOT_READY",
   "NOT_FOUND",
   "INVALID_NICKNAME",
+  "BOT_LIMIT_REACHED",
+  "API_KEY_INVALID",
+  "API_CALL_NOT_ALLOWED",
+  "BOT_WITHDRAWAL_NOT_ALLOWED",
 ]);
 
 /** The methods the server answers from the engine (`GameService` takes its read lock for them; `markets()` checks it
@@ -106,6 +112,7 @@ const ENGINE_READS: ReadonlySet<string> = new Set([
   "crowdAccount",
   "crowdOverview",
   "ratings",
+  "botRatings",
   "publicProfile",
   "myProfile",
   "home",
@@ -186,6 +193,23 @@ class RealApi implements Api {
   }
   myInvite(): Promise<InviteDto> {
     return rpc("myInvite", []);
+  }
+
+  // --- bots of outside developers (Р-106) ---
+  myBots(): Promise<ApiBotDto[]> {
+    return rpc("myBots", []);
+  }
+  createBot(name: string): Promise<ApiBotKeyDto> {
+    return rpc("createBot", [name]);
+  }
+  regenerateBotKey(botId: string): Promise<ApiBotKeyDto> {
+    return rpc("regenerateBotKey", [botId]);
+  }
+  revokeBotKey(botId: string): Promise<ApiBotDto> {
+    return rpc("revokeBotKey", [botId]);
+  }
+  botRatings(season?: SeasonId): Promise<RatingsDto> {
+    return rpc("botRatings", [season ?? null]);
   }
 
   // --- markets (Р-69, Р-70) ---

@@ -1,0 +1,16 @@
+{
+  "method": "regenerateBotKey",
+  "args": [
+    "api-5d2cf395-d45a-48cc-8819-f6a9e0f5ae27"
+  ],
+  "response": {
+    "bot": {
+      "playerId": "api-5d2cf395-d45a-48cc-8819-f6a9e0f5ae27",
+      "nickname": "Wire Bot",
+      "keyHint": "herd_...NrNw",
+      "keyActive": true,
+      "createdAtMs": 1792403621732
+    },
+    "apiKey": "herd_EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEE"
+  }
+}

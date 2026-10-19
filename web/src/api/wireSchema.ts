@@ -11,6 +11,8 @@
  * Nothing in the app imports this file.
  */
 import type {
+  ApiBotDto,
+  ApiBotKeyDto,
   AuthSessionDto,
   BetDto,
   BetFeedDto,
@@ -320,6 +322,16 @@ const overviewRow = obj<CrowdOverviewDto["markets"][number]>({
   roundsWon: int,
 });
 export const crowdOverview = obj<CrowdOverviewDto>({ totalCapital: usd, totalStartingCapital: usd, returnPct: num, markets: arr(overviewRow) });
+
+/** Р-106: an API bot as its owner sees it; `keyHint` is `herd_...` and four characters, `null` once the key is revoked. */
+export const apiBot = obj<ApiBotDto>({ playerId: nonEmptyStr, nickname: nonEmptyStr, keyHint: nullable(nonEmptyStr), keyActive: bool, createdAtMs: int });
+/** The key is sent in full here and nowhere else: `herd_` and 43 characters of the URL-safe alphabet. */
+export const apiBotKey = obj<ApiBotKeyDto>({
+  bot: apiBot,
+  apiKey: (v, path, problems) => {
+    if (typeof v !== "string" || !/^herd_[A-Za-z0-9_-]{43}$/.test(v)) problems.push(`${path}: expected an API key (herd_ and 43 URL-safe characters), got ${describe(v)}`);
+  },
+});
 
 export const ratings = obj<RatingsDto>({
   season: nonEmptyStr,

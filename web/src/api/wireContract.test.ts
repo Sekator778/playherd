@@ -50,6 +50,11 @@ const CASES: Record<Exclude<WireName, `error.${string}`>, Case> = {
   home: { call: (api) => api.home(), check: schema.home },
   currentPlayer: { call: (api) => api.currentPlayer(), check: schema.playerSummary },
   authVerify: { call: (api, a) => api.authVerify(a[0] as AuthVerifyRequest), check: schema.authSession },
+  myBots: { call: (api) => api.myBots(), check: (v, p, pr) => schema.arr(schema.apiBot)(v, p, pr) },
+  createBot: { call: (api, a) => api.createBot(a[0] as string), check: schema.apiBotKey },
+  regenerateBotKey: { call: (api, a) => api.regenerateBotKey(a[0] as string), check: schema.apiBotKey },
+  revokeBotKey: { call: (api, a) => api.revokeBotKey(a[0] as string), check: schema.apiBot },
+  botRatings: { call: (api, a) => api.botRatings(orUndefined<string>(a[0])), check: schema.ratings },
 };
 
 const DATA_NAMES = Object.keys(CASES) as Array<keyof typeof CASES>;
@@ -217,7 +222,7 @@ describe("every price has its market's price scale", () => {
 });
 
 describe("errors: the envelope, the status, and the code RealApi turns it into", () => {
-  const expectedCode = { "error.notSignedIn": "NOT_SIGNED_IN", "error.marketNotFound": "MARKET_NOT_FOUND", "error.engineNotReady": "ENGINE_NOT_READY" } as const;
+  const expectedCode = { "error.notSignedIn": "NOT_SIGNED_IN", "error.marketNotFound": "MARKET_NOT_FOUND", "error.engineNotReady": "ENGINE_NOT_READY", "error.apiCallNotAllowed": "API_CALL_NOT_ALLOWED", "error.apiKeyInvalid": "API_KEY_INVALID" } as const;
 
   it.each(ERROR_NAMES)("%s: the envelope is {error: {code, message}} and the status is an HTTP error", (name) => {
     const { status, code, message } = wireError(name);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApi, useSession } from "../api/ApiContext";
 import { isEngineNotReady } from "../api/apiErrors";
-import type { CrowdAccountDto, PublicProfileDto, RatingsDto, SeasonId } from "../api/contract";
+import { RATING_ROUNDS_THRESHOLD, type CrowdAccountDto, type PublicProfileDto, type RatingsDto, type SeasonId } from "../api/contract";
 import { useEngineEpoch } from "../api/engineState";
 import { ErrorState, MultiAccountDisclosureLine, Skeleton } from "../components/Common";
 import { LeaderboardList, LeaderboardHighlights, type LeaderboardEntry, type LeaderboardHighlight } from "../components/Leaderboard";
@@ -65,7 +65,49 @@ function currentSeasonId(): SeasonId {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-type Tab = "RICH" | "PROPHETS";
+type Tab = "RICH" | "PROPHETS" | "BOTS";
+
+/** What the bots' tab shows when the server cannot give the boards (older server, or none answered): no one has qualified. */
+const EMPTY_BOT_RATINGS: RatingsDto = { season: "", roundsThreshold: RATING_ROUNDS_THRESHOLD, rich: [], prophets: [] };
+
+/** Р-106: the boards of the API bots - the same two rankings as the people's, one under the other, with a line saying who they are. */
+function BotBoards({ ratings, t }: { ratings: RatingsDto | null; t: TFn }) {
+  if (!ratings) return <Skeleton height={200} />;
+  return (
+    <div className="stack" style={{ gap: 16 }}>
+      <p className="muted">{t("ratings.botsNote", { count: ratings.roundsThreshold })}</p>
+      {ratings.rich.length === 0 ? (
+        <p className="muted">{t("ratings.noQualified", { count: ratings.roundsThreshold })}</p>
+      ) : (
+        <>
+          <h2>{t("ratings.richest")}</h2>
+          <LeaderboardList
+            entries={ratings.rich.map(
+              (r): LeaderboardEntry => ({
+                rank: r.rank,
+                player: r.player,
+                value: `${formatPlayAmount(r.growth, { sign: true })} PLAY`,
+                valueClassName: outcomeClassName(outcomeFromNet(Number(r.growth))),
+                meta: t("ratings.roundsMeta", { count: r.roundsPlayed }),
+              }),
+            )}
+          />
+          <h2>{t("ratings.prophets")}</h2>
+          <LeaderboardList
+            entries={ratings.prophets.map(
+              (r): LeaderboardEntry => ({
+                rank: r.rank,
+                player: r.player,
+                value: formatPercent(r.accuracy),
+                meta: t("ratings.roundsMeta", { count: r.roundsPlayed }),
+              }),
+            )}
+          />
+        </>
+      )}
+    </div>
+  );
+}
 
 export function RatingsPage() {
   const api = useApi();
@@ -75,6 +117,8 @@ export function RatingsPage() {
   const current = currentSeasonId();
   const [season, setSeason] = useState<SeasonId>(current);
   const [ratings, setRatings] = useState<RatingsDto | null>(null);
+  // Р-106: the API bots' own boards, fetched when their tab is opened (and again for another season).
+  const [botRatings, setBotRatings] = useState<RatingsDto | null>(null);
   const [error, setError] = useState(false);
   const [myRoundsPlayed, setMyRoundsPlayed] = useState<number | null>(null);
   // The full season archive (Р-10) — same source CrowdPage's season-returns table uses, not a
@@ -131,6 +175,21 @@ export function RatingsPage() {
   }, [load, engineEpoch]);
 
   useEffect(() => {
+    if (tab !== "BOTS") return;
+    let live = true;
+    Promise.resolve()
+      .then(() => api.botRatings(season))
+      .then(
+        (r) => live && setBotRatings(r),
+        // a server without the bots' boards, or one restarting: the tab shows the empty state, the page stays
+        () => live && setBotRatings(EMPTY_BOT_RATINGS),
+      );
+    return () => {
+      live = false;
+    };
+  }, [api, season, tab, engineEpoch]);
+
+  useEffect(() => {
     // No `player` → simply don't fetch; every render already gates the "below threshold" banner
     // on `player` being truthy too, so a stale `myRoundsPlayed` from a previous session can't
     // leak into view after sign-out.
@@ -146,7 +205,7 @@ export function RatingsPage() {
   // Hero zone (direction.md §4): the player's own rank in the tab they're looking at, if they're
   // in it — derived from data already fetched for the list below, nothing fabricated.
   const ownRank =
-    player && ratings
+    player && ratings && tab !== "BOTS"
       ? (tab === "RICH" ? ratings.rich : ratings.prophets).find((r) => r.player.playerId === player.playerId)?.rank
       : undefined;
 
@@ -178,6 +237,9 @@ export function RatingsPage() {
           <button type="button" role="tab" aria-selected={tab === "PROPHETS"} onClick={() => setTab("PROPHETS")}>
             {t("ratings.prophets")}
           </button>
+          <button type="button" role="tab" aria-selected={tab === "BOTS"} onClick={() => setTab("BOTS")}>
+            {t("ratings.botsTab")}
+          </button>
         </div>
         <div className="field" style={{ margin: 0 }}>
           <label htmlFor="season-picker" className="visually-hidden">
@@ -193,7 +255,9 @@ export function RatingsPage() {
         </div>
       </div>
 
-      {!ratings ? (
+      {tab === "BOTS" ? (
+        <BotBoards ratings={botRatings} t={t} />
+      ) : !ratings ? (
         <Skeleton height={360} />
       ) : tab === "RICH" ? (
         ratings.rich.length === 0 ? (

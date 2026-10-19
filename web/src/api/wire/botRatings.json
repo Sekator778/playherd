@@ -1,0 +1,12 @@
+{
+  "method": "botRatings",
+  "args": [
+    null
+  ],
+  "response": {
+    "season": "2026-10",
+    "roundsThreshold": 10,
+    "rich": [],
+    "prophets": []
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "method": "createBot",
+  "args": [
+    "Child Bot"
+  ],
+  "status": 403,
+  "response": {
+    "error": {
+      "code": "API_CALL_NOT_ALLOWED",
+      "message": "the call createBot is not available with an API key - it is for a signed-in person"
+    }
+  }
+}

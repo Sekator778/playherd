@@ -124,6 +124,10 @@ describe("RealApi — error mapping", () => {
     "ENGINE_NOT_READY",
     "NOT_FOUND",
     "INVALID_NICKNAME",
+    "BOT_LIMIT_REACHED",
+    "API_KEY_INVALID",
+    "API_CALL_NOT_ALLOWED",
+    "BOT_WITHDRAWAL_NOT_ALLOWED",
   ])("a known server code (%s) is an ApiRequestError carrying that code and the server's text", async (code) => {
     fetchMock.mockResolvedValueOnce(errorResponse(400, code, `server says ${code}`));
     const err = await realApi.placeBet({ roundId: "1h-0", direction: "UP", leverage: 2, stake: "100.000" }).catch((e) => e);

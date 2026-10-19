@@ -1,0 +1,13 @@
+{
+  "method": "revokeBotKey",
+  "args": [
+    "api-5d2cf395-d45a-48cc-8819-f6a9e0f5ae27"
+  ],
+  "response": {
+    "playerId": "api-5d2cf395-d45a-48cc-8819-f6a9e0f5ae27",
+    "nickname": "Wire Bot",
+    "keyHint": null,
+    "keyActive": false,
+    "createdAtMs": 1792403621732
+  }
+}
