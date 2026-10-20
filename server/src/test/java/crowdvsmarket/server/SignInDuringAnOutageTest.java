@@ -1,5 +1,7 @@
 package crowdvsmarket.server;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doThrow;
@@ -50,7 +52,7 @@ class SignInDuringAnOutageTest extends LiveGameTestBase {
         String body = "{\"args\":[{\"nonce\":\"" + nonce + "\",\"address\":\"txch1outage"
                 + UUID.randomUUID().toString().replace("-", "") + "\",\"publicKey\":\"0x" + "ab".repeat(48)
                 + "\",\"signature\":\"0x" + "cd".repeat(96) + "\"}]}";
-        doThrow(new IllegalStateException("db flapping")).when(eventStoreSpy).loadAll();
+        doThrow(new IllegalStateException("db flapping")).when(eventStoreSpy).replayAfter(anyLong(), any());
         gameService.runExclusively(() -> rebuild.recoverAfterFailure(new IllegalStateException("the settlement failed")));
         assertThat(rebuild.isReady()).isFalse();
 

@@ -90,7 +90,7 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
                 EngineLockProbe.awaitQueued(betCall);
                 EngineLockProbe.awaitQueued(readCall);
                 // a settlement of this thread failed, and so did its recovery: the engine is not ready
-                doThrow(new IllegalStateException("db flapping")).when(eventStoreSpy).loadAll();
+                doThrow(new IllegalStateException("db flapping")).when(eventStoreSpy).replayAfter(anyLong(), any());
                 rebuild.recoverAfterFailure(new IllegalStateException("the settlement failed"));
             }));
             // (the holder has the lock before the others start, or they would get it first)

@@ -109,6 +109,24 @@ public final class BetFeed {
      *  page), oldest first, capped to {@link #PAGE_SIZE}. An unknown/never-bet-on round returns an
      *  empty, {@code hasMore=false} result rather than an error — same "empty, not an error"
      *  convention as this codebase's other paginated reads. */
+    /** The feed of one moment: the counter and, per round in the order they were first recorded, its entries oldest first
+     *  (architecture plan F5: a snapshot). */
+    public record State(long seq, Map<String, List<Entry>> rounds) {
+    }
+
+    public synchronized State state() {
+        Map<String, List<Entry>> rounds = new LinkedHashMap<>();
+        byRound.forEach((roundId, entries) -> rounds.put(roundId, List.copyOf(entries)));
+        return new State(seqCounter.get(), rounds);
+    }
+
+    /** Puts a saved state into this (fresh) feed. */
+    public synchronized void restore(State state) {
+        seqCounter.set(state.seq());
+        byRound.clear();
+        state.rounds().forEach((roundId, entries) -> byRound.put(roundId, new ArrayDeque<>(entries)));
+    }
+
     public synchronized Result since(String roundId, long sinceSeq) {
         Deque<Entry> entries = byRound.get(roundId);
         return entries == null ? new Result(List.of(), false) : pageSince(entries, sinceSeq);

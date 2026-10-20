@@ -102,6 +102,27 @@ public final class ComparisonAccounts {
         antiCrowdHistory.add(antiCrowdCapital);
     }
 
+    /** The comparison lines of one moment (architecture plan F5: a snapshot). {@code holdQty} is {@code null} before the first round. */
+    public record State(BigDecimal holdCapital, BigDecimal holdQty, BigDecimal antiCrowdCapital, List<BigDecimal> holdHistory,
+                        List<BigDecimal> antiCrowdHistory) {
+    }
+
+    public synchronized State state() {
+        return new State(holdCapital, holdQty, antiCrowdCapital, List.copyOf(holdHistory), List.copyOf(antiCrowdHistory));
+    }
+
+    /** Puts a saved state into fresh lines. */
+    public synchronized void restore(State state) {
+        if (!holdHistory.isEmpty() || !antiCrowdHistory.isEmpty()) {
+            throw new IllegalStateException("a comparison state is restored into fresh lines only");
+        }
+        holdCapital = state.holdCapital();
+        holdQty = state.holdQty();
+        antiCrowdCapital = state.antiCrowdCapital();
+        holdHistory.addAll(state.holdHistory());
+        antiCrowdHistory.addAll(state.antiCrowdHistory());
+    }
+
     public synchronized List<BigDecimal> holdHistory() {
         return List.copyOf(holdHistory);
     }

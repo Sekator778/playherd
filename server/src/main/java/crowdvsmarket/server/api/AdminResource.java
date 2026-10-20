@@ -51,6 +51,8 @@ public class AdminResource {
     FeedbackService feedbackService;
     @Inject
     BotMetrics botMetrics;
+    @Inject
+    crowdvsmarket.server.snapshot.SnapshotService snapshotService;
 
     private void requireOperator(String authorizationHeader) {
         String expected = "Bearer " + config.operatorToken();
@@ -162,8 +164,14 @@ public class AdminResource {
                 throw e;
             }
         }
+        crowdvsmarket.server.snapshot.SnapshotService.Status snapshotStatus = null;
+        try {
+            snapshotStatus = snapshotService.status();
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "the operator status could not read the snapshots");
+        }
         return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker, botDays(),
-                gameService.missingRows(), gameService.ledgerRowsStatus());
+                gameService.missingRows(), gameService.ledgerRowsStatus(), snapshotStatus);
     }
 
     /**
@@ -252,13 +260,26 @@ public class AdminResource {
      *  journal and whose result rows could not be written so far ({@code roundId}, {@code failures}, {@code sinceMs}, {@code lastError}),
      *  each retried in the background; empty when all is written. {@code ledgerRows}: the projection of the ledger history into
      *  {@code ledger_entries} - {@code pending} movements not written yet (a few at most when healthy), {@code failures} writes in a row
-     *  that failed, since when ({@code sinceMs}) and why ({@code lastError}). Not part of {@code contract.ts}: the operator's own page. */
+     *  that failed, since when ({@code sinceMs}) and why ({@code lastError}). {@code snapshots} (F5): whether snapshots are on, how many are
+     *  stored, the newest one's journal row ({@code lastSeq}) and time, the journal's last row, the last write error and
+     *  {@code lastCheck}, the nightly comparison of a replay from zero with the newest snapshot ({@code ok} false is a mismatch; also an
+     *  ERROR in the log); {@code null} while the database does not answer. Not part of {@code contract.ts}: the operator's own page. */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                                    java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
                                    java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
                                    java.util.List<BotMetrics.Day> botDays,
                                    java.util.List<GameService.MissingRows> missingRoundRows,
-                                   GameService.LedgerRowsStatus ledgerRows) {
+                                   GameService.LedgerRowsStatus ledgerRows,
+                                   crowdvsmarket.server.snapshot.SnapshotService.Status snapshots) {
+
+        public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
+                              java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
+                              java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
+                              java.util.List<BotMetrics.Day> botDays, java.util.List<GameService.MissingRows> missingRoundRows,
+                              GameService.LedgerRowsStatus ledgerRows) {
+            this(server, recentCancellations, recentLedgerCorrections, priceFeeds, circuitBreakerOpen, botDays,
+                    missingRoundRows, ledgerRows, null);
+        }
 
         public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                               java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,

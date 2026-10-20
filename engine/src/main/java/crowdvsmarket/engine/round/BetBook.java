@@ -96,6 +96,11 @@ public final class BetBook {
     }
 
     /** A copy of the round's bets in the order they were first placed — O(bets); for one player's bet use {@link #find}. */
+    /** The rounds the book holds an entry for, in the order they were first bet on (a snapshot walks them). */
+    public List<String> roundIds() {
+        return List.copyOf(byRound.keySet());
+    }
+
     public Collection<Bet> betsFor(String roundId) {
         RoundBets round = byRound.get(roundId);
         return round == null ? List.of() : List.copyOf(round.bets.values());

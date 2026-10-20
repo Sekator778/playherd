@@ -103,6 +103,15 @@ public final class CrowdAccount {
     }
 
     /** Capital after every round processed so far, oldest first — the source for the "толпа против рынка" chart (Р-17). */
+    /** Puts a saved state into a fresh account (architecture plan F5: a snapshot): its capital and its rounds so far. */
+    public void restore(BigDecimal savedCapital, List<RoundResult> savedHistory) {
+        if (!history.isEmpty()) {
+            throw new IllegalStateException("a crowd account state is restored into a fresh account only");
+        }
+        this.capital = Objects.requireNonNull(savedCapital, "capital");
+        history.addAll(savedHistory);
+    }
+
     public List<RoundResult> history() {
         return List.copyOf(history);
     }

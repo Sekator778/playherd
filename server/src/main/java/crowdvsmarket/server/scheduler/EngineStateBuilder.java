@@ -21,6 +21,9 @@ import crowdvsmarket.server.service.BoundaryPrices;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.service.RoundCancellations;
 import crowdvsmarket.server.service.SeriesSeeder;
+import crowdvsmarket.server.snapshot.EngineSnapshotRepository;
+import crowdvsmarket.server.snapshot.SnapshotService;
+import crowdvsmarket.server.snapshot.StateCodec;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
@@ -73,16 +76,41 @@ public class EngineStateBuilder {
     LedgerEntryRepository ledgerRows;
     @Inject
     ServerMetaRepository serverMeta;
+    @Inject
+    SnapshotService snapshots;
 
     /** How many ledger movements a replay collects before it writes them to the table (a first start with an empty table). */
     static final int LEDGER_SPILL_BATCH = 5_000;
 
+    /** The event types the projection tables are repaired from ({@code projectFromJournal}, {@code repairFromJournal}): the repair reads
+     *  these alone, so it does not need the whole journal even when the engine state starts from a snapshot. */
+    static final List<String> PROJECTION_EVENT_TYPES = List.of("PlayerRegistered", "NicknameChanged", "BotStrategyAssigned",
+            "BotRetired", "MarketListed", "MarketClosed");
+
     /** A finished build: ready to be swapped in. {@code cursors} holds one window per running series;
      *  {@code boundaries} the closes of the settled rounds those cursors may open at; {@code description}
-     *  is the log line's tail. */
+     *  is the log line's tail. {@code eventsReplayed} counts the journal rows applied; with {@code snapshotSeq} above
+     *  zero those are the rows after that snapshot (F5), and {@code lastEventId} is the id of the last row applied. */
     public record Built(EngineHub hub, BetFeed betFeed, Map<RoundProgress.SeriesKey, RoundWindow> cursors,
                         BoundaryPrices.Snapshot boundaries, int eventsReplayed, int marketCount,
-                        String description) {
+                        String description, long snapshotSeq, long lastEventId) {
+
+        public Built(EngineHub hub, BetFeed betFeed, Map<RoundProgress.SeriesKey, RoundWindow> cursors,
+                     BoundaryPrices.Snapshot boundaries, int eventsReplayed, int marketCount, String description) {
+            this(hub, betFeed, cursors, boundaries, eventsReplayed, marketCount, description, 0, 0);
+        }
+    }
+
+    /** A state being built: the hub and feed, the applier over them, and what the replay found written or not. */
+    private static final class Replay {
+        final EngineHub hub = new EngineHub();
+        final BetFeed betFeed = new BetFeed();
+        final EventApplier applier = EventApplier.over(hub, betFeed);
+        final List<GameEvent.RoundResolved> unwrittenEvents = new ArrayList<>();
+        final List<RoundReport> unwrittenReports = new ArrayList<>();
+        long snapshotSeq;
+        long lastEventId;
+        int applied;
     }
 
     /**
@@ -98,48 +126,46 @@ public class EngineStateBuilder {
             jfr.heapBefore = usedHeap();
         }
         long t = JfrClock.nanos(rec);
-        List<GameEvent> events = eventStore.loadAll();
-        jfr.loadNs = JfrClock.since(rec, t);
         // F4: the players and markets tables are projections of the journal. Whatever they lack (a database built from the journal
         // alone, a write that never committed) is written before anything reads them; a journal of schema version 1 has nothing to
-        // add and leaves them as they are.
-        if (marketRegistry.projectFromJournal(events) > 0) {
+        // add and leaves them as they are. The repair folds the events of a few types, read on their own: it needs them all, snapshot
+        // or not (a snapshot says nothing about whether a row was written), and they are a small part of the journal.
+        List<GameEvent> projected = eventStore.loadOfTypes(PROJECTION_EVENT_TYPES);
+        if (marketRegistry.projectFromJournal(projected) > 0) {
             marketRegistry.reload();
         }
-        players.repairFromJournal(events);
+        players.repairFromJournal(projected);
         players.all().stream().mapToInt(PlayerDirectory.Row::playerIndex).max().ifPresent(serverMeta::raiseNextPlayerIndexAbove);
         List<Market> markets = marketRegistry.all();
-        EngineHub hub = new EngineHub();
-        BetFeed betFeed = new BetFeed();
-        EventApplier applier = EventApplier.over(hub, betFeed);
-        for (Market market : markets) {
-            hub.install(market); // a fresh hub: BTC's engines are rebuilt from the registry row, like every other market's
-        }
-        // The applier reads nothing outside the hub: the players a journal of schema version 1 does not describe come from the table,
-        // put into the hub's roster before the replay (an event of version 2 then overrides them).
-        hub.roster().seed(players.all());
         // The ledger keeps no history in memory: the movements the replay produces and the ledger_entries table lacks (all of
         // them on the first start after V16, the tail a crash or a failed write left otherwise) are written from here in
         // batches; a write that fails leaves them in the hub's outbox, where the live flush takes them over.
-        hub.ledgerOutbox().skipStored(ledgerRows.stored()::has);
-        hub.ledgerOutbox().spillTo(ledgerRows::insertBatch, LEDGER_SPILL_BATCH);
-        t = JfrClock.nanos(rec);
+        LedgerEntryRepository.Stored storedRows = ledgerRows.stored();
         // The derived rows of a settlement are written after its event is committed (GameService#resolveRound), and a
         // stop or a failing write between the two leaves rounds without them - possibly several, since the game goes on
         // while a write is retried. Every resolved round of the journal that has no row is repaired below.
         Set<String> withRows = roundResults.allRoundIds();
-        List<GameEvent.RoundResolved> unwrittenEvents = new ArrayList<>();
-        List<RoundReport> unwrittenReports = new ArrayList<>();
-        for (GameEvent event : events) {
-            Object result = applier.apply(event); // also keeps the hub's index of the windows that hold bets
+        Replay replay = fromSnapshot(markets, storedRows, withRows);
+        if (replay == null) {
+            replay = start(markets, storedRows);
+        }
+        jfr.loadNs = JfrClock.since(rec, t);
+        t = JfrClock.nanos(rec);
+        Replay state = replay;
+        state.lastEventId = eventStore.replayAfter(state.snapshotSeq, (id, event) -> {
+            Object result = state.applier.apply(event); // also keeps the hub's index of the windows that hold bets
             if (event instanceof GameEvent.RoundResolved resolved) {
                 RoundReport report = (RoundReport) result;
                 if (!withRows.contains(report.window().roundId())) {
-                    unwrittenEvents.add(resolved);
-                    unwrittenReports.add(report);
+                    state.unwrittenEvents.add(resolved);
+                    state.unwrittenReports.add(report);
                 }
             }
-        }
+            state.applied++;
+        });
+        EngineHub hub = state.hub;
+        BetFeed betFeed = state.betFeed;
+        EventApplier applier = state.applier;
         // The oracle counter: what the journal issued (RoundResolved.oracleSeq, raised while replaying) or the database counter holds
         // (the floor the chain service demanded, rows of a version-1 journal), whichever is higher.
         hub.raiseOracleSeq(serverMeta.oracleSeq());
@@ -148,19 +174,19 @@ public class EngineStateBuilder {
         }
         if (rec) {
             jfr.applyNs = JfrClock.since(rec, t);
-            jfr.events = events.size();
+            jfr.events = state.applied;
             jfr.heapAfter = usedHeap();
             jfr.end();
             jfr.commit();
         }
         // Written from the events, here, before the boundary prices are read, which read them; a write that fails does
-        // not fail the build (the game does not depend on the rows, the engine's marker says what is resolved): it goes to
-        // the background retry of GameService, and the close of that round is added to the boundary prices from the event.
+        // not fail the build (the game does not depend on the rows, the engine's marker says what is resolved): it goes to the
+        // background retry of GameService, and the close of that round is added to the boundary prices from the event.
         List<GameEvent.RoundResolved> notWritten = new ArrayList<>();
-        for (int i = 0; i < unwrittenEvents.size(); i++) {
-            gameService.repairSettledResult(unwrittenEvents.get(i), unwrittenReports.get(i));
-            if (gameService.rowsPending(unwrittenReports.get(i).window().roundId())) {
-                notWritten.add(unwrittenEvents.get(i));
+        for (int i = 0; i < state.unwrittenEvents.size(); i++) {
+            gameService.repairSettledResult(state.unwrittenEvents.get(i), state.unwrittenReports.get(i));
+            if (gameService.rowsPending(state.unwrittenReports.get(i).window().roundId())) {
+                notWritten.add(state.unwrittenEvents.get(i));
             }
         }
         cancelRoundsOfClosedMarkets(applier, hub, markets, nowMs);
@@ -186,7 +212,79 @@ public class EngineStateBuilder {
                     resolved.windowEnd()), new BigDecimal(resolved.closePrice()).movePointRight(2).longValueExact(),
                     resolved.venue());
         }
-        return new Built(hub, betFeed, cursors, closes, events.size(), markets.size(), series.toString());
+        return new Built(hub, betFeed, cursors, closes, state.applied, markets.size(), series.toString(), state.snapshotSeq,
+                state.lastEventId);
+    }
+
+    /** A fresh state with the engines of every market in the registry (closed ones too: their history replays), the roster
+     *  seeded from the {@code players} table (a journal of schema version 1 does not describe the players: an event of version 2
+     *  then overrides them) and the ledger outbox set to write the movements the table lacks. */
+    private Replay start(List<Market> markets, LedgerEntryRepository.Stored storedRows) {
+        Replay replay = new Replay();
+        for (Market market : markets) {
+            replay.hub.install(market); // a fresh hub: BTC's engines are rebuilt from the registry row, like every other market's
+        }
+        replay.hub.roster().seed(players.all());
+        replay.hub.ledgerOutbox().skipStored(storedRows::has);
+        replay.hub.ledgerOutbox().spillTo(ledgerRows::insertBatch, LEDGER_SPILL_BATCH);
+        return replay;
+    }
+
+    /**
+     * F5: the state of the newest snapshot that can be trusted, or {@code null} for a replay of the whole journal. A snapshot is
+     * left aside, with a log line, when
+     * <ul>
+     *   <li>it does not verify (format version, hash: {@link SnapshotService#verified}) or does not decode into the registry's markets;
+     *   <li>it stands ahead of the journal (the journal is shorter than it);
+     *   <li>the {@code ledger_entries} table lacks a movement the snapshot's ledger has made: the tail would not write it, only a
+     *       replay of the journal can - correct rather than fast;
+     *   <li>a round resolved at or before it has no result row: the repair of that row needs the round's report, which only a
+     *       replay of it gives.
+     * </ul>
+     * The older snapshots are tried in turn: the conditions are the looser the earlier the snapshot is.
+     */
+    private Replay fromSnapshot(List<Market> markets, LedgerEntryRepository.Stored storedRows, Set<String> withRows) {
+        if (!snapshots.enabled()) {
+            return null;
+        }
+        List<EngineSnapshotRepository.Meta> candidates = snapshots.stored();
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        long journalEnd = eventStore.lastId();
+        for (EngineSnapshotRepository.Meta meta : candidates) {
+            SnapshotService.Verified verified = snapshots.verified(meta).orElse(null);
+            if (verified == null) {
+                continue;
+            }
+            if (verified.seq() > journalEnd) {
+                LOG.warnf("engine snapshot %d ignored: the journal ends at row %d", verified.seq(), journalEnd);
+                continue;
+            }
+            Replay replay = start(markets, storedRows);
+            try {
+                StateCodec.decode(verified.text(), replay.hub, replay.betFeed);
+            } catch (IllegalArgumentException e) {
+                LOG.warnf("engine snapshot %d ignored: %s", verified.seq(), e.getMessage());
+                continue;
+            }
+            if (!storedRows.hasAllThrough(replay.hub.ledger().lastSequence())) {
+                LOG.warnf("engine snapshot %d ignored: the ledger_entries table lacks movements up to %d that only a replay of the journal "
+                        + "can write", verified.seq(), replay.hub.ledger().lastSequence());
+                continue;
+            }
+            Set<String> missing = eventStore.resolvedRoundIds(verified.seq());
+            missing.removeAll(withRows);
+            if (!missing.isEmpty()) {
+                LOG.warnf("engine snapshot %d ignored: %d round(s) resolved before it have no result row (e.g. %s) that only a replay "
+                        + "of the journal can repair", verified.seq(), missing.size(), missing.iterator().next());
+                continue;
+            }
+            replay.snapshotSeq = verified.seq();
+            return replay;
+        }
+        LOG.warn("no engine snapshot can be used - replaying the whole journal");
+        return null;
     }
 
     private static long usedHeap() {

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
@@ -289,22 +290,20 @@ class FailStopRecoveryTest extends LiveGameTestBase {
     void aRecoveryThatFailsReadingTheEventLogStopsTheGameUntilARebuildSucceeds() throws Exception {
         aFailedRecoveryStopsTheGameUntilARebuildSucceeds("T_FS_LOG",
                 () -> doThrow(new IllegalStateException("db down while reading the log")).when(eventStoreSpy)
-                        .loadAll(),
+                        .replayAfter(anyLong(), any()),
                 "db down while reading the log");
-        verify(eventStoreSpy, atLeast(2)).loadAll(); // the recovery itself, then the scheduler's retries
+        verify(eventStoreSpy, atLeast(2)).replayAfter(anyLong(), any()); // the recovery itself, then the scheduler's retries
     }
 
     @Test
     void aRecoveryThatFailsInTheMiddleOfTheReplayStopsTheGameAndLeavesNoHalfBuiltHubBehind() throws Exception {
         aFailedRecoveryStopsTheGameUntilARebuildSucceeds("T_FS_REPLAY", () -> doAnswer(inv -> {
             // a log whose last event cannot be applied: the replay has applied every real event by then
-            @SuppressWarnings("unchecked")
-            List<GameEvent> real = (List<GameEvent>) inv.callRealMethod();
-            List<GameEvent> events = new ArrayList<>(real);
-            events.add(new GameEvent.BetPlaced("nobody", Interval.HOURLY, 1_000L, 61_000L, Direction.UP, 2, 100_000L,
-                    1_000L, "GHOSTMARKET"));
-            return events;
-        }).when(eventStoreSpy).loadAll(), "GHOSTMARKET");
+            long last = (long) inv.callRealMethod();
+            ((EventStore.Replayed) inv.getArgument(1)).accept(last + 1, new GameEvent.BetPlaced("nobody", Interval.HOURLY,
+                    1_000L, 61_000L, Direction.UP, 2, 100_000L, 1_000L, "GHOSTMARKET"));
+            return last + 1;
+        }).when(eventStoreSpy).replayAfter(anyLong(), any()), "GHOSTMARKET");
     }
 
     @Test
@@ -322,7 +321,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
         long cursorsBefore = roundProgress.seededSeries().size();
         for (Runnable inject : List.<Runnable>of(
                 () -> doThrow(new IllegalStateException("db down: players")).when(playersSpy).reload(),
-                () -> doThrow(new IllegalStateException("db down: log")).when(eventStoreSpy).loadAll(),
+                () -> doThrow(new IllegalStateException("db down: log")).when(eventStoreSpy).replayAfter(anyLong(), any()),
                 () -> doThrow(new IllegalStateException("db down: seeding")).when(roundResultsSpy)
                         .latestWindowEnd(anyString(), any(Interval.class)))) {
             inject.run();
@@ -355,7 +354,7 @@ class FailStopRecoveryTest extends LiveGameTestBase {
         gameService.placeBet(bettor, bet(doomedBetting, Enums.Direction.UP, 5, "400.000"),
                 doomedBetting.startMs() - 1);
         failTheSettlementAfterItsEventWasApplied();
-        doThrow(new IllegalStateException("db down while reading the log")).when(eventStoreSpy).loadAll();
+        doThrow(new IllegalStateException("db down while reading the log")).when(eventStoreSpy).replayAfter(anyLong(), any());
         assertThatThrownBy(() -> gameService.resolveRound(f.betting(), f.betting().endMs()))
                 .hasMessageContaining("injected failure after the event append");
         assertThat(rebuild.isReady()).isFalse();

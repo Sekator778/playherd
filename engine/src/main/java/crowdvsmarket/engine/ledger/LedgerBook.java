@@ -104,6 +104,70 @@ public final class LedgerBook {
         return sequence;
     }
 
+    // --- state export / restore (architecture plan F5: snapshots) ---
+
+    /** Everything the book holds except its listeners and its optional audit log: what a snapshot of the book is made of
+     *  ({@link #exportState}, {@link #restoreState}). Maps keep the order the book keeps them in. */
+    public record State(List<PlayerAccount> accounts, List<WithdrawalRequest> withdrawals, List<DepositRequest> deposits,
+                        List<LedgerCorrection> corrections, long sequence, long requestCounter, long correctionCounter,
+                        boolean economyActive, PlayAmount treasury, PlayAmount herd, PlayAmount openStakes,
+                        PlayAmount playersTotal, PlayAmount openingTotal, PlayAmount externalFlow,
+                        PlayAmount externalFlowAtCutover, PlayAmount depositedTotal, PlayAmount depositedAtCutover,
+                        PlayAmount withdrawnConfirmed, long cutoverAtMs, Map<String, PlayAmount> packCredited,
+                        Map<String, PlayAmount> feesPaid, PlayAmount botFeesSwept, long lastSweepAtMs, List<String> retired,
+                        Map<Long, PlayAmount> treasuryDayMax) {
+    }
+
+    /** A copy of the book's state; the retired players are in name order, the rest in the order the book keeps it. */
+    public State exportState() {
+        List<String> retiredIds = new ArrayList<>(retired);
+        java.util.Collections.sort(retiredIds);
+        return new State(List.copyOf(accounts.values()), List.copyOf(withdrawals.values()), List.copyOf(deposits.values()),
+                List.copyOf(corrections), sequence, requestCounter, correctionCounter, economyActive, treasury, herd,
+                openStakes, playersTotal, openingTotal, externalFlow, externalFlowAtCutover, depositedTotal,
+                depositedAtCutover, withdrawnConfirmed, cutoverAtMs, new LinkedHashMap<>(packCredited),
+                new LinkedHashMap<>(feesPaid), botFeesSwept, lastSweepAtMs, retiredIds, new TreeMap<>(treasuryDayMax));
+    }
+
+    /** Puts {@code state} into this book, which must be fresh (nothing booked yet). Nothing is handed to the listeners:
+     *  the movements the state stands for were handed to them when they happened. */
+    public void restoreState(State state) {
+        if (sequence != 0 || !accounts.isEmpty()) {
+            throw new IllegalStateException("a ledger state is restored into a fresh book only");
+        }
+        for (PlayerAccount account : state.accounts()) {
+            accounts.put(account.playerId(), account);
+        }
+        for (WithdrawalRequest w : state.withdrawals()) {
+            withdrawals.put(w.requestId(), w);
+        }
+        for (DepositRequest d : state.deposits()) {
+            deposits.put(d.requestId(), d);
+        }
+        corrections.addAll(state.corrections());
+        sequence = state.sequence();
+        requestCounter = state.requestCounter();
+        correctionCounter = state.correctionCounter();
+        economyActive = state.economyActive();
+        treasury = state.treasury();
+        herd = state.herd();
+        openStakes = state.openStakes();
+        playersTotal = state.playersTotal();
+        openingTotal = state.openingTotal();
+        externalFlow = state.externalFlow();
+        externalFlowAtCutover = state.externalFlowAtCutover();
+        depositedTotal = state.depositedTotal();
+        depositedAtCutover = state.depositedAtCutover();
+        withdrawnConfirmed = state.withdrawnConfirmed();
+        cutoverAtMs = state.cutoverAtMs();
+        packCredited.putAll(state.packCredited());
+        feesPaid.putAll(state.feesPaid());
+        botFeesSwept = state.botFeesSwept();
+        lastSweepAtMs = state.lastSweepAtMs();
+        retired.addAll(state.retired());
+        treasuryDayMax.putAll(state.treasuryDayMax());
+    }
+
     // --- reads ---
 
     public PlayAmount balance(String playerId) {

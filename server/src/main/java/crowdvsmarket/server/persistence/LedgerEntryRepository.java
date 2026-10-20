@@ -30,6 +30,15 @@ public class LedgerEntryRepository {
         public boolean has(long seq) {
             return seq <= denseThrough || (sparse != null && seq <= Integer.MAX_VALUE && sparse.get((int) seq));
         }
+
+        /** Whether the table holds every movement {@code 1..last} (a snapshot of a ledger whose last movement is {@code last}
+         *  stands on rows that are all there). */
+        public boolean hasAllThrough(long last) {
+            if (last <= denseThrough) {
+                return true;
+            }
+            return sparse != null && last <= Integer.MAX_VALUE && sparse.nextClearBit(1) > last;
+        }
     }
 
     /** Writes {@code entries} in ONE transaction; a movement the table already has is left as it is. */

@@ -190,15 +190,20 @@ public class EngineRebuildService {
         retryFailureLog.reset("retry");
         if (recovering) {
             // a recovery is one of a failing window's every attempt: not the 36 cursors each time
-            LOG.infof("engine rebuilt after a failure: %d event(s) replayed, markets=%d, players=%d, "
-                    + "ledger-player-count=%d", built.eventsReplayed(), built.marketCount(), players.all().size(),
-                    hub.ledger().playerIds().size());
+            LOG.infof("engine rebuilt after a failure: %d event(s) replayed%s, markets=%d, players=%d, "
+                    + "ledger-player-count=%d", built.eventsReplayed(), fromSnapshot(built), built.marketCount(),
+                    players.all().size(), hub.ledger().playerIds().size());
             LOG.debugf("cursors after the rebuild:%s", built.description());
         } else {
-            LOG.infof("engine rebuilt: %d event(s) replayed, markets=%d, players=%d, ledger-player-count=%d,%s",
-                    built.eventsReplayed(), built.marketCount(), players.all().size(),
+            LOG.infof("engine rebuilt: %d event(s) replayed%s, markets=%d, players=%d, ledger-player-count=%d,%s",
+                    built.eventsReplayed(), fromSnapshot(built), built.marketCount(), players.all().size(),
                     hub.ledger().playerIds().size(), built.description());
         }
+    }
+
+    /** What the log line says of the snapshot the state started from (F5): nothing when the whole journal was replayed. */
+    private static String fromSnapshot(EngineStateBuilder.Built built) {
+        return built.snapshotSeq() > 0 ? " after the snapshot of journal row " + built.snapshotSeq() : "";
     }
 
     /**

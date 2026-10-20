@@ -142,7 +142,7 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         }
 
         assertThat(insertsFor(f.betting())).as("attempts at +0, +2, +6, +14 and +30 s, not 31 of them").isEqualTo(5);
-        verify(eventStoreSpy, Mockito.times(5)).loadAll(); // one rebuild per failed attempt: the failures touched memory
+        verify(eventStoreSpy, Mockito.times(5)).replayAfter(anyLong(), any()); // one rebuild per failed attempt: the failures touched memory
         assertThat(rebuild.isReady()).as("every failure was recovered from").isTrue();
         assertThat(roundResults.exists(f.betting().roundId())).isFalse();
         assertThat(gameService.account(f.player()).balance()).isEqualTo("9699.840");
@@ -222,7 +222,7 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         scheduler.tick(t0 + 2_000L);
         scheduler.tick(t0 + 6_000L);
 
-        verify(eventStoreSpy, Mockito.atLeast(3)).loadAll();
+        verify(eventStoreSpy, Mockito.atLeast(3)).replayAfter(anyLong(), any());
         assertThat(rebuild.isReady()).as("the rebuild worked, the database answers reads").isTrue();
         assertThat(hub.ledger()).as("and the engine is a rebuilt one").isNotSameAs(ledgerBefore);
         assertThat(roundResults.exists(f.betting().roundId())).isFalse();
@@ -249,7 +249,7 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         Mockito.reset(dbSpy);
         scheduler.tick(t0 + 2_000L);   // the database is back (the rebuild of the failed batch, or the retry of it)
 
-        verify(eventStoreSpy, Mockito.atLeastOnce()).loadAll();
+        verify(eventStoreSpy, Mockito.atLeastOnce()).replayAfter(anyLong(), any());
         assertThat(rebuild.isReady()).isTrue();
         assertThat(hub.ledger()).isNotSameAs(ledgerBefore);
         assertThat(roundResults.exists(f.betting().roundId())).as("and the retry settles the round").isTrue();

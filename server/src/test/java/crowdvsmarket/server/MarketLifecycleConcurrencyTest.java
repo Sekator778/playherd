@@ -167,7 +167,7 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
             inRebuild.countDown();
             assertThat(release.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
             return inv.callRealMethod();
-        }).when(eventStoreSpy).loadAll();
+        }).when(eventStoreSpy).replayAfter(anyLong(), any());
         ExecutorService pool = pool(3);
         Future<?> rebuilding = pool.submit(() -> rebuild.rebuild());
         assertThat(inRebuild.await(10, TimeUnit.SECONDS)).isTrue();

@@ -3,6 +3,7 @@ package crowdvsmarket.server;
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 
 import crowdvsmarket.server.events.EventStore;
@@ -53,7 +54,7 @@ class AdminStatusOutageTest extends LiveGameTestBase {
     }
 
     private void theEngineIsNotReady() {
-        doThrow(new IllegalStateException("db flapping")).when(eventStoreSpy).loadAll();
+        doThrow(new IllegalStateException("db flapping")).when(eventStoreSpy).replayAfter(anyLong(), any());
         gameService.runExclusively(() -> rebuild.recoverAfterFailure(new IllegalStateException("the settlement failed")));
         assertThat(rebuild.isReady()).isFalse();
     }

@@ -39,6 +39,30 @@ public final class ClosedRounds {
     }
 
     /** Whether {@code window} was resolved or cancelled (and is still among the newest {@value #KEEP} of its series). */
+    /** The closed windows still remembered of a series as {@code {startMs, endMs}}, oldest first (a snapshot walks them). */
+    public java.util.List<long[]> remembered(String marketId, Interval interval) {
+        ConcurrentSkipListMap<Long, Long> windows = byStart.get(new RoundProgress.SeriesKey(marketId, interval));
+        java.util.List<long[]> out = new java.util.ArrayList<>();
+        if (windows != null) {
+            windows.forEach((start, end) -> out.add(new long[] {start, end}));
+        }
+        return out;
+    }
+
+    /** Puts the saved memory of a series back: the windows {@link #remembered} gave and the newest end ({@code null}: none). */
+    public void restore(String marketId, Interval interval, java.util.List<long[]> windows, Long newestEnd) {
+        RoundProgress.SeriesKey key = new RoundProgress.SeriesKey(marketId, interval);
+        if (!windows.isEmpty()) {
+            ConcurrentSkipListMap<Long, Long> map = byStart.computeIfAbsent(key, k -> new ConcurrentSkipListMap<>());
+            for (long[] window : windows) {
+                map.put(window[0], window[1]);
+            }
+        }
+        if (newestEnd != null) {
+            latestEnd.put(key, newestEnd);
+        }
+    }
+
     public boolean isClosed(RoundWindow window) {
         ConcurrentSkipListMap<Long, Long> windows =
                 byStart.get(new RoundProgress.SeriesKey(window.market(), window.interval()));

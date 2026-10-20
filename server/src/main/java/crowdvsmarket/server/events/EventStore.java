@@ -67,6 +67,79 @@ public class EventStore {
                         rs.getInt("schema_version"))));
     }
 
+    /** What {@link #replayAfter} hands over: an event with the id of its row (its place in the journal). */
+    @FunctionalInterface
+    public interface Replayed {
+        void accept(long id, GameEvent event);
+    }
+
+    /** The rows read per round trip by {@link #replayAfter}. */
+    static final int REPLAY_PAGE = 5_000;
+
+    /** The id of the last row of the journal, 0 for an empty one (the journal's position: a snapshot is taken at it). */
+    public long lastId() {
+        return db.read(c -> db.queryOne(c, "SELECT COALESCE(MAX(id), 0) AS m FROM game_events", rs -> rs.getLong("m")));
+    }
+
+    /**
+     * Hands every event with {@code id > afterId} to {@code sink}, in order, read in pages of {@link #REPLAY_PAGE} rows
+     * (architecture plan F5: the journal is not held in memory; only a page is). A row that cannot be decoded stops the replay
+     * with the exception of {@link #decode}.
+     *
+     * @return the id of the last row handed over, {@code afterId} when there was none
+     */
+    public long replayAfter(long afterId, Replayed sink) {
+        return replayAfter(afterId, Long.MAX_VALUE, sink);
+    }
+
+    /** {@link #replayAfter(long, Replayed)} for the rows with {@code afterId < id <= upToId} only. */
+    public long replayAfter(long afterId, long upToId, Replayed sink) {
+        long last = afterId;
+        while (true) {
+            long from = last;
+            List<Object[]> page = db.read(c -> db.queryList(c,
+                    "SELECT id, event_type, payload, schema_version FROM game_events WHERE id > ? AND id <= ? ORDER BY id ASC LIMIT ?",
+                    rs -> new Object[] {rs.getLong("id"), rs.getString("event_type"), rs.getString("payload"),
+                            rs.getInt("schema_version")}, from, upToId, REPLAY_PAGE));
+            for (Object[] row : page) {
+                long id = (Long) row[0];
+                sink.accept(id, decode(id, (String) row[1], (String) row[2], (Integer) row[3]));
+                last = id;
+            }
+            if (page.size() < REPLAY_PAGE) {
+                return last;
+            }
+        }
+    }
+
+    /** The events of the given types ({@code event_type} names), in order: what the repair of a projection folds. */
+    public List<GameEvent> loadOfTypes(java.util.Collection<String> types) {
+        return db.read(c -> db.queryList(c,
+                "SELECT id, event_type, payload, schema_version FROM game_events WHERE event_type = ANY (?) ORDER BY id ASC",
+                rs -> decode(rs.getLong("id"), rs.getString("event_type"), rs.getString("payload"),
+                        rs.getInt("schema_version")),
+                (Object) types.toArray(new String[0])));
+    }
+
+    /** The ids of the rounds with a {@code RoundResolved} event at or before {@code upToId}, read without decoding the events
+     *  (their price paths are the bulk of the journal). */
+    public java.util.Set<String> resolvedRoundIds(long upToId) {
+        return new java.util.HashSet<>(db.read(c -> db.queryList(c,
+                "SELECT COALESCE(payload->>'market', 'BTC') AS market, payload->>'interval' AS interval, "
+                        + "(payload->>'windowStart')::bigint AS start FROM game_events "
+                        + "WHERE event_type = 'RoundResolved' AND id <= ?",
+                rs -> new crowdvsmarket.engine.round.RoundWindow.RoundRef(rs.getString("market"),
+                        crowdvsmarket.engine.market.Interval.valueOf(rs.getString("interval")), rs.getLong("start")).roundId(),
+                upToId)));
+    }
+
+    /** Whether any row at or before {@code upToId} is of schema version 1 (a journal from before F4, which does not carry the
+     *  roster). */
+    public boolean hasLegacyRows(long upToId) {
+        return db.read(c -> db.queryOne(c, "SELECT 1 AS x FROM game_events WHERE schema_version = ? AND id <= ? LIMIT 1",
+                rs -> Boolean.TRUE, LEGACY_SCHEMA_VERSION, upToId)) != null;
+    }
+
     /** Package-private (not {@code private}) so {@code EventStoreSchemaEvolutionTest} can drive it
      *  directly with a synthetic row id/type/payload/version — testing the real decode path
      *  {@link #loadAll} uses, not a reimplementation of it, the same approach the rest of this
