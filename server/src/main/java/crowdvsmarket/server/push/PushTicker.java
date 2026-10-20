@@ -5,18 +5,23 @@ import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.service.GameService;
-import io.quarkus.scheduler.Scheduled;
+import io.quarkus.runtime.StartupEvent;
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
  * The part of the "changed" notices that no event announces: a market's price moved, or its round windows moved on with the clock
- * (a betting round starts running, the running one ends). Four times a second it compares a small signature of every running
+ * (a betting round starts running, the running one ends). Four times a second (own thread) it compares a small signature of every running
  * market - the latest quote and the state of the round cursors against the clock - with the last one and publishes
  * {@code market:<id>} (and {@code markets}) when it differs. It reads memory only (the quote ring, the round cursors), takes no
  * lock, and does nothing at all while nobody listens to a market topic.
@@ -27,6 +32,7 @@ import org.jboss.logging.Logger;
 public class PushTicker {
 
     private static final Logger LOG = Logger.getLogger(PushTicker.class);
+    private static final long TICK_MS = 250;
 
     @Inject
     PushHub hub;
@@ -43,7 +49,25 @@ public class PushTicker {
     private final Map<String, String> lastPrice = new HashMap<>();
     private final Map<String, Long> lastPriceAnnouncedMs = new HashMap<>();
 
-    @Scheduled(every = "0.25s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP, identity = "push-ticker")
+    private ScheduledExecutorService executor;
+
+    /** Every 250 ms on a thread of its own (the Quarkus scheduler does not run anything more often than once a second). */
+    void onStart(@Observes StartupEvent event) {
+        executor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "herd-push-ticker");
+            thread.setDaemon(true);
+            return thread;
+        });
+        executor.scheduleWithFixedDelay(this::tick, 1000, TICK_MS, TimeUnit.MILLISECONDS);
+    }
+
+    @PreDestroy
+    void shutdown() {
+        if (executor != null) {
+            executor.shutdownNow();
+        }
+    }
+
     void tick() {
         try {
             scan(System.currentTimeMillis());
