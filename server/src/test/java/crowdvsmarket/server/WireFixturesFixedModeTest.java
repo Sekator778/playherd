@@ -46,6 +46,9 @@ class WireFixturesFixedModeTest extends LiveRpcTestBase {
 
     private final List<Taken> taken = new ArrayList<>();
 
+    @jakarta.inject.Inject
+    crowdvsmarket.server.api.RateLimiter rateLimiter;
+
     private void capture(String name, Session session, String method, Object... args) throws Exception {
         Response response = rpc(session, method, args);
         assertThat(response.statusCode()).as("%s: %s", name, response.asString()).isEqualTo(200);
@@ -67,6 +70,7 @@ class WireFixturesFixedModeTest extends LiveRpcTestBase {
 
     @Test
     void theAnswersAboutFixedPayoutBetsHaveTheShapeOfTheirCommittedFixtures() throws Exception {
+        rateLimiter.clear(); // the classes before it may have spent 127.0.0.1's budget (as in WireFixturesTest)
         long now = System.currentTimeMillis();
         long monthStart = YearMonth.from(Instant.ofEpochMilli(now).atZone(ZoneOffset.UTC)).atDay(1)
                 .atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
