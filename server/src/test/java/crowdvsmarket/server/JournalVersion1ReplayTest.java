@@ -59,7 +59,7 @@ class JournalVersion1ReplayTest extends LiveGameTestBase {
         db.tx(c -> {
             db.update(c, "TRUNCATE TABLE game_events, players, round_results, player_round_history, withdrawal_requests, "
                     + "deposit_requests, auth_challenges, sessions, oracle_records, player_deposit_addresses, deposit_confirmations, "
-                    + "price_snapshots, round_venues, feedback, registration_ips, ledger_entries RESTART IDENTITY CASCADE");
+                    + "price_snapshots, round_venues, feedback, registration_ips, ledger_entries, engine_snapshots RESTART IDENTITY CASCADE");
             db.update(c, "DELETE FROM markets");
             return null;
         });

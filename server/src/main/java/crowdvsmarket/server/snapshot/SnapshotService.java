@@ -83,9 +83,10 @@ public class SnapshotService {
     public record Check(long atMs, long seq, Boolean ok, String expectedSha256, String replayedSha256, String note) {
     }
 
-    /** What the admin status shows. {@code lastCheck} is {@code null} until the first check has run. */
+    /** What the admin status shows. {@code lastCheck} is {@code null} until the first check has run; {@code lastRebuild} says how the
+     *  state in use was built (from which snapshot, how many rows replayed, how long it took). */
     public record Status(boolean enabled, int stored, Long lastSeq, Long lastTakenAtMs, long journalLastId, String lastError,
-                         Check lastCheck) {
+                         Check lastCheck, EngineRebuildService.Rebuilt lastRebuild) {
     }
 
     private final ExecutorService writer = Executors.newSingleThreadExecutor(r -> {
@@ -121,16 +122,19 @@ public class SnapshotService {
             long now = System.currentTimeMillis();
             long last = knownLastSeq();
             long head = eventStore.lastId();
-            long added = head - last;
-            boolean byCount = added >= everyEvents;
-            boolean byTime = added > 0 && now - lastTakenAtMs >= everyMinutes * 60_000L;
-            if (byCount || byTime) {
+            if (due(head - last, now - lastTakenAtMs, everyEvents, everyMinutes)) {
                 take(now);
             }
         } catch (RuntimeException e) {
             lastError = e.toString();
             LOG.error("the engine snapshot could not be taken", e);
         }
+    }
+
+    /** Whether a snapshot is due: {@code added} journal rows since the last one reach {@code everyEvents}, or there is something
+     *  new and {@code sinceMs} has reached {@code everyMinutes}. */
+    static boolean due(long added, long sinceMs, long everyEvents, long everyMinutes) {
+        return added >= everyEvents || (added > 0 && sinceMs >= everyMinutes * 60_000L);
     }
 
     private long knownLastSeq() {
@@ -242,9 +246,9 @@ public class SnapshotService {
 
     /**
      * Replays the journal from the start up to the newest verified snapshot's {@code seq} into a state of its own (the live
-     * one is not touched, no lock is taken) and compares its digest with the snapshot's. A journal of schema version 1 does not
-     * reproduce the roster and the bet feed's names, so for it the two are left out of both digests
-     * ({@link StateDigest#ofJournalDetermined}).
+     * one is not touched, no lock is taken) and compares its digest with the snapshot's ({@link StateDigest#ofJournalDetermined}: the
+     * oracle counter has a floor a replay does not know, and a journal of schema version 1 does not reproduce the roster and the
+     * bet feed's names).
      */
     public Check check(long nowMs) {
         Verified snapshot = null;
@@ -261,11 +265,15 @@ public class SnapshotService {
         }
         String replayed = replayText(snapshot.seq(), snapshot.text());
         boolean legacy = eventStore.hasLegacyRows(snapshot.seq());
-        String expected = legacy ? StateDigest.ofJournalDetermined(snapshot.text()) : snapshot.stateSha256();
-        String actual = legacy ? StateDigest.ofJournalDetermined(replayed) : StateDigest.sha256(replayed);
-        boolean ok = expected.equals(actual);
+        String expected = StateDigest.ofJournalDetermined(snapshot.text(), legacy);
+        String actual = StateDigest.ofJournalDetermined(replayed, legacy);
+        long snapshotOracle = StateDigest.oracleSeqOf(snapshot.text());
+        long replayedOracle = StateDigest.oracleSeqOf(replayed);
+        boolean ok = expected.equals(actual) && snapshotOracle >= replayedOracle;
         Check result = new Check(nowMs, snapshot.seq(), ok, expected, actual,
-                ok ? "the journal replayed from zero gives the snapshot's state" + (legacy ? " (journal of schema version 1: roster and feed names not compared)" : "")
+                ok ? "the journal replayed from zero gives the snapshot's state" + (legacy
+                        ? " (journal of schema version 1: roster and feed names not compared)" : "")
+                        : snapshotOracle < replayedOracle ? "the snapshot's oracle counter is behind the journal's"
                         : "the journal replayed from zero gives another state than the snapshot");
         lastCheck = result;
         if (ok) {
@@ -307,7 +315,8 @@ public class SnapshotService {
     public Status status() {
         List<EngineSnapshotRepository.Meta> stored = repository.list();
         return new Status(enabled, stored.size(), stored.isEmpty() ? null : stored.get(0).seq(),
-                stored.isEmpty() ? null : stored.get(0).takenAtMs(), eventStore.lastId(), lastError, lastCheck);
+                stored.isEmpty() ? null : stored.get(0).takenAtMs(), eventStore.lastId(), lastError, lastCheck,
+                rebuildService.lastRebuild());
     }
 
     // ---------------------------------------------------------------------------------------------------------------

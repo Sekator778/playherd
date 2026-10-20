@@ -89,6 +89,18 @@ public class EngineRebuildService {
     @ConfigProperty(name = "herd.rebuild.retry-ms", defaultValue = "2000")
     long retryGapMs;
 
+    /** How the state in use was built, last time (F5): from which snapshot (0: none, the whole journal was replayed), how many journal
+     *  rows were applied, how long the build took, and when it was swapped in. */
+    public record Rebuilt(long snapshotSeq, int eventsReplayed, long tookMs, long atMs) {
+    }
+
+    private volatile Rebuilt lastRebuild;
+
+    /** The last successful rebuild, {@code null} before the first. */
+    public Rebuilt lastRebuild() {
+        return lastRebuild;
+    }
+
     /** True while the in-memory state can be trusted: after the first rebuild has finished, and again
      *  after every recovery that succeeded; false in between (class javadoc). */
     private volatile boolean ready;
@@ -169,6 +181,7 @@ public class EngineRebuildService {
      */
     public void rebuildStateLocked(long nowMs) {
         lastAttemptAtNanos = System.nanoTime();
+        long startedAtNanos = lastAttemptAtNanos;
         boolean recovering = recoveryPending;
         roundCalendar.init(nowMs);
         players.reload();
@@ -187,6 +200,8 @@ public class EngineRebuildService {
         gameService.publishAllViews();
         ready = true;
         recoveryPending = false;
+        lastRebuild = new Rebuilt(built.snapshotSeq(), built.eventsReplayed(), (System.nanoTime() - startedAtNanos) / 1_000_000L,
+                System.currentTimeMillis());
         retryFailureLog.reset("retry");
         if (recovering) {
             // a recovery is one of a failing window's every attempt: not the 36 cursors each time

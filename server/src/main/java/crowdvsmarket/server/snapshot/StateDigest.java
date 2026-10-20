@@ -36,21 +36,38 @@ public final class StateDigest {
     }
 
     /**
-     * The digest of what the journal alone determines. A journal of schema version 1 does not carry the player roster (it comes from
-     * the {@code players} table when the state is built, and so do the names in the bet feed), so a replay of it later cannot
-     * reproduce those; the roster lines and the feed entries are left out, everything else is hashed.
+     * The digest of what a replay of the journal determines, for comparing a snapshot with a replay from zero. Left out:
+     * <ul>
+     *   <li>the {@code oracleSeq} line: the live counter is also raised to the floor the chain service demanded
+     *       ({@code server_meta}), which no replay knows; {@link #oracleSeqOf} is compared on its own (a replay may not be ahead);
+     *   <li>with {@code withoutPlayers}, for a journal of schema version 1, which does not carry the roster (it comes from the
+     *       {@code players} table when the state is built, and so do the names in the bet feed): the roster lines and the feed
+     *       entries, and the closing line count with them.
+     * </ul>
      */
-    public static String ofJournalDetermined(String canonicalText) {
+    public static String ofJournalDetermined(String canonicalText, boolean withoutPlayers) {
         StringBuilder kept = new StringBuilder(canonicalText.length());
         int from = 0;
         while (from < canonicalText.length()) {
             int end = canonicalText.indexOf('\n', from);
             String line = canonicalText.substring(from, end + 1);
-            if (!line.startsWith("roster\t") && !line.startsWith("feedEntry\t")) {
+            boolean drop = line.startsWith("oracleSeq\t")
+                    || (withoutPlayers && (line.startsWith("roster\t") || line.startsWith("feedEntry\t") || line.startsWith("end\t")));
+            if (!drop) {
                 kept.append(line);
             }
             from = end + 1;
         }
         return sha256(kept.toString());
+    }
+
+    /** The oracle sequence number a canonical text carries. */
+    public static long oracleSeqOf(String canonicalText) {
+        int at = canonicalText.indexOf("\noracleSeq\t");
+        if (at < 0) {
+            throw new IllegalArgumentException("no oracleSeq line");
+        }
+        int from = at + "\noracleSeq\t".length();
+        return Long.parseLong(canonicalText.substring(from, canonicalText.indexOf('\n', from)));
     }
 }
