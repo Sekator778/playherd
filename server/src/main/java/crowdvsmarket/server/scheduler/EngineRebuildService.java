@@ -183,6 +183,8 @@ public class EngineRebuildService {
         hub.adopt(built.hub());
         betFeed.adopt(built.betFeed());
         boundaryPrices.adopt(built.boundaries());
+        // F8: the read views of the state just adopted, in full, before anything can read it as ready
+        gameService.publishAllViews();
         ready = true;
         recoveryPending = false;
         retryFailureLog.reset("retry");

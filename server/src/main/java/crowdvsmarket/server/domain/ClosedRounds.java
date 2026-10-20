@@ -49,4 +49,12 @@ public final class ClosedRounds {
     public Optional<Long> latestEnd(String marketId, Interval interval) {
         return Optional.ofNullable(latestEnd.get(new RoundProgress.SeriesKey(marketId, interval)));
     }
+
+    /** An independent copy (the read views keep their own, updated after each commit - architecture plan F8). */
+    public ClosedRounds copy() {
+        ClosedRounds copy = new ClosedRounds();
+        byStart.forEach((key, windows) -> copy.byStart.put(key, new ConcurrentSkipListMap<>(windows)));
+        copy.latestEnd.putAll(latestEnd);
+        return copy;
+    }
 }

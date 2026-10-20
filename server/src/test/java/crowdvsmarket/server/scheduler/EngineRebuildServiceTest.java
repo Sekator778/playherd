@@ -105,6 +105,25 @@ class EngineRebuildServiceTest {
     }
 
     @Test
+    void theReadViewsOfTheAdoptedStateArePublishedBeforeTheServiceIsReadyAndNotWhenTheRebuildFails() {
+        java.util.List<String> order = new java.util.ArrayList<>();
+        doAnswer(inv -> {
+            order.add("views, ready=" + service.isReady() + ", cursor=" + progress.findNext("BTC", Interval.HOURLY).isPresent());
+            return null;
+        }).when(gameService).publishAllViews();
+        when(builder.build(1_000L)).thenReturn(built(btcHourly, cursor));
+
+        service.rebuild(1_000L);
+
+        assertThat(order).as("after the swap, before ready").containsExactly("views, ready=false, cursor=true");
+        assertThat(service.isReady()).isTrue();
+
+        when(builder.build(2_000L)).thenThrow(new IllegalStateException("db down"));
+        assertThatThrownBy(() -> service.rebuild(2_000L)).hasMessageContaining("db down");
+        assertThat(order).as("a rebuild that failed publishes nothing").hasSize(1);
+    }
+
+    @Test
     void aRebuildThatFailsBeforeTheSwapChangesNothingAndLeavesAReadyServiceReady() {
         when(builder.build(anyLong())).thenReturn(built(btcHourly, cursor));
         service.rebuild(1_000L);

@@ -43,6 +43,12 @@ class CoreWriterTest {
         final List<GameEvent> applied = Collections.synchronizedList(new ArrayList<>());
         /** The events that reached the "journal", in order, per transaction. */
         final List<List<GameEvent>> journalBatches = Collections.synchronizedList(new ArrayList<>());
+        /** What the writer handed over for publication (F8): the batch's events, the version, and what the journal held then. */
+        record Published(List<GameEvent> events, long version, int journalSize, boolean gateHeld, boolean engineLocked) {
+        }
+
+        final List<Published> published = Collections.synchronizedList(new ArrayList<>());
+        final AtomicInteger soloPublications = new AtomicInteger();
         final AtomicInteger recoveries = new AtomicInteger();
         final AtomicInteger transactions = new AtomicInteger();
         volatile RuntimeException commitFailure;
@@ -66,6 +72,7 @@ class CoreWriterTest {
                 }
                 return work.run(connection);
             });
+            when(store.lastId(any())).thenAnswer(inv -> (long) journal().size());
             org.mockito.Mockito.doAnswer(inv -> {
                 List<EventStore.Pending> events = inv.getArgument(1);
                 journalBatches.add(events.stream().map(EventStore.Pending::event).toList());
@@ -105,6 +112,17 @@ class CoreWriterTest {
         public Object apply(GameEvent event) {
             applied.add(event);
             return event;
+        }
+
+        @Override
+        public void committed(List<GameEvent> events, long version) {
+            published.add(new Published(List.copyOf(events), version, journal().size(), gate.isHeldByCurrentThread(),
+                    engine.isLocked()));
+        }
+
+        @Override
+        public void committedSolo() {
+            soloPublications.incrementAndGet();
         }
 
         @Override
@@ -310,5 +328,87 @@ class CoreWriterTest {
         assertThat(last.get(10, TimeUnit.SECONDS)).isEqualTo(3L);
         assertThat(transactionsWhenSoloRan).as("the batch before the solo command had committed already").containsExactly(1);
         assertThat(world.journal()).containsExactly(event(1), event(3));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The read views are published after the commit (F8)
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void aCommittedBatchIsHandedOverForPublicationWithTheJournalsLastIdBeforeAnyCallerIsAnswered() throws Exception {
+        List<Future<Long>> futures = queueBehindTheGate(5);
+        world.gate.unlock();
+        for (Future<Long> f : futures) {
+            f.get(10, TimeUnit.SECONDS);
+        }
+
+        assertThat(world.published).isNotEmpty();
+        List<GameEvent> published = new ArrayList<>();
+        for (World.Published p : world.published) {
+            published.addAll(p.events());
+            assertThat(p.journalSize()).as("the batch is in the journal when it is published")
+                    .isGreaterThanOrEqualTo(published.size());
+            assertThat(p.version()).as("the version is the last id of the journal").isEqualTo(p.journalSize());
+            assertThat(p.gateHeld()).as("on the writer, holding the gate").isTrue();
+            assertThat(p.engineLocked()).as("with the engine lock released").isFalse();
+        }
+        assertThat(published).as("every event, once, in the order of the journal").containsExactlyElementsOf(world.journal());
+    }
+
+    @Test
+    void theViewsAreHandedOverBeforeTheCallerIsAnswered() throws Exception {
+        world.commitGate = new CountDownLatch(1);
+        Future<Long> call = submitting(1);
+        await().atMost(Duration.ofSeconds(10)).until(() -> world.transactions.get() == 1);
+        assertThat(world.published).as("not before the commit").isEmpty();
+
+        world.commitGate.countDown();
+        call.get(10, TimeUnit.SECONDS);
+        assertThat(world.published).as("by the time the caller has its answer").hasSize(1);
+    }
+
+    @Test
+    void aBatchThatDoesNotCommitPublishesNothing() throws Exception {
+        world.gate.lock();
+        world.commitFailure = new IllegalStateException("injected commit failure");
+        Future<Long> call = submitting(1);
+        world.gate.unlock();
+        assertThatThrownBy(() -> call.get(10, TimeUnit.SECONDS)).hasCauseInstanceOf(ApiException.class);
+
+        assertThat(world.published).as("what was applied and did not commit is in no view").isEmpty();
+        assertThat(world.recoveries.get()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    void aCommandThatFailsAfterApplyingMakesTheBatchBeRebuiltNotPublishedFromAnEngineThatHoldsItsEvents() throws Exception {
+        world.commitGate = new CountDownLatch(1);
+        Future<Long> first = submitting(0);
+        await().atMost(Duration.ofSeconds(10)).until(() -> world.transactions.get() == 1);
+        // the writer is committing the first batch; these two wait for the next one and share it
+        Future<Long> before = submitting(1);
+        Future<Long> broken = submittingCommand(ctx -> {
+            ctx.record(event(2), 2);
+            throw new IllegalStateException("failed after the apply");
+        }, false, "broken", 2);
+        world.commitGate.countDown();
+
+        first.get(10, TimeUnit.SECONDS);
+        before.get(10, TimeUnit.SECONDS);
+        assertThatThrownBy(() -> broken.get(10, TimeUnit.SECONDS)).hasRootCauseMessage("failed after the apply");
+        assertThat(world.recoveries.get()).isEqualTo(1);
+        assertThat(world.journal()).containsExactly(event(0), event(1));
+        List<GameEvent> published = new ArrayList<>();
+        world.published.forEach(p -> published.addAll(p.events()));
+        assertThat(published).as("the engine held an uncommitted event: the rebuild publishes the second batch, not the writer")
+                .containsExactly(event(0));
+    }
+
+    @Test
+    void aCommandThatDoesItsOwnTransactionsIsFollowedByAFullPublication() throws Exception {
+        Long answer = writer.submit(ctx -> 7L, true, true, "solo", 1);
+
+        assertThat(answer).isEqualTo(7L);
+        assertThat(world.soloPublications.get()).isEqualTo(1);
+        assertThat(world.published).isEmpty();
     }
 }

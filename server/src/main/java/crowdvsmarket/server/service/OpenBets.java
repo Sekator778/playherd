@@ -27,7 +27,8 @@ import java.util.Optional;
  * after it is {@code BETTING}. A series that is not seeded (a closed market, replay mode's other markets) has
  * none: its bets were refunded when it stopped.
  *
- * <p>Reads engine state: the caller holds the engine's read lock ({@code GameService#readEngine}).
+ * <p>{@link #of(String)} and {@link #stake(String)} read the live engine, for a caller on the core writer; the reads of the
+ * API use {@link #of(ReadViews.Snapshot, String)}, which walks the committed views and takes no lock.
  */
 @ApplicationScoped
 public class OpenBets {
@@ -69,6 +70,36 @@ public class OpenBets {
     public PlayAmount stake(String playerId) {
         PlayAmount total = PlayAmount.ZERO;
         for (Entry entry : of(playerId)) {
+            total = total.plus(entry.bet().stake());
+        }
+        return total;
+    }
+
+    /**
+     * {@link #of(String)} over the committed read views (architecture plan F8): the same walk, with the cursors and the bets as of
+     * {@code snapshot}, and no lock. A series' cursor and its bets come from the one snapshot, so a settlement is never seen half
+     * way (the cursor moved, the stake not yet paid out).
+     */
+    public static List<Entry> of(ReadViews.Snapshot snapshot, String playerId) {
+        List<Entry> out = new ArrayList<>();
+        for (RoundProgress.SeriesKey series : snapshot.seededSeries()) {
+            Optional<RoundWindow> running = snapshot.cursor(series.marketId(), series.interval());
+            if (running.isEmpty() || !snapshot.hasMarket(series.marketId())) {
+                continue;
+            }
+            snapshot.find(running.get().roundId(), playerId).ifPresent(bet -> out.add(new Entry(series.marketId(),
+                    series.interval(), running.get(), Enums.RoundPhase.RUNNING, bet)));
+            RoundWindow betting = RoundClock.next(running.get());
+            snapshot.find(betting.roundId(), playerId).ifPresent(bet -> out.add(new Entry(series.marketId(),
+                    series.interval(), betting, Enums.RoundPhase.BETTING, bet)));
+        }
+        return out;
+    }
+
+    /** {@link #stake(String)} over the committed read views. */
+    public static PlayAmount stake(ReadViews.Snapshot snapshot, String playerId) {
+        PlayAmount total = PlayAmount.ZERO;
+        for (Entry entry : of(snapshot, playerId)) {
             total = total.plus(entry.bet().stake());
         }
         return total;

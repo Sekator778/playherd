@@ -111,9 +111,10 @@ public final class BetFeed {
      *  convention as this codebase's other paginated reads. */
     public synchronized Result since(String roundId, long sinceSeq) {
         Deque<Entry> entries = byRound.get(roundId);
-        if (entries == null) {
-            return new Result(List.of(), false);
-        }
+        return entries == null ? new Result(List.of(), false) : pageSince(entries, sinceSeq);
+    }
+
+    private static Result pageSince(Iterable<Entry> entries, long sinceSeq) {
         List<Entry> matched = new ArrayList<>();
         for (Entry e : entries) {
             if (e.seq() > sinceSeq) {
@@ -136,11 +137,101 @@ public final class BetFeed {
         if (entries == null || entries.isEmpty()) {
             return List.of();
         }
-        List<Entry> out = new ArrayList<>(Math.min(limit, entries.size()));
-        Iterator<Entry> descending = entries.descendingIterator();
+        return newestFirst(entries.descendingIterator(), Math.min(limit, entries.size()), limit);
+    }
+
+    private static List<Entry> newestFirst(Iterator<Entry> descending, int sizeHint, int limit) {
+        List<Entry> out = new ArrayList<>(sizeHint);
         while (descending.hasNext() && out.size() < limit) {
             out.add(descending.next());
         }
         return out;
+    }
+
+    /** The entries of one round, oldest first, as an immutable copy (what the read views keep, architecture plan F8). */
+    public synchronized List<Entry> entriesOf(String roundId) {
+        Deque<Entry> entries = byRound.get(roundId);
+        return entries == null ? List.of() : List.copyOf(entries);
+    }
+
+    /** Every round's entries as an immutable {@link Rows}: the full set the read views publish when a rebuild has swapped the feed. */
+    public synchronized Rows rows() {
+        Map<String, List<Entry>> all = new LinkedHashMap<>();
+        byRound.forEach((roundId, entries) -> all.put(roundId, List.copyOf(entries)));
+        return new Rows(all);
+    }
+
+    /**
+     * An immutable picture of the feed, the same reads as the feed itself ({@link #since}, {@link #latest}) with no monitor: what
+     * the core writer publishes after a commit, so a read of the feed never sees a row of a batch that has not committed.
+     * {@link #with} builds the next picture from this one and the rounds a batch touched, under the same cap of rounds.
+     */
+    public static final class Rows {
+
+        public static final Rows EMPTY = new Rows(new LinkedHashMap<>());
+
+        private final Map<String, List<Entry>> byRound;
+
+        private Rows(Map<String, List<Entry>> byRound) {
+            this.byRound = byRound;
+        }
+
+        public Result since(String roundId, long sinceSeq) {
+            List<Entry> entries = byRound.get(roundId);
+            return entries == null ? new Result(List.of(), false) : pageSince(entries, sinceSeq);
+        }
+
+        public List<Entry> latest(String roundId, int limit) {
+            List<Entry> entries = byRound.get(roundId);
+            if (entries == null || entries.isEmpty()) {
+                return List.of();
+            }
+            return newestFirst(new ReverseIterator(entries), Math.min(limit, entries.size()), limit);
+        }
+
+        /** These rows with {@code touched} rounds' entries replaced (a new round goes last, like in the feed) and the oldest
+         *  rounds dropped beyond {@link #MAX_ROUNDS_TRACKED}. */
+        public Rows with(Map<String, List<Entry>> touched) {
+            if (touched.isEmpty()) {
+                return this;
+            }
+            Map<String, List<Entry>> next = new LinkedHashMap<>(byRound);
+            next.putAll(touched);
+            while (next.size() > MAX_ROUNDS_TRACKED) {
+                var oldest = next.keySet().iterator();
+                oldest.next();
+                oldest.remove();
+            }
+            return new Rows(next);
+        }
+
+        public int rounds() {
+            return byRound.size();
+        }
+
+        /** The rounds and their entries, in the order of the feed (for tests that compare two pictures). */
+        public Map<String, List<Entry>> asMap() {
+            return java.util.Collections.unmodifiableMap(byRound);
+        }
+
+        private static final class ReverseIterator implements Iterator<Entry> {
+            private final List<Entry> list;
+            private int next;
+
+            ReverseIterator(List<Entry> list) {
+                this.list = list;
+                this.next = list.size() - 1;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return next >= 0;
+            }
+
+            @Override
+            public Entry next() {
+                return list.get(next--);
+            }
+        }
     }
 }

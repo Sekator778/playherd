@@ -83,12 +83,33 @@ class MarketViewServiceTest {
         gameService.hub = hub;
         gameService.roundProgress = progress;
         gameService.rebuildService = rebuild;
+        gameService.betFeedStore = new crowdvsmarket.server.domain.BetFeed();
         gameService.marketPrices = prices;
         gameService.priceService = replay;
         gameService.marketRegistry = registry;
         gameService.boundaries = new BoundaryPrices(); // nothing settled before: the source's prices as they are
-        view = new MarketViewService(gameService, config, registry, hub, progress,
-                new OpenBets(hub, progress));
+        // the hub stands for the committed engine here: whatever the test did to it is "committed" when the read model is asked,
+        // so the views are published from it first (in the application the core writer publishes them after each commit, F8)
+        GameService game = gameService;
+        view = new MarketViewService(game, config, registry) {
+            @Override
+            public Markets.MarketsDto markets(long nowMs) {
+                game.publishAllViews(0L);
+                return super.markets(nowMs);
+            }
+
+            @Override
+            public List<Markets.MyPositionDto> myPositions(String playerId, long nowMs) {
+                game.publishAllViews(0L);
+                return super.myPositions(playerId, nowMs);
+            }
+
+            @Override
+            public Markets.CrowdOverviewDto crowdOverview() {
+                game.publishAllViews(0L);
+                return super.crowdOverview();
+            }
+        };
 
         btc = registry.require("BTC");
         lot4 = list("PERP4", MarketKind.PERP, Category.CRYPTO, "P4", 12, 4, null, null);

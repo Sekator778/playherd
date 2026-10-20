@@ -109,6 +109,8 @@ class AdminReverseDepositTest {
             withdrawalDeposits.updateDepositState(c, requestId, Enums.DepositState.CONFIRMED);
             return null;
         });
+        // the events were applied outside the core writer: the read views are published from the engine, as the writer does after a commit
+        gameService.runExclusively(gameService::publishAllViews);
         return withdrawalDeposits.findDeposit(requestId).orElseThrow();
     }
 

@@ -107,7 +107,8 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
             });
             Future<Throwable> read = pool.submit(() -> {
                 readCall.arrive();
-                return catching(() -> gameService.account(player));
+                // a read that still takes the engine's read lock (F8: account() is from the views and takes none)
+                return catching(() -> gameService.ratings(null));
             });
 
             holder.get(30, TimeUnit.SECONDS);

@@ -8,8 +8,6 @@ import crowdvsmarket.engine.round.PositionSimulator;
 import crowdvsmarket.engine.round.RoundClock;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.config.GameConfig;
-import crowdvsmarket.server.domain.EngineHub;
-import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Markets;
 import crowdvsmarket.server.markets.Category;
@@ -32,16 +30,16 @@ import java.util.Optional;
 /**
  * The read model of the markets (docs/research/markets_architecture.md §8; docs/research/server_design.md
  * §20): the answers of the RPCs {@code markets}, {@code myPositions} and {@code crowdOverview}, built from
- * memory only — the market registry, the engine's bet books and crowd accounts, {@code RoundProgress}, the
- * price buffer — and never from the database or the network. It sits beside {@code GameService} instead of in
- * it, and reads the engine through its small read API ({@link GameService#readEngine}: the engine's READ
- * lock, 503 {@code ENGINE_NOT_READY} while the memory cannot be trusted).
+ * memory only — the market registry, the committed read views of the bet books, crowd accounts and series
+ * cursors ({@link ReadViews}, F8), the price buffer — and never from the database or the network. It sits beside
+ * {@code GameService} instead of in it, and reads the latest views ({@link GameService#snapshot}: no lock, 503
+ * {@code ENGINE_NOT_READY} while the memory cannot be trusted).
  *
  * <p><b>{@code markets} is polled</b> every 2–3 s by every open lobby, so the assembled answer is kept for
  * {@link #CACHE_MS} (about a second) and handed to everybody who asks meanwhile; only {@code serverTimeMs}
  * is the caller's own. What is expensive to count — a crowd account's rounds traded and won — is counted
- * once per round ({@link CrowdStatsMemo}), not once per call. One rebuild of the answer takes the read lock
- * once; callers that arrive during it wait for it instead of building their own. A cached answer is never
+ * once per round, when the views are published ({@link ReadViews.CrowdView}), not once per call. One rebuild of the
+ * answer is built from one snapshot; callers that arrive during it wait for it instead of building their own. A cached answer is never
  * given while the engine is not ready.
  *
  * <p><b>What is listed.</b> The markets that are played on this server — all of them in {@code mode=live},
@@ -61,10 +59,6 @@ public class MarketViewService {
     private final GameService gameService;
     private final GameConfig config;
     private final MarketRegistry marketRegistry;
-    private final EngineHub hub;
-    private final RoundProgress roundProgress;
-    private final OpenBets openBets;
-    private final CrowdStatsMemo crowdStats = new CrowdStatsMemo();
 
     private record Cached(long builtAtMs, Markets.MarketsDto dto) {
     }
@@ -73,14 +67,10 @@ public class MarketViewService {
     private volatile Cached marketsCache;
 
     @Inject
-    public MarketViewService(GameService gameService, GameConfig config, MarketRegistry marketRegistry,
-                             EngineHub hub, RoundProgress roundProgress, OpenBets openBets) {
+    public MarketViewService(GameService gameService, GameConfig config, MarketRegistry marketRegistry) {
         this.gameService = gameService;
         this.config = config;
         this.marketRegistry = marketRegistry;
-        this.hub = hub;
-        this.roundProgress = roundProgress;
-        this.openBets = openBets;
     }
 
     // ---------------------------------------------------------------------------------------
@@ -99,7 +89,7 @@ public class MarketViewService {
             if (cached != null) {
                 return cached; // somebody else rebuilt it while this call waited
             }
-            Markets.MarketsDto built = gameService.readEngine(() -> assembleMarkets(nowMs));
+            Markets.MarketsDto built = assembleMarkets(gameService.snapshot(), nowMs);
             marketsCache = new Cached(nowMs, built);
             return built;
         }
@@ -121,7 +111,7 @@ public class MarketViewService {
                 cached.dto().economy());
     }
 
-    private Markets.MarketsDto assembleMarkets(long nowMs) {
+    private Markets.MarketsDto assembleMarkets(ReadViews.Snapshot snapshot, long nowMs) {
         List<Interval> intervals = intervalsShortestFirst();
         Map<String, Integer> activeByCategory = new HashMap<>();
         List<Markets.MarketDto> shown = new ArrayList<>();
@@ -130,7 +120,7 @@ public class MarketViewService {
                 activeByCategory.merge(market.category(), 1, Integer::sum);
             }
             if (market.isActive() || closedRecently(market, nowMs)) {
-                shown.add(toDto(market, intervals, nowMs));
+                shown.add(toDto(market, intervals, nowMs, snapshot));
             }
         }
         List<Markets.CategoryDto> categories = Category.ORDER.stream()
@@ -166,8 +156,7 @@ public class MarketViewService {
                 .toList();
     }
 
-    private Markets.MarketDto toDto(Market market, List<Interval> intervals, long nowMs) {
-        Optional<EngineHub.MarketEngines> engines = hub.findMarket(market.id());
+    private Markets.MarketDto toDto(Market market, List<Interval> intervals, long nowMs, ReadViews.Snapshot snapshot) {
         Markets.MarketPriceDto price = gameService.latestQuote(market, nowMs)
                 .map(quote -> MarketMapper.price(market, quote)).orElse(null);
         return new Markets.MarketDto(market.id(), Enums.MarketKind.valueOf(market.kind().name()), market.category(),
@@ -176,24 +165,22 @@ public class MarketViewService {
                 MarketMapper.eventStartsAtMs(market), market.closedAtMs(), market.closeReason(),
                 market.oracleIndex(), market.source(),
                 Instruments.backupOf(market).map(Instruments.Backup::source).orElse(null), price,
-                series(market, engines, intervals), crowdBrief(market, engines));
+                series(market, intervals, snapshot), crowdBrief(market, snapshot));
     }
 
-    private List<Markets.MarketSeriesDto> series(Market market, Optional<EngineHub.MarketEngines> engines,
-                                                 List<Interval> intervals) {
-        if (engines.isEmpty()) {
+    private List<Markets.MarketSeriesDto> series(Market market, List<Interval> intervals, ReadViews.Snapshot snapshot) {
+        if (!snapshot.hasMarket(market.id())) {
             return List.of();
         }
         List<Markets.MarketSeriesDto> out = new ArrayList<>();
         for (Interval interval : intervals) {
-            Optional<RoundWindow> cursor = roundProgress.findNext(market.id(), interval);
+            Optional<RoundWindow> cursor = snapshot.cursor(market.id(), interval);
             if (cursor.isEmpty()) {
                 continue; // closed, not seeded yet, or not played here
             }
             RoundWindow running = cursor.get();
             RoundWindow betting = RoundClock.next(running);
-            MarketMapper.Split split = MarketMapper.split(
-                    engines.get().engine(interval).betBook().betsFor(betting.roundId()));
+            MarketMapper.Split split = MarketMapper.split(snapshot.betsFor(betting.roundId()));
             out.add(new Markets.MarketSeriesDto(Enums.Interval.valueOf(interval.name()),
                     (running.endMs() - running.startMs()) / 1000L, betting.roundId(), betting.startMs(),
                     running.roundId(), running.endMs(), split.participantCount(),
@@ -205,13 +192,13 @@ public class MarketViewService {
         return out;
     }
 
-    private Markets.MarketCrowdBriefDto crowdBrief(Market market, Optional<EngineHub.MarketEngines> engines) {
-        if (engines.isEmpty()) {
+    private Markets.MarketCrowdBriefDto crowdBrief(Market market, ReadViews.Snapshot snapshot) {
+        Optional<ReadViews.CrowdView> crowd = snapshot.crowd(market.id());
+        if (crowd.isEmpty()) {
             return new Markets.MarketCrowdBriefDto(CrowdAccount.STARTING_CAPITAL.toPlainString(), 0.0, 0, 0, null);
         }
-        CrowdAccount crowd = engines.get().crowd();
-        CrowdStatsMemo.Stats stats = crowdStats.of(market.id(), crowd);
-        BigDecimal capital = crowd.capital();
+        ReadViews.CrowdStats stats = crowd.get().stats();
+        BigDecimal capital = crowd.get().capital();
         return new Markets.MarketCrowdBriefDto(capital.toPlainString(), MarketMapper.returnPct(capital),
                 stats.roundsTraded(), stats.roundsWon(), stats.lastOutcome());
     }
@@ -229,12 +216,12 @@ public class MarketViewService {
      * price is not known they are {@code null} and {@code liquidated} is false.
      */
     public List<Markets.MyPositionDto> myPositions(String playerId, long nowMs) {
-        return gameService.readEngine(() -> positionsOf(playerId, nowMs));
+        return positionsOf(gameService.snapshot(), playerId, nowMs);
     }
 
-    private List<Markets.MyPositionDto> positionsOf(String playerId, long nowMs) {
+    private List<Markets.MyPositionDto> positionsOf(ReadViews.Snapshot snapshot, String playerId, long nowMs) {
         List<Markets.MyPositionDto> out = new ArrayList<>();
-        for (OpenBets.Entry entry : openBets.of(playerId)) {
+        for (OpenBets.Entry entry : OpenBets.of(snapshot, playerId)) {
             Optional<Market> market = marketRegistry.byId(entry.marketId());
             if (market.isEmpty()) {
                 continue; // markets are never deleted: cannot happen, and nothing to label it with
@@ -290,17 +277,17 @@ public class MarketViewService {
      * account of every market in the registry), only {@code markets()} forgets it after 10 minutes.
      */
     public Markets.CrowdOverviewDto crowdOverview() {
-        return gameService.readEngine(this::assembleOverview);
+        return assembleOverview(gameService.snapshot());
     }
 
-    private Markets.CrowdOverviewDto assembleOverview() {
+    private Markets.CrowdOverviewDto assembleOverview(ReadViews.Snapshot snapshot) {
         List<Markets.CrowdOverviewRowDto> rows = new ArrayList<>();
         BigDecimal total = BigDecimal.ZERO;
         BigDecimal totalStarting = BigDecimal.ZERO;
         for (Market market : playedMarkets()) {
-            CrowdAccount crowd = hub.findMarket(market.id()).map(EngineHub.MarketEngines::crowd).orElse(null);
+            ReadViews.CrowdView crowd = snapshot.crowd(market.id()).orElse(null);
             BigDecimal capital = crowd == null ? CrowdAccount.STARTING_CAPITAL : crowd.capital();
-            CrowdStatsMemo.Stats stats = crowd == null ? CrowdStatsMemo.Stats.NONE : crowdStats.of(market.id(), crowd);
+            ReadViews.CrowdStats stats = crowd == null ? ReadViews.CrowdStats.NONE : crowd.stats();
             rows.add(new Markets.CrowdOverviewRowDto(market.id(), market.symbol(), market.title(),
                     Enums.MarketStatus.valueOf(market.status().name()), market.category(), capital.toPlainString(),
                     MarketMapper.returnPct(capital), stats.roundsTraded(), stats.roundsWon()));

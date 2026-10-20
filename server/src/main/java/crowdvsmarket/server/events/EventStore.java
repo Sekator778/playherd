@@ -132,6 +132,18 @@ public class EventStore {
     public record Pending(GameEvent event, long atMs) {
     }
 
+    /** The id of the last event in the journal ({@code 0} when it is empty), read in the caller's transaction: the version of
+     *  the read views the core writer publishes after a batch has committed (architecture plan F8). */
+    public long lastId(Connection c) throws SQLException {
+        Long last = db.queryOne(c, "SELECT COALESCE(MAX(id), 0) AS last_id FROM game_events", rs -> rs.getLong("last_id"));
+        return last == null ? 0L : last;
+    }
+
+    /** {@link #lastId(Connection)} in a transaction of its own. */
+    public long lastId() {
+        return db.read(this::lastId);
+    }
+
     /** Rows per INSERT statement of {@link #appendAll} (four parameters a row, far below the driver's limit). */
     static final int APPEND_CHUNK = 200;
 

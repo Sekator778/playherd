@@ -71,6 +71,18 @@ public final class CoreWriter implements AutoCloseable {
         /** The engine may be ahead of the journal: rebuild it from the journal. Called holding the engine write lock; never
          *  throws (a rebuild that fails leaves the engine not ready). */
         void recover(Throwable cause, String key, long nowMs);
+
+        /**
+         * A batch has committed: {@code events} are its events in the order of the journal, {@code version} the id of the last
+         * event of the journal (negative when the batch wrote none). Called on the writer thread, holding the gate, before any
+         * caller is answered; the engine holds the batch and nothing else. The host publishes its read views here (F8). Must not
+         * throw.
+         */
+        void committed(List<GameEvent> events, long version);
+
+        /** A command that did its own transactions ({@code solo}) has completed: whatever it changed is durable. Same place and
+         *  rules as {@link #committed}. Must not throw. */
+        void committedSolo();
     }
 
     private final AtomicInteger inFlight = new AtomicInteger();
@@ -303,6 +315,7 @@ public final class CoreWriter implements AutoCloseable {
                 ctx.begin(s.staged, System.nanoTime() - s.submittedNanos);
                 try {
                     runAndKeep(s);
+                    publishSolo();
                     s.succeed();
                 } catch (Throwable e) {
                     s.fail(e);
@@ -380,15 +393,16 @@ public final class CoreWriter implements AutoCloseable {
             }
             Throwable commitFailure = null;
             long commitNs = 0;
+            long version = -1;
             if (!events.isEmpty() || !works.isEmpty()) {
                 long t0 = System.nanoTime();
                 try {
-                    db.tx(c -> {
+                    version = db.tx(c -> {
                         for (Db.SqlWork<?> w : works) {
                             w.run(c);
                         }
                         eventStore.appendAll(c, events);
-                        return null;
+                        return events.isEmpty() ? -1L : eventStore.lastId(c);
                     });
                 } catch (Throwable e) {
                     commitFailure = e;
@@ -403,6 +417,14 @@ public final class CoreWriter implements AutoCloseable {
             }
 
             if (commitFailure == null) {
+                if (tainted != null) {
+                    // the engine holds what the failing command applied before it threw: the views must not (nor may a caller who
+                    // is answered meanwhile find nothing of its own change) - the rebuild from the journal publishes the committed
+                    // state in full, so it comes first
+                    recover(tainted, taint, List.of(tainted));
+                } else if (!accepted.isEmpty()) {
+                    publish(events, version);
+                }
                 for (Slot<?> s : accepted) {
                     for (Runnable action : s.staged.afterCommit) {
                         try {
@@ -414,7 +436,6 @@ public final class CoreWriter implements AutoCloseable {
                     s.succeed();
                 }
                 if (tainted != null) {
-                    recover(tainted, taint, List.of(tainted));
                     tainted.fail(taint);
                     if (rec) {
                         jfr.outcome = "TAINTED";
@@ -449,6 +470,27 @@ public final class CoreWriter implements AutoCloseable {
                 jfr.end();
                 jfr.commit();
             }
+        }
+    }
+
+    /** Hands the committed batch to the host, which publishes its read views; a failure is logged, never thrown. */
+    private void publish(List<EventStore.Pending> events, long version) {
+        try {
+            List<GameEvent> committed = new ArrayList<>(events.size());
+            for (EventStore.Pending p : events) {
+                committed.add(p.event());
+            }
+            host.committed(committed, version);
+        } catch (Throwable e) {
+            LOG.error("the read views could not be published after the commit of the batch", e);
+        }
+    }
+
+    private void publishSolo() {
+        try {
+            host.committedSolo();
+        } catch (Throwable e) {
+            LOG.error("the read views could not be published after a command that did its own transactions", e);
         }
     }
 

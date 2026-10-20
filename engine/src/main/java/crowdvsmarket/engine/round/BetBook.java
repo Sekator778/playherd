@@ -108,6 +108,17 @@ public final class BetBook {
     }
 
     /** How many bets the round holds — O(1). */
+    /** The ids of the rounds that hold at least one bet, oldest first. */
+    public List<String> roundIds() {
+        List<String> ids = new java.util.ArrayList<>();
+        byRound.forEach((roundId, round) -> {
+            if (!round.bets.isEmpty()) {
+                ids.add(roundId);
+            }
+        });
+        return List.copyOf(ids);
+    }
+
     public int count(String roundId) {
         RoundBets round = byRound.get(roundId);
         return round == null ? 0 : round.bets.size();

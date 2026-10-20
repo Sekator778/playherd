@@ -41,6 +41,22 @@ public final class RoundProgress {
 
     /** Sets the cursor of {@code (marketId, interval)} to {@code window} — which must be a window of
      *  that very market and interval, or the series would silently drift into another one. */
+    /** Told after a cursor moved by {@link #seed}, {@link #advance}, {@link #jumpTo} or {@link #remove} - not by a whole-table swap
+     *  ({@link #clear}, {@link #replaceAll}), which the rebuild that does it announces itself. The read views follow the cursors
+     *  through it (architecture plan F8). Runs on the thread that moved the cursor. */
+    private volatile Runnable changeListener;
+
+    public void setChangeListener(Runnable listener) {
+        this.changeListener = listener;
+    }
+
+    private void moved() {
+        Runnable listener = changeListener;
+        if (listener != null) {
+            listener.run();
+        }
+    }
+
     public void seed(String marketId, Interval interval, RoundWindow window) {
         Objects.requireNonNull(window, "window");
         if (!window.market().equals(marketId) || window.interval() != interval) {
@@ -48,6 +64,7 @@ public final class RoundProgress {
                     + marketId + "/" + interval);
         }
         next.put(new SeriesKey(marketId, interval), window);
+        moved();
     }
 
     /** True once {@link #seed} has run for the series — false only in the brief startup window
@@ -84,6 +101,7 @@ public final class RoundProgress {
     /** Moves the cursor of the series one step forward, whatever it currently is. */
     public void advance(String marketId, Interval interval) {
         next.computeIfPresent(new SeriesKey(marketId, interval), (k, w) -> RoundClock.next(w));
+        moved();
     }
 
     /** Moves the cursor one step forward only if it still is {@code expected}: the scheduler
@@ -92,7 +110,11 @@ public final class RoundProgress {
      *
      *  @return whether the cursor moved */
     public boolean advance(String marketId, Interval interval, RoundWindow expected) {
-        return next.replace(new SeriesKey(marketId, interval), expected, RoundClock.next(expected));
+        boolean moved = next.replace(new SeriesKey(marketId, interval), expected, RoundClock.next(expected));
+        if (moved) {
+            moved();
+        }
+        return moved;
     }
 
     /** Moves the cursor from {@code expected} to {@code target} — a catch-up jump over empty
@@ -104,12 +126,17 @@ public final class RoundProgress {
             throw new IllegalArgumentException("window " + target.roundId() + " does not belong to series "
                     + marketId + "/" + interval);
         }
-        return next.replace(new SeriesKey(marketId, interval), expected, target);
+        boolean moved = next.replace(new SeriesKey(marketId, interval), expected, target);
+        if (moved) {
+            moved();
+        }
+        return moved;
     }
 
     /** Stops the series of a closed market. */
     public void remove(String marketId, Interval interval) {
         next.remove(new SeriesKey(marketId, interval));
+        moved();
     }
 
     /** Forgets every series. */

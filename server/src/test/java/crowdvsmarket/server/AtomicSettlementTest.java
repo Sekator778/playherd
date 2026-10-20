@@ -11,6 +11,7 @@ import static org.mockito.Mockito.doThrow;
 
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundWindow;
+import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.events.EventApplier;
@@ -19,11 +20,13 @@ import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.persistence.RoundResultRepository;
+import crowdvsmarket.server.service.OpenBets;
 import crowdvsmarket.server.testsupport.LiveGameTestBase;
 import crowdvsmarket.server.testsupport.LiveMarketsProfile;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.junit.mockito.InjectSpy;
+import jakarta.inject.Inject;
 import java.sql.Connection;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -53,13 +56,21 @@ class AtomicSettlementTest extends LiveGameTestBase {
                             int pendingBets, int feedEntries) {
     }
 
+    @Inject
+    OpenBets openBets;
+    @Inject
+    BetFeed betFeed;
+
+    /** The engine itself, as it is at this instant - not the reads, which show the committed state only (F8): this test looks at
+     *  what the engine holds in the middle of the settlement's transaction, and at what a rebuild leaves in its place. */
     private Snapshot snapshot(String playerId, Market market, RoundWindow window) {
         var engines = hub.market(market.id());
-        return new Snapshot(gameService.account(playerId).balance(), gameService.account(playerId).inPlay(),
+        return new Snapshot(hub.ledger().balance(playerId).toMoney().toPlainString(),
+                openBets.stake(playerId).toMoney().toPlainString(),
                 engines.crowd().history().size(), engines.crowd().capital().toPlainString(),
                 engines.comparison().holdHistory().size(),
                 engines.engine(window.interval()).betBook().betsFor(window.roundId()).size(),
-                gameService.betFeed(window.roundId(), null).entries().size());
+                betFeed.since(window.roundId(), 0L).entries().size());
     }
 
     private long count(String sql, Object... params) {
@@ -98,10 +109,12 @@ class AtomicSettlementTest extends LiveGameTestBase {
         // The settlement fails — AFTER the RoundResolved event was appended and applied to the engine inside the
         // transaction (the applier throws once it has applied it). What the engine looks like at that very moment:
         AtomicReference<Snapshot> atFailure = new AtomicReference<>();
+        AtomicReference<String> readAtFailure = new AtomicReference<>();
         doAnswer(inv -> {
             Object result = inv.callRealMethod();
             if (inv.getArgument(0) instanceof GameEvent.RoundResolved) {
                 atFailure.set(snapshot(p, market, betting));
+                readAtFailure.set(gameService.account(p).balance());
                 throw new RuntimeException("injected failure after the event append");
             }
             return result;
@@ -114,6 +127,8 @@ class AtomicSettlementTest extends LiveGameTestBase {
         assertThat(atFailure.get().pendingBets()).isZero();
         assertThat(atFailure.get().balance()).isEqualTo("10119.600");   // 9699.6 + 420 (10x short, -4%)
         assertThat(atFailure.get().crowdHistory()).isEqualTo(before.crowdHistory() + 1);
+        // F8: ... which the reads did not show: they answer from what has committed
+        assertThat(readAtFailure.get()).isEqualTo(before.balance());
         // ... and yet nothing of it survived: no event, no result, no oracle record, no burned seq
         assertThat(resolvedEvents(market, betting)).isZero();
         assertThat(roundResults.exists(betting.roundId())).isFalse();
