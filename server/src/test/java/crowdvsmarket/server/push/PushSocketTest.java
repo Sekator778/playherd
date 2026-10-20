@@ -16,18 +16,31 @@ import crowdvsmarket.server.testsupport.RpcClient.Session;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.common.http.TestHTTPResource;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.QuarkusTestProfile;
+import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.net.URI;
 import java.net.URL;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /** {@code /api/ws} end to end on a real socket: the hello, the topics, the private topic, and the notices the game itself causes. */
 @QuarkusTest
+@TestProfile(PushSocketTest.OwnApp.class)
 class PushSocketTest {
+
+    /** A profile of its own, so that this class gets an application (and a rate limiter) of its own: its sign-ins must not use up the
+     *  per-address budget of authChallenge that the other tests of the default application share. */
+    public static class OwnApp implements QuarkusTestProfile {
+        @Override
+        public Map<String, String> getConfigOverrides() {
+            return Map.of("herd.push.coalesce-ms", "100");
+        }
+    }
 
     @TestHTTPResource("/api/ws")
     URL url;
