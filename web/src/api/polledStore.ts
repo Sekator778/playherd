@@ -11,6 +11,7 @@
  */
 import { useSyncExternalStore } from "react";
 import type { Api } from "./contract";
+import { PUSH_FALLBACK_POLL_MS, getPush, throttled } from "./push";
 
 export interface PolledStore<T> {
   /** Stable identity, as `useSyncExternalStore` needs. */
@@ -30,6 +31,11 @@ export interface PolledStoreOptions<T> {
   /** The snapshot to start from when the first subscriber comes back after the last one left
    *  (a poll that was stopped has a gap; a store may prefer to start over). Default: keep it. */
   onIdle?: (current: T) => T;
+  /**
+   * Topics of the push socket (`push.ts`) whose notices make the store fetch at once. While the socket is healthy the timer slows to
+   * `PUSH_FALLBACK_POLL_MS` (a safety net); with the socket down or unsupported the store polls every `intervalMs` as it always did.
+   */
+  pushTopics?: readonly string[];
 }
 
 export function createPolledStore<T>(options: PolledStoreOptions<T>): PolledStore<T> {
@@ -61,9 +67,17 @@ export function createPolledStore<T>(options: PolledStoreOptions<T>): PolledStor
     );
   };
 
+  /** Resolved at start (not at creation): the push client of the moment. */
+  let push: ReturnType<typeof getPush> = null;
+  let unsubscribePush: (() => void) | undefined;
+  let unsubscribeHealth: (() => void) | undefined;
+  let notice: ReturnType<typeof throttled> | undefined;
+
+  const currentIntervalMs = () => (push && push.isHealthy() ? PUSH_FALLBACK_POLL_MS : options.intervalMs);
+
   const startTimer = () => {
     if (timer !== undefined) return;
-    timer = window.setInterval(refresh, options.intervalMs);
+    timer = window.setInterval(refresh, currentIntervalMs());
   };
   const stopTimer = () => {
     if (timer === undefined) return;
@@ -73,6 +87,21 @@ export function createPolledStore<T>(options: PolledStoreOptions<T>): PolledStor
 
   const start = () => {
     refresh();
+    if (options.pushTopics && options.pushTopics.length > 0) {
+      push = getPush();
+      if (push) {
+        const client = push;
+        notice = throttled(refresh);
+        unsubscribePush = client.subscribe(options.pushTopics, notice.call);
+        unsubscribeHealth = client.onHealthChange(() => {
+          // The poll speed follows the socket's health; a socket that just went down may have missed notices: read now.
+          const wasRunning = timer !== undefined;
+          stopTimer();
+          if (!client.isHealthy()) refresh();
+          if (wasRunning) startTimer();
+        });
+      }
+    }
     if (typeof document === "undefined" || document.visibilityState === "visible") startTimer();
     visibilityHandler = () => {
       if (document.visibilityState === "visible") {
@@ -87,6 +116,12 @@ export function createPolledStore<T>(options: PolledStoreOptions<T>): PolledStor
 
   const stop = () => {
     stopTimer();
+    unsubscribePush?.();
+    unsubscribeHealth?.();
+    notice?.cancel();
+    unsubscribePush = unsubscribeHealth = undefined;
+    notice = undefined;
+    push = null;
     if (visibilityHandler) document.removeEventListener?.("visibilitychange", visibilityHandler);
     visibilityHandler = undefined;
     generation += 1;

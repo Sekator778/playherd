@@ -99,7 +99,7 @@ export function useSettlementWatcher(): void {
     legacyTick(api, playerId, { prevRunning, pending, failedAttempts });
   }, [api, playerId]);
 
-  usePoll(tick, POLL_MS, [tick]);
+  usePoll(tick, POLL_MS, [tick], playerId ? ["me"] : undefined);
 }
 
 interface LegacyState {

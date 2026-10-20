@@ -3,6 +3,7 @@ import type { Api, PlayerSummaryDto } from "./contract";
 import { API_MODE } from "./apiMode";
 import { mockApi } from "./mockApi";
 import { realApi } from "./realApi";
+import { getPush } from "./push";
 
 /**
  * The single `Api` instance every screen reads from — every component only ever imports this
@@ -101,6 +102,12 @@ export function ApiProvider({ children, api = apiInstance }: { children: ReactNo
       window.clearTimeout(retry);
     };
   }, [api, sessionFailures]);
+
+  // The push socket authenticates with the session cookie at the upgrade: a new player (or none) needs a new socket.
+  const playerId = player?.playerId ?? null;
+  useEffect(() => {
+    if (!loading) getPush()?.setIdentity(playerId);
+  }, [loading, playerId]);
 
   const session: SessionState = {
     player,

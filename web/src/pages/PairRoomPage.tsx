@@ -350,7 +350,7 @@ function Room({ market }: { market: MarketDto }) {
       });
   }, [api, interval, marketId]);
 
-  usePoll(load, POLL_MS, [load]);
+  usePoll(load, POLL_MS, [load], [`market:${marketId}`]);
 
   // A bet placed from the bet sheet (or the sign-in dialog): the room reads its round again at once instead of on the next poll.
   useEffect(() => onDraftPlaced(() => void load()), [load]);

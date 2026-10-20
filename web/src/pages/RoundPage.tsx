@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { isEngineNotReady, isNotFound } from "../api/apiErrors";
+import { parseRoundId } from "../api/clock";
 import { usePoll } from "../api/usePoll";
 import { useReferencePrice } from "../api/useReferencePrice";
 import { useMarket } from "../api/useMarkets";
@@ -72,7 +73,9 @@ export function RoundPage() {
       });
   }, [api, roundId]);
 
-  usePoll(load, POLL_MS, [load]);
+  // Push (push.ts): this round (a bet came in, it was settled or cancelled) and its market (the clock moved the round on: it starts running).
+  const roundMarketId = roundId ? parseRoundId(roundId)?.marketId : undefined;
+  usePoll(load, POLL_MS, [load], roundId ? [`round:${roundId}`, ...(roundMarketId ? [`market:${roundMarketId}`] : [])] : undefined);
 
   if (error === "not-found" && !round) return <ErrorState message={t("round.notFound")} />;
   if (error && !round) return <ErrorState onRetry={load} />;

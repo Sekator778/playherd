@@ -21,6 +21,6 @@ export function useReferencePrice(marketId: MarketId | null | undefined, interva
       .catch(() => {});
   }, [api, marketId]);
 
-  usePoll(load, intervalMs, [load]);
+  usePoll(load, intervalMs, [load], marketId ? [`market:${marketId}`] : undefined);
   return state !== null && state.marketId === marketId ? state.reference : null;
 }

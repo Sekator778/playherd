@@ -56,6 +56,7 @@ function getPriceSeriesStore(api: Api, marketId: MarketId): PolledStore<PriceSer
     createPolledStore<PriceSeriesSnapshot>({
       initial: INITIAL,
       intervalMs: PRICE_SERIES_POLL_MS,
+      pushTopics: [`market:${marketId}`],
       fetch: async (current) => {
         const newest = current.ticks.length > 0 ? current.ticks[current.ticks.length - 1].atMs : undefined;
         const response = await api.priceSeries(marketId, newest);

@@ -32,6 +32,7 @@ function getMarketsStore(api: Api): PolledStore<MarketsSnapshot> {
     createPolledStore<MarketsSnapshot>({
       initial: EMPTY,
       intervalMs: MARKETS_POLL_MS,
+      pushTopics: ["markets"],
       fetch: async () => {
         const sentAt = clientNowMs();
         const data = await api.markets();

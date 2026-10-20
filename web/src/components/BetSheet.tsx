@@ -60,7 +60,7 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
         }
       })
       .catch(() => {});
-  }, 2000, [api, interval, marketId]);
+  }, 2000, [api, interval, marketId], [`market:${marketId}`]);
 
   // --- the choice: a stake (a chip, or typed under "other") and a risk level ---
   const [stake, setStake] = useState(String(SHEET_STAKES[0]));

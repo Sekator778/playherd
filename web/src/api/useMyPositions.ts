@@ -27,6 +27,7 @@ function getMyPositionsStore(api: Api, playerId: string): PolledStore<PositionsS
     createPolledStore<PositionsSnapshot>({
       initial: INITIAL,
       intervalMs: MY_POSITIONS_POLL_MS,
+      pushTopics: ["me"],
       fetch: async (current) => {
         const positions = await api.myPositions();
         // Keep the old array when nothing changed, so consumers do not re-render on every tick.
