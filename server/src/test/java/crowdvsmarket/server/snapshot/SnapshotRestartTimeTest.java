@@ -13,6 +13,8 @@ import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -29,6 +31,14 @@ class SnapshotRestartTimeTest extends LiveGameTestBase {
     SnapshotService snapshots;
     @Inject
     BetFeed betFeed;
+
+    /** The fabricator's idempotency markers ({@code bench.*} in {@code server_meta}) belong to one run of it: another test class that used
+     *  the same seed would be told "already fabricated" about a journal the cleaning between classes has since removed. */
+    @BeforeEach
+    @AfterEach
+    void forgetTheFabricatorsMarkers() {
+        db.tx(c -> db.update(c, "DELETE FROM server_meta WHERE key LIKE 'bench.%'"));
+    }
 
     private Map<String, String> run(String mode, String... kv) {
         BenchJournal.Args args = BenchJournal.Args.of(kv);
