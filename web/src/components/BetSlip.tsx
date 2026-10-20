@@ -19,6 +19,8 @@ import { LeverageControl } from "./LeverageControl";
 import { LiquidationBar } from "./LiquidationBar";
 import { DEFAULT_LEVERAGE_LIMIT, effectiveLeverage } from "./leverageScale";
 import { useLiquidationPreview } from "./useLiquidationPreview";
+import { fixedModeAvailable, saveBetMode } from "./betModeModel";
+import { openBetSheet } from "./betSheetState";
 import {
   defaultLeverage,
   formatFeePercent,
@@ -898,6 +900,25 @@ function BetSlipForm({
           void submit();
         }}
       >
+        {!existing && fixedModeAvailable(market?.kind) && (
+          // Р-106: the Pro slip pays in the percentage mode; "Win or lose" lives in the bet sheet, so this switch hands the bet over to it
+          <div className="bet-sheet__chips bet-slip__mode" role="group" aria-label={t("mode.aria")}>
+            <button
+              type="button"
+              className="bet-sheet__chip"
+              aria-pressed={false}
+              onClick={() => {
+                saveBetMode("FIXED");
+                openBetSheet({ marketId: round.marketId, interval: round.window.interval, direction });
+              }}
+            >
+              {t("mode.winOrLose")}
+            </button>
+            <button type="button" className="bet-sheet__chip mono" aria-pressed={true}>
+              {t("mode.percent")}
+            </button>
+          </div>
+        )}
         {!hideDirectionPicker && <DirectionPicker id="direction-label" direction={direction} onChange={setDirection} />}
         <HerdPicker herd={herdSideOf(round)} direction={direction} onPick={setDirection} />
 
