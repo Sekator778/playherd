@@ -20,7 +20,19 @@ function SheetProbe() {
 
 function renderSlip(kind: "PERP" | "ODDS") {
   const btc = market("BTC", { kind, series: [seriesDto({ maxLeverage: 100 })] });
-  const api = fakeApi({ markets: vi.fn(async () => marketsOf([btc])), myAccount: vi.fn(async () => account) });
+  const api = fakeApi({
+    markets: vi.fn(async () => marketsOf([btc])),
+    myAccount: vi.fn(async () => account),
+    previewLiquidation: vi.fn(async () => ({
+      entryPriceUsed: "100.00",
+      liquidationPrice: "95.00",
+      percentToLiquidation: 0.05,
+      feeHerd: "0.050",
+      feeNetwork: "0.100",
+      totalDebit: "100.150",
+      maxLeverageForStake: 100,
+    })),
+  });
   render(
     <MemoryRouter>
       <BetSlip round={bettingRoundOf("BTC", "BTC")} nowMs={NOW} onChanged={() => {}} />
