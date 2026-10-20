@@ -55,8 +55,74 @@ public class EventStore {
      *  always writes its event and its read-model rows in the same {@link Db#tx}). */
     public void append(Connection c, GameEvent event, long atMs) throws SQLException {
         String type = event.getClass().getSimpleName();
-        db.update(c, "INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES (?, ?, ?, ?)",
-                type, Db.jsonb(event), atMs, CURRENT_SCHEMA_VERSION);
+        db.update(c, "INSERT INTO game_events (event_type, payload, at_ms, schema_version, market, player_id) "
+                + "VALUES (?, ?, ?, ?, ?, ?)",
+                type, Db.jsonb(event), atMs, CURRENT_SCHEMA_VERSION, marketOf(event), playerOf(event));
+    }
+
+    /**
+     * The market an event belongs to, for the {@code game_events.market} column (V20, architecture plan step 1: the journal can be
+     * read per market without parsing its JSON), or {@code null} for an event of no market. A round or bet event carries it in
+     * {@code market} (BTC when the event was written before markets existed - the record's constructor says so), a listing or
+     * closing in {@code marketId}. The switch has no default: a new event type does not compile until it is placed here.
+     */
+    public static String marketOf(GameEvent event) {
+        return switch (event) {
+            case GameEvent.BetPlaced e -> e.market();
+            case GameEvent.BetCancelled e -> e.market();
+            case GameEvent.RoundResolved e -> e.market();
+            case GameEvent.RoundCancelled e -> e.market();
+            case GameEvent.MarketListed e -> e.marketId();
+            case GameEvent.MarketClosed e -> e.marketId();
+            case GameEvent.PlayerRegistered e -> null;
+            case GameEvent.NicknameChanged e -> null;
+            case GameEvent.BotStrategyAssigned e -> null;
+            case GameEvent.EconomyCutover e -> null;
+            case GameEvent.BotRetired e -> null;
+            case GameEvent.HerdSweptToTreasury e -> null;
+            case GameEvent.WithdrawalRequested e -> null;
+            case GameEvent.WithdrawalConfirmed e -> null;
+            case GameEvent.WithdrawalFailed e -> null;
+            case GameEvent.DepositRequested e -> null;
+            case GameEvent.DepositConfirmed e -> null;
+            case GameEvent.DepositFailed e -> null;
+            case GameEvent.WithdrawalReversed e -> null;
+            case GameEvent.DepositReversed e -> null;
+            case GameEvent.DepositConfirmedOnChain e -> null;
+            case GameEvent.WithdrawalConfirmedOnChain e -> null;
+        };
+    }
+
+    /**
+     * The player an event is about, for the {@code game_events.player_id} column, or {@code null} for an event that names none (a
+     * round, a market, the treasury, and a confirmation or failure that names only its request id). Same rules as
+     * {@link #marketOf}.
+     */
+    public static String playerOf(GameEvent event) {
+        return switch (event) {
+            case GameEvent.PlayerRegistered e -> e.playerId();
+            case GameEvent.NicknameChanged e -> e.playerId();
+            case GameEvent.BotStrategyAssigned e -> e.playerId();
+            case GameEvent.BetPlaced e -> e.playerId();
+            case GameEvent.BetCancelled e -> e.playerId();
+            case GameEvent.BotRetired e -> e.playerId();
+            case GameEvent.WithdrawalRequested e -> e.playerId();
+            case GameEvent.DepositRequested e -> e.playerId();
+            case GameEvent.WithdrawalReversed e -> e.playerId();
+            case GameEvent.DepositReversed e -> e.playerId();
+            case GameEvent.DepositConfirmedOnChain e -> e.playerId();
+            case GameEvent.RoundResolved e -> null;
+            case GameEvent.RoundCancelled e -> null;
+            case GameEvent.EconomyCutover e -> null;
+            case GameEvent.HerdSweptToTreasury e -> null;
+            case GameEvent.WithdrawalConfirmed e -> null;
+            case GameEvent.WithdrawalFailed e -> null;
+            case GameEvent.DepositConfirmed e -> null;
+            case GameEvent.DepositFailed e -> null;
+            case GameEvent.WithdrawalConfirmedOnChain e -> null;
+            case GameEvent.MarketListed e -> null;
+            case GameEvent.MarketClosed e -> null;
+        };
     }
 
     /** All events in insertion order, for the startup rebuild ({@code EngineRebuildService#rebuild}). */
@@ -212,12 +278,12 @@ public class EventStore {
         return db.read(this::lastId);
     }
 
-    /** Rows per INSERT statement of {@link #appendAll} (four parameters a row, far below the driver's limit). */
+    /** Rows per INSERT statement of {@link #appendAll} (six parameters a row, far below the driver's limit). */
     static final int APPEND_CHUNK = 200;
 
     /**
      * Appends {@code events}, in this order, within the caller's open transaction: the batch of the core writer
-     * ({@code CoreWriter}). Every row is what {@link #append} writes (type, payload, time, schema version); a single event is
+     * ({@code CoreWriter}). Every row is what {@link #append} writes (type, payload, time, schema version, market, player); a single event is
      * written by {@link #append} itself, more than one by multi-row {@code INSERT} statements of {@link #APPEND_CHUNK} rows,
      * whose rows get their ids in the order of the {@code VALUES} list.
      */
@@ -231,15 +297,17 @@ public class EventStore {
         }
         for (int from = 0; from < events.size(); from += APPEND_CHUNK) {
             List<Pending> chunk = events.subList(from, Math.min(events.size(), from + APPEND_CHUNK));
-            StringBuilder sql = new StringBuilder("INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES ");
-            Object[] params = new Object[chunk.size() * 4];
+            StringBuilder sql = new StringBuilder("INSERT INTO game_events (event_type, payload, at_ms, schema_version, market, player_id) VALUES ");
+            Object[] params = new Object[chunk.size() * 6];
             for (int i = 0; i < chunk.size(); i++) {
-                sql.append(i == 0 ? "(?, ?, ?, ?)" : ", (?, ?, ?, ?)");
+                sql.append(i == 0 ? "(?, ?, ?, ?, ?, ?)" : ", (?, ?, ?, ?, ?, ?)");
                 Pending p = chunk.get(i);
-                params[i * 4] = p.event().getClass().getSimpleName();
-                params[i * 4 + 1] = Db.jsonb(p.event());
-                params[i * 4 + 2] = p.atMs();
-                params[i * 4 + 3] = CURRENT_SCHEMA_VERSION;
+                params[i * 6] = p.event().getClass().getSimpleName();
+                params[i * 6 + 1] = Db.jsonb(p.event());
+                params[i * 6 + 2] = p.atMs();
+                params[i * 6 + 3] = CURRENT_SCHEMA_VERSION;
+                params[i * 6 + 4] = marketOf(p.event());
+                params[i * 6 + 5] = playerOf(p.event());
             }
             db.update(c, sql.toString(), params);
         }
