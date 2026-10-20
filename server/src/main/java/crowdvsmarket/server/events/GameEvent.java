@@ -13,9 +13,14 @@ import java.util.List;
  * {@code EventApplier} method needs to replay the original engine call byte-for-byte, including
  * the {@code atMs} timestamp the live call used (never re-derived from wall-clock at replay time).
  *
- * <p>Read-model tables ({@code round_results}, {@code players}, …) are NOT rebuilt from this log
- * — they are written directly, once, when first produced, and read as-is; only the in-memory
- * engine needs replaying.
+ * <p>Read-model tables ({@code round_results}, {@code oracle_records}, …) are written beside the event, once, when first
+ * produced, and read as-is. <b>Architecture plan F4 (schema version 2):</b> the journal is self-contained for the players and the
+ * markets: {@link PlayerRegistered} carries the row of a new player ({@link NicknameChanged}, {@link BotStrategyAssigned} and
+ * {@link BotRetired} its later changes), {@link MarketListed} / {@link MarketClosed} the market registry, and {@link RoundResolved}
+ * the oracle sequence number the engine assigned. The {@code players} and {@code markets} tables are projections of these events,
+ * written in the event's own transaction and repaired from the journal at every rebuild ({@code EngineStateBuilder}). What stays
+ * outside the journal on purpose: the API keys of API bots, the referral and source columns of a player, the withdrawal and deposit
+ * bookkeeping tables. An event of schema version 1 (everything written before F4) has none of the new fields and replays as it always did.
  *
  * <p><b>Markets (Р-69, docs/research/markets_architecture.md §6, Т-13):</b> the four round events
  * ({@link BetPlaced}, {@link BetCancelled}, {@link RoundResolved}, {@link RoundCancelled}) carry an
@@ -48,7 +53,58 @@ public sealed interface GameEvent {
      *  {@code GameService} only actually appends one of these for a brand-new player or a genuine
      *  season rollover — not on every plain re-login — but a historical duplicate from before the
      *  fix must still replay safely, which is exactly what this idempotency already gives for free. */
-    record PlayerRegistered(String playerId, long atMs) implements GameEvent {
+    record PlayerRegistered(String playerId, long atMs,
+                            @JsonInclude(JsonInclude.Include.NON_NULL) String walletAddress,
+                            @JsonInclude(JsonInclude.Include.NON_NULL) Integer playerIndex,
+                            @JsonInclude(JsonInclude.Include.NON_NULL) String displayName,
+                            @JsonInclude(JsonInclude.Include.NON_NULL) String kind,
+                            @JsonInclude(JsonInclude.Include.NON_NULL) String botStrategy,
+                            @JsonInclude(JsonInclude.Include.NON_NULL) String ownerPlayerId,
+                            @JsonInclude(JsonInclude.Include.NON_NULL) String replacesPlayerId) implements GameEvent {
+
+        /** The shape before F4 and the event of a returning player (a new season's pack): the player exists already. */
+        public PlayerRegistered(String playerId, long atMs) {
+            this(playerId, atMs, null, null, null, null, null, null, null);
+        }
+
+        /** A registration: the event carries the player's row, so the {@code players} table is its projection (architecture plan F4).
+         *  {@code displayName} is the name chosen at registration ({@code null}: a person who has none yet); the key of an API bot is
+         *  never in the journal. */
+        public static PlayerRegistered registration(String playerId, long atMs, String walletAddress, int playerIndex,
+                                                    String displayName, String kind, String botStrategy, String ownerPlayerId,
+                                                    String replacesPlayerId) {
+            return new PlayerRegistered(playerId, atMs, java.util.Objects.requireNonNull(walletAddress, "walletAddress"),
+                    playerIndex, displayName, java.util.Objects.requireNonNull(kind, "kind"), botStrategy, ownerPlayerId,
+                    replacesPlayerId);
+        }
+
+        /** Whether this event registers the player (it carries the row) and not only grants the pack of a new season. */
+        public boolean isRegistration() {
+            return walletAddress != null;
+        }
+    }
+
+    /** F4: a player's nickname was set (a person's own, or a bot relabelled). The {@code players} row is its projection. */
+    record NicknameChanged(String playerId, String nickname, long atMs) implements GameEvent {
+    }
+
+    /** F4: a house bot was assigned the strategy of a catalog slot. The {@code players} row is its projection. */
+    record BotStrategyAssigned(String playerId, String botStrategy, long atMs) implements GameEvent {
+    }
+
+    /**
+     * F4: a market was listed. Carries the whole row, the append-only {@code oracleIndex} and the economy parameters the registry
+     * gave it, so the {@code markets} table is a projection of the journal and a replay never recomputes a default. BTC is not listed
+     * by an event: it is the genesis row ({@code V7__markets.sql}).
+     */
+    record MarketListed(String marketId, String kind, String category, String symbol, String title, String subtitle,
+                        String iconUrl, String source, String sourceRef, String sourceMeta, int maxLeverage, int lotExp,
+                        int oracleIndex, long listedAtMs, Long endsAtMs, int capHourly, int capDaily, String kappa,
+                        String herdFeeBp, String stressMove) implements GameEvent {
+    }
+
+    /** F4: a market was closed (an operator, an ended question, a market that took over its symbol). */
+    record MarketClosed(String marketId, String reason, long atMs) implements GameEvent {
     }
 
     /**
@@ -177,10 +233,17 @@ public sealed interface GameEvent {
      *  it originally. */
     record RoundResolved(Interval interval, long windowStart, long windowEnd, String openPrice, String closePrice,
                            List<CandleData> path, long atMs, String market,
-                           @JsonInclude(JsonInclude.Include.NON_NULL) String venue) implements GameEvent {
+                           @JsonInclude(JsonInclude.Include.NON_NULL) String venue,
+                           @JsonInclude(JsonInclude.Include.NON_NULL) Long oracleSeq) implements GameEvent {
 
         public RoundResolved {
             market = marketOrBtc(market);
+        }
+
+        /** Before F4: no oracle sequence number in the event (it was taken from {@code server_meta} when the rows were written). */
+        public RoundResolved(Interval interval, long windowStart, long windowEnd, String openPrice, String closePrice,
+                               List<CandleData> path, long atMs, String market, String venue) {
+            this(interval, windowStart, windowEnd, openPrice, closePrice, path, atMs, market, venue, null);
         }
 
         /** Pre-venues shape: a round of a market with one exchange (the event is then written without a {@code venue} key, as ever). */
@@ -192,7 +255,7 @@ public sealed interface GameEvent {
         /** Pre-markets shape: a BTC round. */
         public RoundResolved(Interval interval, long windowStart, long windowEnd, String openPrice,
                                String closePrice, List<CandleData> path, long atMs) {
-            this(interval, windowStart, windowEnd, openPrice, closePrice, path, atMs, null, null);
+            this(interval, windowStart, windowEnd, openPrice, closePrice, path, atMs, null, null, null);
         }
     }
 

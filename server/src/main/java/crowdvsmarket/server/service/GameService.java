@@ -223,12 +223,15 @@ public class GameService implements MarketListener {
         final RoundReport report;
         final long sourceTsMs;
         final String venue;
+        /** The oracle sequence number the {@code RoundResolved} event carries; {@code null} for an event written before F4. */
+        final Long oracleSeq;
         final CompletableFuture<Void> stored = new CompletableFuture<>();
         final long sinceMs = System.currentTimeMillis();
         volatile int failures;
         volatile String lastError;
 
-        PendingRows(Market market, RoundWindow window, RoundReport report, long sourceTsMs, String venue) {
+        PendingRows(Market market, RoundWindow window, RoundReport report, long sourceTsMs, String venue, Long oracleSeq) {
+            this.oracleSeq = oracleSeq;
             this.market = market;
             this.window = window;
             this.report = report;
@@ -646,10 +649,13 @@ public class GameService implements MarketListener {
                 String finalPlayerId = playerId;
                 int playerIndex = serverMeta.reserveNextPlayerIndex();
                 String referrerId = referralCode == null ? null : invites.playerIdForCode(referralCode).orElse(null);
-                // The directory's cache gets the row only after the commit (PlayerDirectory's javadoc).
+                GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
+                        playerIndex, null, PlayerDirectory.KIND_HUMAN, null, null, null);
+                // The event and the players row (its projection) are one transaction; the directory's cache gets the row only after the
+                // commit (PlayerDirectory's javadoc).
                 players.cache(db.tx(c -> {
-                    PlayerDirectory.Row row = players.insert(c, finalPlayerId, walletAddress, null, false, null,
-                            playerIndex, nowMs);
+                    eventStore.append(c, registered, nowMs);
+                    PlayerDirectory.Row row = players.project(c, registered, null, null);
                     invites.recordAtRegistration(c, finalPlayerId, referrerId, source);
                     return row;
                 }));
@@ -657,7 +663,7 @@ public class GameService implements MarketListener {
                 if (ipHash != null) {
                     registrationIps.record(ipHash, nowMs);
                 }
-                appendPlayerRegistered(playerId, nowMs);
+                eventApplier.apply(registered);
             } else {
                 playerId = existing.get();
                 Season season = Season.of(now);
@@ -673,9 +679,9 @@ public class GameService implements MarketListener {
         }
     }
 
-    /** Shared by {@link #registerOrTouchPlayer} (new-player and season-rollover-touch cases) and
-     *  {@link #createBotPlayer} — the one place a {@code PlayerRegistered} event is actually
-     *  persisted+applied, so there is exactly one code path to reason about for task item 1's fix. */
+    /** The {@code PlayerRegistered} event of a player who exists already and enters a new season (a returning sign-in, an API bot's
+     *  first call of a season): it carries only the id, persisted and applied here. A new player's event carries the player (F4) and is
+     *  written in the same transaction as the {@code players} row, by the method that creates the player. */
     private void appendPlayerRegistered(String playerId, long nowMs) {
         GameEvent.PlayerRegistered event = new GameEvent.PlayerRegistered(playerId, nowMs);
         persist(event, nowMs);
@@ -700,8 +706,11 @@ public class GameService implements MarketListener {
             String playerId = "bot-" + strategy.toLowerCase(java.util.Locale.ROOT) + "-" + UUID.randomUUID();
             String walletAddress = "txbot1" + playerId.replace("-", "").substring(0, Math.min(40, playerId.length()));
             int playerIndex = serverMeta.reserveNextPlayerIndex();
+            GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
+                    playerIndex, nickname, PlayerDirectory.KIND_HOUSE_BOT, strategy, null, replacesPlayerId);
             players.cache(db.tx(c -> {
-                PlayerDirectory.Row row = players.insert(c, playerId, walletAddress, nickname, true, strategy, playerIndex, nowMs);
+                eventStore.append(c, registered, nowMs);
+                PlayerDirectory.Row row = players.project(c, registered, null, null);
                 if (replacesPlayerId != null) {
                     players.updateReplaced(c, replacesPlayerId);
                 }
@@ -710,7 +719,7 @@ public class GameService implements MarketListener {
             if (replacesPlayerId != null) {
                 players.cacheReplaced(replacesPlayerId);
             }
-            appendPlayerRegistered(playerId, nowMs);
+            eventApplier.apply(registered);
             return summary(playerId);
         } finally {
             engineLock.writeLock().unlock();
@@ -763,10 +772,14 @@ public class GameService implements MarketListener {
             String key = ApiKeys.generate();
             String hash = ApiKeys.hash(key);
             String hint = ApiKeys.hint(key);
-            PlayerDirectory.Row row = db.tx(c -> players.insertApiBot(c, playerId, walletAddress, nickname, playerIndex, ownerId,
-                    hash, hint, nowMs));
+            GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
+                    playerIndex, nickname, PlayerDirectory.KIND_API_BOT, null, ownerId, null);
+            PlayerDirectory.Row row = db.tx(c -> {
+                eventStore.append(c, registered, nowMs);
+                return players.project(c, registered, hash, hint); // the key is in the table, never in the journal
+            });
             players.cache(row);
-            appendPlayerRegistered(playerId, nowMs);
+            eventApplier.apply(registered);
             apiBotSeasonTouched.put(playerId, Season.of(Instant.ofEpochMilli(nowMs)).id());
             return new Bots.ApiBotKeyDto(toDto(row), key);
         } finally {
@@ -878,11 +891,14 @@ public class GameService implements MarketListener {
         try {
             players.byId(playerId).filter(PlayerDirectory.Row::isBot)
                     .orElseThrow(() -> ApiException.notFound("unknown bot " + playerId));
+            GameEvent.BotStrategyAssigned event = new GameEvent.BotStrategyAssigned(playerId, botStrategy, System.currentTimeMillis());
             db.tx(c -> {
+                eventStore.append(c, event, event.atMs());
                 players.updateBotStrategy(c, playerId, botStrategy);
                 return null;
             });
             players.cacheBotStrategy(playerId, botStrategy);
+            eventApplier.apply(event);
         } finally {
             engineLock.writeLock().unlock();
         }
@@ -895,11 +911,14 @@ public class GameService implements MarketListener {
         try {
             players.byId(playerId).filter(PlayerDirectory.Row::isBot)
                     .orElseThrow(() -> ApiException.notFound("unknown bot " + playerId));
+            GameEvent.NicknameChanged event = new GameEvent.NicknameChanged(playerId, nickname, System.currentTimeMillis());
             db.tx(c -> {
+                eventStore.append(c, event, event.atMs());
                 players.updateNickname(c, playerId, nickname);
                 return null;
             });
             players.cacheNickname(playerId, nickname);
+            eventApplier.apply(event);
         } finally {
             engineLock.writeLock().unlock();
         }
@@ -935,11 +954,14 @@ public class GameService implements MarketListener {
         lockWrite();
         try {
             players.byId(playerId).orElseThrow(() -> ApiException.notFound("unknown player " + playerId));
+            GameEvent.NicknameChanged event = new GameEvent.NicknameChanged(playerId, trimmed, System.currentTimeMillis());
             db.tx(c -> {
+                eventStore.append(c, event, event.atMs());
                 players.updateNickname(c, playerId, trimmed);
                 return null;
             });
             players.cacheNickname(playerId, trimmed);
+            eventApplier.apply(event);
             return summary(playerId);
         } finally {
             engineLock.writeLock().unlock();
@@ -1459,9 +1481,13 @@ public class GameService implements MarketListener {
         boolean hasBets = hasBetsLocked(window);
         List<Candle> path = hasBets && !data.path().isEmpty() ? data.path()
                 : List.of(singleCandle(window, open, close));
+        // F4: the engine assigns the oracle sequence number: above everything issued (the hub's counter, which replaying the journal
+        // restores) and above the floor the chain service demanded (OracleSeqGate). Applying the event advances the counter, so a
+        // transaction that fails leaves no hole.
+        long oracleSeq = Math.max(hub.oracleSeq(), serverMeta.raisedOracleFloor()) + 1;
         GameEvent.RoundResolved event = new GameEvent.RoundResolved(window.interval(), window.startMs(),
                 window.endMs(), open.toPlainString(), close.toPlainString(), EventApplier.fromCandles(path),
-                nowMs, market.id(), data.venue());
+                nowMs, market.id(), data.venue(), oracleSeq);
         AtomicBoolean touchedMemory = new AtomicBoolean();
         try {
             RoundReport report = db.tx(c -> {
@@ -1475,7 +1501,7 @@ public class GameService implements MarketListener {
                 jfr.bets = r.playerOutcomes().size();
                 return r;
             });
-            PendingRows pending = new PendingRows(market, window, report, data.sourceTsMs(), data.venue());
+            PendingRows pending = new PendingRows(market, window, report, data.sourceTsMs(), data.venue(), oracleSeq);
             storing.put(window.roundId(), pending);
             // the event is committed: the close is the close on the exchange the round ran on (Р-76), the next round of the
             // series opens at it, and the series' cursor leaves the round, so the next round takes bets right away
@@ -1519,7 +1545,7 @@ public class GameService implements MarketListener {
             return;
         }
         db.tx(c -> {
-            storeSettledResult(c, p.market, p.window, p.report, p.sourceTsMs, p.venue, jfr);
+            storeSettledResult(c, p.market, p.window, p.report, p.sourceTsMs, p.venue, p.oracleSeq, jfr);
             return null;
         });
     }
@@ -1605,10 +1631,10 @@ public class GameService implements MarketListener {
         LOG.warnf("round %s is resolved in the journal but has no result row (the process stopped, or the write failed, "
                 + "after the event was committed) - writing the result row, the history and the oracle record from the "
                 + "event", window.roundId());
-        PendingRows pending = new PendingRows(market, window, report, sourceTsMs, event.venue());
+        PendingRows pending = new PendingRows(market, window, report, sourceTsMs, event.venue(), event.oracleSeq());
         try {
             db.tx(c -> {
-                storeSettledResult(c, market, window, report, sourceTsMs, event.venue(), new HerdSettle());
+                storeSettledResult(c, market, window, report, sourceTsMs, event.venue(), event.oracleSeq(), new HerdSettle());
                 return null;
             });
             return true;
@@ -1647,7 +1673,7 @@ public class GameService implements MarketListener {
      *  (Р-76) — in the canonical results JSON, so inside the hash that goes on chain, and in the result row; the oracle
      *  record's price is the close on that exchange; {@code null} for a market with one exchange: nothing changes for it. */
     private void storeSettledResult(Connection c, Market market, RoundWindow window, RoundReport report,
-                                    long sourceTsMs, String venue, HerdSettle jfr) throws SQLException {
+                                    long sourceTsMs, String venue, Long oracleSeq, HerdSettle jfr) throws SQLException {
         MarketSpec spec = market.spec();
         Map<String, PlayerIdentity> identities = players.identitiesById();
         List<Rounds.PublicPositionDto> positionDtos = new ArrayList<>();
@@ -1711,7 +1737,7 @@ public class GameService implements MarketListener {
                 settledAtMs, historyRows, venue);
         boolean rec = jfr.isEnabled();
         long t = JfrClock.nanos(rec);
-        enqueueOracleRecord(c, market, window.roundId(), settledAtMs, sourceTsMs, closeCents, canonical.hash());
+        enqueueOracleRecord(c, market, window.roundId(), settledAtMs, sourceTsMs, closeCents, canonical.hash(), oracleSeq);
         jfr.oracleNs = JfrClock.since(rec, t);
     }
 
@@ -1740,8 +1766,16 @@ public class GameService implements MarketListener {
      *                     повтора истории"), the tick the close price was read from in live mode
      *  @param priceCents engine (lot) close price times 100 */
     private void enqueueOracleRecord(Connection c, Market market, String roundId, long ts, long sourceTsMs,
-                                     long priceCents, String resultsHash) throws SQLException {
-        long seq = serverMeta.reserveOracleSeqRange(c, 1);
+                                     long priceCents, String resultsHash, Long oracleSeq) throws SQLException {
+        // F4: the sequence number was assigned by the engine and is in the event; the counter in server_meta only follows it. An event
+        // written before F4 has none, and takes the next number from the counter as it always did.
+        long seq;
+        if (oracleSeq != null) {
+            seq = oracleSeq;
+            serverMeta.projectOracleSeq(c, seq);
+        } else {
+            seq = serverMeta.reserveOracleSeqRange(c, 1);
+        }
         String source = config.mode() == GameMode.REPLAY ? "replay" : "live";
         oracleRecords.insert(c, new OracleRecordRepository.NewRecord(market.id(), market.oracleIndex(), roundId, seq,
                 ts / 1000, priceCents, resultsHash, source, sourceTsMs / 1000, System.currentTimeMillis()));

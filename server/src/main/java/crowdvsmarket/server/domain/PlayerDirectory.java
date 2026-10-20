@@ -1,23 +1,26 @@
 package crowdvsmarket.server.domain;
 
 import crowdvsmarket.engine.player.PlayerIdentity;
+import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.persistence.Db;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The {@code players} dimension table (wallet address, nickname, bot flag/strategy) plus an
- * in-memory cache of it. Deliberately NOT part of the {@code game_events} replay log
- * ({@link EngineHub}'s javadoc) — a nickname or a bot's strategy assignment has no effect on
- * ledger/crowd-account math, so it is written straight to its row and just re-read (not replayed)
- * at startup.
+ * in-memory cache of it. Since architecture plan F4 the table is a projection of the journal: a player's row is written in the
+ * transaction of its {@code PlayerRegistered} event (and a nickname, strategy or retirement in the transaction of its event), and a
+ * rebuild repairs the table from the journal ({@link #repairFromJournal}) before the cache is read. Not in the journal, by design:
+ * the API key of an API bot and the referral columns.
  *
  * <p><b>The cache never runs ahead of the table.</b> {@link #insert} and {@link #updateNickname}
  * write the row inside the caller's transaction and touch no memory; the caller puts the result
@@ -209,6 +212,107 @@ public final class PlayerDirectory {
                 playerId, walletAddress, nickname, playerIndex, atMs, KIND_API_BOT, ownerId, keyHash, keyHint);
         return new Row(playerId, walletAddress, nickname, false, null, playerIndex, atMs, null, false, KIND_API_BOT, ownerId,
                 keyHash, keyHint);
+    }
+
+    /**
+     * F4: writes the {@code players} row that the registration event describes, within the caller's transaction (the transaction that
+     * appended the event), and returns it; the cache gets it through {@link #cache} after the commit. Idempotent: a row that exists
+     * is left as it is. {@code keyHash} / {@code keyHint} are an API bot's first key: they are in the table and never in the journal.
+     */
+    public Row project(Connection c, GameEvent.PlayerRegistered e, String keyHash, String keyHint) throws SQLException {
+        boolean houseBot = KIND_HOUSE_BOT.equals(e.kind());
+        db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, "
+                        + "created_at_ms, kind, owner_player_id, api_key_hash, api_key_hint) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                e.playerId(), e.walletAddress(), e.displayName(), houseBot, e.botStrategy(), e.playerIndex(), e.atMs(), e.kind(),
+                e.ownerPlayerId(), keyHash, keyHint);
+        return new Row(e.playerId(), e.walletAddress(), e.displayName(), houseBot, e.botStrategy(), e.playerIndex(), e.atMs(), null,
+                false, e.kind(), e.ownerPlayerId(), keyHash, keyHint);
+    }
+
+    /** What the journal says about one player, folded in order: the target of {@link #repairFromJournal}. */
+    private static final class Folded {
+        GameEvent.PlayerRegistered registered;
+        String nickname;
+        String botStrategy;
+        Long retiredAtMs;
+    }
+
+    /**
+     * F4: the {@code players} table is a projection of the journal. Folds the registration, nickname, strategy and retirement events
+     * of {@code events} and makes the table agree: a player the table lacks is inserted (a database built from the journal alone, or
+     * a write that never committed), a nickname, strategy, retirement or replacement that differs is written. A player whose
+     * registration is not in the journal (a journal of schema version 1) is left exactly as the table has it. The cache is reloaded
+     * when anything changed.
+     *
+     * @return the number of rows written
+     */
+    public synchronized int repairFromJournal(List<GameEvent> events) {
+        Map<String, Folded> folded = new java.util.LinkedHashMap<>();
+        Set<String> replacedIds = new HashSet<>();
+        for (GameEvent event : events) {
+            switch (event) {
+                case GameEvent.PlayerRegistered e when e.isRegistration() -> {
+                    Folded f = folded.computeIfAbsent(e.playerId(), id -> new Folded());
+                    if (f.registered == null) {
+                        f.registered = e;
+                        f.nickname = e.displayName();
+                        f.botStrategy = e.botStrategy();
+                        if (e.replacesPlayerId() != null) {
+                            replacedIds.add(e.replacesPlayerId());
+                        }
+                    }
+                }
+                case GameEvent.NicknameChanged e -> folded.computeIfAbsent(e.playerId(), id -> new Folded()).nickname = e.nickname();
+                case GameEvent.BotStrategyAssigned e ->
+                        folded.computeIfAbsent(e.playerId(), id -> new Folded()).botStrategy = e.botStrategy();
+                case GameEvent.BotRetired e -> folded.computeIfAbsent(e.playerId(), id -> new Folded()).retiredAtMs = e.atMs();
+                default -> {
+                }
+            }
+        }
+        int written = db.tx(c -> {
+            int n = 0;
+            for (Map.Entry<String, Folded> entry : folded.entrySet()) {
+                Folded f = entry.getValue();
+                Row row = maps.byId.get(entry.getKey());
+                if (row == null) {
+                    if (f.registered != null) {
+                        n += db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, "
+                                        + "player_index, created_at_ms, kind, owner_player_id, retired_at_ms, replaced) "
+                                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                                f.registered.playerId(), f.registered.walletAddress(), f.nickname,
+                                KIND_HOUSE_BOT.equals(f.registered.kind()), f.botStrategy, f.registered.playerIndex(),
+                                f.registered.atMs(), f.registered.kind(), f.registered.ownerPlayerId(), f.retiredAtMs,
+                                replacedIds.contains(entry.getKey()));
+                    }
+                    continue;
+                }
+                if (f.registered == null) {
+                    continue; // registered before F4: the table is the only record
+                }
+                if (!java.util.Objects.equals(row.nickname(), f.nickname)) {
+                    n += db.update(c, "UPDATE players SET nickname = ? WHERE player_id = ?", f.nickname, entry.getKey());
+                }
+                if (row.isBot() && !java.util.Objects.equals(row.botStrategy(), f.botStrategy)) {
+                    n += db.update(c, "UPDATE players SET bot_strategy = ? WHERE player_id = ?", f.botStrategy, entry.getKey());
+                }
+                if (f.retiredAtMs != null && row.retiredAtMs() == null) {
+                    n += db.update(c, "UPDATE players SET retired_at_ms = ? WHERE player_id = ?", f.retiredAtMs, entry.getKey());
+                }
+            }
+            for (String id : replacedIds) {
+                Row row = maps.byId.get(id);
+                if (row != null && !row.replaced()) {
+                    n += db.update(c, "UPDATE players SET replaced = TRUE WHERE player_id = ?", id);
+                }
+            }
+            return n;
+        });
+        if (written > 0) {
+            reload();
+        }
+        return written;
     }
 
     /** Writes a bot's key (a new one, or {@code null} for a revoked one) within the caller's transaction ({@link #cacheKey} after the commit). */

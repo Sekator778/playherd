@@ -73,7 +73,8 @@ class EventStoreFixedModeFixturesTest {
     }
 
     @Test
-    void theSchemaVersionIsStillOne() {
-        assertThat(EventStore.CURRENT_SCHEMA_VERSION).isEqualTo(1);
+    void theSchemaVersionIsTwoSinceF4() {
+        assertThat(EventStore.CURRENT_SCHEMA_VERSION).isEqualTo(2);
+        assertThat(EventStore.LEGACY_SCHEMA_VERSION).isEqualTo(1);
     }
 }

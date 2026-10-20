@@ -10,7 +10,6 @@ import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.domain.EngineHub;
-import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.markets.MarketStatus;
@@ -49,7 +48,6 @@ class FixedPayoutReplayTest {
         EventApplier applier = new EventApplier();
         applier.hub = hub;
         applier.betFeed = new BetFeed();
-        applier.players = new PlayerDirectory();
         return applier;
     }
 

@@ -51,7 +51,7 @@ class EventStoreSchemaEvolutionTest {
     @Test
     void unsupportedSchemaVersionFailsLoudlyNamingTheRow() {
         assertThatThrownBy(() -> eventStore.decode(7777L, "PlayerRegistered",
-                "{\"playerId\":\"p\",\"atMs\":1}", 2))
+                "{\"playerId\":\"p\",\"atMs\":1}", 3))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("7777")
                 .hasMessageContaining("schema_version");

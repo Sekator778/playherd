@@ -87,6 +87,44 @@ public class ServerMetaRepository {
         return first;
     }
 
+    /** The highest floor {@link #raiseOracleSeqTo} has put into the counter in this process (0 before): the engine, which assigns the
+     *  oracle sequence numbers (architecture plan F4), starts every number above it without asking the database. */
+    private volatile long raisedOracleFloor;
+
+    public long raisedOracleFloor() {
+        return raisedOracleFloor;
+    }
+
+    /** The oracle counter as the database holds it: the last {@code seq} issued or raised to, 0 for a database that never issued one. */
+    public long oracleSeq() {
+        return get(ORACLE_SEQ_KEY).map(Long::parseLong).orElse(0L);
+    }
+
+    /** F4: the projection of a settlement keeps the counter at or above the {@code seq} its event carries (idempotent, never lowers). */
+    public void projectOracleSeq(Connection c, long seq) throws SQLException {
+        lockOracleSeq(c);
+        db.update(c, "UPDATE server_meta SET value = ? WHERE key = ? AND value::BIGINT < ?", Long.toString(seq),
+                ORACLE_SEQ_KEY, seq);
+    }
+
+    /** {@link #projectOracleSeq(Connection, long)} in a transaction of its own: a rebuild keeps the counter at or above the journal. */
+    public void projectOracleSeq(long seq) {
+        db.tx(c -> {
+            projectOracleSeq(c, seq);
+            return null;
+        });
+    }
+
+    /** F4: after players were projected from the journal, the next player index is above every index in use (idempotent, never lowers). */
+    public void raiseNextPlayerIndexAbove(int highestIndexInUse) {
+        db.tx(c -> {
+            db.update(c, "INSERT INTO server_meta (key, value) VALUES (?, '0') ON CONFLICT (key) DO NOTHING",
+                    NEXT_PLAYER_INDEX_KEY);
+            return db.update(c, "UPDATE server_meta SET value = ? WHERE key = ? AND value::BIGINT <= ?",
+                    Long.toString(highestIndexInUse + 1L), NEXT_PLAYER_INDEX_KEY, (long) highestIndexInUse);
+        });
+    }
+
     /** The oracle {@code seq} counter — the last {@code seq} handed out, 0 on a database that never
      *  issued one — read under a row lock that the caller's transaction keeps until it ends. */
     private long lockOracleSeq(Connection c) throws SQLException {
@@ -126,6 +164,9 @@ public class ServerMetaRepository {
             db.update(c, "UPDATE server_meta SET value = ? WHERE key = ?", Long.toString(floor), ORACLE_SEQ_KEY);
             return floor;
         });
+        if (after > raisedOracleFloor) {
+            raisedOracleFloor = after;
+        }
         if (after > before[0]) {
             // Rare and worth knowing: a new database against an old chain, a chain bootstrap, another writer.
             LOG.infof("oracle seq counter raised from %d to %d — the next seq issued is %d", before[0], after,

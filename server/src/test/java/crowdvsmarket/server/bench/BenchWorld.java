@@ -49,7 +49,7 @@ public final class BenchWorld {
     public final EngineHub hub = new EngineHub();
     public final BetFeed feed = new BetFeed();
     public final PlayerDirectory directory = new PlayerDirectory();
-    public final EventApplier applier = EventApplier.over(hub, feed, directory);
+    public final EventApplier applier = EventApplier.over(hub, feed);
     public final ObjectMapper mapper = mapper();
     public final Map<String, Market> markets = new LinkedHashMap<>();
     /** Events applied so far (replayed from the database plus fabricated). */

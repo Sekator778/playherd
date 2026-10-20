@@ -16,6 +16,7 @@ import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketRegistry;
 import crowdvsmarket.server.persistence.LedgerEntryRepository;
 import crowdvsmarket.server.persistence.RoundResultRepository;
+import crowdvsmarket.server.persistence.ServerMetaRepository;
 import crowdvsmarket.server.service.BoundaryPrices;
 import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.service.RoundCancellations;
@@ -70,6 +71,8 @@ public class EngineStateBuilder {
     RoundResultRepository roundResults;
     @Inject
     LedgerEntryRepository ledgerRows;
+    @Inject
+    ServerMetaRepository serverMeta;
 
     /** How many ledger movements a replay collects before it writes them to the table (a first start with an empty table). */
     static final int LEDGER_SPILL_BATCH = 5_000;
@@ -88,27 +91,38 @@ public class EngineStateBuilder {
      *         dropped
      */
     public Built build(long nowMs) {
-        List<Market> markets = marketRegistry.all();
-        EngineHub hub = new EngineHub();
-        BetFeed betFeed = new BetFeed();
-        EventApplier applier = EventApplier.over(hub, betFeed, players);
-        for (Market market : markets) {
-            hub.install(market); // a fresh hub: BTC's engines are rebuilt from the registry row, like every other market's
-        }
         HerdRebuild jfr = new HerdRebuild(); // I-5: the clock and the heap are read only while JFR records
         boolean rec = jfr.isEnabled();
         if (rec) {
             jfr.begin();
             jfr.heapBefore = usedHeap();
         }
+        long t = JfrClock.nanos(rec);
+        List<GameEvent> events = eventStore.loadAll();
+        jfr.loadNs = JfrClock.since(rec, t);
+        // F4: the players and markets tables are projections of the journal. Whatever they lack (a database built from the journal
+        // alone, a write that never committed) is written before anything reads them; a journal of schema version 1 has nothing to
+        // add and leaves them as they are.
+        if (marketRegistry.projectFromJournal(events) > 0) {
+            marketRegistry.reload();
+        }
+        players.repairFromJournal(events);
+        players.all().stream().mapToInt(PlayerDirectory.Row::playerIndex).max().ifPresent(serverMeta::raiseNextPlayerIndexAbove);
+        List<Market> markets = marketRegistry.all();
+        EngineHub hub = new EngineHub();
+        BetFeed betFeed = new BetFeed();
+        EventApplier applier = EventApplier.over(hub, betFeed);
+        for (Market market : markets) {
+            hub.install(market); // a fresh hub: BTC's engines are rebuilt from the registry row, like every other market's
+        }
+        // The applier reads nothing outside the hub: the players a journal of schema version 1 does not describe come from the table,
+        // put into the hub's roster before the replay (an event of version 2 then overrides them).
+        hub.roster().seed(players.all());
         // The ledger keeps no history in memory: the movements the replay produces and the ledger_entries table lacks (all of
         // them on the first start after V16, the tail a crash or a failed write left otherwise) are written from here in
         // batches; a write that fails leaves them in the hub's outbox, where the live flush takes them over.
         hub.ledgerOutbox().skipStored(ledgerRows.stored()::has);
         hub.ledgerOutbox().spillTo(ledgerRows::insertBatch, LEDGER_SPILL_BATCH);
-        long t = JfrClock.nanos(rec);
-        List<GameEvent> events = eventStore.loadAll();
-        jfr.loadNs = JfrClock.since(rec, t);
         t = JfrClock.nanos(rec);
         // The derived rows of a settlement are written after its event is committed (GameService#resolveRound), and a
         // stop or a failing write between the two leaves rounds without them - possibly several, since the game goes on
@@ -125,6 +139,12 @@ public class EngineStateBuilder {
                     unwrittenReports.add(report);
                 }
             }
+        }
+        // The oracle counter: what the journal issued (RoundResolved.oracleSeq, raised while replaying) or the database counter holds
+        // (the floor the chain service demanded, rows of a version-1 journal), whichever is higher.
+        hub.raiseOracleSeq(serverMeta.oracleSeq());
+        if (hub.oracleSeq() > serverMeta.oracleSeq()) {
+            serverMeta.projectOracleSeq(hub.oracleSeq()); // the counter in the database follows the journal (a database built from it)
         }
         if (rec) {
             jfr.applyNs = JfrClock.since(rec, t);

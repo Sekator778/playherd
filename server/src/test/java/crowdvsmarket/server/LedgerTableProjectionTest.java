@@ -86,7 +86,7 @@ class LedgerTableProjectionTest extends LiveGameTestBase {
      *  list of the ledger book held before F3. */
     private List<LedgerEntry> replayedEntries() {
         EngineHub aside = new EngineHub();
-        EventApplier applier = EventApplier.over(aside, new BetFeed(), players);
+        EventApplier applier = EventApplier.over(aside, new BetFeed());
         for (Market market : marketRegistry.all()) {
             aside.install(market);
         }

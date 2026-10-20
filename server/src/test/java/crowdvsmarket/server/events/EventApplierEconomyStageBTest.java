@@ -9,7 +9,6 @@ import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.domain.EngineHub;
-import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketEconomy;
 import crowdvsmarket.server.markets.MarketKind;
@@ -46,7 +45,7 @@ class EventApplierEconomyStageBTest {
     }
 
     private static EventApplier applierOver(EngineHub hub) {
-        return EventApplier.over(hub, new BetFeed(), new PlayerDirectory());
+        return EventApplier.over(hub, new BetFeed());
     }
 
     private static EngineHub hubWith(Market market) {

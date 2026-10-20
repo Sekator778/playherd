@@ -53,4 +53,15 @@ public interface MarketRegistry {
      */
     default void reload() {
     }
+
+    /**
+     * F4: makes the persisted markets agree with the {@code MarketListed} / {@code MarketClosed} events of {@code events}, the
+     * journal ({@code EngineStateBuilder} calls it at every rebuild, before the registry is read): a market the table lacks is
+     * inserted, one the journal closed is closed. A default no-op like {@link #reload}.
+     *
+     * @return the number of rows written
+     */
+    default int projectFromJournal(java.util.List<crowdvsmarket.server.events.GameEvent> events) {
+        return 0;
+    }
 }

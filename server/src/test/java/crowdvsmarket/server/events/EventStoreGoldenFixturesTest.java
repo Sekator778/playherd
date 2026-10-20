@@ -41,7 +41,11 @@ class EventStoreGoldenFixturesTest {
     @Inject
     EventStore eventStore;
 
-    private record Fixture(String typeName, GameEvent expected) {
+    /** {@code version}: the {@code schema_version} the fixture row is stored with (the four types born in F4 are version 2). */
+    private record Fixture(String typeName, GameEvent expected, int version) {
+        Fixture(String typeName, GameEvent expected) {
+            this(typeName, expected, 1);
+        }
     }
 
     static Stream<Fixture> fixtures() {
@@ -75,7 +79,13 @@ class EventStoreGoldenFixturesTest {
                         "0xgoldencoin2", 4735706L, 1700000009000L)),
                 new Fixture("EconomyCutover", new GameEvent.EconomyCutover(99_998_100_000L, 1700000010000L)),
                 new Fixture("BotRetired", new GameEvent.BotRetired("bot-golden-1", 1700000011000L)),
-                new Fixture("HerdSweptToTreasury", new GameEvent.HerdSweptToTreasury(2100L, 1700000012000L)));
+                new Fixture("HerdSweptToTreasury", new GameEvent.HerdSweptToTreasury(2100L, 1700000012000L)),
+                new Fixture("NicknameChanged", new GameEvent.NicknameChanged("p-golden-1", "Golden Name", 1700000013000L), 2),
+                new Fixture("BotStrategyAssigned", new GameEvent.BotStrategyAssigned("bot-golden-1", "trend", 1700000014000L), 2),
+                new Fixture("MarketListed", new GameEvent.MarketListed("GOLD", "PERP", "crypto", "GOLD", "Golden market", null,
+                        null, "synthetic", "GOLD", "{\"k\": 1}", 25, 1, 7, 1700000015000L, null, 600, 300, "0.1", "1.0",
+                        "0.016"), 2),
+                new Fixture("MarketClosed", new GameEvent.MarketClosed("GOLD", "golden fixture close", 1700000016000L), 2));
     }
 
     /** Every {@link GameEvent} record must have exactly one fixture above — catches "added a new
@@ -95,7 +105,7 @@ class EventStoreGoldenFixturesTest {
         String fixtureJson = readFixture(fixture.typeName());
 
         // Round trip: the committed fixture JSON decodes to exactly the expected GameEvent.
-        GameEvent decodedDirectly = eventStore.decode(-1L, fixture.typeName(), fixtureJson, 1);
+        GameEvent decodedDirectly = eventStore.decode(-1L, fixture.typeName(), fixtureJson, fixture.version());
         assertThat(decodedDirectly).isEqualTo(fixture.expected());
 
         // Replay: the exact same fixture, persisted as a real game_events row (JSONB round trip
@@ -105,9 +115,9 @@ class EventStoreGoldenFixturesTest {
         // this test, which only exercises decode()'s reading of event_type/payload/schema_version.
         Object node = db.json().readTree(fixtureJson);
         long rowId = db.tx(c -> db.queryOne(c,
-                "INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES (?, ?, ?, 1) "
+                "INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES (?, ?, ?, ?) "
                         + "RETURNING id",
-                rs -> rs.getLong("id"), fixture.typeName(), Db.jsonb(node), 0L));
+                rs -> rs.getLong("id"), fixture.typeName(), Db.jsonb(node), 0L, fixture.version()));
         try {
             GameEvent replayed = db.read(c -> db.queryOne(c,
                     "SELECT id, event_type, payload, schema_version FROM game_events WHERE id = ?",

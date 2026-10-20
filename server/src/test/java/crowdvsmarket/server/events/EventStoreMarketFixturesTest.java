@@ -27,7 +27,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       so that "one fixture per event type" in the first directory stays true) decode to that market,
  *       through the same Postgres/JSONB round trip {@link EventStore#loadAll} uses at every startup.
  * </ul>
- * {@code EventStore.CURRENT_SCHEMA_VERSION} stays 1 for both.
+ * {@code EventStore.CURRENT_SCHEMA_VERSION} was 1 when this was written (F4 made it 2; these rows are version 1 and decode as ever) for both.
  */
 @QuarkusTest
 class EventStoreMarketFixturesTest {
@@ -116,9 +116,9 @@ class EventStoreMarketFixturesTest {
     }
 
     @Test
-    void theSchemaVersionIsStillOne() {
+    void theCurrentSchemaVersionIsTwoAndTheseRowsAreVersionOne() {
         // markets are an additive, defaulted field: no schema bump (Т-13)
-        assertThat(EventStore.CURRENT_SCHEMA_VERSION).isEqualTo(1);
+        assertThat(EventStore.CURRENT_SCHEMA_VERSION).isEqualTo(2); // F4; the shape above is a version-1 row and still decodes
     }
 
     private static String marketOf(GameEvent event) {

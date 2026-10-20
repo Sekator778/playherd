@@ -13,13 +13,19 @@ import java.util.Map;
 @ApplicationScoped
 public class EventStore {
 
-    /** Task item 4 (event schema evolution): the {@code schema_version} every event this server
-     *  writes today is stamped with ({@code V3__event_schema_version.sql} adds the column,
-     *  {@code DEFAULT 1}, so every already-persisted row is version 1 too). {@link #decode} rejects
-     *  any other value loudly rather than silently guessing how to read it, since there is no
-     *  version-2 shape/branch to decode into yet — this exists purely as the hook a future,
-     *  actual shape change hangs a new branch off of. */
-    static final int CURRENT_SCHEMA_VERSION = 1;
+    /** The {@code schema_version} every event this server writes is stamped with. Version 2 is architecture plan F4 (the journal
+     *  is self-contained): {@code PlayerRegistered} carries the player's row, {@code RoundResolved} the oracle sequence number, and
+     *  the types {@code NicknameChanged}, {@code BotStrategyAssigned}, {@code MarketListed}, {@code MarketClosed} exist. A row of
+     *  version 1 (all that was written before, {@code V3__event_schema_version.sql} defaults to it) is decoded by the same records,
+     *  whose new components are then absent: {@link #decode} has the explicit branch. Any other version is refused loudly. */
+    static final int CURRENT_SCHEMA_VERSION = 2;
+
+    /** The version of every journal written before F4. */
+    static final int LEGACY_SCHEMA_VERSION = 1;
+
+    /** The event types that exist from version 2 on: a version-1 row cannot be one of them. */
+    private static final java.util.Set<String> SINCE_VERSION_2 = java.util.Set.of("NicknameChanged", "BotStrategyAssigned",
+            "MarketListed", "MarketClosed");
 
     /**
      * Task item 4 (event schema evolution): an explicit table from an old/renamed
@@ -73,12 +79,19 @@ public class EventStore {
      * replays every row into money-affecting engine state, so silently dropping one is worse than
      * failing startup loudly with enough detail — the row id — for an operator to go look at it). */
     GameEvent decode(long rowId, String type, String payloadJson, int schemaVersion) {
-        if (schemaVersion != CURRENT_SCHEMA_VERSION) {
+        if (schemaVersion != CURRENT_SCHEMA_VERSION && schemaVersion != LEGACY_SCHEMA_VERSION) {
             throw new IllegalStateException("game_events row id=" + rowId + " (type=" + type
                     + ") has unsupported schema_version=" + schemaVersion + " — this server only understands "
-                    + CURRENT_SCHEMA_VERSION + "; add a decode branch for it before replaying this data");
+                    + LEGACY_SCHEMA_VERSION + " and " + CURRENT_SCHEMA_VERSION
+                    + "; add a decode branch for it before replaying this data");
         }
         String resolvedType = resolveTypeAlias(type, TYPE_ALIASES);
+        if (schemaVersion == LEGACY_SCHEMA_VERSION && SINCE_VERSION_2.contains(resolvedType)) {
+            // Version 1: the records read the old shapes as they are (PlayerRegistered without a row is a pack grant, RoundResolved
+            // without a sequence number takes it from server_meta when its rows are written); a type born in version 2 cannot be there.
+            throw new IllegalStateException("game_events row id=" + rowId + " has event_type " + type
+                    + " that did not exist in schema_version 1");
+        }
         try {
             Class<? extends GameEvent> clazz = switch (resolvedType) {
                 case "PlayerRegistered" -> GameEvent.PlayerRegistered.class;
@@ -99,6 +112,10 @@ public class EventStore {
                 case "EconomyCutover" -> GameEvent.EconomyCutover.class;
                 case "BotRetired" -> GameEvent.BotRetired.class;
                 case "HerdSweptToTreasury" -> GameEvent.HerdSweptToTreasury.class;
+                case "NicknameChanged" -> GameEvent.NicknameChanged.class;
+                case "BotStrategyAssigned" -> GameEvent.BotStrategyAssigned.class;
+                case "MarketListed" -> GameEvent.MarketListed.class;
+                case "MarketClosed" -> GameEvent.MarketClosed.class;
                 default -> throw new IllegalStateException("game_events row id=" + rowId
                         + " has unknown event_type: " + type
                         + (resolvedType.equals(type) ? "" : " (alias table pointed it at unknown type: " + resolvedType + ")"));

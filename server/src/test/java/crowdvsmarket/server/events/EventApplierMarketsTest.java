@@ -9,7 +9,6 @@ import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.domain.EngineHub;
-import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.markets.MarketStatus;
@@ -40,7 +39,6 @@ class EventApplierMarketsTest {
         applier = new EventApplier();
         applier.hub = hub;
         applier.betFeed = new BetFeed();
-        applier.players = new PlayerDirectory();
         applier.apply(new GameEvent.PlayerRegistered("p1", START - 1_000));
     }
 
@@ -55,7 +53,7 @@ class EventApplierMarketsTest {
         aside.ensureMarket(new Market("ETH", MarketKind.PERP, "crypto", "ETH", "Ether", null, null, "synthetic", "ETH",
                 null, 25, 1, 1, MarketStatus.ACTIVE, 0L, null, null, null));
         BetFeed asideFeed = new BetFeed();
-        EventApplier over = EventApplier.over(aside, asideFeed, applier.players);
+        EventApplier over = EventApplier.over(aside, asideFeed);
 
         over.apply(new GameEvent.PlayerRegistered("p2", START - 1_000));
         over.apply(new GameEvent.BetPlaced("p2", Interval.HOURLY, START, END, Direction.UP, 5, 200_000L, START - 1, "ETH"));

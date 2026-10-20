@@ -14,8 +14,12 @@ import crowdvsmarket.engine.round.RoundPrices;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.domain.EngineHub;
-import crowdvsmarket.server.domain.PlayerDirectory;
+import crowdvsmarket.server.domain.PlayerRoster;
 import crowdvsmarket.server.dto.Enums;
+import crowdvsmarket.server.markets.Market;
+import crowdvsmarket.server.markets.MarketEconomy;
+import crowdvsmarket.server.markets.MarketKind;
+import crowdvsmarket.server.markets.MarketStatus;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
@@ -45,19 +49,15 @@ public final class EventApplier {
     @Inject
     BetFeed betFeed;
 
-    @Inject
-    PlayerDirectory players;
-
     /**
      * An applier over a state other than the live one: what a rebuild replays the event log into
      * (and then cancels the rounds of closed markets in) while the live state keeps serving, before
      * the new state is swapped in. The bean itself always works on the live hub and feed.
      */
-    public static EventApplier over(EngineHub hub, BetFeed betFeed, PlayerDirectory players) {
+    public static EventApplier over(EngineHub hub, BetFeed betFeed) {
         EventApplier applier = new EventApplier();
         applier.hub = hub;
         applier.betFeed = betFeed;
-        applier.players = players;
         return applier;
     }
 
@@ -71,6 +71,10 @@ public final class EventApplier {
     public Object apply(GameEvent event) {
         return switch (event) {
             case GameEvent.PlayerRegistered e -> {
+                if (e.isRegistration()) { // F4: the event carries the player; a returning player's event carries only the id
+                    hub.roster().register(new PlayerRoster.Entry(e.playerId(), e.walletAddress(), e.displayName(), e.kind(),
+                            e.botStrategy(), e.ownerPlayerId()));
+                }
                 hub.ledger().ensureSeasonPack(e.playerId(), Instant.ofEpochMilli(e.atMs()));
                 yield null;
             }
@@ -107,6 +111,9 @@ public final class EventApplier {
                 List<Candle> path = toCandles(e.path());
                 RoundPrices prices = new StoredRoundPrices(new BigDecimal(e.openPrice()), new BigDecimal(e.closePrice()), path);
                 RoundReport report = market.engine(e.interval()).runRound(window, prices);
+                if (e.oracleSeq() != null) {
+                    hub.raiseOracleSeq(e.oracleSeq()); // F4: assigned by the engine, carried by the event
+                }
                 market.comparison().onRoundResolved(report, path);
                 hub.betWindows().closed(window);
                 hub.closedRounds().closed(window);
@@ -177,6 +184,19 @@ public final class EventApplier {
                 hub.ledger().sweepHerdToTreasury(new PlayAmount(e.amountMojos()), Instant.ofEpochMilli(e.atMs()));
                 yield null;
             }
+            case GameEvent.NicknameChanged e -> {
+                hub.roster().setNickname(e.playerId(), e.nickname());
+                yield null;
+            }
+            case GameEvent.BotStrategyAssigned e -> {
+                hub.roster().setBotStrategy(e.playerId(), e.botStrategy());
+                yield null;
+            }
+            case GameEvent.MarketListed e -> {
+                hub.ensureMarket(marketOf(e));
+                yield null;
+            }
+            case GameEvent.MarketClosed e -> null; // no engine effect: the rounds a closed market left open are cancelled by their own events
         };
     }
 
@@ -186,6 +206,15 @@ public final class EventApplier {
         return hub.findMarket(marketId).orElseThrow(() -> new IllegalStateException(
                 event.getClass().getSimpleName() + " refers to market '" + marketId + "' that has no engines "
                         + "(is it in the markets table?) — refusing to skip a money event: " + event));
+    }
+
+    /** The market a {@link GameEvent.MarketListed} lists, exactly as the registry row was written. */
+    public static Market marketOf(GameEvent.MarketListed e) {
+        return new Market(e.marketId(), MarketKind.valueOf(e.kind()), e.category(), e.symbol(), e.title(), e.subtitle(),
+                e.iconUrl(), e.source(), e.sourceRef(), e.sourceMeta(), e.maxLeverage(), e.lotExp(), e.oracleIndex(),
+                MarketStatus.ACTIVE, e.listedAtMs(), null, null, e.endsAtMs(),
+                new MarketEconomy(e.capHourly(), e.capDaily(), new BigDecimal(e.kappa()), new BigDecimal(e.herdFeeBp()),
+                        e.stressMove() == null ? null : new BigDecimal(e.stressMove())));
     }
 
     /** Refunds every bet still pending on {@code window} and clears it — the operator/automatic
@@ -209,8 +238,8 @@ public final class EventApplier {
      *  same "should not happen" situation as {@code GameService.storeSettledResult}'s identical
      *  fallback). */
     private void recordBetFeedEntry(String roundId, GameEvent.BetPlaced e) {
-        PlayerDirectory.Row row = players.byId(e.playerId()).orElse(null);
-        String displayName = row == null ? e.playerId() : row.identity().displayName();
+        PlayerRoster.Entry row = hub.roster().find(e.playerId()).orElse(null);
+        String displayName = row == null ? e.playerId() : row.displayName();
         boolean isBot = row != null && row.displaysAsBot();
         String stake = new PlayAmount(e.stakeMojos()).toMoney().toPlainString();
         betFeed.record(roundId, e.playerId(), displayName, isBot, Enums.Direction.valueOf(e.direction().name()),

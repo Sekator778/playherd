@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
  *       trip {@link EventStore#loadAll} uses at every startup;
  *   <li>the event of a round with no venue is written without the key — byte for byte what it always was.
  * </ul>
- * {@code EventStore.CURRENT_SCHEMA_VERSION} stays 1.
+ * {@code EventStore.CURRENT_SCHEMA_VERSION} was 1 when this was written (F4 made it 2; these rows are version 1 and decode as ever).
  */
 @QuarkusTest
 class EventStoreVenueFixturesTest {
@@ -108,8 +108,8 @@ class EventStoreVenueFixturesTest {
     }
 
     @Test
-    void theSchemaVersionIsStillOne() {
-        assertThat(EventStore.CURRENT_SCHEMA_VERSION).isEqualTo(1);
+    void theCurrentSchemaVersionIsTwoAndTheseRowsAreVersionOne() {
+        assertThat(EventStore.CURRENT_SCHEMA_VERSION).isEqualTo(2); // F4; the shape above is a version-1 row and still decodes
     }
 
     private static String read(Path dir) {

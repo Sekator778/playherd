@@ -80,6 +80,10 @@ public final class EngineHub {
         final ConcurrentHashMap<String, MarketEngines> markets = new ConcurrentHashMap<>();
         final BetWindows betWindows = new BetWindows();
         final ClosedRounds closedRounds = new ClosedRounds();
+        final PlayerRoster roster = new PlayerRoster();
+        /** The last oracle sequence number issued (architecture plan F4): the engine assigns the next one, {@code RoundResolved}
+         *  carries it, and applying the event raises this to it. Touched under the engine lock only. */
+        long oracleSeq;
 
         State() {
             ledger.addListener(ledgerOutbox);
@@ -149,6 +153,24 @@ public final class EngineHub {
     /** The rounds that are resolved or cancelled ({@link ClosedRounds}); kept by {@code EventApplier}. */
     public ClosedRounds closedRounds() {
         return state.closedRounds;
+    }
+
+    /** The players the replay knows ({@link PlayerRoster}); kept by {@code EventApplier}. */
+    public PlayerRoster roster() {
+        return state.roster;
+    }
+
+    /** The last oracle sequence number issued, 0 before the first. */
+    public long oracleSeq() {
+        return state.oracleSeq;
+    }
+
+    /** Raises the oracle counter to {@code seq}; never lowers it. The caller holds the engine lock (or owns the hub, aside). */
+    public void raiseOracleSeq(long seq) {
+        State current = state;
+        if (seq > current.oracleSeq) {
+            current.oracleSeq = seq;
+        }
     }
 
     /** The market's engines, or empty when {@link #ensureMarket} never ran for it. */

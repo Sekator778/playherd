@@ -9,7 +9,6 @@ import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.domain.EngineHub;
-import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.markets.MarketStatus;
@@ -42,7 +41,6 @@ class EventApplierEconomyTest {
         applier = new EventApplier();
         applier.hub = hub;
         applier.betFeed = new BetFeed();
-        applier.players = new PlayerDirectory();
         applier.apply(new GameEvent.PlayerRegistered("p1", START - 1_000));
     }
 
@@ -119,7 +117,7 @@ class EventApplierEconomyTest {
         other.install(new Market(lowered.id(), lowered.kind(), lowered.category(), lowered.symbol(), lowered.title(), null,
                 null, "synthetic", "TST", null, 25, 1, 1, MarketStatus.ACTIVE, 0L, null, null, null,
                 new crowdvsmarket.server.markets.MarketEconomy(50, 40, new BigDecimal("0.1"), new BigDecimal("1.0"), null)));
-        EventApplier replay = EventApplier.over(other, new BetFeed(), applier.players);
+        EventApplier replay = EventApplier.over(other, new BetFeed());
         replay.apply(new GameEvent.PlayerRegistered("p1", START - 1_000));
 
         replay.apply(new GameEvent.BetPlaced("p1", Interval.HOURLY, START, END, Direction.UP, 90, 200_000L, START - 500,

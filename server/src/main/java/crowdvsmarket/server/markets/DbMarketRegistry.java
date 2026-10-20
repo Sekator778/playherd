@@ -3,6 +3,8 @@ package crowdvsmarket.server.markets;
 import com.fasterxml.jackson.databind.JsonNode;
 import crowdvsmarket.engine.market.MarketSpec;
 import crowdvsmarket.server.dto.ApiException;
+import crowdvsmarket.server.events.EventStore;
+import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.persistence.Db;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -41,6 +43,9 @@ public class DbMarketRegistry implements MarketRegistry {
 
     @Inject
     Db db;
+
+    @Inject
+    EventStore eventStore;
 
     /** Guards writes (and the swap of {@link #markets}); never held while the listener runs. */
     private final Object writeLock = new Object();
@@ -137,10 +142,16 @@ public class DbMarketRegistry implements MarketRegistry {
             if (known.isEmpty() || !known.get().isActive()) {
                 return;
             }
-            int updated = db.tx(c -> db.update(c, """
-                    UPDATE markets SET status = 'CLOSED', closed_at_ms = ?, close_reason = ?
-                    WHERE id = ? AND status = 'ACTIVE'
-                    """, nowMs, reason, marketId));
+            int updated = db.tx(c -> {
+                int rows = db.update(c, """
+                        UPDATE markets SET status = 'CLOSED', closed_at_ms = ?, close_reason = ?
+                        WHERE id = ? AND status = 'ACTIVE'
+                        """, nowMs, reason, marketId);
+                if (rows > 0) { // F4: the closing is in the journal, in the transaction that changes the row
+                    eventStore.append(c, new GameEvent.MarketClosed(marketId, reason, nowMs), nowMs);
+                }
+                return rows;
+            });
             closed = known.get().closed(nowMs, reason);
             markets = withMarket(snapshot(), closed);
             if (updated == 0) {
@@ -174,6 +185,52 @@ public class DbMarketRegistry implements MarketRegistry {
     public void reload() {
         synchronized (writeLock) {
             markets = List.copyOf(db.tx(this::loadAll));
+        }
+    }
+
+    /**
+     * F4: the {@code markets} table is a projection of the journal. Inserts the markets that {@code MarketListed} events list and the
+     * table lacks (with the {@code oracle_index} and the economy parameters the event carries) and closes those that {@code
+     * MarketClosed} events closed and the table still has active. BTC, the genesis row, is not in the journal. The cache is reloaded
+     * by the caller ({@link #reload}) when this returns more than 0.
+     */
+    @Override
+    public int projectFromJournal(List<GameEvent> events) {
+        List<GameEvent> relevant = events.stream()
+                .filter(e -> e instanceof GameEvent.MarketListed || e instanceof GameEvent.MarketClosed).toList();
+        if (relevant.isEmpty()) {
+            return 0;
+        }
+        synchronized (writeLock) {
+            int written = db.tx(c -> {
+                int n = 0;
+                for (GameEvent event : relevant) {
+                    if (event instanceof GameEvent.MarketListed e) {
+                        n += db.update(c, """
+                                INSERT INTO markets (id, kind, category, symbol, title, subtitle, icon_url, source, source_ref,
+                                    source_meta, max_leverage, lot_exp, oracle_index, status, listed_at_ms, ends_at_ms,
+                                    cap_hourly, cap_daily, kappa, herd_fee_bp, stress_move)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?)
+                                ON CONFLICT DO NOTHING
+                                """,
+                                e.marketId(), e.kind(), e.category(), e.symbol(), e.title(), e.subtitle(), e.iconUrl(), e.source(),
+                                e.sourceRef(), Db.jsonb(parseMeta(e.sourceMeta())), e.maxLeverage(), e.lotExp(), e.oracleIndex(),
+                                e.listedAtMs(), e.endsAtMs(), e.capHourly(), e.capDaily(), new java.math.BigDecimal(e.kappa()),
+                                new java.math.BigDecimal(e.herdFeeBp()),
+                                e.stressMove() == null ? null : new java.math.BigDecimal(e.stressMove()));
+                    } else if (event instanceof GameEvent.MarketClosed e) {
+                        n += db.update(c, """
+                                UPDATE markets SET status = 'CLOSED', closed_at_ms = ?, close_reason = ?
+                                WHERE id = ? AND status = 'ACTIVE'
+                                """, e.atMs(), e.reason(), e.marketId());
+                    }
+                }
+                return n;
+            });
+            if (written > 0) {
+                LOG.infof("the markets table was repaired from the journal: %d row change(s)", written);
+            }
+            return written;
         }
     }
 
@@ -245,7 +302,16 @@ public class DbMarketRegistry implements MarketRegistry {
                 economy.herdFeeBp(), economy.stressMove());
         // Read the row back: what the caller gets is exactly what a reload will give (jsonb
         // normalizes the text of sourceMeta).
-        return new Inserted(db.queryOne(c, "SELECT * FROM markets WHERE id = ?", this::toMarket, spec.id()), true);
+        Market listed = db.queryOne(c, "SELECT * FROM markets WHERE id = ?", this::toMarket, spec.id());
+        // F4: the listing is in the journal, in the transaction that inserts the row; the event carries the whole row, so the table can
+        // be rebuilt from the journal without recomputing a default.
+        eventStore.append(c, new GameEvent.MarketListed(listed.id(), listed.kind().name(), listed.category(), listed.symbol(),
+                listed.title(), listed.subtitle(), listed.iconUrl(), listed.source(), listed.sourceRef(), listed.sourceMeta(),
+                listed.maxLeverage(), listed.lotExp(), listed.oracleIndex(), listed.listedAtMs(), listed.endsAtMs(),
+                listed.economy().capHourly(), listed.economy().capDaily(), listed.economy().kappa().toPlainString(),
+                listed.economy().herdFeeBp().toPlainString(),
+                listed.economy().stressMove() == null ? null : listed.economy().stressMove().toPlainString()), nowMs);
+        return new Inserted(listed, true);
     }
 
     private List<Market> loadAll(Connection c) throws SQLException {
