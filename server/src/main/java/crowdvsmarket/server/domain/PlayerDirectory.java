@@ -220,14 +220,19 @@ public final class PlayerDirectory {
      * is left as it is. {@code keyHash} / {@code keyHint} are an API bot's first key: they are in the table and never in the journal.
      */
     public Row project(Connection c, GameEvent.PlayerRegistered e, String keyHash, String keyHint) throws SQLException {
-        boolean houseBot = KIND_HOUSE_BOT.equals(e.kind());
         db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, "
                         + "created_at_ms, kind, owner_player_id, api_key_hash, api_key_hint) "
                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-                e.playerId(), e.walletAddress(), e.displayName(), houseBot, e.botStrategy(), e.playerIndex(), e.atMs(), e.kind(),
-                e.ownerPlayerId(), keyHash, keyHint);
-        return new Row(e.playerId(), e.walletAddress(), e.displayName(), houseBot, e.botStrategy(), e.playerIndex(), e.atMs(), null,
-                false, e.kind(), e.ownerPlayerId(), keyHash, keyHint);
+                e.playerId(), e.walletAddress(), e.displayName(), KIND_HOUSE_BOT.equals(e.kind()), e.botStrategy(), e.playerIndex(),
+                e.atMs(), e.kind(), e.ownerPlayerId(), keyHash, keyHint);
+        return rowOf(e, keyHash, keyHint);
+    }
+
+    /** The row {@link #project} writes for the registration event, without writing it: what the cache gets at once when the write is
+     *  staged for the batch of the core writer. */
+    public static Row rowOf(GameEvent.PlayerRegistered e, String keyHash, String keyHint) {
+        return new Row(e.playerId(), e.walletAddress(), e.displayName(), KIND_HOUSE_BOT.equals(e.kind()), e.botStrategy(),
+                e.playerIndex(), e.atMs(), null, false, e.kind(), e.ownerPlayerId(), keyHash, keyHint);
     }
 
     /** What the journal says about one player, folded in order: the target of {@link #repairFromJournal}. */

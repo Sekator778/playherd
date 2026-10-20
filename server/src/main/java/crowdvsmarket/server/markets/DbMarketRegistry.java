@@ -91,18 +91,22 @@ public class DbMarketRegistry implements MarketRegistry {
     @Override
     public Market list(NewMarket spec, long nowMs) {
         validate(spec);
-        Market listed;
-        synchronized (writeLock) {
-            Optional<Market> known = find(snapshot(), spec.id());
-            if (known.isPresent()) {
-                return known.get();
+        // The row and its MarketListed event are written in the writer's turn (WriterTurn), which takes the registry's lock
+        // inside it: nothing here holds the lock while it waits for the writer.
+        Inserted inserted = turn.run(() -> {
+            synchronized (writeLock) {
+                Optional<Market> known = find(snapshot(), spec.id());
+                if (known.isPresent()) {
+                    return new Inserted(known.get(), false);
+                }
+                Inserted done = db.tx(c -> insertNext(c, spec, nowMs));
+                markets = withMarket(snapshot(), done.market());
+                return done; // not created: another process listed it between our snapshot and the table lock
             }
-            Inserted inserted = db.tx(c -> insertNext(c, spec, nowMs));
-            listed = inserted.market();
-            markets = withMarket(snapshot(), listed);
-            if (!inserted.created()) {
-                return listed; // another process listed it between our snapshot and the table lock
-            }
+        });
+        Market listed = inserted.market();
+        if (!inserted.created()) {
+            return listed;
         }
         LOG.infof("market listed: %s (%s/%s) oracleIndex=%d lotExp=%d maxLeverage=%d", listed.id(), listed.kind(),
                 listed.category(), listed.oracleIndex(), listed.lotExp(), listed.maxLeverage());
@@ -136,11 +140,20 @@ public class DbMarketRegistry implements MarketRegistry {
     }
 
     private void closeMarket(String marketId, String reason, long nowMs) {
+        Market closed = turn.run(() -> closeMarketRow(marketId, reason, nowMs));
+        if (closed == null) {
+            return; // unknown, closed already, or closed by another process (its own listener announced it)
+        }
+        announceClosed(closed, marketId, reason);
+    }
+
+    /** The row and its MarketClosed event, in the writer's turn; {@code null} when there was nothing to close. */
+    private Market closeMarketRow(String marketId, String reason, long nowMs) {
         Market closed;
         synchronized (writeLock) {
             Optional<Market> known = find(snapshot(), marketId);
             if (known.isEmpty() || !known.get().isActive()) {
-                return;
+                return null;
             }
             int updated = db.tx(c -> {
                 int rows = db.update(c, """
@@ -155,9 +168,13 @@ public class DbMarketRegistry implements MarketRegistry {
             closed = known.get().closed(nowMs, reason);
             markets = withMarket(snapshot(), closed);
             if (updated == 0) {
-                return; // closed by another process already; its own listener announced it
+                return null; // closed by another process already; its own listener announced it
             }
         }
+        return closed;
+    }
+
+    private void announceClosed(Market closed, String marketId, String reason) {
         LOG.infof("market closed: %s (%s)", marketId, reason);
         MarketListener l = listener;
         if (l != null) {
@@ -176,6 +193,13 @@ public class DbMarketRegistry implements MarketRegistry {
     @Override
     public void setListener(MarketListener listener) {
         this.listener = listener;
+    }
+
+    private volatile WriterTurn turn = WriterTurn.IN_PLACE;
+
+    @Override
+    public void setWriterTurn(WriterTurn turn) {
+        this.turn = turn == null ? WriterTurn.IN_PLACE : turn;
     }
 
     /** Re-reads the {@code markets} table (inserting BTC if its row is missing) and replaces the

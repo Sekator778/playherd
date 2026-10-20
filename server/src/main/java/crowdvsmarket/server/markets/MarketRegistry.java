@@ -45,6 +45,10 @@ public interface MarketRegistry {
 
     void setListener(MarketListener listener);
 
+    /** F6: where the journal writes of a listing and a closing take their turn ({@link WriterTurn}); a default no-op. */
+    default void setWriterTurn(WriterTurn turn) {
+    }
+
     /**
      * Re-reads the persisted markets, for an implementation that caches them. {@code
      * EngineRebuildService} calls it at every rebuild, so that it needs to know no implementation

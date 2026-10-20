@@ -9,8 +9,9 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * For tests that need a call to be QUEUED behind the engine's lock — the one condition under which a call can meet
  * an engine that has just stopped being ready: it passed its first readiness check, then waited for the lock while
- * another call failed and its recovery failed too ({@code GameService#lockWrite}/{@code #lockRead} check again
- * once they hold the lock). A thread that waits for the lock is parked in {@code lockWrite}/{@code lockRead}; this
+ * another call failed and its recovery failed too ({@code GameService#lockRead} and the core writer check again
+ * once they hold the lock). A thread that waits for the lock is parked in {@code lockRead}, or - a call that changes
+ * something - in {@code CoreWriter#submit}, waiting for the writer, which waits for the lock; this
  * waits for that, so the test releases the lock holder only when the call under test really is behind it, not after
  * a sleep that may be too short on a busy machine.
  */
@@ -38,8 +39,9 @@ public final class EngineLockProbe {
         await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofMillis(5)).until(() -> {
             Thread thread = probe.thread();
             return thread != null && thread.getState() == Thread.State.WAITING && Arrays.stream(thread.getStackTrace())
-                    .anyMatch(frame -> frame.getClassName().endsWith("GameService")
-                            && (frame.getMethodName().equals("lockWrite") || frame.getMethodName().equals("lockRead")));
+                    .anyMatch(frame -> (frame.getClassName().endsWith("GameService")
+                            && frame.getMethodName().equals("lockRead"))
+                            || (frame.getClassName().endsWith("CoreWriter") && frame.getMethodName().equals("submit")));
         });
     }
 }

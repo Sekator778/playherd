@@ -127,4 +127,41 @@ public class EventStore {
             throw new RuntimeException("failed to decode game_events row id=" + rowId + " of type " + type, e);
         }
     }
+
+    /** An event with the time it is stamped with, waiting to be written ({@link #appendAll}). */
+    public record Pending(GameEvent event, long atMs) {
+    }
+
+    /** Rows per INSERT statement of {@link #appendAll} (four parameters a row, far below the driver's limit). */
+    static final int APPEND_CHUNK = 200;
+
+    /**
+     * Appends {@code events}, in this order, within the caller's open transaction: the batch of the core writer
+     * ({@code CoreWriter}). Every row is what {@link #append} writes (type, payload, time, schema version); a single event is
+     * written by {@link #append} itself, more than one by multi-row {@code INSERT} statements of {@link #APPEND_CHUNK} rows,
+     * whose rows get their ids in the order of the {@code VALUES} list.
+     */
+    public void appendAll(Connection c, List<Pending> events) throws SQLException {
+        if (events.isEmpty()) {
+            return;
+        }
+        if (events.size() == 1) {
+            append(c, events.get(0).event(), events.get(0).atMs());
+            return;
+        }
+        for (int from = 0; from < events.size(); from += APPEND_CHUNK) {
+            List<Pending> chunk = events.subList(from, Math.min(events.size(), from + APPEND_CHUNK));
+            StringBuilder sql = new StringBuilder("INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES ");
+            Object[] params = new Object[chunk.size() * 4];
+            for (int i = 0; i < chunk.size(); i++) {
+                sql.append(i == 0 ? "(?, ?, ?, ?)" : ", (?, ?, ?, ?)");
+                Pending p = chunk.get(i);
+                params[i * 4] = p.event().getClass().getSimpleName();
+                params[i * 4 + 1] = Db.jsonb(p.event());
+                params[i * 4 + 2] = p.atMs();
+                params[i * 4 + 3] = CURRENT_SCHEMA_VERSION;
+            }
+            db.update(c, sql.toString(), params);
+        }
+    }
 }

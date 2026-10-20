@@ -29,6 +29,9 @@ import crowdvsmarket.engine.season.Season;
 import crowdvsmarket.server.chain.ChainSvcClient;
 import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.config.GameMode;
+import crowdvsmarket.server.core.Command;
+import crowdvsmarket.server.core.CoreWriter;
+import crowdvsmarket.server.core.WriteContext;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.domain.RoundProgress;
@@ -54,6 +57,7 @@ import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketListener;
 import crowdvsmarket.server.markets.MarketRegistry;
+import crowdvsmarket.server.markets.WriterTurn;
 import crowdvsmarket.server.jfr.HerdPlaceBet;
 import crowdvsmarket.server.jfr.HerdSettle;
 import crowdvsmarket.server.jfr.JfrClock;
@@ -126,6 +130,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * rebuild used to run inside {@code synchronized(gameService)}: it must never interleave with any
  * other read or write here either.
  *
+ * <p><b>The core writer (architecture plan F6):</b> since then no method here takes the write lock itself. Every call that
+ * changes anything is a {@link Command} that {@link CoreWriter}'s one thread runs, holding the engine write lock for the
+ * command's own work only; the events of the commands of a batch go to the journal in ONE transaction that is committed
+ * with the engine lock released, and the caller is answered after that commit (a player never gets "OK" for a bet that is not
+ * durable). A batch that fails to commit answers 503 to its commands and rebuilds the engine from the journal. The read lock
+ * is unchanged: a read can see what a batch has applied and not yet committed (the next step, F8, publishes snapshots
+ * after the commit); a rebuild and the ledger flush take {@code writerGate} first, so they never see a batch half way.
+ * Inside a command no database query and no network call: whatever needs them is done before the command is submitted, or is
+ * staged as a write of the batch's transaction ({@link WriteContext#work}).
+ *
  * <p><b>Markets (Р-69, docs/research/markets_architecture.md):</b> every round id names its market
  * ({@code RoundWindow.parseRoundId}) and every path below works for any market; BTC is the default
  * wherever an argument is optional. Prices leave the server as the market's RAW price strings
@@ -136,7 +150,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * its open rounds cancelled with a refund.
  *
  * <p><b>Settlement is atomic (§4 п.3):</b> {@link #resolveRound} fetches prices BEFORE taking the
- * lock (the source may be asked over the network), then, under the write lock, runs ONE database
+ * lock (the source may be asked over the network), then, on the core writer, runs ONE database
  * transaction — the {@code RoundResolved} event, the result and history rows, the oracle record —
  * and applies the event to the engine inside it. If anything throws, the transaction rolls back and — when
  * the event had been applied by then — the in-memory state is rebuilt from the event log before the exception
@@ -293,12 +307,20 @@ public class GameService implements MarketListener {
         try {
             crowdvsmarket.server.domain.LedgerOutbox outbox;
             List<LedgerEntry> batch;
-            engineLock.readLock().lock();
+            // the gate: between two batches of the core writer, never while one is applied in memory and not committed - a
+            // movement written to the table for an event that then fails to commit would stay there, and the rebuild would
+            // take its sequence number for a stored one
+            writerGate.lock();
             try {
-                outbox = hub.ledgerOutbox();
-                batch = outbox.drain();
+                engineLock.readLock().lock();
+                try {
+                    outbox = hub.ledgerOutbox();
+                    batch = outbox.drain();
+                } finally {
+                    engineLock.readLock().unlock();
+                }
             } finally {
-                engineLock.readLock().unlock();
+                writerGate.unlock();
             }
             if (batch.isEmpty()) {
                 return outbox.size() == 0;
@@ -361,6 +383,7 @@ public class GameService implements MarketListener {
         if (rowsRetryExecutor != null) {
             rowsRetryExecutor.shutdownNow();
         }
+        stopWriter();
     }
 
     @Inject
@@ -409,19 +432,140 @@ public class GameService implements MarketListener {
      *  must never interleave with any other read or write of {@link EngineHub} through this class. Not
      *  gated by the engine being ready: this is how it becomes ready. */
     public void runExclusively(Runnable action) {
-        // the ledger flush first (the order of the flush itself: its lock, then the engine's): a write of the old state's
-        // movements that is under way ends before the action replaces that state, and the table it may reset is not written meanwhile
+        // the ledger flush first (the order of the flush itself: its lock, then the writer's gate, then the engine's): a write
+        // of the old state's movements that is under way ends before the action replaces that state, and the table it may
+        // reset is not written meanwhile. The gate: the core writer is not half way through a batch (applied in memory, not
+        // yet committed) when the state is replaced - the replacement would lose the batch's events or the journal get them
+        // twice. Never called from a command (the writer thread holds the gate already, and taking the flush lock after it
+        // would be the wrong order).
         ledgerFlushLock.lock();
         try {
-            engineLock.writeLock().lock();
+            writerGate.lock();
             try {
-                action.run();
+                engineLock.writeLock().lock();
+                try {
+                    action.run();
+                } finally {
+                    engineLock.writeLock().unlock();
+                }
             } finally {
-                engineLock.writeLock().unlock();
+                writerGate.unlock();
             }
         } finally {
             ledgerFlushLock.unlock();
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The core writer (architecture plan F6)
+    // ---------------------------------------------------------------------------------------
+
+    /** The most commands one batch of the core writer takes ({@link CoreWriter}). A batch is one transaction, so this bounds
+     *  how many callers one slow commit holds up, and how long the engine lock is held for the commands' own work. */
+    @ConfigProperty(name = "herd.writer.max-batch", defaultValue = "256")
+    int writerMaxBatch;
+    /** How long the writer waits for more commands once it has more than one in hand and the batch is not full (milliseconds).
+     *  0: it takes what is queued and goes - the commands that arrive while a batch commits are the next batch. */
+    @ConfigProperty(name = "herd.writer.max-wait-ms", defaultValue = "0")
+    long writerMaxWaitMs;
+    /** The commands that may wait for the writer; a caller that finds the queue full waits for room. */
+    @ConfigProperty(name = "herd.writer.queue-capacity", defaultValue = "10000")
+    int writerQueueCapacity;
+
+    /** Held by the core writer for a whole cycle and by whoever replaces the engine's state or takes the ledger movements;
+     *  see {@link CoreWriter}. Lock order: the ledger flush lock, this, the engine lock. */
+    private final java.util.concurrent.locks.ReentrantLock writerGate = new java.util.concurrent.locks.ReentrantLock();
+    private volatile CoreWriter writer;
+
+    private CoreWriter writer() {
+        CoreWriter w = writer;
+        if (w == null) {
+            synchronized (this) {
+                w = writer;
+                if (w == null) {
+                    w = new CoreWriter(new CoreWriter.Host() {
+                        @Override
+                        public java.util.concurrent.locks.ReentrantLock gate() {
+                            return writerGate;
+                        }
+
+                        @Override
+                        public void lockEngine() {
+                            engineLock.writeLock().lock();
+                        }
+
+                        @Override
+                        public void unlockEngine() {
+                            engineLock.writeLock().unlock();
+                        }
+
+                        @Override
+                        public boolean ready() {
+                            return rebuildService.isReady();
+                        }
+
+                        @Override
+                        public Object apply(GameEvent event) {
+                            return eventApplier.apply(event);
+                        }
+
+                        @Override
+                        public void recover(Throwable cause, String key, long nowMs) {
+                            rebuildService.recoverAfterFailure(cause, key, nowMs);
+                        }
+                    }, db, eventStore, writerMaxBatch <= 0 ? 256 : writerMaxBatch, writerMaxWaitMs,
+                            writerQueueCapacity <= 0 ? 10_000 : writerQueueCapacity);
+                    writer = w;
+                }
+            }
+        }
+        return w;
+    }
+
+    void stopWriter() {
+        CoreWriter w = writer;
+        if (w != null) {
+            w.close();
+        }
+    }
+
+    /** The number of commands waiting for the core writer (0 before the first one). */
+    public int writerQueued() {
+        CoreWriter w = writer;
+        return w == null ? 0 : w.queued();
+    }
+
+    /** Runs {@code command} on the core writer and returns its answer once the batch it was in has committed: 503
+     *  {@code ENGINE_NOT_READY} while the engine cannot be trusted (checked here at once, and again by the writer), and for
+     *  every command of a batch that failed to commit. Every changing call of this class goes through here. */
+    private <T> T write(String key, long nowMs, Command<T> command) {
+        requireReady();
+        return writer().submit(command, true, false, key, nowMs);
+    }
+
+    private <T> T write(Command<T> command) {
+        return write(null, System.currentTimeMillis(), command);
+    }
+
+    /** {@link #write} for a command that is meant to run, and decide for itself, while the engine is not ready. */
+    private <T> T writeWhateverTheState(String key, long nowMs, Command<T> command) {
+        return writer().submit(command, false, false, key, nowMs);
+    }
+
+    /** {@link #write} for a command that needs the database's answer to decide, so it does its own transactions: it runs alone
+     *  between two batches, holding the engine lock across them. */
+    private <T> T writeSolo(String key, long nowMs, Command<T> command) {
+        requireReady();
+        return writer().submit(command, true, true, key, nowMs);
+    }
+
+    /** What a caller outside the game's own HTTP face wants of a failed batch: the failure itself, not "503, try again" -
+     *  the scheduler counts a settlement that failed, the operator's cancel says why. */
+    private static RuntimeException failureBehind(ApiException e) {
+        if (e.code() == Enums.ApiErrorCode.ENGINE_NOT_READY && e.getCause() instanceof RuntimeException cause) {
+            return cause;
+        }
+        return e;
     }
 
     /** 503 {@code ENGINE_NOT_READY} while the engine's memory cannot be trusted (class javadoc). */
@@ -482,19 +626,8 @@ public class GameService implements MarketListener {
         }
     }
 
-    /** The write lock of every call that changes the engine, taken only while it is ready: the first
-     *  check answers at once, without queueing behind a rebuild; the second one counts (a recovery may
-     *  have failed while this call waited). The caller unlocks as usual, once this has returned. */
-    private void lockWrite() {
-        requireReady();
-        engineLock.writeLock().lock();
-        if (!rebuildService.isReady()) {
-            engineLock.writeLock().unlock();
-            throw ApiException.engineNotReady();
-        }
-    }
-
-    /** {@link #lockWrite} for the read lock, taken by every read that comes from the engine. */
+    /** The read lock, taken by every read that comes from the engine, only while it is ready: the first check answers at
+     *  once, without queueing behind a rebuild; the second one counts (a recovery may have failed while this call waited). */
     private void lockRead() {
         requireReady();
         engineLock.readLock().lock();
@@ -510,6 +643,13 @@ public class GameService implements MarketListener {
      *  scheduler seeds any running market that still has no series ({@link #ensureSeries}). */
     void onStart(@Observes StartupEvent ev) {
         marketRegistry.setListener(this);
+        // the registry's journal writes (MarketListed, MarketClosed) take their turn on the core writer: alone, between two batches
+        marketRegistry.setWriterTurn(new WriterTurn() {
+            @Override
+            public <T> T run(java.util.function.Supplier<T> work) {
+                return writer().submit(ctx -> work.get(), false, true, "market", System.currentTimeMillis());
+            }
+        });
     }
 
     // ---------------------------------------------------------------------------------------
@@ -551,13 +691,6 @@ public class GameService implements MarketListener {
 
     private static crowdvsmarket.engine.round.Direction toEngine(Enums.Direction d) {
         return crowdvsmarket.engine.round.Direction.valueOf(d.name());
-    }
-
-    private void persist(GameEvent event, long atMs) {
-        db.tx(c -> {
-            eventStore.append(c, event, atMs);
-            return null;
-        });
     }
 
     // ---------------------------------------------------------------------------------------
@@ -627,65 +760,103 @@ public class GameService implements MarketListener {
      */
     public PlayerTouchResult registerOrTouchPlayer(String walletAddress, long nowMs, String clientIp, String referralCode,
                                                    String source) {
-        lockWrite();
+        requireReady();
+        // What a NEW player needs from the database and from no engine state is done here, before the writer: the writer's
+        // turn is for the engine and the one transaction of its batch. A wallet seen in the directory is a returning player;
+        // the writer asks again, so a second sign-in of a wallet that registers in the meantime is a returning one there.
+        NewPlayerPrep prep = null;
+        if (players.playerIdForWallet(walletAddress).isEmpty()) {
+            prep = prepareNewPlayer(clientIp, referralCode, nowMs);
+        }
+        final NewPlayerPrep newPlayer = prep;
         try {
-            Optional<String> existing = players.playerIdForWallet(walletAddress);
-            String playerId;
-            boolean isNew = existing.isEmpty();
-            boolean packGranted = false;
-            Instant now = Instant.ofEpochMilli(nowMs);
-            if (isNew) {
-                String ipHash = null;
-                if (clientIp != null && !clientIp.isBlank() && !"unknown".equals(clientIp)) {
-                    ipHash = registrationIps.hash(clientIp);
-                    int perDay = config.registrationMaxPerIpPerDay();
-                    if (registrationIps.countInWindow(ipHash, nowMs) >= perDay) {
-                        throw ApiException.registrationLimit("this network has already registered " + perDay
-                                + " new player" + (perDay == 1 ? "" : "s") + " in the last 24 hours - no more new players can sign "
-                                + "up from it until then (a player who already signed up can still sign in)");
+            Registration r = write("sign-in", nowMs, ctx -> {
+                Optional<String> existing = players.playerIdForWallet(walletAddress);
+                String playerId;
+                boolean isNew = existing.isEmpty();
+                boolean packGranted = false;
+                Instant now = Instant.ofEpochMilli(nowMs);
+                if (isNew) {
+                    if (newPlayer == null) {
+                        throw new IllegalStateException("no preparation for the new player " + walletAddress);
+                    }
+                    playerId = UUID.randomUUID().toString();
+                    String finalPlayerId = playerId;
+                    String ipHash = newPlayer.ipHash();
+                    GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
+                            newPlayer.playerIndex(), null, PlayerDirectory.KIND_HUMAN, null, null, null);
+                    ctx.touch();
+                    // The directory has the row at once (the next command of the batch sees the wallet); a batch that fails
+                    // to commit is followed by a rebuild, which reloads the directory from the table. The row itself (the
+                    // projection of the event) is written in the batch's transaction.
+                    players.cache(PlayerDirectory.rowOf(registered, null, null));
+                    ctx.work(c -> {
+                        players.project(c, registered, null, null);
+                        invites.recordAtRegistration(c, finalPlayerId, newPlayer.referrerId(), source);
+                        if (ipHash != null) {
+                            registrationIps.record(c, ipHash, nowMs);
+                        }
+                        return null;
+                    });
+                    packGranted = hub.ledger().seasonPackAmount(playerId, now).isPositive(); // a player nobody has seen: the first pack
+                    ctx.record(registered, nowMs);
+                } else {
+                    playerId = existing.get();
+                    Season season = Season.of(now);
+                    boolean seasonAlreadyTouched = hub.ledger().seasonRecord(playerId, season).isPresent();
+                    if (!seasonAlreadyTouched) {
+                        packGranted = hub.ledger().seasonPackAmount(playerId, now).isPositive(); // a top-up of nothing is no pack
+                        ctx.record(new GameEvent.PlayerRegistered(playerId, nowMs), nowMs);
                     }
                 }
-                playerId = UUID.randomUUID().toString();
-                String finalPlayerId = playerId;
-                int playerIndex = serverMeta.reserveNextPlayerIndex();
-                String referrerId = referralCode == null ? null : invites.playerIdForCode(referralCode).orElse(null);
-                GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
-                        playerIndex, null, PlayerDirectory.KIND_HUMAN, null, null, null);
-                // The event and the players row (its projection) are one transaction; the directory's cache gets the row only after the
-                // commit (PlayerDirectory's javadoc).
-                players.cache(db.tx(c -> {
-                    eventStore.append(c, registered, nowMs);
-                    PlayerDirectory.Row row = players.project(c, registered, null, null);
-                    invites.recordAtRegistration(c, finalPlayerId, referrerId, source);
-                    return row;
-                }));
-                packGranted = hub.ledger().seasonPackAmount(playerId, now).isPositive(); // a player nobody has seen: the first pack
-                if (ipHash != null) {
-                    registrationIps.record(ipHash, nowMs);
-                }
-                eventApplier.apply(registered);
-            } else {
-                playerId = existing.get();
-                Season season = Season.of(now);
-                boolean seasonAlreadyTouched = hub.ledger().seasonRecord(playerId, season).isPresent();
-                if (!seasonAlreadyTouched) {
-                    packGranted = hub.ledger().seasonPackAmount(playerId, now).isPositive(); // a top-up of nothing is no pack
-                    appendPlayerRegistered(playerId, nowMs);
-                }
-            }
-            return new PlayerTouchResult(summary(playerId), isNew, packGranted);
+                return new Registration(playerId, isNew, packGranted);
+            });
+            return new PlayerTouchResult(summary(r.playerId()), r.isNew(), r.starterPackGranted());
         } finally {
-            engineLock.writeLock().unlock();
+            if (newPlayer != null && newPlayer.ipHash() != null) {
+                registrationsInFlight.merge(newPlayer.ipHash(), -1, (a, b) -> a + b == 0 ? null : a + b);
+            }
         }
     }
 
-    /** The {@code PlayerRegistered} event of a player who exists already and enters a new season (a returning sign-in, an API bot's
-     *  first call of a season): it carries only the id, persisted and applied here. A new player's event carries the player (F4) and is
-     *  written in the same transaction as the {@code players} row, by the method that creates the player. */
-    private void appendPlayerRegistered(String playerId, long nowMs) {
-        GameEvent.PlayerRegistered event = new GameEvent.PlayerRegistered(playerId, nowMs);
-        persist(event, nowMs);
-        eventApplier.apply(event);
+    private record Registration(String playerId, boolean isNew, boolean starterPackGranted) {
+    }
+
+    /** What a new player's registration needs from the database, found before the writer's turn: the hash of the address
+     *  (when the address is limited), the player index reserved for the player, and the referrer. */
+    private record NewPlayerPrep(String ipHash, int playerIndex, String referrerId) {
+    }
+
+    /** New players that passed the per-address limit and are not in {@code registration_ips} yet, per address hash: counted
+     *  with the table's rows, so that simultaneous sign-ups from one address cannot all pass the last place. */
+    private final ConcurrentHashMap<String, Integer> registrationsInFlight = new ConcurrentHashMap<>();
+    private final Object registrationLimitMonitor = new Object();
+
+    private NewPlayerPrep prepareNewPlayer(String clientIp, String referralCode, long nowMs) {
+        String ipHash = null;
+        if (clientIp != null && !clientIp.isBlank() && !"unknown".equals(clientIp)) {
+            ipHash = registrationIps.hash(clientIp);
+            int perDay = config.registrationMaxPerIpPerDay();
+            synchronized (registrationLimitMonitor) {
+                int inFlight = registrationsInFlight.getOrDefault(ipHash, 0);
+                if (registrationIps.countInWindow(ipHash, nowMs) + inFlight >= perDay) {
+                    throw ApiException.registrationLimit("this network has already registered " + perDay
+                            + " new player" + (perDay == 1 ? "" : "s") + " in the last 24 hours - no more new players can sign "
+                            + "up from it until then (a player who already signed up can still sign in)");
+                }
+                registrationsInFlight.merge(ipHash, 1, Integer::sum);
+            }
+        }
+        try {
+            int playerIndex = serverMeta.reserveNextPlayerIndex();
+            String referrerId = referralCode == null ? null : invites.playerIdForCode(referralCode).orElse(null);
+            return new NewPlayerPrep(ipHash, playerIndex, referrerId);
+        } catch (RuntimeException | Error e) {
+            if (ipHash != null) {
+                registrationsInFlight.merge(ipHash, -1, (a, b) -> a + b == 0 ? null : a + b);
+            }
+            throw e;
+        }
     }
 
     /** Used by {@code BotService} to create the 20 labelled bot players once (Р-46), and (with
@@ -701,29 +872,29 @@ public class GameService implements MarketListener {
      * comes from TREASURY, like any pack.
      */
     public Identity.PlayerSummaryDto createBotPlayer(String nickname, String strategy, long nowMs, String replacesPlayerId) {
-        lockWrite();
-        try {
-            String playerId = "bot-" + strategy.toLowerCase(java.util.Locale.ROOT) + "-" + UUID.randomUUID();
-            String walletAddress = "txbot1" + playerId.replace("-", "").substring(0, Math.min(40, playerId.length()));
-            int playerIndex = serverMeta.reserveNextPlayerIndex();
+        requireReady();
+        String playerId = "bot-" + strategy.toLowerCase(java.util.Locale.ROOT) + "-" + UUID.randomUUID();
+        String walletAddress = "txbot1" + playerId.replace("-", "").substring(0, Math.min(40, playerId.length()));
+        int playerIndex = serverMeta.reserveNextPlayerIndex(); // before the writer's turn: no database round trip in it
+        write("bot", nowMs, ctx -> {
             GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
                     playerIndex, nickname, PlayerDirectory.KIND_HOUSE_BOT, strategy, null, replacesPlayerId);
-            players.cache(db.tx(c -> {
-                eventStore.append(c, registered, nowMs);
-                PlayerDirectory.Row row = players.project(c, registered, null, null);
+            ctx.touch();
+            players.cache(PlayerDirectory.rowOf(registered, null, null));
+            ctx.work(c -> {
+                players.project(c, registered, null, null);
                 if (replacesPlayerId != null) {
                     players.updateReplaced(c, replacesPlayerId);
                 }
-                return row;
-            }));
+                return null;
+            });
             if (replacesPlayerId != null) {
                 players.cacheReplaced(replacesPlayerId);
             }
-            eventApplier.apply(registered);
-            return summary(playerId);
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+            ctx.record(registered, nowMs);
+            return null;
+        });
+        return summary(playerId);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -756,34 +927,38 @@ public class GameService implements MarketListener {
         if (!NICKNAME_PATTERN.matcher(nickname).matches()) {
             throw ApiException.invalidNickname("bot name must be 3-24 characters: letters, digits, space, '_', '.', '-' only");
         }
-        lockWrite();
-        try {
-            PlayerDirectory.Row owner = players.byId(ownerId).orElseThrow(() -> ApiException.notFound("unknown player " + ownerId));
-            if (owner.isBot() || owner.isApiBot()) {
-                throw ApiException.apiCallNotAllowed("createBot");
-            }
-            if (players.apiBotsOf(ownerId).size() >= MAX_API_BOTS_PER_OWNER) {
-                throw ApiException.botLimitReached("you already have " + MAX_API_BOTS_PER_OWNER
-                        + " API bots - that is the most one person can create");
-            }
-            String playerId = "api-" + UUID.randomUUID();
-            String walletAddress = "txapi1" + playerId.replace("-", "").substring(3);
-            int playerIndex = serverMeta.reserveNextPlayerIndex();
-            String key = ApiKeys.generate();
-            String hash = ApiKeys.hash(key);
-            String hint = ApiKeys.hint(key);
+        requireReady();
+        requireApiBotPlace(ownerId); // a first look, so that only a call that can pass reserves a player index
+        String playerId = "api-" + UUID.randomUUID();
+        String walletAddress = "txapi1" + playerId.replace("-", "").substring(3);
+        int playerIndex = serverMeta.reserveNextPlayerIndex(); // before the writer's turn: no database round trip in it
+        String key = ApiKeys.generate();
+        String hash = ApiKeys.hash(key);
+        String hint = ApiKeys.hint(key);
+        PlayerDirectory.Row row = write("api bot", nowMs, ctx -> {
+            requireApiBotPlace(ownerId); // the decision, on the state of the writer: two simultaneous calls cannot both take the last place
             GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
                     playerIndex, nickname, PlayerDirectory.KIND_API_BOT, null, ownerId, null);
-            PlayerDirectory.Row row = db.tx(c -> {
-                eventStore.append(c, registered, nowMs);
-                return players.project(c, registered, hash, hint); // the key is in the table, never in the journal
-            });
-            players.cache(row);
-            eventApplier.apply(registered);
-            apiBotSeasonTouched.put(playerId, Season.of(Instant.ofEpochMilli(nowMs)).id());
-            return new Bots.ApiBotKeyDto(toDto(row), key);
-        } finally {
-            engineLock.writeLock().unlock();
+            PlayerDirectory.Row created = PlayerDirectory.rowOf(registered, hash, hint);
+            ctx.touch();
+            players.cache(created);
+            ctx.work(c -> players.project(c, registered, hash, hint)); // the key is in the table, never in the journal
+            ctx.record(registered, nowMs);
+            ctx.afterCommit(() -> apiBotSeasonTouched.put(playerId, Season.of(Instant.ofEpochMilli(nowMs)).id()));
+            return created;
+        });
+        return new Bots.ApiBotKeyDto(toDto(row), key);
+    }
+
+    /** The owner exists, is a person, and has a place left for one more API bot. */
+    private void requireApiBotPlace(String ownerId) {
+        PlayerDirectory.Row owner = players.byId(ownerId).orElseThrow(() -> ApiException.notFound("unknown player " + ownerId));
+        if (owner.isBot() || owner.isApiBot()) {
+            throw ApiException.apiCallNotAllowed("createBot");
+        }
+        if (players.apiBotsOf(ownerId).size() >= MAX_API_BOTS_PER_OWNER) {
+            throw ApiException.botLimitReached("you already have " + MAX_API_BOTS_PER_OWNER
+                    + " API bots - that is the most one person can create");
         }
     }
 
@@ -794,37 +969,33 @@ public class GameService implements MarketListener {
 
     /** A new key for the bot; the old one stops opening it at once. Returned in full, once. */
     public Bots.ApiBotKeyDto regenerateApiKey(String ownerId, String botId) {
-        lockWrite();
-        try {
+        return write(ctx -> {
             requireOwnedApiBot(ownerId, botId);
             String key = ApiKeys.generate();
             String hash = ApiKeys.hash(key);
             String hint = ApiKeys.hint(key);
-            db.tx(c -> {
+            ctx.touch();
+            ctx.work(c -> {
                 players.updateKey(c, botId, hash, hint);
                 return null;
             });
             players.cacheKey(botId, hash, hint);
             return new Bots.ApiBotKeyDto(toDto(players.byId(botId).orElseThrow()), key);
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        });
     }
 
     /** Revokes the bot's key: nothing opens the bot until a new key is generated. Idempotent. */
     public Bots.ApiBotDto revokeApiKey(String ownerId, String botId) {
-        lockWrite();
-        try {
+        return write(ctx -> {
             requireOwnedApiBot(ownerId, botId);
-            db.tx(c -> {
+            ctx.touch();
+            ctx.work(c -> {
                 players.updateKey(c, botId, null, null);
                 return null;
             });
             players.cacheKey(botId, null, null);
             return toDto(players.byId(botId).orElseThrow());
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        });
     }
 
     /** The API bot a key opens: the SHA-256 of the key is looked up; empty for an unknown or revoked key. */
@@ -845,15 +1016,13 @@ public class GameService implements MarketListener {
         if (season.id().equals(apiBotSeasonTouched.get(playerId))) {
             return;
         }
-        lockWrite();
-        try {
+        write("api bot touch", nowMs, ctx -> {
             if (hub.ledger().seasonRecord(playerId, season).isEmpty()) {
-                appendPlayerRegistered(playerId, nowMs);
+                ctx.record(new GameEvent.PlayerRegistered(playerId, nowMs), nowMs);
             }
-            apiBotSeasonTouched.put(playerId, season.id());
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+            ctx.afterCommit(() -> apiBotSeasonTouched.put(playerId, season.id()));
+            return null;
+        });
     }
 
     /** A player's PLAY balance, empty for a player the ledger does not know (a bot's view of its own account, {@code bots.ServerBotPorts}). */
@@ -887,41 +1056,37 @@ public class GameService implements MarketListener {
      * it is not part of the event log: a bot's strategy has no effect on ledger or crowd-account maths.
      */
     public void assignBotStrategy(String playerId, String botStrategy) {
-        lockWrite();
-        try {
+        write(ctx -> {
             players.byId(playerId).filter(PlayerDirectory.Row::isBot)
                     .orElseThrow(() -> ApiException.notFound("unknown bot " + playerId));
             GameEvent.BotStrategyAssigned event = new GameEvent.BotStrategyAssigned(playerId, botStrategy, System.currentTimeMillis());
-            db.tx(c -> {
-                eventStore.append(c, event, event.atMs());
+            ctx.touch();
+            ctx.work(c -> {
                 players.updateBotStrategy(c, playerId, botStrategy);
                 return null;
             });
             players.cacheBotStrategy(playerId, botStrategy);
-            eventApplier.apply(event);
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+            ctx.record(event, event.atMs());
+            return null;
+        });
     }
 
     /** A bot's new name, written the way {@link #setNickname} writes a player's but without the players' allow-list: a bot's name
      *  carries its strategy in parentheses ({@code BotService} relabels a bot moved to another strategy). */
     public void renameBot(String playerId, String nickname) {
-        lockWrite();
-        try {
+        write(ctx -> {
             players.byId(playerId).filter(PlayerDirectory.Row::isBot)
                     .orElseThrow(() -> ApiException.notFound("unknown bot " + playerId));
             GameEvent.NicknameChanged event = new GameEvent.NicknameChanged(playerId, nickname, System.currentTimeMillis());
-            db.tx(c -> {
-                eventStore.append(c, event, event.atMs());
+            ctx.touch();
+            ctx.work(c -> {
                 players.updateNickname(c, playerId, nickname);
                 return null;
             });
             players.cacheNickname(playerId, nickname);
-            eventApplier.apply(event);
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+            ctx.record(event, event.atMs());
+            return null;
+        });
     }
 
     public Identity.PlayerSummaryDto summary(String playerId) {
@@ -951,21 +1116,18 @@ public class GameService implements MarketListener {
             throw ApiException.invalidNickname(
                     "nickname must be 3-24 characters: letters, digits, space, '_', '.', '-' only");
         }
-        lockWrite();
-        try {
+        return write(ctx -> {
             players.byId(playerId).orElseThrow(() -> ApiException.notFound("unknown player " + playerId));
             GameEvent.NicknameChanged event = new GameEvent.NicknameChanged(playerId, trimmed, System.currentTimeMillis());
-            db.tx(c -> {
-                eventStore.append(c, event, event.atMs());
+            ctx.touch();
+            ctx.work(c -> {
                 players.updateNickname(c, playerId, trimmed);
                 return null;
             });
             players.cacheNickname(playerId, trimmed);
-            eventApplier.apply(event);
+            ctx.record(event, event.atMs());
             return summary(playerId);
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        });
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1081,15 +1243,13 @@ public class GameService implements MarketListener {
      *  every market in the registry and seeds the running ones, and a listing must not throw out of
      *  {@code MarketRegistry#list}, whose caller has committed it. */
     public void ensureSeries(Market market, long nowMs) {
-        engineLock.writeLock().lock();
-        try {
+        writeWhateverTheState("series " + market.id(), nowMs, ctx -> {
             if (!rebuildService.isReady()) {
-                return;
+                return null;
             }
             ensureSeriesLocked(market, nowMs);
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+            return null;
+        });
     }
 
     private void ensureSeriesLocked(Market market, long nowMs) {
@@ -1123,21 +1283,15 @@ public class GameService implements MarketListener {
     @Override
     public void onClosed(Market market, String reason) {
         long nowMs = System.currentTimeMillis();
-        engineLock.writeLock().lock();
-        try {
+        writeWhateverTheState("market " + market.id(), nowMs, ctx -> {
             if (!rebuildService.isReady()) {
-                return;
+                return null;
             }
-            try {
-                hub.ensureMarket(market);
-                cancellations.closeSeries(eventApplier, hub, market, "market closed: " + reason, nowMs);
-            } catch (RuntimeException | Error e) {
-                rebuildService.recoverAfterFailure(e, "market " + market.id(), nowMs); // always: completes a close
-                throw e;
-            }
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+            hub.ensureMarket(market);
+            ctx.touch(); // a failure from here on rebuilds, and the rebuild cancels, with a refund, every open round of every closed market
+            cancellations.closeSeries(ctx, hub, market, "market closed: " + reason, nowMs);
+            return null;
+        });
     }
 
     /** Whether any bet waits in {@code window}'s round. */
@@ -1183,156 +1337,154 @@ public class GameService implements MarketListener {
 
     public Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
         RoundWindow.RoundRef ref = parseRoundId(req.roundId());
-        marketRegistry.require(ref.market()); // MARKET_NOT_FOUND without waiting for the lock
+        marketRegistry.require(ref.market()); // MARKET_NOT_FOUND without waiting for the writer
         HerdPlaceBet jfr = new HerdPlaceBet(); // I-2: phases of the call, the clock is read only while JFR records
         boolean rec = jfr.isEnabled();
         if (rec) {
             jfr.begin();
             jfr.outcome = "ERROR";
         }
-        long t = JfrClock.nanos(rec);
-        lockWrite();
-        jfr.waitNs = JfrClock.since(rec, t);
         try {
-            // Read again under the lock: a close announced while this call waited for it wins.
-            Market market = marketRegistry.require(ref.market());
-            if (!market.isActive()) {
-                throw ApiException.marketClosed(market.id());
-            }
-            hub.ensureMarket(market);
-            RoundWindow bettingWindow = roundProgress.findNext(market.id(), ref.interval())
-                    .map(RoundClock::next)
-                    .orElseThrow(() -> ApiException.roundNotOpenForBetting(req.roundId()));
-            // Bug fix (wave-2 MINOR finding): reject strictly by wall-clock time against the
-            // window's own startMs, not only by roundId equality against RoundProgress's cursor.
-            // RoundProgress only advances when RoundSchedulerService's tick (every
-            // herd.scheduler.tick-ms, ~1s) actually resolves the previous round — so for up to that
-            // ~1s after a round has, by definition, already started (now >= bettingWindow.startMs()),
-            // the cursor could still name this same roundId as "open for betting" and let a late bet
-            // slip in. Comparing nowMs (the request's own arrival time, not a re-read of
-            // System.currentTimeMillis() here) closes that gap regardless of scheduler timing.
-            if (!bettingWindow.roundId().equals(ref.roundId()) || nowMs >= bettingWindow.startMs()) {
-                throw ApiException.roundNotOpenForBetting(req.roundId());
-            }
-            // §4 п.6: a round that is already closed (the engine's marker) was cancelled by the operator before it
-            // started — the cancellation refunded and cleared its bets, so a bet accepted now would
-            // sit in the bet book with its stake debited and never be settled or refunded.
-            t = JfrClock.nanos(rec);
-            if (hub.closedRounds().isClosed(bettingWindow)) {
-                throw ApiException.roundNotOpenForBetting(req.roundId());
-            }
-            jfr.existsNs = JfrClock.since(rec, t);
-            // Only registered players bet. A bot tick that started before the player directory was
-            // reset (test DB cleanup between classes) otherwise waited for this lock and then
-            // placed bets for bots that no longer exist — the ledger's ensureSeasonPack below
-            // would have given them a starter pack.
-            if (players.byId(playerId).isEmpty()) {
-                throw ApiException.notFound("unknown player " + playerId);
-            }
-            BigDecimal stakeDecimal;
-            try {
-                stakeDecimal = new BigDecimal(req.stake());
-            } catch (NumberFormatException e) {
-                throw ApiException.badRequest("invalid stake: " + req.stake());
-            }
-            PlayAmount stake;
-            try {
-                stake = PlayAmount.fromMoney(stakeDecimal);
-            } catch (IllegalArgumentException e) {
-                throw ApiException.badRequest(e.getMessage());
-            }
-            // Economy stage A (Р-92): 2..the cap of this market for this round length (plan A2), lowered by the size of the
-            // stake (plan A3); the message names the highest leverage allowed for this stake. The fees follow the leverage (A4).
-            MarketSpec spec = market.spec();
-            // Р-106: the fixed-payout mode has no leverage; it is for every market but the odds markets (rules point 4)
-            boolean fixed = req.isFixed();
-            if (fixed && market.kind() == crowdvsmarket.server.markets.MarketKind.ODDS) {
-                throw ApiException.badRequest("the win-or-lose (fixed payout) mode is not available on odds markets - "
-                        + market.id() + " takes percentage-mode bets only");
-            }
-            Fees fees;
-            if (fixed) {
-                fees = EconomyRules.fixedFees(stake);
-            } else {
+            Rounds.BetDto dto = write("bet", nowMs, ctx -> {
+                jfr.waitNs = ctx.queueWaitNanos();
+                long t;
+                // Read again under the lock: a close announced while this call waited for it wins.
+                Market market = marketRegistry.require(ref.market());
+                if (!market.isActive()) {
+                    throw ApiException.marketClosed(market.id());
+                }
+                hub.ensureMarket(market);
+                RoundWindow bettingWindow = roundProgress.findNext(market.id(), ref.interval())
+                        .map(RoundClock::next)
+                        .orElseThrow(() -> ApiException.roundNotOpenForBetting(req.roundId()));
+                // Bug fix (wave-2 MINOR finding): reject strictly by wall-clock time against the
+                // window's own startMs, not only by roundId equality against RoundProgress's cursor.
+                // RoundProgress only advances when RoundSchedulerService's tick (every
+                // herd.scheduler.tick-ms, ~1s) actually resolves the previous round — so for up to that
+                // ~1s after a round has, by definition, already started (now >= bettingWindow.startMs()),
+                // the cursor could still name this same roundId as "open for betting" and let a late bet
+                // slip in. Comparing nowMs (the request's own arrival time, not a re-read of
+                // System.currentTimeMillis() here) closes that gap regardless of scheduler timing.
+                if (!bettingWindow.roundId().equals(ref.roundId()) || nowMs >= bettingWindow.startMs()) {
+                    throw ApiException.roundNotOpenForBetting(req.roundId());
+                }
+                // §4 п.6: a round that is already closed (the engine's marker) was cancelled by the operator before it
+                // started — the cancellation refunded and cleared its bets, so a bet accepted now would
+                // sit in the bet book with its stake debited and never be settled or refunded.
+                t = JfrClock.nanos(rec);
+                if (hub.closedRounds().isClosed(bettingWindow)) {
+                    throw ApiException.roundNotOpenForBetting(req.roundId());
+                }
+                jfr.existsNs = JfrClock.since(rec, t);
+                // Only registered players bet. A bot tick that started before the player directory was
+                // reset (test DB cleanup between classes) otherwise waited for this lock and then
+                // placed bets for bots that no longer exist — the ledger's ensureSeasonPack below
+                // would have given them a starter pack.
+                if (players.byId(playerId).isEmpty()) {
+                    throw ApiException.notFound("unknown player " + playerId);
+                }
+                BigDecimal stakeDecimal;
                 try {
-                    EconomyRules.requireLeverageAllowed(spec, ref.interval(), req.leverage(), stake);
-                    new Leverage(req.leverage());
+                    stakeDecimal = new BigDecimal(req.stake());
+                } catch (NumberFormatException e) {
+                    throw ApiException.badRequest("invalid stake: " + req.stake());
+                }
+                PlayAmount stake;
+                try {
+                    stake = PlayAmount.fromMoney(stakeDecimal);
                 } catch (IllegalArgumentException e) {
-                    throw ApiException.invalidLeverage(e.getMessage());
+                    throw ApiException.badRequest(e.getMessage());
                 }
-                fees = EconomyRules.fees(spec, ref.interval(), req.leverage(), stake);
-            }
-
-            LedgerBook ledger = hub.ledger();
-            Instant now = Instant.ofEpochMilli(nowMs);
-            if (ledger.isRetired(playerId)) {
-                throw ApiException.badRequest("player " + playerId + " is retired");
-            }
-            // Economy stage B (plan B6): with TREASURY more than 10% below its 30-day maximum a new bet takes at most cap/4
-            boolean breaker = ledger.circuitBreakerOpen(now);
-            noteBreaker(breaker, ledger, now);
-            if (breaker && !fixed) { // the breaker lowers the leverage cap; a fixed-payout bet has none
-                int allowedNow = Math.min(EconomyRules.maxLeverage(spec, ref.interval(), stake),
-                        EconomyLimits.breakerMaxLeverage(spec.capFor(ref.interval())));
-                if (req.leverage() > allowedNow) {
-                    throw ApiException.invalidLeverage("leverage must be in [" + Leverage.MIN + ", " + allowedNow + "] for now on "
-                            + spec.id() + ": the treasury is below 90% of its 30-day maximum, new bets take at most a quarter of the "
-                            + "usual cap while it recovers (bets already open are paid as ever), got " + req.leverage());
+                // Economy stage A (Р-92): 2..the cap of this market for this round length (plan A2), lowered by the size of the
+                // stake (plan A3); the message names the highest leverage allowed for this stake. The fees follow the leverage (A4).
+                MarketSpec spec = market.spec();
+                // Р-106: the fixed-payout mode has no leverage; it is for every market but the odds markets (rules point 4)
+                boolean fixed = req.isFixed();
+                if (fixed && market.kind() == crowdvsmarket.server.markets.MarketKind.ODDS) {
+                    throw ApiException.badRequest("the win-or-lose (fixed payout) mode is not available on odds markets - "
+                            + market.id() + " takes percentage-mode bets only");
                 }
-            }
-            ledger.ensureSeasonPack(playerId, now); // idempotent — also happens inside the event replay below
+                Fees fees;
+                if (fixed) {
+                    fees = EconomyRules.fixedFees(stake);
+                } else {
+                    try {
+                        EconomyRules.requireLeverageAllowed(spec, ref.interval(), req.leverage(), stake);
+                        new Leverage(req.leverage());
+                    } catch (IllegalArgumentException e) {
+                        throw ApiException.invalidLeverage(e.getMessage());
+                    }
+                    fees = EconomyRules.fees(spec, ref.interval(), req.leverage(), stake);
+                }
 
-            if (stake.compareTo(LedgerBook.MIN_STAKE) < 0) {
-                throw ApiException.stakeBelowMinimum("stake " + stake + " is below the minimum " + LedgerBook.MIN_STAKE);
-            }
-            GameEngine engine = hub.engine(market.id(), ref.interval());
-            PlayAmount currentBalance = ledger.balance(playerId);
-            Optional<Bet> existing = engine.betBook().find(bettingWindow.roundId(), playerId);
-            // a bet being replaced is refunded first, its fees too (a legacy bet has none)
-            PlayAmount effectiveBalance = existing
-                    .map(b -> currentBalance.plus(b.stake()).plus(b.isLegacy() ? PlayAmount.ZERO : b.fees().total()))
-                    .orElse(currentBalance);
-            PlayAmount totalDebit = stake.plus(fees.total());
-            if (totalDebit.compareTo(effectiveBalance) > 0) {
-                throw ApiException.insufficientBalance("stake " + stake + " plus fees " + fees.total()
-                        + " exceeds balance " + effectiveBalance);
-            }
+                LedgerBook ledger = hub.ledger();
+                Instant now = Instant.ofEpochMilli(nowMs);
+                if (ledger.isRetired(playerId)) {
+                    throw ApiException.badRequest("player " + playerId + " is retired");
+                }
+                // Economy stage B (plan B6): with TREASURY more than 10% below its 30-day maximum a new bet takes at most cap/4
+                boolean breaker = ledger.circuitBreakerOpen(now);
+                noteBreaker(breaker, ledger, now);
+                if (breaker && !fixed) { // the breaker lowers the leverage cap; a fixed-payout bet has none
+                    int allowedNow = Math.min(EconomyRules.maxLeverage(spec, ref.interval(), stake),
+                            EconomyLimits.breakerMaxLeverage(spec.capFor(ref.interval())));
+                    if (req.leverage() > allowedNow) {
+                        throw ApiException.invalidLeverage("leverage must be in [" + Leverage.MIN + ", " + allowedNow + "] for now on "
+                                + spec.id() + ": the treasury is below 90% of its 30-day maximum, new bets take at most a quarter of the "
+                                + "usual cap while it recovers (bets already open are paid as ever), got " + req.leverage());
+                    }
+                }
+                ledger.ensureSeasonPack(playerId, now); // idempotent — also happens inside the event replay below
 
-            t = JfrClock.nanos(rec);
-            if (fixed) {
-                requireFixedExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), stake);
-            } else {
-                requireExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), req.leverage(), stake);
-            }
-            jfr.exposureNs = JfrClock.since(rec, t);
-            jfr.roundBets = rec ? engine.betBook().count(bettingWindow.roundId()) : 0;
-            GameEvent.BetPlaced event;
-            if (fixed) {
-                event = GameEvent.BetPlaced.fixed(playerId, ref.interval(), bettingWindow.startMs(), bettingWindow.endMs(),
-                        toEngine(req.direction()), stake.mojos(), nowMs, market.id(), fees.herd().mojos(), fees.network().mojos());
-            } else {
-                LiquidationParams liquidation = LiquidationParams.of(spec, ref.interval());
-                event = new GameEvent.BetPlaced(playerId, ref.interval(), bettingWindow.startMs(),
-                        bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs,
-                        market.id(), fees.herd().mojos(), fees.network().mojos(), liquidation.cap(),
-                        liquidation.kappa().toPlainString());
-            }
-            t = JfrClock.nanos(rec);
-            persist(event, nowMs);
-            jfr.persistNs = JfrClock.since(rec, t);
-            t = JfrClock.nanos(rec);
-            eventApplier.apply(event);
-            jfr.applyNs = JfrClock.since(rec, t);
-            Rounds.BetDto dto = betDto(playerId, bettingWindow.roundId(), req.direction(),
-                    fixed ? Bet.FIXED_LEVERAGE.value() : req.leverage(), stake, fees, spec, ref.interval(),
-                    fixed ? crowdvsmarket.engine.round.BetMode.FIXED : crowdvsmarket.engine.round.BetMode.PERCENTAGE);
+                if (stake.compareTo(LedgerBook.MIN_STAKE) < 0) {
+                    throw ApiException.stakeBelowMinimum("stake " + stake + " is below the minimum " + LedgerBook.MIN_STAKE);
+                }
+                GameEngine engine = hub.engine(market.id(), ref.interval());
+                PlayAmount currentBalance = ledger.balance(playerId);
+                Optional<Bet> existing = engine.betBook().find(bettingWindow.roundId(), playerId);
+                // a bet being replaced is refunded first, its fees too (a legacy bet has none)
+                PlayAmount effectiveBalance = existing
+                        .map(b -> currentBalance.plus(b.stake()).plus(b.isLegacy() ? PlayAmount.ZERO : b.fees().total()))
+                        .orElse(currentBalance);
+                PlayAmount totalDebit = stake.plus(fees.total());
+                if (totalDebit.compareTo(effectiveBalance) > 0) {
+                    throw ApiException.insufficientBalance("stake " + stake + " plus fees " + fees.total()
+                            + " exceeds balance " + effectiveBalance);
+                }
+
+                t = JfrClock.nanos(rec);
+                if (fixed) {
+                    requireFixedExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), stake);
+                } else {
+                    requireExposureRoom(market, ref.interval(), bettingWindow, playerId, toEngine(req.direction()), req.leverage(), stake);
+                }
+                jfr.exposureNs = JfrClock.since(rec, t);
+                jfr.roundBets = rec ? engine.betBook().count(bettingWindow.roundId()) : 0;
+                GameEvent.BetPlaced event;
+                if (fixed) {
+                    event = GameEvent.BetPlaced.fixed(playerId, ref.interval(), bettingWindow.startMs(), bettingWindow.endMs(),
+                            toEngine(req.direction()), stake.mojos(), nowMs, market.id(), fees.herd().mojos(), fees.network().mojos());
+                } else {
+                    LiquidationParams liquidation = LiquidationParams.of(spec, ref.interval());
+                    event = new GameEvent.BetPlaced(playerId, ref.interval(), bettingWindow.startMs(),
+                            bettingWindow.endMs(), toEngine(req.direction()), req.leverage(), stake.mojos(), nowMs,
+                            market.id(), fees.herd().mojos(), fees.network().mojos(), liquidation.cap(),
+                            liquidation.kappa().toPlainString());
+                }
+                t = JfrClock.nanos(rec);
+                ctx.record(event, nowMs);
+                jfr.applyNs = JfrClock.since(rec, t);
+                ctx.afterCommit(() -> jfr.persistNs = ctx.commitNanos());
+                return betDto(playerId, bettingWindow.roundId(), req.direction(),
+                        fixed ? Bet.FIXED_LEVERAGE.value() : req.leverage(), stake, fees, spec, ref.interval(),
+                        fixed ? crowdvsmarket.engine.round.BetMode.FIXED : crowdvsmarket.engine.round.BetMode.PERCENTAGE);
+            });
             jfr.outcome = "OK";
             return dto;
         } catch (ApiException e) {
             jfr.outcome = e.code().name();
             throw e;
         } finally {
-            engineLock.writeLock().unlock();
             if (rec) {
                 jfr.end();
                 jfr.commit();
@@ -1357,8 +1509,7 @@ public class GameService implements MarketListener {
     public void cancelBet(String playerId, String roundId, long nowMs) {
         RoundWindow.RoundRef ref = parseRoundId(roundId);
         marketRegistry.require(ref.market());
-        lockWrite();
-        try {
+        write("cancel bet", nowMs, ctx -> {
             RoundWindow bettingWindow = roundProgress.findNext(ref.market(), ref.interval())
                     .map(RoundClock::next)
                     .orElseThrow(() -> ApiException.roundNotOpenForBetting(roundId));
@@ -1368,15 +1519,13 @@ public class GameService implements MarketListener {
                 throw ApiException.roundNotOpenForBetting(roundId);
             }
             if (!hub.hasBet(ref.market(), ref.interval(), bettingWindow.roundId(), playerId)) {
-                return;
+                return null;
             }
             GameEvent.BetCancelled event = new GameEvent.BetCancelled(playerId, ref.interval(),
                     bettingWindow.startMs(), bettingWindow.endMs(), nowMs, ref.market());
-            persist(event, nowMs);
-            eventApplier.apply(event);
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+            ctx.record(event, nowMs);
+            return null;
+        });
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1392,13 +1541,14 @@ public class GameService implements MarketListener {
      *       round one hour after its end (Р-23). So does a price it cannot be settled on (an open or
      *       close that is not positive, too long a path: {@link RoundPriceChecks}), found out here
      *       and not inside the settlement transaction.
-     *   <li>Under the write lock: looks again whether the round was resolved or cancelled while prices were fetched (the
-     *       engine's marker, {@link crowdvsmarket.server.domain.ClosedRounds} - then nothing happens and {@code null} is
-     *       returned), takes the open from the round that closed there ({@link BoundaryPrices}, Р-40), then runs ONE
-     *       database transaction: the {@code RoundResolved} event, with the event applied to the engine inside it. A
-     *       failure rolls it back and, if the event had been applied, rebuilds the in-memory state from the event log
-     *       before it propagates (§4 п.13). Once it has committed, still under the lock: the close goes to the boundary
-     *       prices and the series' cursor moves on, so the next round takes bets at once.
+     *   <li>As a command of the core writer: looks again whether the round was resolved or cancelled while prices were
+     *       fetched (the engine's marker, {@link crowdvsmarket.server.domain.ClosedRounds} - then nothing happens and
+     *       {@code null} is returned), takes the open from the round that closed there ({@link BoundaryPrices}, Р-40),
+     *       applies the {@code RoundResolved} event to the engine, moves the close to the boundary prices and the series'
+     *       cursor on (so the next round takes bets at once, behind this event in the journal). The event is written in
+     *       the transaction of the batch the command is in, and the call returns after that commit. A batch that does not
+     *       commit rebuilds the in-memory state from the event log (§4 п.13); the scheduler then sees the failure that
+     *       made it fail and counts the attempt.
      *   <li>Without the lock: ONE transaction with the result and history rows and the oracle record, projections of that
      *       event ({@link #storeAfterTheLock}). A failure of that write does not fail the call: it is retried in the
      *       background with a growing delay ({@link #rowsFailed}), and the rebuild writes what a crash left
@@ -1418,28 +1568,27 @@ public class GameService implements MarketListener {
             jfr.begin();
             jfr.outcome = "ERROR";
         }
-        RoundPriceData fetched = resolvePrices(market, window); // phase 1 — no lock
-
-        long t = JfrClock.nanos(rec);
-        lockWrite();
-        long locked = JfrClock.nanos(rec);
-        jfr.waitNs = locked - t;
-        Applied applied = null;
         try {
-            applied = journalAndApplyLocked(market, window, fetched, nowMs, jfr, rec, locked);
+            RoundPriceData fetched = resolvePrices(market, window); // phase 1 — no lock
+
+            Applied applied;
+            try {
+                applied = write("round " + window.roundId(), nowMs, ctx -> {
+                    long locked = JfrClock.nanos(rec);
+                    jfr.waitNs = ctx.queueWaitNanos();
+                    try {
+                        return journalAndApplyLocked(ctx, market, window, fetched, nowMs, jfr, rec, locked);
+                    } finally {
+                        jfr.lockedNs = JfrClock.since(rec, locked);
+                    }
+                });
+            } catch (ApiException e) {
+                throw failureBehind(e); // a batch that did not commit: the scheduler counts the failed attempt
+            }
             if (applied == null) {
                 return null;
             }
-            // from here on the round is resolved for the game: the lock goes, the derived rows follow without it
-        } finally {
-            jfr.lockedNs = JfrClock.since(rec, locked);
-            engineLock.writeLock().unlock();
-            if (rec && applied == null) {
-                jfr.end();
-                jfr.commit();
-            }
-        }
-        try {
+            // from here on the round is resolved for the game: the derived rows follow without any lock
             storeAfterTheLock(applied, jfr, rec);
             return applied.report();
         } finally {
@@ -1455,17 +1604,17 @@ public class GameService implements MarketListener {
     }
 
     /**
-     * Phase 2 of {@link #resolveRound}, <b>the caller holds the write lock</b>: the part that must be serialised with
-     * every other change of the engine — the {@code RoundResolved} event in the journal and the event applied to the
-     * engine, in ONE database transaction (a failure rolls it back and, if the event had been applied, rebuilds the
-     * in-memory state from the journal before it propagates, §4 п.13). The result rows, the history and the oracle
-     * record are projections of that event; they are written by {@link #storeAfterTheLock}. The round is entered in
-     * {@link #storing} before the lock goes, so that nothing can resolve or cancel it a second time in between.
+     * Phase 2 of {@link #resolveRound}, <b>run by the core writer</b>: the part that must be serialised with every
+     * other change of the engine — the {@code RoundResolved} event applied to the engine and staged for the journal (it
+     * is written with the batch; a batch that does not commit rebuilds the in-memory state from the journal, §4 п.13).
+     * The result rows, the history and the oracle record are projections of that event; they are written by
+     * {@link #storeAfterTheLock}. The round is entered in {@link #storing} at once (and taken out again if the batch
+     * does not commit), so that nothing can resolve or cancel it a second time in between.
      *
      * @return what phase 3 needs, or {@code null} when the round was already resolved or cancelled
      */
-    private Applied journalAndApplyLocked(Market market, RoundWindow window, RoundPriceData fetched, long nowMs,
-                                          HerdSettle jfr, boolean rec, long lockedAtNanos) {
+    private Applied journalAndApplyLocked(WriteContext ctx, Market market, RoundWindow window, RoundPriceData fetched,
+                                          long nowMs, HerdSettle jfr, boolean rec, long lockedAtNanos) {
         long t = lockedAtNanos;
         // already resolved or cancelled: the engine's marker, which the journal sets (live and in a replay)
         boolean alreadyDone = hub.closedRounds().isClosed(window);
@@ -1482,38 +1631,30 @@ public class GameService implements MarketListener {
         List<Candle> path = hasBets && !data.path().isEmpty() ? data.path()
                 : List.of(singleCandle(window, open, close));
         // F4: the engine assigns the oracle sequence number: above everything issued (the hub's counter, which replaying the journal
-        // restores) and above the floor the chain service demanded (OracleSeqGate). Applying the event advances the counter, so a
-        // transaction that fails leaves no hole.
+        // restores) and above the floor the chain service demanded (OracleSeqGate) - memory only, no database in the writer's turn.
+        // Applying the event advances the counter, so the next settlement of the same batch gets the next number, and a batch that
+        // fails leaves no hole (the rebuilt counter is the journal's).
         long oracleSeq = Math.max(hub.oracleSeq(), serverMeta.raisedOracleFloor()) + 1;
         GameEvent.RoundResolved event = new GameEvent.RoundResolved(window.interval(), window.startMs(),
                 window.endMs(), open.toPlainString(), close.toPlainString(), EventApplier.fromCandles(path),
                 nowMs, market.id(), data.venue(), oracleSeq);
-        AtomicBoolean touchedMemory = new AtomicBoolean();
-        try {
-            RoundReport report = db.tx(c -> {
-                long t0 = JfrClock.nanos(rec);
-                eventStore.append(c, event, nowMs);
-                jfr.appendNs = JfrClock.since(rec, t0);
-                touchedMemory.set(true); // from here the engine may be ahead of the database
-                t0 = JfrClock.nanos(rec);
-                RoundReport r = (RoundReport) eventApplier.apply(event);
-                jfr.applyNs = JfrClock.since(rec, t0);
-                jfr.bets = r.playerOutcomes().size();
-                return r;
-            });
-            PendingRows pending = new PendingRows(market, window, report, data.sourceTsMs(), data.venue(), oracleSeq);
-            storing.put(window.roundId(), pending);
-            // the event is committed: the close is the close on the exchange the round ran on (Р-76), the next round of the
-            // series opens at it, and the series' cursor leaves the round, so the next round takes bets right away
-            boundaries.settled(window, close.movePointRight(2).longValueExact(), data.venue());
-            roundProgress.advance(market.id(), window.interval(), window);
-            return new Applied(report, pending);
-        } catch (RuntimeException | Error e) {
-            if (touchedMemory.get()) {
-                rebuildService.recoverAfterFailure(e, window.roundId(), nowMs);
-            }
-            throw e;
-        }
+        t = JfrClock.nanos(rec);
+        RoundReport report = (RoundReport) ctx.record(event, nowMs); // applied now, in the journal with the batch
+        jfr.applyNs = JfrClock.since(rec, t);
+        jfr.bets = report.playerOutcomes().size();
+        PendingRows pending = new PendingRows(market, window, report, data.sourceTsMs(), data.venue(), oracleSeq);
+        storing.put(window.roundId(), pending);
+        // a batch that does not commit takes the round back (the rebuild finds it unresolved): nobody waits for its rows
+        ctx.onRollback(() -> {
+            storing.remove(window.roundId(), pending);
+            pending.stored.complete(null);
+        });
+        // the round is resolved in the engine: the close is the close on the exchange the round ran on (Р-76), the next
+        // round of the series opens at it, and the series' cursor leaves the round, so the next round takes bets right away
+        // (its bets are behind this event in the same batch or a later one, never ahead of it in the journal)
+        boundaries.settled(window, close.movePointRight(2).longValueExact(), data.venue());
+        roundProgress.advance(market.id(), window.interval(), window);
+        return new Applied(report, pending);
     }
 
     /**
@@ -1782,9 +1923,7 @@ public class GameService implements MarketListener {
     }
 
     /** {@code AdminResource}'s entry point: parses {@code roundId} and delegates to
-     *  {@link #cancelRound(RoundWindow, String, long)} (which takes the write lock itself —
-     *  {@link java.util.concurrent.locks.ReentrantReadWriteLock}'s write lock is reentrant, so
-     *  this needs no locking of its own). */
+     *  {@link #cancelRound(RoundWindow, String, long)} (which runs it on the core writer). */
     public Rounds.CancellationDto cancelRoundById(String roundId, String reason, long nowMs) {
         return cancelRound(windowFor(roundId), reason, nowMs);
     }
@@ -1793,33 +1932,25 @@ public class GameService implements MarketListener {
      *  or currently open-for-betting round of its series; already-resolved rounds are rejected. */
     public Rounds.CancellationDto cancelRound(RoundWindow window, String reason, long nowMs) {
         Market market = marketRegistry.require(window.market());
-        lockWrite();
         try {
-            if (hub.closedRounds().isClosed(window)) {
-                throw ApiException.badRequest("round " + window.roundId() + " is already resolved");
-            }
-            Optional<RoundWindow> running = roundProgress.findNext(market.id(), window.interval());
-            if (running.isEmpty()
-                    || (!window.equals(running.get()) && !window.equals(RoundClock.next(running.get())))) {
-                throw ApiException.badRequest("not the current running or betting round for " + market.id() + "/"
-                        + window.interval());
-            }
-            hub.ensureMarket(market);
-            AtomicBoolean touchedMemory = new AtomicBoolean();
-            try {
-                // one transaction, like the settlement; never touches RoundProgress (the scheduler steps over)
-                Rounds.CancellationDto cancelled =
-                        cancellations.cancel(eventApplier, hub, market, window, reason, nowMs, touchedMemory);
-                rebuildService.recovered(window.roundId());
-                return cancelled;
-            } catch (RuntimeException | Error e) {
-                if (touchedMemory.get()) {
-                    rebuildService.recoverAfterFailure(e, window.roundId(), nowMs);
+            return write("cancel " + window.roundId(), nowMs, ctx -> {
+                if (hub.closedRounds().isClosed(window)) {
+                    throw ApiException.badRequest("round " + window.roundId() + " is already resolved");
                 }
-                throw e;
-            }
-        } finally {
-            engineLock.writeLock().unlock();
+                Optional<RoundWindow> running = roundProgress.findNext(market.id(), window.interval());
+                if (running.isEmpty()
+                        || (!window.equals(running.get()) && !window.equals(RoundClock.next(running.get())))) {
+                    throw ApiException.badRequest("not the current running or betting round for " + market.id() + "/"
+                            + window.interval());
+                }
+                hub.ensureMarket(market);
+                // with the batch's transaction, like the settlement; never touches RoundProgress (the scheduler steps over)
+                Rounds.CancellationDto cancelled = cancellations.cancel(ctx, hub, market, window, reason, nowMs);
+                ctx.afterCommit(() -> rebuildService.recovered(window.roundId()));
+                return cancelled;
+            });
+        } catch (ApiException e) {
+            throw failureBehind(e); // a batch that did not commit: the operator is told why
         }
     }
 
@@ -2391,10 +2522,8 @@ public class GameService implements MarketListener {
             throw ApiException.withdrawalBelowMinimum(
                     "withdrawal " + amt + " is below the minimum " + MIN_WITHDRAWAL);
         }
-        String requestId;
-        String toAddress;
-        lockWrite();
-        try {
+        withdrawalSubmitter.ensureNamespace(); // E1: before this database's first withdrawal row exists (§4 п.16); not in the writer's turn
+        Requested requested = write("withdrawal", nowMs, ctx -> {
             PlayAmount balance = hub.ledger().balance(playerId);
             if (amt.compareTo(balance) > 0) {
                 throw ApiException.withdrawalExceedsBalance("withdrawal " + amt + " exceeds balance " + balance);
@@ -2406,29 +2535,27 @@ public class GameService implements MarketListener {
                         + withdrawable + ": starter packs (" + hub.ledger().packCredited(playerId) + " credited to you so far) "
                         + "stay in the game, only winnings and deposits above them can be withdrawn");
             }
-            toAddress = players.byId(playerId)
+            String toAddress = players.byId(playerId)
                     .orElseThrow(() -> ApiException.notFound("unknown player " + playerId))
                     .walletAddress();
-            withdrawalSubmitter.ensureNamespace(); // E1: before this database's first withdrawal row exists (§4 п.16)
             GameEvent.WithdrawalRequested event = new GameEvent.WithdrawalRequested(playerId, amt.mojos(), nowMs);
-            persist(event, nowMs);
             // LedgerBook assigns its own "w-N" id inside requestWithdrawal (a single counter shared
             // with deposits' "d-N") — we reuse THAT id as our own external requestId rather than
             // minting a separate one, precisely so replaying this same event later (same call, same
             // position in the event order) reproduces the identical id deterministically; see
             // GameEvent.WithdrawalRequested's javadoc and EventApplier's WithdrawalRequested case.
-            requestId = (String) eventApplier.apply(event);
-            String finalRequestId = requestId;
-            String finalToAddress = toAddress;
-            db.tx(c -> {
-                withdrawalDeposits.insertWithdrawal(c, finalRequestId, playerId, amt.mojos(), finalToAddress, nowMs);
+            String requestId = (String) ctx.record(event, nowMs);
+            ctx.work(c -> {
+                withdrawalDeposits.insertWithdrawal(c, requestId, playerId, amt.mojos(), toAddress, nowMs);
                 return null;
             });
-        } finally {
-            engineLock.writeLock().unlock();
-        }
-        withdrawalSubmitter.submit(requestId, toAddress, amt.mojos(), nowMs);
-        return withdrawalDeposits.findWithdrawal(requestId).orElseThrow();
+            return new Requested(requestId, toAddress);
+        });
+        withdrawalSubmitter.submit(requested.requestId(), requested.toAddress(), amt.mojos(), nowMs);
+        return withdrawalDeposits.findWithdrawal(requested.requestId()).orElseThrow();
+    }
+
+    private record Requested(String requestId, String toAddress) {
     }
 
     /** Р-53: {@code WithdrawalPollerService}'s entry point once {@code GET
@@ -2437,22 +2564,19 @@ public class GameService implements MarketListener {
      *  WithdrawalConfirmed} — the escrow debit already happened at request time) and makes {@code
      *  coinId}/{@code height} public in the player's own withdrawal view (task requirement). */
     public void confirmWithdrawalOnChain(String requestId, String coinId, long height, long nowMs) {
-        lockWrite();
-        try {
+        write("withdrawal confirmed", nowMs, ctx -> {
             if (!withdrawalAwaitingChain(requestId)) {
-                return;
+                return null;
             }
             GameEvent.WithdrawalConfirmedOnChain event =
                     new GameEvent.WithdrawalConfirmedOnChain(requestId, coinId, height, nowMs);
-            persist(event, nowMs);
-            eventApplier.apply(event);
-            db.tx(c -> {
+            ctx.record(event, nowMs);
+            ctx.work(c -> {
                 withdrawalDeposits.markWithdrawalConfirmedOnChain(c, requestId, coinId, height, nowMs);
                 return null;
             });
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+            return null;
+        });
     }
 
     /** Р-53: {@code WithdrawalPollerService}'s entry point once {@code GET
@@ -2461,21 +2585,18 @@ public class GameService implements MarketListener {
      *  the escrowed amount, needs no {@code coinId}/{@code height}), recording {@code reason} only
      *  in the read model. */
     public void failWithdrawalOnChain(String requestId, String reason, long nowMs) {
-        lockWrite();
-        try {
+        write("withdrawal failed", nowMs, ctx -> {
             if (!withdrawalAwaitingChain(requestId)) {
-                return;
+                return null;
             }
             GameEvent.WithdrawalFailed event = new GameEvent.WithdrawalFailed(requestId, nowMs);
-            persist(event, nowMs);
-            eventApplier.apply(event);
-            db.tx(c -> {
+            ctx.record(event, nowMs);
+            ctx.work(c -> {
                 withdrawalDeposits.markWithdrawalFailed(c, requestId, reason, nowMs);
                 return null;
             });
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+            return null;
+        });
     }
 
     /** Idempotence guard for the two on-chain entry points above, checked under the write lock
@@ -2587,8 +2708,10 @@ public class GameService implements MarketListener {
      */
     public boolean creditOnChainDeposit(String playerId, int playerIndex, PlayAmount amount, String coinId,
                                          long height, long nowMs) {
-        lockWrite();
-        try {
+        // solo: the reservation of the coin is the database's answer, and the event is written only when it is ours - the
+        // command runs alone between two batches and does its own transaction (the one command that still holds the engine
+        // lock across a commit; a deposit coin is rare)
+        return writeSolo("deposit " + coinId, nowMs, ctx -> {
             GameEvent.DepositConfirmedOnChain event =
                     new GameEvent.DepositConfirmedOnChain(playerId, playerIndex, amount.mojos(), coinId, height, nowMs);
             if (!db.tx(c -> {
@@ -2608,9 +2731,7 @@ public class GameService implements MarketListener {
                 throw e;
             }
             return true;
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        });
     }
 
     // ---------------------------------------------------------------------------------------
@@ -2628,8 +2749,7 @@ public class GameService implements MarketListener {
         if (trimmedReason.isBlank()) {
             throw ApiException.badRequest("correction reason must not be blank");
         }
-        lockWrite();
-        try {
+        return write("reverse withdrawal", nowMs, ctx -> {
             LedgerBook ledger = hub.ledger();
             crowdvsmarket.engine.ledger.WithdrawalRequest request = ledger.withdrawal(requestId)
                     .orElseThrow(() -> ApiException.notFound("unknown withdrawal request " + requestId));
@@ -2642,13 +2762,10 @@ public class GameService implements MarketListener {
 
             GameEvent.WithdrawalReversed event = new GameEvent.WithdrawalReversed(request.playerId(),
                     request.amount().mojos(), originalSeason.id(), trimmedReason, requestId, nowMs);
-            persist(event, nowMs);
             crowdvsmarket.engine.ledger.LedgerCorrection correction =
-                    (crowdvsmarket.engine.ledger.LedgerCorrection) eventApplier.apply(event);
+                    (crowdvsmarket.engine.ledger.LedgerCorrection) ctx.record(event, nowMs);
             return toLedgerCorrectionDto(correction);
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        });
     }
 
     /** Task item 1 (BLOCKER security fix): {@code AdminResource}'s entry point for correcting a
@@ -2662,8 +2779,7 @@ public class GameService implements MarketListener {
         if (trimmedReason.isBlank()) {
             throw ApiException.badRequest("correction reason must not be blank");
         }
-        lockWrite();
-        try {
+        return write("reverse deposit", nowMs, ctx -> {
             LedgerBook ledger = hub.ledger();
             crowdvsmarket.engine.ledger.DepositRequest request = ledger.deposit(requestId)
                     .orElseThrow(() -> ApiException.notFound("unknown deposit request " + requestId));
@@ -2676,13 +2792,10 @@ public class GameService implements MarketListener {
 
             GameEvent.DepositReversed event = new GameEvent.DepositReversed(request.playerId(),
                     request.amount().mojos(), originalSeason.id(), trimmedReason, requestId, nowMs);
-            persist(event, nowMs);
             crowdvsmarket.engine.ledger.LedgerCorrection correction =
-                    (crowdvsmarket.engine.ledger.LedgerCorrection) eventApplier.apply(event);
+                    (crowdvsmarket.engine.ledger.LedgerCorrection) ctx.record(event, nowMs);
             return toLedgerCorrectionDto(correction);
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        });
     }
 
     private static Ledger.LedgerCorrectionDto toLedgerCorrectionDto(crowdvsmarket.engine.ledger.LedgerCorrection c) {
@@ -2968,8 +3081,7 @@ public class GameService implements MarketListener {
         if (openingPlay <= 0) {
             return false;
         }
-        lockWrite();
-        try {
+        return write("economy cutover", nowMs, ctx -> {
             LedgerBook ledger = hub.ledger();
             if (ledger.economyActive()) {
                 return false;
@@ -2981,14 +3093,11 @@ public class GameService implements MarketListener {
                         + ", more than the opening total " + opening + " (herd.economy.treasury-opening-play)");
             }
             GameEvent.EconomyCutover event = new GameEvent.EconomyCutover(opening.mojos(), nowMs);
-            persist(event, nowMs);
-            eventApplier.apply(event);
+            ctx.record(event, nowMs);
             LOG.infof("economy cutover: opening total %s, players hold %s (balances %s, open stakes %s) -> TREASURY %s, HERD 0",
                     opening, held, ledger.playersTotal(), ledger.openStakes(), ledger.treasury());
             return true;
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        });
     }
 
     /** Whether the economy has been cut over (the TREASURY and HERD accounts exist). */
@@ -3124,8 +3233,7 @@ public class GameService implements MarketListener {
      * @return the ids of the bots retired now
      */
     public List<String> retireBotsBelowThreshold(long nowMs) {
-        lockWrite();
-        try {
+        return write("retire bots", nowMs, ctx -> {
             LedgerBook ledger = hub.ledger();
             if (!ledger.economyActive()) {
                 return List.of();
@@ -3146,20 +3254,17 @@ public class GameService implements MarketListener {
                     continue;
                 }
                 GameEvent.BotRetired event = new GameEvent.BotRetired(bot.playerId(), nowMs);
-                db.tx(c -> {
-                    eventStore.append(c, event, nowMs);
+                ctx.record(event, nowMs);
+                ctx.work(c -> {
                     players.updateRetired(c, bot.playerId(), nowMs);
                     return null;
                 });
-                eventApplier.apply(event);
                 players.cacheRetired(bot.playerId(), nowMs);
                 retired.add(bot.playerId());
                 LOG.debugf("bot %s retired with %s", bot.playerId(), balance);
             }
             return retired;
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        });
     }
 
     /**
@@ -3169,8 +3274,7 @@ public class GameService implements MarketListener {
      * @return the amount moved (zero when nothing was)
      */
     public PlayAmount sweepBotFeesIfDue(long nowMs) {
-        lockWrite();
-        try {
+        return write("sweep bot fees", nowMs, ctx -> {
             LedgerBook ledger = hub.ledger();
             if (!ledger.economyActive()) {
                 return PlayAmount.ZERO;
@@ -3191,13 +3295,10 @@ public class GameService implements MarketListener {
                 return PlayAmount.ZERO;
             }
             GameEvent.HerdSweptToTreasury event = new GameEvent.HerdSweptToTreasury(amount.mojos(), nowMs);
-            persist(event, nowMs);
-            eventApplier.apply(event);
+            ctx.record(event, nowMs);
             LOG.infof("the fees the bots paid, %s, moved from HERD to TREASURY", amount);
             return amount;
-        } finally {
-            engineLock.writeLock().unlock();
-        }
+        });
     }
 
     /** The nicknames in use, bots included, retired ones too: a generated name must be new. */

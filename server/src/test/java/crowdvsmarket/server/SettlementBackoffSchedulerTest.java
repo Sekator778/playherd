@@ -208,9 +208,11 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
     }
 
     @Test
-    void aFailureThatCannotHaveTouchedMemoryRebuildsNothingAndTheEngineStaysReady() throws Exception {
+    void aBatchThatCannotBeWrittenRebuildsTheEngineFromTheJournalAndTheGameGoesOn() throws Exception {
         Fixture f = marketWithABetAndTheRunningWindowSettled("T_BO_UNTOUCHED", "BOU");
         var ledgerBefore = hub.ledger();
+        // the event is applied in the writer before the batch is written, so a write that fails leaves the engine ahead of
+        // the journal: the engine is rebuilt (the batch's events never reached the journal, so the rebuilt state lacks them)
         doThrow(new IllegalStateException("db flapping while writing the event")).when(eventStoreSpy)
                 .append(any(Connection.class), any(GameEvent.RoundResolved.class), anyLong());
         Mockito.clearInvocations(eventStoreSpy);
@@ -220,9 +222,10 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         scheduler.tick(t0 + 2_000L);
         scheduler.tick(t0 + 6_000L);
 
-        verify(eventStoreSpy, never()).loadAll();
-        assertThat(rebuild.isReady()).as("nothing was applied, so there is nothing to be unsure of").isTrue();
-        assertThat(hub.ledger()).as("and the engine was not rebuilt").isSameAs(ledgerBefore);
+        verify(eventStoreSpy, Mockito.atLeast(3)).loadAll();
+        assertThat(rebuild.isReady()).as("the rebuild worked, the database answers reads").isTrue();
+        assertThat(hub.ledger()).as("and the engine is a rebuilt one").isNotSameAs(ledgerBefore);
+        assertThat(roundResults.exists(f.betting().roundId())).isFalse();
         assertThat(gameService.account(f.player()).balance()).as("the game goes on serving").isEqualTo("9699.840");
         assertThat(gameService.hasPendingBets(f.betting())).isTrue();
 
@@ -234,22 +237,23 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
     }
 
     @Test
-    void aDatabaseThatDoesNotGiveAConnectionRebuildsNothingEither() throws Exception {
+    void aDatabaseThatDoesNotGiveAConnectionFailsTheBatchAndTheEngineIsRebuiltOnceItAnswers() throws Exception {
         Fixture f = marketWithABetAndTheRunningWindowSettled("T_BO_NOCONN", "BON");
         var ledgerBefore = hub.ledger();
         Mockito.clearInvocations(eventStoreSpy);
-        // every transaction fails before its work runs — what a database that is down looks like to the settlement
+        // every transaction fails before its work runs - what a database that is down looks like to the settlement
         doThrow(new RuntimeException("db connection failure")).when(dbSpy).tx(any());
         long t0 = f.betting().endMs() + 1;
 
         scheduler.tick(t0);
         Mockito.reset(dbSpy);
+        scheduler.tick(t0 + 2_000L);   // the database is back (the rebuild of the failed batch, or the retry of it)
 
-        verify(eventStoreSpy, never()).loadAll();
+        verify(eventStoreSpy, Mockito.atLeastOnce()).loadAll();
         assertThat(rebuild.isReady()).isTrue();
-        assertThat(hub.ledger()).isSameAs(ledgerBefore);
-        assertThat(roundResults.exists(f.betting().roundId())).isFalse();
-        assertThat(gameService.hasPendingBets(f.betting())).isTrue();
+        assertThat(hub.ledger()).isNotSameAs(ledgerBefore);
+        assertThat(roundResults.exists(f.betting().roundId())).as("and the retry settles the round").isTrue();
+        assertThat(gameService.account(f.player()).balance()).isEqualTo("10059.840");
     }
 
     // ------------------------------------------------------------------------------------------

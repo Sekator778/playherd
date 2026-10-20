@@ -6,6 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.HexFormat;
 
 /**
@@ -68,5 +70,10 @@ public class RegistrationIpRepository {
     /** Counts one more registration for the address. */
     public void record(String ipHash, long nowMs) {
         db.tx(c -> db.update(c, "INSERT INTO registration_ips (ip_hash, at_ms) VALUES (?, ?)", ipHash, nowMs));
+    }
+
+    /** {@link #record(String, long)} within the caller's transaction (the batch of the core writer). */
+    public void record(Connection c, String ipHash, long nowMs) throws SQLException {
+        db.update(c, "INSERT INTO registration_ips (ip_hash, at_ms) VALUES (?, ?)", ipHash, nowMs);
     }
 }

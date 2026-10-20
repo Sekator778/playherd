@@ -3,6 +3,7 @@ package crowdvsmarket.server.service;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundClock;
 import crowdvsmarket.engine.round.RoundWindow;
+import crowdvsmarket.server.core.WriteContext;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.dto.Rounds;
@@ -61,7 +62,7 @@ public class RoundCancellations {
      * does not point at is debited, never settled, never refunded), earliest first. Then stops the series.
      * The caller holds the engine lock and recovers from a failure ({@link #cancel}).
      */
-    public void closeSeries(EventApplier applier, EngineHub hub, Market market, String reason, long nowMs) {
+    public void closeSeries(WriteContext ctx, EngineHub hub, Market market, String reason, long nowMs) {
         for (Interval interval : Interval.values()) {
             TreeMap<Long, RoundWindow> windows = new TreeMap<>();
             Optional<RoundWindow> running = roundProgress.findNext(market.id(), interval);
@@ -75,11 +76,34 @@ public class RoundCancellations {
             }
             for (RoundWindow window : windows.values()) {
                 if (!hub.closedRounds().isClosed(window)) {
-                    cancel(applier, hub, market, window, reason, nowMs);
+                    cancel(ctx, hub, market, window, reason, nowMs);
                 }
             }
             roundProgress.remove(market.id(), interval);
         }
+    }
+
+    /**
+     * {@link #cancel(EventApplier, EngineHub, Market, RoundWindow, String, long, AtomicBoolean)} for the live engine, inside
+     * a command of the core writer: the event is applied now and goes to the journal with the batch, the cancelled result row
+     * is written in the batch's transaction. A failure of either fails the batch; the engine is rebuilt behind it.
+     */
+    public Rounds.CancellationDto cancel(WriteContext ctx, EngineHub hub, Market market, RoundWindow window,
+                                         String reason, long nowMs) {
+        int refundedBetCount = hub.engine(market.id(), window.interval()).betBook().count(window.roundId());
+        GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
+                window.endMs(), reason, nowMs, market.id());
+        String venue = Instruments.hasBackup(market) ? venues.venueOfRound(window.roundId()).orElse(null) : null;
+        var canonical = ResultsHasher.build(market.id(), window.roundId(), window.interval().name(), "CANCELLED",
+                null, null, List.of(), null, venue);
+        ctx.record(event, nowMs); // refunds every pending bet and clears the round's BetBook entry
+        ctx.work(c -> {
+            roundResults.insertCancelled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
+                    window.endMs(), reason, nowMs, refundedBetCount, canonical.hash(), canonical.json(), venue);
+            return null;
+        });
+        return new Rounds.CancellationDto(window.roundId(), market.id(), market.symbol(), reason, nowMs,
+                refundedBetCount);
     }
 
     /** {@link #cancel(EventApplier, EngineHub, Market, RoundWindow, String, long, AtomicBoolean)} for a caller
