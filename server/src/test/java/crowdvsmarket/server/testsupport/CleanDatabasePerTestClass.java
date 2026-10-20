@@ -118,6 +118,8 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
             // it did not.
             rebuildService.rebuildStateLocked();
         });
+        // the sessions table was truncated: a cached session of an earlier class must not outlive it
+        Arc.container().instance(crowdvsmarket.server.auth.SessionService.class).get().clearCache();
         // ... and BotService#ensureBotsExist then creates exactly this class's own configured bot count
         // (outside the engine lock, like EngineRebuildService#rebuild: it takes the BotService monitor).
         // economy stage B: a profile with herd.economy.treasury-opening-play > 0 starts its (emptied) game with the cutover, as a first start does
