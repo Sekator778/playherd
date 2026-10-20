@@ -1,0 +1,2 @@
+oracle_seq=6
+next_player_index=4

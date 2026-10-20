@@ -1,0 +1,9 @@
+player api-38d11bdf-130f-44ea-8507-8d00f54d95d6 txapi138d11bdf130f44ea85078d00f54d95d6 nick=Api V1 bot=false strategy=~ index=3 created=1792494703822 retired=-1 replaced=false kind=API_BOT owner=c083b245-6553-4e42-8a1d-3f4b9c68d888
+player bot-trend-9028b37d-a030-49e8-bca5-9e6521056cf7 txbot1bottrend9028b37da03049e8bca59e6521056cf7 nick=Bot V1 relabelled bot=true strategy=trend-follower index=2 created=1792494703822 retired=-1 replaced=false kind=HUMAN owner=~
+player c083b245-6553-4e42-8a1d-3f4b9c68d888 txch1livev1aa53bdcc887604cf9908c78873e490434 nick=Alice V1 bot=false strategy=~ index=0 created=1792494703868 retired=-1 replaced=false kind=HUMAN owner=~
+player df114568-8afe-46a8-8f56-cc0c8ab6a9a6 txch1livev1b757c1d9223834e69b4553fccaaf8e65c nick=~ bot=false strategy=~ index=1 created=1792494703928 retired=-1 replaced=false kind=HUMAN owner=~
+market BTC PERP crypto BTC title=Bitcoin sub=~ icon=~ src=hyperliquid/BTC meta=~ lev=40 lot=0 oracleIndex=0 ACTIVE listed=0 closed=-1 reason=~ ends=-1 caps=1200/500 kappa=0.1000 fee=0.920 stress=0.008170
+market V1_CLOSE PERP crypto VTWO title=VTWO test market sub=~ icon=~ src=synthetic/V1_CLOSE meta=~ lev=25 lot=1 oracleIndex=2 CLOSED listed=1792494703849 closed=1792494704518 reason=V1 test close ends=-1 caps=25/25 kappa=0.1000 fee=1.000 stress=0.016000
+market V1_MAIN PERP crypto VONE title=VONE test market sub=~ icon=~ src=synthetic/V1_MAIN meta=~ lev=25 lot=1 oracleIndex=1 ACTIVE listed=1792494703824 closed=-1 reason=~ ends=-1 caps=25/25 kappa=0.1000 fee=1.000 stress=0.016000
+counter next_player_index=4
+counter oracle_seq=6

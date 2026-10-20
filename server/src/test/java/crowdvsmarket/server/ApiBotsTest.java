@@ -411,7 +411,10 @@ class ApiBotsTest extends LiveRpcTestBase {
         new com.fasterxml.jackson.databind.ObjectMapper().readTree(personEvent).fieldNames().forEachRemaining(personFields::add);
         java.util.List<String> botFields = new java.util.ArrayList<>();
         new com.fasterxml.jackson.databind.ObjectMapper().readTree(botEvent).fieldNames().forEachRemaining(botFields::add);
-        assertThat(botFields).containsExactlyInAnyOrderElementsOf(personFields);
+        // F4: both are PlayerRegistered, the one event of a player; the bot's carries the owner on top, and neither carries a credential
+        assertThat(botFields).containsAll(personFields).contains("ownerPlayerId").doesNotContain("apiKey", "keyHash", "keyHint", "api_key_hash");
+        assertThat(personFields).doesNotContain("ownerPlayerId", "apiKey", "keyHash", "keyHint");
+        assertThat(personEvent).contains("HUMAN");
     }
 
     private static java.util.List<String> ratingIds(JsonNode entries) {

@@ -66,7 +66,9 @@ public final class PlayerRoster {
     /** Puts the players of a journal of schema version 1 (the {@code players} table) into the roster, before the replay. */
     public void seed(Collection<PlayerDirectory.Row> rows) {
         for (PlayerDirectory.Row row : rows) {
-            register(new Entry(row.playerId(), row.walletAddress(), row.nickname(), row.kind(), row.botStrategy(), row.ownerId()));
+            // a house bot created before F4 has kind HUMAN in the table (the column's default; is_bot is what says it is a bot)
+            register(new Entry(row.playerId(), row.walletAddress(), row.nickname(),
+                    row.isBot() ? PlayerDirectory.KIND_HOUSE_BOT : row.kind(), row.botStrategy(), row.ownerId()));
         }
     }
 }

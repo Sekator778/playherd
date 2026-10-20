@@ -37,6 +37,8 @@ class DbMarketRegistryTest {
     @Inject
     Db db;
     @Inject
+    crowdvsmarket.server.events.EventStore eventStore;
+    @Inject
     DbMarketRegistry live;
 
     private static final String PREFIX = "RT_";
@@ -44,6 +46,7 @@ class DbMarketRegistryTest {
     private DbMarketRegistry registry(MarketListener listener) {
         DbMarketRegistry registry = new DbMarketRegistry();
         registry.db = db;
+        registry.eventStore = eventStore;
         registry.setListener(listener);
         registry.reload();
         return registry;

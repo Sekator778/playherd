@@ -1,0 +1,24 @@
+account api-38d11bdf-130f-44ea-8507-8d00f54d95d6 balance=10000000 pack=10000000 fees=0 withdrawable=10000000 retired=false
+account bot-trend-9028b37d-a030-49e8-bca5-9e6521056cf7 balance=10019880 pack=10000000 fees=120 withdrawable=10019880 retired=false
+account c083b245-6553-4e42-8a1d-3f4b9c68d888 balance=9949640 pack=10000000 fees=360 withdrawable=9949640 retired=false
+account df114568-8afe-46a8-8f56-cc0c8ab6a9a6 balance=9969750 pack=10000000 fees=250 withdrawable=9969750 retired=false
+ledger economyActive=false treasury=0 herd=0 openStakes=150000 playersTotal=39939270 openingTotal=0 deposited=0 withdrawnConfirmed=0 withdrawalsPending=0 botFeesSwept=0 lastSweepAtMs=-1 cutoverAtMs=-1 lastSequence=29
+crowd BTC capital=100000.00 rounds=0
+comparison BTC hold=[] anti=[]
+series BTC/DAILY latestClosedEnd=-1
+series BTC/HOURLY latestClosedEnd=-1
+crowd V1_CLOSE capital=100000.00 rounds=3
+  crowdRound RoundResult[roundId=V1_CLOSE-1d-1792494600000, traded=false, direction=null, leverage=null, margin=null, entryPrice=null, liquidated=false, capitalBefore=100000.00, capitalAfter=100000.00]
+  crowdRound RoundResult[roundId=V1_CLOSE-1h-1792494660000, traded=false, direction=null, leverage=null, margin=null, entryPrice=null, liquidated=false, capitalBefore=100000.00, capitalAfter=100000.00]
+  crowdRound RoundResult[roundId=V1_CLOSE-1h-1792494720000, traded=true, direction=UP, leverage=2, margin=10000.00, entryPrice=500.00, liquidated=false, capitalBefore=100000.00, capitalAfter=100000.00]
+comparison V1_CLOSE hold=[100000.00, 100000.00, 100000.00] anti=[100000.00, 100000.00, 100000.00]
+series V1_CLOSE/DAILY latestClosedEnd=1792494960000
+series V1_CLOSE/HOURLY latestClosedEnd=1792494900000
+crowd V1_MAIN capital=104000.00 rounds=3
+  crowdRound RoundResult[roundId=V1_MAIN-1d-1792494600000, traded=false, direction=null, leverage=null, margin=null, entryPrice=null, liquidated=false, capitalBefore=100000.00, capitalAfter=100000.00]
+  crowdRound RoundResult[roundId=V1_MAIN-1h-1792494660000, traded=false, direction=null, leverage=null, margin=null, entryPrice=null, liquidated=false, capitalBefore=100000.00, capitalAfter=100000.00]
+  crowdRound RoundResult[roundId=V1_MAIN-1h-1792494720000, traded=true, direction=UP, leverage=4, margin=10000.00, entryPrice=1000.00, liquidated=false, capitalBefore=100000.00, capitalAfter=104000.00]
+comparison V1_MAIN hold=[100000.00, 100000.00, 110000.00] anti=[100000.00, 100000.00, 96000.00]
+series V1_MAIN/DAILY latestClosedEnd=1792494720000
+series V1_MAIN/HOURLY latestClosedEnd=1792494780000
+  bet V1_MAIN-1h-1792494840000 Bet[playerId=c083b245-6553-4e42-8a1d-3f4b9c68d888, roundId=V1_MAIN-1h-1792494840000, direction=DOWN, leverage=Leverage[value=4], stake=150.000 PLAY, fees=Fees[herd=0.060 PLAY, network=0.100 PLAY], liquidation=LiquidationParams[cap=25, kappa=0.1], mode=PERCENTAGE]
