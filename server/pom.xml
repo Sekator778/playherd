@@ -73,6 +73,14 @@
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-rest-jackson</artifactId>
     </dependency>
+    <!-- Output side of the LMAX plan (docs/research/lmax_roadmap.md step 5): /api/ws pushes "changed" notices to browsers.
+         WebSockets Next (the Quarkus-native, Vert.x based extension) rather than the Jakarta WebSocket one: it runs on the
+         reactive stack the server already uses, has HttpUpgradeCheck for the pre-upgrade limits and does not block a thread
+         per connection. -->
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-websockets-next</artifactId>
+    </dependency>
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-rest-client-jackson</artifactId>
