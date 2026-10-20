@@ -15,12 +15,17 @@ public final class Identity {
     /** {@code streak}: the win streak over ALL the player's settled rounds, not only the {@code history} page
      *  (Р-71; {@code domain.WinStreak} has the rule). */
     public record PublicProfileDto(PlayerSummaryDto player, Ledger.SeasonRecordDto seasonRecord,
-                                     List<ProfileRoundEntryDto> history, StreakDto streak) {
+                                     List<ProfileRoundEntryDto> history, StreakDto streak, PlayDaysDto playDays) {
     }
 
     /** contract.ts {@code PublicProfileDto.streak}: the run of wins that ends at the newest settled round
      *  ({@code current}) and the longest run there has ever been ({@code best}). */
     public record StreakDto(int current, int best) {
+    }
+
+    /** contract.ts {@code PublicProfileDto.playDays}: UTC days in a row with a settled round, up to today (or yesterday while today is
+     *  not played yet), and the longest such run ({@code domain.PlayDays}). */
+    public record PlayDaysDto(int current, int best) {
     }
 
     /** {@code asset}: the market's symbol ("BTC", "NVDA"), {@code marketId}: its id; {@code durationSec}: the

@@ -267,6 +267,37 @@ public class RoundResultRepository {
     }
 
     /**
+     * Every player's settled rounds with {@code fromMs <= settled_at_ms <= toMs}, summed per player (the "This week" boards, {@link
+     * crowdvsmarket.server.domain.WeeklyBoards}): how many, the sum of {@code payout - stake - fees} in mojos (a row without recorded
+     * fees counts none), and the direction calls - {@code eligible} are the rounds with a defined call (not flat), {@code correct}
+     * the right ones. Cancelled rounds have no row here.
+     */
+    public List<crowdvsmarket.server.domain.WeeklyBoards.Totals> weeklyTotals(long fromMs, long toMs) {
+        return db.read(c -> db.queryList(c, """
+                SELECT player_id, COUNT(*) AS rounds,
+                       SUM(payout_mojos - stake_mojos - COALESCE(fees_mojos, 0)) AS net,
+                       COUNT(direction_correct) AS eligible,
+                       COALESCE(SUM(CASE WHEN direction_correct THEN 1 ELSE 0 END), 0) AS correct
+                FROM player_round_history
+                WHERE settled_at_ms >= ? AND settled_at_ms <= ?
+                GROUP BY player_id
+                """,
+                rs -> new crowdvsmarket.server.domain.WeeklyBoards.Totals(rs.getString("player_id"), rs.getInt("rounds"),
+                        rs.getLong("net"), rs.getInt("eligible"), rs.getInt("correct")),
+                fromMs, toMs));
+    }
+
+    /** The UTC day numbers (epoch milliseconds / 86 400 000) on which the player had a round settle, newest first: what "played N days
+     *  in a row" ({@link crowdvsmarket.server.domain.PlayDays}) is counted from. */
+    public List<Long> playDays(String playerId) {
+        return db.read(c -> db.queryList(c, """
+                SELECT DISTINCT settled_at_ms / 86400000 AS day FROM player_round_history
+                WHERE player_id = ? ORDER BY day DESC
+                """,
+                rs -> rs.getLong("day"), playerId));
+    }
+
+    /**
      * The player's latest settled rounds that were not flat ({@code payout <> stake}), newest first, as {@code {stake, payout}} in
      * mojos: what a bot reads its last result and its streak from. At most {@code limit}.
      */

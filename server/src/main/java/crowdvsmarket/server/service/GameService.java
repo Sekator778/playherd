@@ -2795,6 +2795,45 @@ public class GameService implements MarketListener {
         }
     }
 
+    /** The people's "This week" boards (the house's bots with them, as in {@link #ratings}); the API bots have {@link #botWeeklyRatings}. */
+    public Ratings.WeeklyRatingsDto weeklyRatings(long nowMs) {
+        return weeklyRatings(nowMs, false);
+    }
+
+    /** The API bots' "This week" boards: same window, same minimum of rounds, same rules. */
+    public Ratings.WeeklyRatingsDto botWeeklyRatings(long nowMs) {
+        return weeklyRatings(nowMs, true);
+    }
+
+    private Ratings.WeeklyRatingsDto weeklyRatings(long nowMs, boolean apiBots) {
+        awaitStored();
+        long weekStart = crowdvsmarket.server.domain.WeeklyBoards.weekStartMs(nowMs);
+        List<crowdvsmarket.server.domain.WeeklyBoards.Totals> totals = new ArrayList<>(roundResults.weeklyTotals(weekStart, nowMs));
+        lockRead();
+        try {
+            // a retired bot is in no list (as in the season's); the API bots have a board of their own
+            totals.removeIf(t -> hub.ledger().isRetired(t.playerId())
+                    || players.byId(t.playerId()).map(PlayerDirectory.Row::isApiBot).orElse(false) != apiBots);
+        } finally {
+            engineLock.readLock().unlock();
+        }
+        int threshold = RatingBook.DEFAULT_ROUNDS_THRESHOLD;
+        List<Ratings.RichEntryDto> richDtos = new ArrayList<>();
+        List<crowdvsmarket.server.domain.WeeklyBoards.Rich> rich = crowdvsmarket.server.domain.WeeklyBoards.rich(totals, threshold);
+        for (int i = 0; i < rich.size(); i++) {
+            var e = rich.get(i);
+            richDtos.add(new Ratings.RichEntryDto(i + 1, summary(e.playerId()),
+                    BigDecimal.valueOf(e.netMojos(), 3).toPlainString(), e.rounds()));
+        }
+        List<Ratings.ProphetEntryDto> prophetDtos = new ArrayList<>();
+        List<crowdvsmarket.server.domain.WeeklyBoards.Prophet> prophets = crowdvsmarket.server.domain.WeeklyBoards.prophets(totals, threshold);
+        for (int i = 0; i < prophets.size(); i++) {
+            var e = prophets.get(i);
+            prophetDtos.add(new Ratings.ProphetEntryDto(i + 1, summary(e.playerId()), e.accuracy(), e.eligible(), e.rounds()));
+        }
+        return new Ratings.WeeklyRatingsDto(weekStart, threshold, richDtos, prophetDtos);
+    }
+
     // ---------------------------------------------------------------------------------------
     // Profiles (Р-15, Р-29)
     // ---------------------------------------------------------------------------------------
@@ -2816,7 +2855,7 @@ public class GameService implements MarketListener {
         List<Identity.ProfileRoundEntryDto> wins = full.history().stream()
                 .filter(h -> !h.liquidated() && new BigDecimal(h.payout()).compareTo(new BigDecimal(h.stake())) > 0)
                 .toList();
-        return new Identity.PublicProfileDto(full.player(), full.seasonRecord(), wins, full.streak());
+        return new Identity.PublicProfileDto(full.player(), full.seasonRecord(), wins, full.streak(), full.playDays());
     }
 
     public Identity.PublicProfileDto publicProfile(String playerId) {
@@ -2837,8 +2876,11 @@ public class GameService implements MarketListener {
         List<Identity.ProfileRoundEntryDto> history = roundResults.playerHistory(playerId, PROFILE_HISTORY_LIMIT);
         // over every settled round of the player, not just the page above (Р-71)
         WinStreak.Result streak = roundResults.playerStreak(playerId);
+        crowdvsmarket.server.domain.PlayDays.Result playDays = crowdvsmarket.server.domain.PlayDays.of(
+                roundResults.playDays(playerId), crowdvsmarket.server.domain.PlayDays.dayOf(System.currentTimeMillis()));
         return new Identity.PublicProfileDto(player, seasonRecord, history,
-                new Identity.StreakDto(streak.current(), streak.best()));
+                new Identity.StreakDto(streak.current(), streak.best()),
+                new Identity.PlayDaysDto(playDays.current(), playDays.best()));
     }
 
     // ---------------------------------------------------------------------------------------

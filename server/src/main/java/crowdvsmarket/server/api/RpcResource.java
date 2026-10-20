@@ -308,6 +308,9 @@ public class RpcResource {
                 result = gameService.revokeApiKey(playerId, str(args, 0));
             }
             case "botRatings" -> result = gameService.botRatings(str(args, 0));
+            // "This week" boards (Monday 00:00 UTC to now): public, additive; the season's rules, winners only on the rich list
+            case "weeklyRatings" -> result = gameService.weeklyRatings(now);
+            case "botWeeklyRatings" -> result = gameService.botWeeklyRatings(now);
             default -> throw ApiException.notFound("unknown RPC method: " + method);
         }
 

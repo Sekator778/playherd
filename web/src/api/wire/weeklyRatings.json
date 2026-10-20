@@ -1,0 +1,37 @@
+{
+  "method": "weeklyRatings",
+  "args": [],
+  "response": {
+    "weekStartMs": 1792368000000,
+    "roundsThreshold": 10,
+    "rich": [
+      {
+        "rank": 1,
+        "player": {
+          "playerId": "9fcb7a2c-c767-45d7-b012-411515a73214",
+          "nickname": "Vera_Wire",
+          "walletAddress": "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn",
+          "displayName": "Vera_Wire (txch1v…d4wn)",
+          "isBot": false
+        },
+        "growth": "2.770",
+        "roundsPlayed": 10
+      }
+    ],
+    "prophets": [
+      {
+        "rank": 1,
+        "player": {
+          "playerId": "9fcb7a2c-c767-45d7-b012-411515a73214",
+          "nickname": "Vera_Wire",
+          "walletAddress": "txch1vera0wire0player00000000000000000000000000000000000000q8d4wn",
+          "displayName": "Vera_Wire (txch1v…d4wn)",
+          "isBot": false
+        },
+        "accuracy": 1.0,
+        "eligibleRounds": 10,
+        "roundsPlayed": 10
+      }
+    ]
+  }
+}

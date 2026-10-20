@@ -17,4 +17,10 @@ public final class Ratings {
     public record RatingsDto(String season, int roundsThreshold, List<RichEntryDto> rich,
                                List<ProphetEntryDto> prophets) {
     }
+
+    /** The "This week" boards: the same entries as {@link RatingsDto}, over the window that starts at {@code weekStartMs} (Monday
+     *  00:00 UTC) and ends now; {@code rich} holds winners only (Р-90). */
+    public record WeeklyRatingsDto(long weekStartMs, int roundsThreshold, List<RichEntryDto> rich,
+                                     List<ProphetEntryDto> prophets) {
+    }
 }

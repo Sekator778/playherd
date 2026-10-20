@@ -286,6 +286,7 @@ class WireFixturesTest extends LiveRpcTestBase {
         capture("crowdAccount", null, "crowdAccount", story.perp().id());
         capture("crowdOverview", null, "crowdOverview");
         capture("ratings", null, "ratings", (Object) null);
+        capture("weeklyRatings", null, "weeklyRatings");
         capture("publicProfile", alice, "publicProfile", story.aliceId()); // as herself: the complete view; anyone else sees only the wins (Р-90)
         capture("cancellations", null, "cancellations", (Object) null);
         capture("unseenResults", alice, "unseenResults");
@@ -312,6 +313,7 @@ class WireFixturesTest extends LiveRpcTestBase {
         captureWithKey("regenerateBotKey", botOwner, "regenerateBotKey", botId);
         capture("revokeBotKey", botOwner, "revokeBotKey", botId);
         capture("botRatings", null, "botRatings", (Object) null);
+        capture("botWeeklyRatings", null, "botWeeklyRatings");
         String liveKey = ok(botOwner, "regenerateBotKey", botId).path("apiKey").asText();
         Response notAllowed = RpcClient.rpcWithKey(liveKey, "createBot", "Child Bot");
         assertThat(notAllowed.statusCode()).as(notAllowed.asString()).isEqualTo(403);
@@ -458,6 +460,10 @@ class WireFixturesTest extends LiveRpcTestBase {
 
         assertThat(elements(answers.get("ratings").path("rich"))).as("Vera played ten rounds").hasSize(1);
         assertThat(elements(answers.get("ratings").path("prophets"))).hasSize(1);
+        assertThat(answers.get("weeklyRatings").path("weekStartMs").asLong()).isPositive();
+        assertThat(answers.get("weeklyRatings").path("roundsThreshold").asInt()).isEqualTo(10);
+        assertThat(elements(answers.get("weeklyRatings").path("prophets"))).as("Vera's ten rounds are this week's too").hasSize(1);
+        assertThat(answers.get("publicProfile").path("playDays").path("current").asInt()).isEqualTo(1);
         List<JsonNode> history = elements(answers.get("publicProfile").path("history"));
         assertThat(history).hasSize(2);
         assertThat(history).extracting(h -> h.path("liquidated").asBoolean()).containsExactlyInAnyOrder(true, false);

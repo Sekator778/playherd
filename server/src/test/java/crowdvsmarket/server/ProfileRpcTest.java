@@ -93,7 +93,7 @@ class ProfileRpcTest extends LiveRpcTestBase {
 
         JsonNode profile = ok(me, "myProfile");
 
-        assertKeys(profile, "player", "seasonRecord", "history", "streak");
+        assertKeys(profile, "player", "seasonRecord", "history", "streak", "playDays");
         assertKeys(profile.path("streak"), "current", "best");
         // newest first: W, flat, W, L, W, W, W, L(daily) — two now (the flat round neither extends nor breaks
         // the run), three at best

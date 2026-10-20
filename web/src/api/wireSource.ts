@@ -41,6 +41,7 @@ export const WIRE_NAMES = [
   "crowdAccount",
   "crowdOverview",
   "ratings",
+  "weeklyRatings",
   "publicProfile",
   "cancellations",
   "unseenResults",
@@ -55,6 +56,7 @@ export const WIRE_NAMES = [
   "regenerateBotKey",
   "revokeBotKey",
   "botRatings",
+  "botWeeklyRatings",
   "error.notSignedIn",
   "error.marketNotFound",
   "error.engineNotReady",
@@ -196,6 +198,8 @@ function defaultReply(method: string, args: unknown[]): WireReply {
     case "regenerateBotKey":
     case "revokeBotKey":
     case "botRatings":
+    case "weeklyRatings":
+    case "botWeeklyRatings":
       return { body: wire(method as WireName).response };
     case "rounds":
       return { body: wire("rounds.hourly").response };
