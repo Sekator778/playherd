@@ -14,6 +14,7 @@ import type {
   PublicProfileDto,
   RichEntryDto,
   ProphetEntryDto,
+  WeeklyRatingsDto,
   SeasonId,
   SeasonRecordDto,
   Interval,
@@ -21,7 +22,8 @@ import type {
 } from "./contract";
 import { RATING_ROUNDS_THRESHOLD } from "./contract";
 import { pick, randFloat, randInt, rngFor, chance } from "./rng";
-import { SIM_BASE_MS, windowFor, prevWindow, roundIdForWindow } from "./clock";
+import { SIM_BASE_MS, simNowMs, windowFor, prevWindow, roundIdForWindow } from "./clock";
+import { playDaysOf, weekStartOf } from "./playDays";
 import { MOCK_MARKETS, MOCK_BTC, type MockMarketSpec } from "./mockMarkets";
 import { seasonIdOf, seasonRange } from "./season";
 
@@ -191,7 +193,7 @@ function seasonRecordFor(index: number, season: SeasonId): SeasonRecordDto {
 export function npcPublicProfile(index: number): PublicProfileDto {
   const history = historyForIndex(index);
   const seasonRecord = history.length > 0 ? seasonRecordFor(index, CURRENT_SEASON) : null;
-  return { player: npcPlayer(index), seasonRecord, history };
+  return { player: npcPlayer(index), seasonRecord, history, playDays: playDaysOf(history.map((h) => h.settledAtMs), simNowMs()) };
 }
 
 export function findNpcIndexByPlayerId(playerId: string): number | null {
@@ -240,6 +242,30 @@ export function prophetRatings(season: SeasonId): ProphetEntryDto[] {
     eligibleRounds: r.record.directionEligibleRounds,
     roundsPlayed: r.record.roundsPlayed,
   }));
+}
+
+/**
+ * The "This week" boards of the NPCs at `nowMs`: the settled rounds from Monday 00:00 UTC to now, the season's minimum of rounds (Р-28),
+ * the rich list for winners only (Р-90) - the rule of `WeeklyBoards.java`.
+ */
+export function weeklyRatingsAt(nowMs: number): WeeklyRatingsDto {
+  const weekStartMs = weekStartOf(nowMs);
+  const rows = Array.from({ length: NPC_COUNT }, (_, i) => {
+    const entries = historyForIndex(i).filter((e) => e.settledAtMs >= weekStartMs && e.settledAtMs <= nowMs);
+    const net = entries.reduce((sum, e) => sum + Number(e.payout) - Number(e.stake), 0);
+    const eligible = entries.filter((e) => e.directionCorrect !== null).length;
+    const correct = entries.filter((e) => e.directionCorrect === true).length;
+    return { player: npcPlayer(i), rounds: entries.length, net, eligible, correct };
+  }).filter((r) => r.rounds >= RATING_ROUNDS_THRESHOLD);
+  const rich = rows
+    .filter((r) => r.net > 0)
+    .sort((a, b) => b.net - a.net)
+    .map((r, i): RichEntryDto => ({ rank: i + 1, player: r.player, growth: r.net.toFixed(3), roundsPlayed: r.rounds }));
+  const prophets = rows
+    .filter((r) => r.eligible > 0)
+    .sort((a, b) => b.correct / b.eligible - a.correct / a.eligible)
+    .map((r, i): ProphetEntryDto => ({ rank: i + 1, player: r.player, accuracy: r.correct / r.eligible, eligibleRounds: r.eligible, roundsPlayed: r.rounds }));
+  return { weekStartMs, roundsThreshold: RATING_ROUNDS_THRESHOLD, rich, prophets };
 }
 
 export { seasonRecordFor };

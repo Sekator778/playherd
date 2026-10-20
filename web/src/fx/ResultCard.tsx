@@ -22,6 +22,8 @@ import { playLiquidationCrack, playLossThud, playTick, playWinJingle, primeAudio
 import { useFxSettings } from "./fxSettings";
 import { useT, type TFn } from "../i18n";
 import { Rich } from "../i18n/Rich";
+import { ShareResultButton } from "../components/ShareResultButton";
+import type { ShareResultInput } from "../components/shareCard";
 import { TrophyIcon, CrackIcon, MinusDiscIcon, EqualsDiscIcon, SpeakerOnIcon, SpeakerMuteIcon } from "../components/icons";
 
 // Tier tables — result-moment.md §2. Durations in ms.
@@ -84,6 +86,21 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
   const seriesLabel = useSeriesLabel(event, tr);
   const odds = useIsOdds(event);
   const backupRound = useBackupRound(event, tr);
+  // "Share" is for a result that is final: not a liquidation told in the middle of a round (a cancelled round gives such a stake back).
+  const shareInput: ShareResultInput | null =
+    event.direction && !event.refunded && !event.midRound
+      ? {
+          roundId: event.roundId,
+          symbol: event.symbol,
+          seriesLabel: seriesLabel ?? undefined,
+          direction: event.direction,
+          mode: event.fixed ? "FIXED" : null,
+          leverage: event.leverage,
+          stake: event.stakePlay,
+          net: event.netPlay,
+          liquidated: event.kind === "LIQUIDATION",
+        }
+      : null;
   const cardRef = useRef<HTMLDivElement>(null);
   // Coin-arc launch point for WIN (below) — deliberately the icon, not the whole card: the
   // card's own bounding-rect center used to be the arc's origin, which on a WIN sits at/just
@@ -305,6 +322,10 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
           <Link to={`/round/${event.roundId}`} className="result-card__link" onClick={dismiss}>
             {tr("results.viewRound")}
           </Link>
+          {shareInput && (
+            // Sharing a result stops the card from leaving by itself while the share sheet is open.
+            <ShareResultButton result={shareInput} onBusy={() => window.clearTimeout(dismissTimer.current)} />
+          )}
           <button
             type="button"
             className="result-card__sound-toggle"

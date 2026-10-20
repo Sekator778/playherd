@@ -63,6 +63,7 @@ import {
   type ProfileRoundEntryDto,
   type PublicProfileDto,
   type RatingsDto,
+  type WeeklyRatingsDto,
   type RoundDto,
   type RoundId,
   type RoundsPairDto,
@@ -113,6 +114,8 @@ const ENGINE_READS: ReadonlySet<string> = new Set([
   "crowdOverview",
   "ratings",
   "botRatings",
+  "weeklyRatings",
+  "botWeeklyRatings",
   "publicProfile",
   "myProfile",
   "home",
@@ -211,6 +214,9 @@ class RealApi implements Api {
   botRatings(season?: SeasonId): Promise<RatingsDto> {
     return rpc("botRatings", [season ?? null]);
   }
+  botWeeklyRatings(): Promise<WeeklyRatingsDto> {
+    return rpc("botWeeklyRatings", []);
+  }
 
   // --- markets (Р-69, Р-70) ---
   markets(): Promise<MarketsDto> {
@@ -283,6 +289,9 @@ class RealApi implements Api {
   // --- ratings ---
   ratings(season?: SeasonId): Promise<RatingsDto> {
     return rpc("ratings", [season ?? null]);
+  }
+  weeklyRatings(): Promise<WeeklyRatingsDto> {
+    return rpc("weeklyRatings", []);
   }
 
   // --- profiles ---

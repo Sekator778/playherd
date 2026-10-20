@@ -150,6 +150,9 @@ export interface PublicProfileDto {
   /** Win streak over settled rounds, newest first (Р-71): a round counts as a win when
    *  `payout > stake`; a flat round (`payout == stake`) neither extends nor breaks the streak. */
   streak?: { current: number; best: number };
+  /** UTC days in a row with a settled round, up to today (or yesterday while today is not played yet), and the longest such run.
+   *  Only told: no bonus, no countdown. Absent from a server that predates it. */
+  playDays?: { current: number; best: number };
 }
 
 export interface ProfileRoundEntryDto extends WithBetMode {
@@ -1029,6 +1032,15 @@ export interface RatingsDto {
   prophets: ProphetEntryDto[];
 }
 
+/** The "This week" boards: the same two rankings as {@link RatingsDto}, over the settled rounds from Monday 00:00 UTC (`weekStartMs`) to now,
+ *  with the same minimum of rounds (`roundsThreshold`, Р-28). `rich` lists winners only (Р-90): a player whose week is not above zero is not in it. */
+export interface WeeklyRatingsDto {
+  weekStartMs: EpochMs;
+  roundsThreshold: number;
+  rich: RichEntryDto[];
+  prophets: ProphetEntryDto[];
+}
+
 // ---------------------------------------------------------------------------
 // Home aggregate (Р-34's fixed layout: open round + bet slip, then the crowd chart, then top
 // ratings — предложение: one call to avoid three round-trips for a screen whose composition is
@@ -1282,6 +1294,8 @@ export interface Api {
   revokeBotKey(botId: string): Promise<ApiBotDto>;
   /** The boards of the API bots only (same season and threshold rules as `ratings`, which leaves them out). */
   botRatings(season?: SeasonId): Promise<RatingsDto>;
+  /** The "This week" boards of the API bots (Monday 00:00 UTC to now; see {@link WeeklyRatingsDto}). */
+  botWeeklyRatings(): Promise<WeeklyRatingsDto>;
 
   // --- markets (Р-69, Р-70) ---
   markets(): Promise<MarketsDto>;
@@ -1342,6 +1356,8 @@ export interface Api {
 
   // --- ratings (Р-9, Р-18, Р-28, Р-30) ---
   ratings(season?: SeasonId): Promise<RatingsDto>;
+  /** The "This week" boards of the people (and the house's bots): Monday 00:00 UTC to now, same minimum of rounds, winners only. */
+  weeklyRatings(): Promise<WeeklyRatingsDto>;
 
   // --- profiles (Р-15, Р-29) ---
   publicProfile(playerId: string): Promise<PublicProfileDto>;

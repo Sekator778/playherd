@@ -48,6 +48,7 @@ import type {
   PublicPositionDto,
   PublicProfileDto,
   RatingsDto,
+  WeeklyRatingsDto,
   RichEntryDto,
   RoundBetting,
   RoundCancelled,
@@ -343,6 +344,13 @@ export const ratings = obj<RatingsDto>({
   prophets: arr(obj<ProphetEntryDto>({ rank: int, player: playerSummary, accuracy: num, eligibleRounds: int, roundsPlayed: int })),
 });
 
+export const weeklyRatings = obj<WeeklyRatingsDto>({
+  weekStartMs: int,
+  roundsThreshold: int,
+  rich: arr(obj<RichEntryDto>({ rank: int, player: playerSummary, growth: play, roundsPlayed: int })),
+  prophets: arr(obj<ProphetEntryDto>({ rank: int, player: playerSummary, accuracy: num, eligibleRounds: int, roundsPlayed: int })),
+});
+
 export const profileRoundEntry = obj<ProfileRoundEntryDto>({
   roundId: nonEmptyStr,
   interval,
@@ -365,6 +373,7 @@ export const publicProfile = obj<PublicProfileDto>({
   seasonRecord: nullable(seasonRecord),
   history: arr(profileRoundEntry),
   streak: opt(obj<{ current: number; best: number }>({ current: int, best: int })),
+  playDays: opt(obj<{ current: number; best: number }>({ current: int, best: int })),
 });
 
 export const priceSeries = obj<PriceSeriesDto>({ marketId: nonEmptyStr, priceDecimals: int, ticks: arr(obj<PriceTickDto>({ atMs: int, price })) });

@@ -1,0 +1,37 @@
+/* "Share" on a settled result: a quiet pill button and one line of status beside it. */
+.share-result {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.share-result__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.share-result__btn:hover:not(:disabled) {
+  background: var(--bg-elevated-2);
+}
+.share-result__btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.share-result__icon {
+  width: 16px;
+  height: 16px;
+}
+.share-result__note {
+  font-size: 12px;
+}
+.share-result__note:empty {
+  display: none;
+}

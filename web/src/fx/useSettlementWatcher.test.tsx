@@ -216,6 +216,8 @@ class FakeApi implements Api {
   regenerateBotKey = () => this.unused();
   revokeBotKey = () => this.unused();
   botRatings = () => this.unused();
+  botWeeklyRatings = () => this.unused();
+  weeklyRatings = () => this.unused();
   markets = () => this.unused();
   priceSeries = () => this.unused();
   candles = () => this.unused();

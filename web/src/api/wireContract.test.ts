@@ -46,6 +46,7 @@ const CASES: Record<Exclude<WireName, `error.${string}`>, Case> = {
   crowdAccount: { call: (api, a) => api.crowdAccount(orUndefined<string>(a[0])), check: schema.crowdAccount },
   crowdOverview: { call: (api) => api.crowdOverview(), check: schema.crowdOverview },
   ratings: { call: (api, a) => api.ratings(orUndefined<string>(a[0])), check: schema.ratings },
+  weeklyRatings: { call: (api) => api.weeklyRatings(), check: schema.weeklyRatings },
   publicProfile: { call: (api, a) => api.publicProfile(a[0] as string), check: schema.publicProfile },
   cancellations: { call: (api, a) => api.cancellations(orUndefined<PageParams>(a[0])), check: schema.cancellationsPage },
   unseenResults: { call: (api) => api.unseenResults!(), check: (v, p, pr) => schema.arr(schema.profileRoundEntry)(v, p, pr) },
@@ -60,6 +61,7 @@ const CASES: Record<Exclude<WireName, `error.${string}`>, Case> = {
   regenerateBotKey: { call: (api, a) => api.regenerateBotKey(a[0] as string), check: schema.apiBotKey },
   revokeBotKey: { call: (api, a) => api.revokeBotKey(a[0] as string), check: schema.apiBot },
   botRatings: { call: (api, a) => api.botRatings(orUndefined<string>(a[0])), check: schema.ratings },
+  botWeeklyRatings: { call: (api) => api.botWeeklyRatings(), check: schema.weeklyRatings },
 };
 
 const DATA_NAMES = Object.keys(CASES) as Array<keyof typeof CASES>;

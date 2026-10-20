@@ -14,6 +14,7 @@ import { Countdown, ErrorState, OracleDisclosureLine, RoundStatusBadge, RoundVen
 import { MarketIcon } from "../components/MarketIcon";
 import { roundPriceInfo } from "../components/marketModel";
 import { OwnPositionCard } from "../components/OwnPositionCard";
+import { ShareResultButton } from "../components/ShareResultButton";
 import { isFixedMode } from "../components/betModeModel";
 import { CancellationNotice, CrowdPositionCard, PositionsList } from "../components/RoundParts";
 import { useServerNow } from "../components/useServerNow";
@@ -179,6 +180,24 @@ export function RoundPage() {
             closePrice={round.phase === "SETTLED" ? round.closePrice : null}
           />
         ))}
+
+      {ownPosition && round.phase === "SETTLED" && ownPosition.payout !== null && (
+        <div className="own-share">
+          <ShareResultButton
+            result={{
+              roundId: round.roundId,
+              symbol: round.asset,
+              seriesLabel: length,
+              direction: ownPosition.direction,
+              mode: ownPosition.mode,
+              leverage: ownPosition.leverage,
+              stake: Number(positionStakeStr(ownPosition)),
+              net: ownPosition.liquidated ? -Number(positionStakeStr(ownPosition)) : netFromPayoutAndStake(ownPosition.payout, positionStakeStr(ownPosition)),
+              liquidated: ownPosition.liquidated,
+            }}
+          />
+        </div>
+      )}
 
       <div className="two-col">
         <div className="stack" style={{ gap: 16 }}>

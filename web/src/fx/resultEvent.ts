@@ -4,7 +4,7 @@
  * unit-тестов") — `useSettlementWatcher.ts` and `unseenResults.ts` are the callers, and own the
  * dedup `Set` and the previous-round `Map` this module treats as inputs, not state.
  */
-import type { Interval, MarketId, MarketKind, ProfileRoundEntryDto, PublicPositionDto, RoundDto, RoundId } from "../api/contract";
+import type { Direction, Interval, MarketId, MarketKind, ProfileRoundEntryDto, PublicPositionDto, RoundDto, RoundId } from "../api/contract";
 import { BTC_MARKET_ID } from "../api/clock";
 import { netFromPayoutAndStake, positionStakeStr } from "../api/outcome";
 
@@ -35,6 +35,8 @@ export interface ResultEvent {
   /** `payout - stake`, signed — the ONLY number the card's headline ever shows (§0, §5). */
   netPlay: number;
   stakePlay: number;
+  /** The side the player took - the share card names it. Absent only for an event built without it. */
+  direction?: Direction;
   /** The bet's total fees (herd + network) as kept at settlement (`ProfileRoundEntryDto.fees`): the card adds "fees X" to its "Staked → returned" line.
    *  Absent for a round recorded without them: no fees line. */
   feesPlay?: number;
@@ -141,6 +143,7 @@ export function resultEventFromHistoryEntry(
     interval: entry.interval,
     durationSec: entry.durationSec,
     stakePlay: stake,
+    direction: entry.direction,
     feesPlay: entry.fees != null && Number.isFinite(Number(entry.fees)) ? Number(entry.fees) : undefined,
     leverage: entry.leverage,
     ...(entry.mode === "FIXED" ? { fixed: true as const } : {}),
@@ -223,6 +226,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       durationSec: (curr.window.endMs - curr.window.startMs) / 1000,
       netPlay: -stake,
       stakePlay: stake,
+      direction: currPos.direction,
       leverage: currPos.leverage,
       ...(currPos.mode === "FIXED" ? { fixed: true as const } : {}),
       balanceBefore: currentBalance,
@@ -253,6 +257,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       durationSec: (curr.window.endMs - curr.window.startMs) / 1000,
       netPlay: net,
       stakePlay: stake,
+      direction: currPos.direction,
       leverage: currPos.leverage,
       ...(currPos.mode === "FIXED" ? { fixed: true as const } : {}),
       balanceBefore,

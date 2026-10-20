@@ -75,6 +75,7 @@ import {
   type ProfileRoundEntryDto,
   type PublicProfileDto,
   type RatingsDto,
+  type WeeklyRatingsDto,
   type RoundCancelled,
   type RoundDto,
   type RoundId,
@@ -105,7 +106,9 @@ import {
   npcPublicProfile,
   prophetRatings,
   richRatings,
+  weeklyRatingsAt,
 } from "./mockPlayers";
+import { playDaysOf } from "./playDays";
 import { candlesBefore, change24hAt, priceStrAt, ticksBetween } from "./mockPrices";
 import {
   betFeedPage,
@@ -449,6 +452,11 @@ export class MockApi implements Api {
   /** The mock has no API bots playing: the boards are empty (a season with nobody past the threshold). */
   async botRatings(season?: SeasonId): Promise<RatingsDto> {
     return { season: season ?? CURRENT_SEASON, roundsThreshold: RATING_ROUNDS_THRESHOLD, rich: [], prophets: [] };
+  }
+
+  /** The mock has no API bots playing: their week is empty too. */
+  async botWeeklyRatings(): Promise<WeeklyRatingsDto> {
+    return { weekStartMs: weeklyRatingsAt(simNowMs()).weekStartMs, roundsThreshold: RATING_ROUNDS_THRESHOLD, rich: [], prophets: [] };
   }
 
   /** Test/demo helper (not part of `Api`): pretend `n` more players registered through this player's link. */
@@ -996,6 +1004,10 @@ export class MockApi implements Api {
     };
   }
 
+  async weeklyRatings(): Promise<WeeklyRatingsDto> {
+    return weeklyRatingsAt(simNowMs());
+  }
+
   // -------------------------------------------------------------------------
   // Profiles (Р-15, Р-29)
   // -------------------------------------------------------------------------
@@ -1024,7 +1036,13 @@ export class MockApi implements Api {
             withdrawn: "0.000",
           })
         : null;
-    return { player, seasonRecord, history: this.myHistory, streak: winStreak(this.myHistory) };
+    return {
+      player,
+      seasonRecord,
+      history: this.myHistory,
+      streak: winStreak(this.myHistory),
+      playDays: playDaysOf(this.myHistory.map((h) => h.settledAtMs), simNowMs()),
+    };
   }
 
   // -------------------------------------------------------------------------

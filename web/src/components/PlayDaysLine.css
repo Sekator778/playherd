@@ -1,0 +1,13 @@
+/* "Played N days in a row" under the win streak: one quiet line. */
+.play-days {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.play-days__main {
+  color: var(--text);
+  font-weight: 600;
+}
+.play-days__best {
+  color: var(--text-faint);
+}

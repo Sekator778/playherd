@@ -12,7 +12,9 @@ import { Avatar } from "../components/Avatar";
 import { BotsBlock } from "../components/BotsBlock";
 import { BotBadge, CopyButton, ErrorState, Skeleton } from "../components/Common";
 import { ResultTile } from "../components/ResultTile";
+import { ShareResultButton } from "../components/ShareResultButton";
 import { StreakBadge } from "../components/StreakBadge";
+import { PlayDaysLine } from "../components/PlayDaysLine";
 import { formatDateTime, formatDuration, formatPercent, formatPlayAmount } from "../format";
 import { useT, type TFn } from "../i18n";
 import "./ProfilePage.css";
@@ -157,6 +159,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
       </h1>
 
       {profile.streak && <StreakBadge current={profile.streak.current} best={profile.streak.best} />}
+      {profile.playDays && <PlayDaysLine current={profile.playDays.current} best={profile.playDays.best} />}
 
       {profile.seasonRecord && (
         <div className="profile-tiles">
@@ -192,14 +195,11 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
       ) : (
         <div className="result-tiles">
           {history.map((h) => (
-            // Net result (>0 won, <0 lost, =0 even), never `payout > 0` alone — the bug Alex
-            // reported (2026-09-25): a losing round that still returned some equity (e.g. 80.15
-            // PLAY back on a 100 PLAY stake) showed as "Won" here. `ProfileRoundEntryDto`
-            // already carries the exact `stake`/`payout`, no derivation needed. Outcome is icon +
-            // color + text together (`ResultTile`), never color-only (audit.md's Profile
-            // section).
+            <div key={h.roundId} className="history-row">
+            {/* Net result (>0 won, <0 lost, =0 even), never `payout > 0` alone — the bug Alex reported (2026-09-25): a losing
+                round that still returned some equity showed as "Won" here. Outcome is icon + color + text together
+                (`ResultTile`), never color-only. */}
             <ResultTile
-              key={h.roundId}
               roundId={h.roundId}
               symbol={h.asset}
               seriesLabel={seriesLabelOf(h, byId.get(h.marketId), t)}
@@ -215,6 +215,23 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
               odds={(h.kind ?? byId.get(h.marketId)?.kind) === "ODDS"}
               source={byId.get(h.marketId)?.source}
             />
+            {isOwn && (
+              <ShareResultButton
+                className="history-row__share"
+                result={{
+                  roundId: h.roundId,
+                  symbol: h.asset,
+                  seriesLabel: seriesLabelOf(h, byId.get(h.marketId), t),
+                  direction: h.direction,
+                  mode: h.mode,
+                  leverage: h.leverage,
+                  stake: Number(h.stake),
+                  net: netFromPayoutAndStake(h.payout, h.stake),
+                  liquidated: h.liquidated,
+                }}
+              />
+            )}
+            </div>
           ))}
         </div>
       )}

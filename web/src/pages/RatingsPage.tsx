@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApi, useSession } from "../api/ApiContext";
 import { isEngineNotReady } from "../api/apiErrors";
-import { RATING_ROUNDS_THRESHOLD, type CrowdAccountDto, type PublicProfileDto, type RatingsDto, type SeasonId } from "../api/contract";
+import { RATING_ROUNDS_THRESHOLD, type CrowdAccountDto, type PublicProfileDto, type RatingsDto, type SeasonId, type WeeklyRatingsDto } from "../api/contract";
 import { useEngineEpoch } from "../api/engineState";
 import { ErrorState, MultiAccountDisclosureLine, Skeleton } from "../components/Common";
 import { LeaderboardList, LeaderboardHighlights, type LeaderboardEntry, type LeaderboardHighlight } from "../components/Leaderboard";
@@ -65,19 +65,22 @@ function currentSeasonId(): SeasonId {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-type Tab = "RICH" | "PROPHETS" | "BOTS";
+type Tab = "RICH" | "PROPHETS" | "WEEK" | "BOTS";
+
+/** The two lists of a board, whichever window it covers. */
+type BoardData = Pick<RatingsDto, "roundsThreshold" | "rich" | "prophets">;
 
 /** What the bots' tab shows when the server cannot give the boards (older server, or none answered): no one has qualified. */
 const EMPTY_BOT_RATINGS: RatingsDto = { season: "", roundsThreshold: RATING_ROUNDS_THRESHOLD, rich: [], prophets: [] };
 
-/** Р-106: the boards of the API bots - the same two rankings as the people's, one under the other, with a line saying who they are. */
-function BotBoards({ ratings, t }: { ratings: RatingsDto | null; t: TFn }) {
+/** Two rankings, one under the other, with a line saying what they cover: the API bots' boards (Р-106) and the "This week" boards. */
+function Boards({ ratings, note, empty, t }: { ratings: BoardData | null; note: string; empty: string; t: TFn }) {
   if (!ratings) return <Skeleton height={200} />;
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <p className="muted">{t("ratings.botsNote", { count: ratings.roundsThreshold })}</p>
+      <p className="muted">{note}</p>
       {ratings.rich.length === 0 ? (
-        <p className="muted">{t("ratings.noQualified", { count: ratings.roundsThreshold })}</p>
+        <p className="muted">{empty}</p>
       ) : (
         <>
           <h2>{t("ratings.richest")}</h2>
@@ -119,6 +122,10 @@ export function RatingsPage() {
   const [ratings, setRatings] = useState<RatingsDto | null>(null);
   // Р-106: the API bots' own boards, fetched when their tab is opened (and again for another season).
   const [botRatings, setBotRatings] = useState<RatingsDto | null>(null);
+  // "This week" (Monday 00:00 UTC to now): the people's boards, and the bots' when their tab is set to the week.
+  const [weekly, setWeekly] = useState<WeeklyRatingsDto | null>(null);
+  const [botWeekly, setBotWeekly] = useState<WeeklyRatingsDto | null>(null);
+  const [botPeriod, setBotPeriod] = useState<"SEASON" | "WEEK">("SEASON");
   const [error, setError] = useState(false);
   const [myRoundsPlayed, setMyRoundsPlayed] = useState<number | null>(null);
   // The full season archive (Р-10) — same source CrowdPage's season-returns table uses, not a
@@ -175,6 +182,35 @@ export function RatingsPage() {
   }, [load, engineEpoch]);
 
   useEffect(() => {
+    if (tab !== "WEEK") return;
+    let live = true;
+    Promise.resolve()
+      .then(() => api.weeklyRatings())
+      .then(
+        (r) => live && setWeekly(r),
+        // a server without the weekly call, or one restarting: the empty state, the page stays
+        () => live && setWeekly({ weekStartMs: 0, roundsThreshold: RATING_ROUNDS_THRESHOLD, rich: [], prophets: [] }),
+      );
+    return () => {
+      live = false;
+    };
+  }, [api, tab, engineEpoch]);
+
+  useEffect(() => {
+    if (tab !== "BOTS" || botPeriod !== "WEEK") return;
+    let live = true;
+    Promise.resolve()
+      .then(() => api.botWeeklyRatings())
+      .then(
+        (r) => live && setBotWeekly(r),
+        () => live && setBotWeekly({ weekStartMs: 0, roundsThreshold: RATING_ROUNDS_THRESHOLD, rich: [], prophets: [] }),
+      );
+    return () => {
+      live = false;
+    };
+  }, [api, tab, botPeriod, engineEpoch]);
+
+  useEffect(() => {
     if (tab !== "BOTS") return;
     let live = true;
     Promise.resolve()
@@ -205,7 +241,7 @@ export function RatingsPage() {
   // Hero zone (direction.md §4): the player's own rank in the tab they're looking at, if they're
   // in it — derived from data already fetched for the list below, nothing fabricated.
   const ownRank =
-    player && ratings && tab !== "BOTS"
+    player && ratings && (tab === "RICH" || tab === "PROPHETS")
       ? (tab === "RICH" ? ratings.rich : ratings.prophets).find((r) => r.player.playerId === player.playerId)?.rank
       : undefined;
 
@@ -221,7 +257,7 @@ export function RatingsPage() {
         </div>
       )}
 
-      {player && ratings && myRoundsPlayed !== null && myRoundsPlayed < ratings.roundsThreshold && (
+      {player && ratings && (tab === "RICH" || tab === "PROPHETS") && myRoundsPlayed !== null && myRoundsPlayed < ratings.roundsThreshold && (
         <div className="card card--tight">
           {t("ratings.playMore", { count: ratings.roundsThreshold - myRoundsPlayed })}
         </div>
@@ -237,10 +273,14 @@ export function RatingsPage() {
           <button type="button" role="tab" aria-selected={tab === "PROPHETS"} onClick={() => setTab("PROPHETS")}>
             {t("ratings.prophets")}
           </button>
+          <button type="button" role="tab" aria-selected={tab === "WEEK"} onClick={() => setTab("WEEK")}>
+            {t("ratings.weekTab")}
+          </button>
           <button type="button" role="tab" aria-selected={tab === "BOTS"} onClick={() => setTab("BOTS")}>
             {t("ratings.botsTab")}
           </button>
         </div>
+        {tab !== "WEEK" && !(tab === "BOTS" && botPeriod === "WEEK") && (
         <div className="field" style={{ margin: 0 }}>
           <label htmlFor="season-picker" className="visually-hidden">
             {t("ratings.season")}
@@ -253,10 +293,42 @@ export function RatingsPage() {
             ))}
           </select>
         </div>
+        )}
+        {tab === "BOTS" && (
+          <div className="tabs" role="tablist" aria-label={t("ratings.periodAria")}>
+            <button type="button" role="tab" aria-selected={botPeriod === "SEASON"} onClick={() => setBotPeriod("SEASON")}>
+              {t("ratings.periodSeason")}
+            </button>
+            <button type="button" role="tab" aria-selected={botPeriod === "WEEK"} onClick={() => setBotPeriod("WEEK")}>
+              {t("ratings.weekTab")}
+            </button>
+          </div>
+        )}
       </div>
 
-      {tab === "BOTS" ? (
-        <BotBoards ratings={botRatings} t={t} />
+      {tab === "WEEK" ? (
+        <Boards
+          ratings={weekly}
+          note={t("ratings.weekNote", { count: weekly?.roundsThreshold ?? RATING_ROUNDS_THRESHOLD })}
+          empty={t("ratings.weekNoQualified", { count: weekly?.roundsThreshold ?? RATING_ROUNDS_THRESHOLD })}
+          t={t}
+        />
+      ) : tab === "BOTS" ? (
+        botPeriod === "WEEK" ? (
+          <Boards
+            ratings={botWeekly}
+            note={t("ratings.botsWeekNote", { count: botWeekly?.roundsThreshold ?? RATING_ROUNDS_THRESHOLD })}
+            empty={t("ratings.weekNoQualified", { count: botWeekly?.roundsThreshold ?? RATING_ROUNDS_THRESHOLD })}
+            t={t}
+          />
+        ) : (
+          <Boards
+            ratings={botRatings}
+            note={t("ratings.botsNote", { count: botRatings?.roundsThreshold ?? RATING_ROUNDS_THRESHOLD })}
+            empty={t("ratings.noQualified", { count: botRatings?.roundsThreshold ?? RATING_ROUNDS_THRESHOLD })}
+            t={t}
+          />
+        )
       ) : !ratings ? (
         <Skeleton height={360} />
       ) : tab === "RICH" ? (
