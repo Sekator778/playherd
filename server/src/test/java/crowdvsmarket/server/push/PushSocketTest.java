@@ -148,6 +148,23 @@ class PushSocketTest {
     }
 
     @Test
+    void aRefusedBetIsNotAnnounced() {
+        Session alice = signIn("pushrefused");
+        WsTestClient aliceSocket = connect(alice.cookie());
+        aliceSocket.subscribe("me", "market:BTC");
+        RoundWindow betting = BettingWindows.fresh(roundProgress, Interval.HOURLY);
+        long meBefore = aliceSocket.count("\"topic\":\"me\"");
+
+        // too late: the round has started by the time the bet is stamped
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> game.placeBet(alice.playerId(),
+                new Betting.PlaceBetRequest(betting.roundId(), Enums.Direction.UP, 2, "100.000"), betting.startMs()))
+                .isInstanceOf(crowdvsmarket.server.dto.ApiException.class);
+
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> Thread.sleep(500));
+        assertThat(aliceSocket.count("\"topic\":\"me\"")).as("a batch that did not commit announces nothing").isEqualTo(meBefore);
+    }
+
+    @Test
     void cancellingABetIsAnnouncedToo() {
         Session alice = signIn("pushcancel");
         WsTestClient watcher = connect(null);

@@ -174,6 +174,10 @@ public class GameService implements MarketListener {
 
     @Inject
     GameConfig config;
+    /** The output side (docs/research/lmax_roadmap.md step 5): told what changed, from the after-commit actions of the commands -
+     *  a notice never goes out for a batch that did not commit. Never blocks, never throws. */
+    @Inject
+    crowdvsmarket.server.push.ChangePublisher publisher = crowdvsmarket.server.push.ChangePublisher.NONE;
     @Inject
     Db db;
     @Inject
@@ -1475,6 +1479,7 @@ public class GameService implements MarketListener {
                 ctx.record(event, nowMs);
                 jfr.applyNs = JfrClock.since(rec, t);
                 ctx.afterCommit(() -> jfr.persistNs = ctx.commitNanos());
+                ctx.afterCommit(() -> publisher.betChanged(market.id(), bettingWindow.roundId(), playerId));
                 return betDto(playerId, bettingWindow.roundId(), req.direction(),
                         fixed ? Bet.FIXED_LEVERAGE.value() : req.leverage(), stake, fees, spec, ref.interval(),
                         fixed ? crowdvsmarket.engine.round.BetMode.FIXED : crowdvsmarket.engine.round.BetMode.PERCENTAGE);
@@ -1524,6 +1529,7 @@ public class GameService implements MarketListener {
             GameEvent.BetCancelled event = new GameEvent.BetCancelled(playerId, ref.interval(),
                     bettingWindow.startMs(), bettingWindow.endMs(), nowMs, ref.market());
             ctx.record(event, nowMs);
+            ctx.afterCommit(() -> publisher.betChanged(ref.market(), bettingWindow.roundId(), playerId));
             return null;
         });
     }
@@ -1643,6 +1649,8 @@ public class GameService implements MarketListener {
         jfr.applyNs = JfrClock.since(rec, t);
         jfr.bets = report.playerOutcomes().size();
         ctx.afterCommit(() -> jfr.appendNs = ctx.commitNanos()); // the journal write is the batch's commit
+        List<String> bettors = report.playerOutcomes().stream().map(o -> o.playerId()).toList();
+        ctx.afterCommit(() -> publisher.roundSettled(market.id(), window.roundId(), bettors));
         PendingRows pending = new PendingRows(market, window, report, data.sourceTsMs(), data.venue(), oracleSeq);
         storing.put(window.roundId(), pending);
         // a batch that does not commit takes the round back (the rebuild finds it unresolved): nobody waits for its rows
@@ -2546,6 +2554,7 @@ public class GameService implements MarketListener {
             // position in the event order) reproduces the identical id deterministically; see
             // GameEvent.WithdrawalRequested's javadoc and EventApplier's WithdrawalRequested case.
             String requestId = (String) ctx.record(event, nowMs);
+            ctx.afterCommit(() -> publisher.changed(crowdvsmarket.server.push.PushTopics.player(playerId)));
             ctx.work(c -> {
                 withdrawalDeposits.insertWithdrawal(c, requestId, playerId, amt.mojos(), toAddress, nowMs);
                 return null;
@@ -2592,6 +2601,8 @@ public class GameService implements MarketListener {
             }
             GameEvent.WithdrawalFailed event = new GameEvent.WithdrawalFailed(requestId, nowMs);
             ctx.record(event, nowMs);
+            hub.ledger().withdrawal(requestId).ifPresent(w -> ctx.afterCommit(
+                    () -> publisher.changed(crowdvsmarket.server.push.PushTopics.player(w.playerId())))); // the escrow is credited back
             ctx.work(c -> {
                 withdrawalDeposits.markWithdrawalFailed(c, requestId, reason, nowMs);
                 return null;
@@ -2726,6 +2737,7 @@ public class GameService implements MarketListener {
             }
             try {
                 eventApplier.apply(event);
+                publisher.changed(crowdvsmarket.server.push.PushTopics.player(playerId)); // the deposit is committed
             } catch (RuntimeException | Error e) {
                 // committed and reserved: no later offer of the coin can credit it, so the rebuild must (it replays it)
                 rebuildService.recoverAfterFailure(e, "deposit " + coinId, nowMs);
@@ -2765,6 +2777,7 @@ public class GameService implements MarketListener {
                     request.amount().mojos(), originalSeason.id(), trimmedReason, requestId, nowMs);
             crowdvsmarket.engine.ledger.LedgerCorrection correction =
                     (crowdvsmarket.engine.ledger.LedgerCorrection) ctx.record(event, nowMs);
+            ctx.afterCommit(() -> publisher.changed(crowdvsmarket.server.push.PushTopics.player(request.playerId())));
             return toLedgerCorrectionDto(correction);
         });
     }
@@ -2795,6 +2808,7 @@ public class GameService implements MarketListener {
                     request.amount().mojos(), originalSeason.id(), trimmedReason, requestId, nowMs);
             crowdvsmarket.engine.ledger.LedgerCorrection correction =
                     (crowdvsmarket.engine.ledger.LedgerCorrection) ctx.record(event, nowMs);
+            ctx.afterCommit(() -> publisher.changed(crowdvsmarket.server.push.PushTopics.player(request.playerId())));
             return toLedgerCorrectionDto(correction);
         });
     }

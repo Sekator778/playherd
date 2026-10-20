@@ -42,6 +42,8 @@ public class RoundCancellations {
     @Inject
     Db db;
     @Inject
+    crowdvsmarket.server.push.ChangePublisher publisher;
+    @Inject
     EventStore eventStore;
     @Inject
     RoundResultRepository roundResults;
@@ -97,6 +99,8 @@ public class RoundCancellations {
         var canonical = ResultsHasher.build(market.id(), window.roundId(), window.interval().name(), "CANCELLED",
                 null, null, List.of(), null, venue);
         ctx.record(event, nowMs); // refunds every pending bet and clears the round's BetBook entry
+        // after the batch has committed (a cancel by an operator, by the scheduler, or by a market close): the round, its market, every player
+        ctx.afterCommit(() -> publisher.roundCancelled(market.id(), window.roundId()));
         ctx.work(c -> {
             roundResults.insertCancelled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
                     window.endMs(), reason, nowMs, refundedBetCount, canonical.hash(), canonical.json(), venue);
