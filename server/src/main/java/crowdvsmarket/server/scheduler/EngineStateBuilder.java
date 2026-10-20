@@ -45,6 +45,11 @@ import org.jboss.logging.Logger;
  * moment something has just gone wrong (a half-replayed hub that requests could reach, or an empty
  * ledger that hands out a new starter pack, are what the in-place rebuild it replaced could leave).
  *
+ * <p><b>Snapshot, then tail (architecture plan F5).</b> The state starts from the newest snapshot that can be trusted
+ * ({@link #fromSnapshot}) and replays the journal after it in pages ({@code EventStore#replayAfter}); with no usable snapshot it
+ * replays the whole journal the same way. The projection tables are repaired from the journal events of their own types in
+ * both cases, and a snapshot that would leave a gap only a replay can fill (a ledger row or a result row missing) is not used.
+ *
  * <p>The things it does that outlive a failed build: the result rows of the last resolved round when a stop left the
  * journal ahead of them ({@code GameService#repairSettledResult}), and the refund of a closed market's open
  * rounds ({@link RoundCancellations}): that is a committed event and result row in the database
