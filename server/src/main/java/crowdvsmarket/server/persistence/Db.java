@@ -1,6 +1,7 @@
 package crowdvsmarket.server.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import crowdvsmarket.server.core.IoGuard;
 import crowdvsmarket.server.jfr.HerdTxCommit;
 import crowdvsmarket.server.jfr.JfrClock;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -49,6 +50,7 @@ public class Db {
      * completely unchanged, exactly as before, so {@code ApiExceptionMapper} keeps seeing it.
      */
     public <T> T tx(SqlWork<T> work) {
+        IoGuard.check("database", "Db.tx");
         HerdTxCommit jfr = new HerdTxCommit(); // I-3: the clock is read only while JFR records
         boolean rec = jfr.isEnabled();
         if (rec) {
@@ -83,6 +85,7 @@ public class Db {
 
     /** A plain, connection-scoped (implicit auto-commit) read; no transaction needed. */
     public <T> T read(SqlWork<T> work) {
+        IoGuard.check("database", "Db.read");
         try (Connection c = dataSource.getConnection()) {
             return work.run(c);
         } catch (Exception e) {

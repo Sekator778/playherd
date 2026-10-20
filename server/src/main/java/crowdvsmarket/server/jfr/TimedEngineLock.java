@@ -1,5 +1,6 @@
 package crowdvsmarket.server.jfr;
 
+import crowdvsmarket.server.core.IoGuard;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
@@ -66,6 +67,14 @@ public final class TimedEngineLock implements ReadWriteLock {
         abstract boolean outermostRelease();
 
         abstract void storeHold(HerdLockHold hold);
+
+        /** The calling thread has just taken the lock, not reentrantly. */
+        void acquired() {
+        }
+
+        /** The calling thread is about to release the outermost hold of the lock. */
+        void releasing() {
+        }
 
         /** The hold event started by the outermost acquisition of the calling thread (cleared), or null. */
         abstract HerdLockHold takeHold();
@@ -145,6 +154,7 @@ public final class TimedEngineLock implements ReadWriteLock {
         public void unlock() {
             HerdLockHold hold = null;
             if (outermostRelease()) {
+                releasing();
                 hold = takeHold();
                 if (hold != null) {
                     hold.end();
@@ -171,6 +181,7 @@ public final class TimedEngineLock implements ReadWriteLock {
         }
 
         private void startHold() {
+            acquired();
             HerdLockHold hold = new HerdLockHold();
             if (hold.isEnabled()) {
                 hold.mode = mode;
@@ -186,6 +197,16 @@ public final class TimedEngineLock implements ReadWriteLock {
 
         WriteSide() {
             super(delegate.writeLock(), "write");
+        }
+
+        @Override
+        void acquired() {
+            IoGuard.writeLockAcquired();
+        }
+
+        @Override
+        void releasing() {
+            IoGuard.writeLockReleasing();
         }
 
         @Override

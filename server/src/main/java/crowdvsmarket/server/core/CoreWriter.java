@@ -137,7 +137,7 @@ public final class CoreWriter implements AutoCloseable {
         this.maxWaitMs = Math.max(0, maxWaitMs);
         this.queue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
         this.ctx = new WriteContext(host);
-        this.thread = new Thread(this::loop, "herd-core-writer");
+        this.thread = new Thread(this::loop, IoGuard.WRITER_THREAD);
         this.thread.setDaemon(true);
         this.thread.start();
     }

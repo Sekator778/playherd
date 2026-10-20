@@ -33,6 +33,7 @@
 
     <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
     <surefire-plugin.version>3.6.0</surefire-plugin.version>
+    <herd.io-guard>fail</herd.io-guard>
   </properties>
 
   <dependencyManagement>
@@ -182,6 +183,9 @@
           <systemPropertyVariables>
             <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
             <maven.home>${maven.home}</maven.home>
+            <!-- The rule "no database and no network under the engine lock" (crowdvsmarket.server.core.IoGuard): a call that breaks it
+                 fails the test. -Dherd.io-guard=record only lists the calls, =off disables the guard. -->
+            <herd.io-guard>${herd.io-guard}</herd.io-guard>
           </systemPropertyVariables>
         </configuration>
       </plugin>

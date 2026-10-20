@@ -1,5 +1,6 @@
 package crowdvsmarket.server.geoip;
 
+import crowdvsmarket.server.core.IoGuard;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.InputStream;
@@ -120,6 +121,7 @@ final class DbIpDownloader implements MonthFetcher {
 
     /** {@code true}: the unpacked file is in {@code target}; {@code false}: the server has no file for the month. */
     private boolean download(URI uri, Path target) throws IOException, InterruptedException {
+        IoGuard.check("network", "DbIpDownloader.download");
         try (HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT)
                 .followRedirects(HttpClient.Redirect.NORMAL).build()) {
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(HEADERS_TIMEOUT).header("User-Agent", USER_AGENT)

@@ -74,6 +74,12 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
     private static final String REOPEN_BTC_SQL = "UPDATE markets SET status = 'ACTIVE', closed_at_ms = NULL, "
             + "close_reason = NULL WHERE id = 'BTC'";
 
+    static {
+        // the reset truncates the tables and rebuilds the engine inside GameService.runExclusively, so that no writer turn runs meanwhile
+        crowdvsmarket.server.core.IoGuard.allow("CleanDatabasePerTestClass.resetDatabaseAndMemory",
+                "test fixture: database reset under the exclusive engine lock");
+    }
+
     @Override
     public void beforeEach(QuarkusTestMethodContext context) {
         Class<?> testClass = context.getTestInstance().getClass();
