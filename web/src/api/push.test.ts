@@ -233,6 +233,20 @@ describe("the push client", () => {
     expect(push.isHealthy()).toBe(false);
   });
 
+  it("pings every 25 s while healthy, and stops when the socket closes", () => {
+    const { socket } = connected(["markets"]);
+    socket.sent.length = 0;
+
+    vi.advanceTimersByTime(25_000);
+    expect(socket.ops()).toEqual([{ op: "ping" }]);
+    vi.advanceTimersByTime(50_000);
+    expect(socket.sent).toHaveLength(3);
+
+    socket.serverCloses();
+    vi.advanceTimersByTime(60_000);
+    expect(socket.sent).toHaveLength(3);
+  });
+
   it("ignores messages that are not JSON", () => {
     const { socket, onNotice } = connected(["markets"]);
 

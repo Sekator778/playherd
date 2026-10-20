@@ -40,6 +40,8 @@ export interface PushClientOptions {
 }
 
 const OPEN = 1;
+/** A healthy socket sends a ping this often, so a proxy never sees it idle for long. */
+const PING_EVERY_MS = 25_000;
 
 /** Reads again at most every `gapMs`: the first call goes at once, the ones that follow inside the gap become one call at its end. */
 export function throttled(fn: () => void, gapMs: number = PUSH_REFRESH_MIN_GAP_MS): { call: () => void; cancel: () => void } {
@@ -74,6 +76,7 @@ export function createPushClient(options: PushClientOptions): PushClient {
   let healthy = false;
   let identity: string | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let pingTimer: ReturnType<typeof setInterval> | undefined;
   let backoff = firstBackoff;
   /** Connection attempts in a row that never got a greeting; many of them mean the server has no socket for us (a proxy without it). */
   let failures = 0;
@@ -81,6 +84,8 @@ export function createPushClient(options: PushClientOptions): PushClient {
   const setHealthy = (next: boolean) => {
     if (healthy === next) return;
     healthy = next;
+    if (pingTimer !== undefined) clearInterval(pingTimer);
+    pingTimer = next ? setInterval(() => send({ op: "ping" }), PING_EVERY_MS) : undefined;
     healthListeners.forEach((l) => l());
   };
 

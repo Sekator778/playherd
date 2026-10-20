@@ -35,9 +35,13 @@
 		file_server browse
 	}
 
+	# /api/ws is a WebSocket (the push notices): reverse_proxy passes the Upgrade through by itself. A reload of this
+	# config (a deploy) would close every open socket at once; stream_close_delay lets them live on for a while instead
+	# (the clients reconnect on their own when they do get closed, and poll while they have no socket).
 	handle {
 		reverse_proxy 127.0.0.1:@@WEB_PORT@@ {
 			header_up CF-Connecting-IP {remote_host}
+			stream_close_delay 5m
 		}
 	}
 

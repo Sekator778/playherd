@@ -283,6 +283,16 @@ external_checks() {
     c_fail "https://${domain}/api/rpc/serverInfo did not answer with a server info (got: ${body:0:120})"
   fi
 
+  # The push socket: Caddy, nginx and the server must all pass a WebSocket upgrade. A handshake answered with 101 proves it. curl does not
+  # speak the protocol afterwards, so it is cut after 4 s; the status is known by then. 404 is the server with herd.push.enabled=false
+  # (HERD_PUSH_ENABLED=false): the app then polls, which is a choice and not a fault.
+  code="$(curl_code -m 4 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "https://${domain}/api/ws")"
+  case "${code}" in
+    101) c_ok "https://${domain}/api/ws -> 101 (the WebSocket upgrade passes Caddy, nginx and the server)" ;;
+    404) c_warn "https://${domain}/api/ws -> 404 (the server has the push socket switched off, HERD_PUSH_ENABLED=false: the app polls)" ;;
+    *) c_fail "https://${domain}/api/ws -> ${code}, not 101: the WebSocket upgrade does not get through (Caddy and nginx must pass Upgrade; the app falls back to polling meanwhile)" ;;
+  esac
+
   hdrs="$(curl -sSI -m 20 "http://${domain}/" 2>/dev/null || true)"
   if printf '%s' "${hdrs}" | head -n 1 | grep -qE ' (301|302|307|308) ' && printf '%s' "${hdrs}" | grep -qi "^location: https://${domain}"; then
     c_ok "http://${domain}/ redirects to https"
@@ -351,7 +361,7 @@ do_checks() {
   CHECK_FAILS=0
   if ((DRY_RUN)); then
     remote "${REMOTE_TOOL} verify ${VPS_DOMAIN}${VERIFY_FLAG}"
-    log "dry run: then the checks from here (https, serverInfo, redirect, HSTS, closed ports, a forged rate-limit header, /download/)"
+    log "dry run: then the checks from here (https, serverInfo, the WebSocket upgrade of /api/ws, redirect, HSTS, closed ports, a forged rate-limit header, /download/)"
     return 0
   fi
   external_checks

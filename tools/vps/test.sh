@@ -268,6 +268,22 @@ test_static() {
   ok "bootstrap.sh: ufw rule defaults match the compose network" "$?"
   file_has "${HERE}/edge/Caddyfile.tmpl" 'header_up CF-Connecting-IP {remote_host}'
   ok "Caddyfile.tmpl: the visitor's address goes to nginx in CF-Connecting-IP" "$?"
+  file_has "${HERE}/edge/Caddyfile.tmpl" 'stream_close_delay 5m'
+  ok "Caddyfile.tmpl: open WebSockets (/api/ws) live on over a reload of the config" "$?"
+  file_has_re "${nginx}" '^    location = /api/ws \{$' && file_has "${nginx}" 'proxy_pass http://server:8081/api/ws;' && file_has "${nginx}" 'proxy_set_header Upgrade $http_upgrade;' && file_has "${nginx}" 'proxy_set_header Connection $herd_connection_upgrade;'
+  ok "web/nginx.conf: /api/ws is proxied to the server with the Upgrade headers" "$?"
+  file_has "${nginx}" 'proxy_read_timeout 3700s;'
+  ok "web/nginx.conf: /api/ws has a read timeout longer than the server's socket age (3600 s), not nginx's 60 s" "$?"
+  file_has_re "${nginx}" '^map \$http_upgrade \$herd_connection_upgrade \{$'
+  ok "web/nginx.conf: Connection is upgrade only for a request that asks for an upgrade" "$?"
+  awk '/location = \/api\/ws/ {inws = 1} inws && /X-Forwarded-For \$herd_client_ip;/ {found = 1} inws && /^    }/ {inws = 0} END {exit !found}' "${nginx}"
+  ok "web/nginx.conf: /api/ws passes the visitor's address the way /api/ does (the socket limits are per address)" "$?"
+  file_has "${REPO}/deploy/Caddyfile" 'stream_close_delay 5m'
+  ok "deploy/Caddyfile: /api/* (the WebSocket too) keeps open sockets over a reload" "$?"
+  file_has "${HERE}/deploy.sh" '/api/ws' && file_has "${HERE}/deploy.sh" "Upgrade: websocket"
+  ok "deploy.sh: the checks ask /api/ws for a WebSocket upgrade" "$?"
+  file_has "${REPO}/server/src/main/java/crowdvsmarket/server/push/PushSocket.java" '@WebSocket(path = "/api/ws")'
+  ok "PushSocket: the endpoint is /api/ws (what the proxies and the check name)" "$?"
   local pin_edge pin_prod
   pin_edge="$(awk '$1 == "image:" {print $2; exit}' "${HERE}/edge/compose.yml")"
   pin_prod="$(awk '$1 == "image:" && $2 ~ /^caddy:/ {print $2; exit}' "${REPO}/deploy/compose.prod.yml")"
@@ -356,6 +372,7 @@ test_common() {
     chk "Caddyfile: the domain is the site address" grep -qx 'herd.example.org {' <<<"${out}"
     chk "Caddyfile: reverse proxy to the web on the loopback port" grep -qF 'reverse_proxy 127.0.0.1:8480 {' <<<"${out}"
     chk "Caddyfile: the visitor's address in CF-Connecting-IP" grep -qF 'header_up CF-Connecting-IP {remote_host}' <<<"${out}"
+    chk "Caddyfile: sockets live on over a reload" grep -qF 'stream_close_delay 5m' <<<"${out}"
     chk "Caddyfile: HSTS" grep -qF 'Strict-Transport-Security "max-age=31536000"' <<<"${out}"
     chk "Caddyfile: /download/ is served from /srv/download" grep -qF 'handle_path /download/*' <<<"${out}"
     chk "Caddyfile: the APK gets the Android package type" grep -qF 'application/vnd.android.package-archive' <<<"${out}"
@@ -1155,6 +1172,7 @@ case "${url}" in
     echo "${n}" >"${state}/mac-cancelbet"
     if ((n > 30)); then code=429; else code=401; fi
     ;;
+  https://herd.example.org/api/ws) code=101 ;;
   https://herd.example.org/download/) code=404 ;;
   https://herd.example.org/download/herd.apk)
     if [[ -f "${FAKE_VPS_HOME}/edge/download/herd.apk" ]]; then
@@ -1372,6 +1390,8 @@ EOF
   ok "up: the stand is started by tools/stand.sh's cmd_up with the web on 127.0.0.1:8480" "$?"
   has "${FL_OUT}" "all checks passed"
   ok "up: ends with all checks passed" "$?"
+  has "${FL_OUT}" "ok    https://herd.example.org/api/ws -> 101"
+  ok "up: the check from outside saw the WebSocket upgrade of /api/ws answered with 101" "$?"
   has "${FL_OUT}" "ok    nginx sees the request from 172.28.77.1" && has "${FL_OUT}" "ok    oracle seq floor: chainsvc maxKnownSeq=10804" && has "${FL_OUT}" "ok    rate limit: one address is limited"
   ok "up: the checks on the VPS saw the gateway as the peer, the seq floor, the per-visitor rate limit" "$?"
   has "${FL_OUT}" "ok    port 8480 of 203.0.113.10 does not answer from outside" && has "${FL_OUT}" "ok    port 8090 of 203.0.113.10 does not answer from outside"
@@ -2062,6 +2082,8 @@ test_caddy() {
     ok "adapted config: the /download/* route comes before the catch-all route" "$?"
     jq -e '[.. | objects | select(.handler?=="headers") | .response.set["Strict-Transport-Security"]? // empty] | length > 0' "${d}/plain.json" >/dev/null
     ok "adapted config: HSTS is set on responses" "$?"
+    [[ "$(jq -r '[.. | objects | select(.handler?=="reverse_proxy") | .stream_close_delay] | first' "${d}/plain.json")" == 300000000000 ]]
+    ok "adapted config: the proxy keeps open streams (WebSockets) for 5 minutes over a reload" "$?"
     jq -e '[.. | objects | select(.handler?=="static_response") | select(.headers.Location[0]=="/download/") | .status_code] | first == 301' "${d}/plain.json" >/dev/null
     ok "adapted config: /download redirects to /download/" "$?"
   else
@@ -2184,11 +2206,24 @@ test_caddylive() {
   grep -q '^http://127.0.0.1:18480 {' "${work}/Caddyfile" && grep -q 'reverse_proxy 127.0.0.1:18481' "${work}/Caddyfile"
   ok "the test copy of the Caddyfile differs from the production text in the site address, the upstream port and the download root only" "$?"
   cat >"${work}/upstream.py" <<'PYEOF'
-import http.server, json
+import base64, hashlib, http.server, json, time
 
 
 class H(http.server.BaseHTTPRequestHandler):
     def reply(self):
+        if self.path == "/api/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
+            # a WebSocket upgrade: the handshake answer, one text frame ("hello"), then the connection is held for a moment
+            accept = base64.b64encode(hashlib.sha1((self.headers["Sec-WebSocket-Key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+            self.send_response(101, "Switching Protocols")
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.end_headers()
+            self.wfile.write(b"\x81\x05hello")
+            self.wfile.flush()
+            time.sleep(2)
+            self.close_connection = True
+            return
         if self.path == "/big":
             body = ("<p>herd herd herd herd herd herd herd herd</p>\n" * 400).encode()
             ctype = "text/html"
@@ -2255,6 +2290,9 @@ body="$(curl -s -H 'CF-Connecting-IP: 198.51.100.77' ${P}/api/rpc/serverInfo)"
 [[ "$(jq -r '.headers["cf-connecting-ip"]' <<<"${body}")" == "127.0.0.1" ]] && pass "a forged CF-Connecting-IP is replaced by the address Caddy saw" || fail "forged CF-Connecting-IP got through: ${body}"
 body="$(curl -s ${P}/api/rpc/serverInfo)"
 [[ "$(jq -r '.headers["cf-connecting-ip"]' <<<"${body}")" == "127.0.0.1" ]] && pass "without the header the upstream gets the peer's address in it anyway" || fail "no CF-Connecting-IP without the header: ${body}"
+out="$(curl -s -i -m 4 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' ${P}/api/ws)"
+grep -q '^HTTP/1.1 101' <<<"${out}" && grep -qi '^sec-websocket-accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=' <<<"${out}" && pass "a WebSocket upgrade on /api/ws is answered 101 through Caddy" || fail "WebSocket upgrade through Caddy: ${out}"
+grep -q 'hello' <<<"${out}" && pass "a frame the upstream sends after the upgrade reaches the client through Caddy" || fail "no frame after the upgrade: ${out}"
 body="$(curl -s -H 'X-Forwarded-For: 5.6.7.8' ${P}/x)"
 [[ "$(jq -r '.headers["x-forwarded-for"]' <<<"${body}")" == "127.0.0.1" ]] && pass "an X-Forwarded-For from the visitor is not passed on" || fail "X-Forwarded-For: ${body}"
 body="$(curl -s -X POST -H 'Content-Type: application/json' -d '{"args":[]}' ${P}/api/rpc/serverInfo)"
