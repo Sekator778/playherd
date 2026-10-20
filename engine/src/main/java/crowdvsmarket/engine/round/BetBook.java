@@ -95,12 +95,12 @@ public final class BetBook {
         return Optional.ofNullable(removed);
     }
 
-    /** A copy of the round's bets in the order they were first placed — O(bets); for one player's bet use {@link #find}. */
-    /** The rounds the book holds an entry for, in the order they were first bet on (a snapshot walks them). */
-    public List<String> roundIds() {
+    /** The rounds the book holds an entry for, empty ones included, in the order they were first bet on (a snapshot walks them). */
+    public List<String> roundIdsWithEntries() {
         return List.copyOf(byRound.keySet());
     }
 
+    /** A copy of the round's bets in the order they were first placed — O(bets); for one player's bet use {@link #find}. */
     public Collection<Bet> betsFor(String roundId) {
         RoundBets round = byRound.get(roundId);
         return round == null ? List.of() : List.copyOf(round.bets.values());
@@ -112,7 +112,6 @@ public final class BetBook {
         return round == null ? Optional.empty() : Optional.ofNullable(round.bets.get(playerId));
     }
 
-    /** How many bets the round holds — O(1). */
     /** The ids of the rounds that hold at least one bet, oldest first. */
     public List<String> roundIds() {
         List<String> ids = new java.util.ArrayList<>();
@@ -124,6 +123,7 @@ public final class BetBook {
         return List.copyOf(ids);
     }
 
+    /** How many bets the round holds — O(1). */
     public int count(String roundId) {
         RoundBets round = byRound.get(roundId);
         return round == null ? 0 : round.bets.size();

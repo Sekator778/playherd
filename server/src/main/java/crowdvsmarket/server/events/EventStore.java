@@ -76,11 +76,6 @@ public class EventStore {
     /** The rows read per round trip by {@link #replayAfter}. */
     static final int REPLAY_PAGE = 5_000;
 
-    /** The id of the last row of the journal, 0 for an empty one (the journal's position: a snapshot is taken at it). */
-    public long lastId() {
-        return db.read(c -> db.queryOne(c, "SELECT COALESCE(MAX(id), 0) AS m FROM game_events", rs -> rs.getLong("m")));
-    }
-
     /**
      * Hands every event with {@code id > afterId} to {@code sink}, in order, read in pages of {@link #REPLAY_PAGE} rows
      * (architecture plan F5: the journal is not held in memory; only a page is). A row that cannot be decoded stops the replay
@@ -212,7 +207,7 @@ public class EventStore {
         return last == null ? 0L : last;
     }
 
-    /** {@link #lastId(Connection)} in a transaction of its own. */
+    /** {@link #lastId(Connection)} in a transaction of its own (also the journal's position a snapshot is taken at, F5). */
     public long lastId() {
         return db.read(this::lastId);
     }

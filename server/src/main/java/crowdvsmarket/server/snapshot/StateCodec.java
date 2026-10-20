@@ -85,7 +85,7 @@ public final class StateCodec {
             comparison.antiCrowdHistory().forEach(v -> out.line("anti", market, v));
             for (Interval interval : Interval.values()) {
                 BetBook book = engines.engine(interval).betBook();
-                for (String roundId : book.roundIds()) {
+                for (String roundId : book.roundIdsWithEntries()) {
                     for (Bet bet : book.betsFor(roundId)) {
                         out.line("bet", market, interval, bet.roundId(), bet.playerId(), bet.direction(), bet.leverage().value(),
                                 bet.stake().mojos(), bet.fees() == null ? null : bet.fees().herd().mojos(),
