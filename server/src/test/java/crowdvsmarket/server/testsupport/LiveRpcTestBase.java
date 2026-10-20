@@ -11,6 +11,16 @@ import io.restassured.response.Response;
  */
 public abstract class LiveRpcTestBase extends LiveGameTestBase {
 
+    @jakarta.inject.Inject
+    crowdvsmarket.server.api.RateLimiter rateLimiter;
+
+    /** Every test starts with a fresh rate-limit budget: the classes before it share 127.0.0.1's and may have spent it (a 429 on
+     *  a sign-in). */
+    @org.junit.jupiter.api.BeforeEach
+    void freshRateLimitBudget() {
+        rateLimiter.clear();
+    }
+
     protected Response rpc(Session session, String method, Object... args) {
         return RpcClient.rpc(session, method, args);
     }
