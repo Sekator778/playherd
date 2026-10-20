@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
+import { placeBetWithRetryId } from "../api/betAttempt";
 import { nextRoundId } from "../api/clock";
 import { useEngineEpoch } from "../api/engineState";
 import {
@@ -874,7 +875,7 @@ function BetSlipForm({
     setErrorMessage(null);
     try {
       const sent = stakeNum.toFixed(3);
-      await api.placeBet({ roundId: round.roundId, direction, leverage, stake: sent });
+      await placeBetWithRetryId(api, { roundId: round.roundId, direction, leverage, stake: sent });
       clearBetDraft(round.roundId);
       // The server has the bet. The player is told so now — "Saved, refreshing…" — and what it came to ("Bet updated.") when the
       // page shows it: the card the form gives way to must show the bet as it is now, not the old one (see the block above).

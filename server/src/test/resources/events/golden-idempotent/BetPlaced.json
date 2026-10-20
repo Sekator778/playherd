@@ -1,0 +1,16 @@
+{
+  "playerId": "p-golden-1",
+  "interval": "HOURLY",
+  "windowStart": 1700000000000,
+  "windowEnd": 1700000180000,
+  "direction": "UP",
+  "leverage": 5,
+  "stakeMojos": 100000,
+  "atMs": 1700000000500,
+  "market": "spot_BTC",
+  "feeHerdMojos": 3000,
+  "feeNetMojos": 100,
+  "liqCap": 1200,
+  "liqKappa": "0.1",
+  "clientRequestId": "3f1c2b9e-6d54-4c0a-9a43-0d2f7a7e8b11"
+}

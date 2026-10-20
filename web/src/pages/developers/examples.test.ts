@@ -103,6 +103,14 @@ describe("docs/api/bots.md", () => {
     expect(text).toContain('**`"FIXED"`** ("Win or lose")');
   });
 
+  it("describes clientRequestId: the id of a bet, the same one on a retry, remembered for ten minutes", () => {
+    const placeBet = CALL_EXAMPLES.find((c) => c.method === "placeBet");
+    expect((placeBet?.args[0] as { clientRequestId?: string }).clientRequestId).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+    expect(text).toContain('Optional "clientRequestId" field');
+    expect(text).toContain("send the SAME request again with the SAME id");
+    expect(text).toContain("remembered for 10 minutes");
+  });
+
   it("calls the game's money PLAY and never describes it as a plaything", () => {
     expect(text.toLowerCase()).not.toMatch(/\btoy\b|play money|play-money|fake money/);
   });
@@ -118,7 +126,12 @@ describe("the example bot", () => {
 
   it("uses only the standard library", () => {
     const imports = [...PYTHON_BOT.matchAll(/^(?:import|from)\s+([a-z_.]+)/gm)].map((m) => m[1].split(".")[0]);
-    expect(imports.sort()).toEqual(["json", "os", "time", "urllib", "urllib"]);
+    expect(imports.sort()).toEqual(["json", "os", "time", "urllib", "urllib", "uuid"]);
+  });
+
+  it("sends one request id per round and reuses it when it asks again", () => {
+    expect(PYTHON_BOT).toContain("request_ids.setdefault(round_id, str(uuid.uuid4()))");
+    expect(PYTHON_BOT).toContain('"clientRequestId": request_id');
   });
 
   it("only makes calls a key may make", () => {

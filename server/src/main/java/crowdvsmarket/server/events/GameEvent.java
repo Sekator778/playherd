@@ -127,10 +127,14 @@ public sealed interface GameEvent {
                        @JsonInclude(JsonInclude.Include.NON_NULL) Long feeNetMojos,
                        @JsonInclude(JsonInclude.Include.NON_NULL) Integer liqCap,
                        @JsonInclude(JsonInclude.Include.NON_NULL) String liqKappa,
-                       @JsonInclude(JsonInclude.Include.NON_NULL) String mode) implements GameEvent {
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String mode,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String clientRequestId) implements GameEvent {
 
         public BetPlaced {
             market = marketOrBtc(market);
+            if (clientRequestId != null && clientRequestId.isBlank()) {
+                throw new IllegalArgumentException("clientRequestId must not be blank when present");
+            }
             if (mode != null) {
                 crowdvsmarket.engine.round.BetMode.fromWire(mode); // refuses a name that is not a mode
                 if (!"FIXED".equals(mode)) {
@@ -152,6 +156,20 @@ public sealed interface GameEvent {
             if (liqCap != null && feeHerdMojos == null) {
                 throw new IllegalArgumentException("liquidation parameters belong to a bet placed under the economy rules (with fees)");
             }
+        }
+
+        /** The shape before the client request id: the {@code clientRequestId} key absent. */
+        public BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
+                           int leverage, long stakeMojos, long atMs, String market, Long feeHerdMojos, Long feeNetMojos,
+                           Integer liqCap, String liqKappa, String mode) {
+            this(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, market, feeHerdMojos,
+                    feeNetMojos, liqCap, liqKappa, mode, null);
+        }
+
+        /** The same bet, remembered under the id the client sent with it (idempotent retry, {@code BetRequests}). */
+        public BetPlaced withClientRequestId(String id) {
+            return new BetPlaced(playerId, interval, windowStart, windowEnd, direction, leverage, stakeMojos, atMs, market,
+                    feeHerdMojos, feeNetMojos, liqCap, liqKappa, mode, id);
         }
 
         /** The shape before the fixed-payout mode (Р-106): a percentage-mode bet, the {@code mode} key absent. */

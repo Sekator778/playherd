@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useApi, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
+import { placeBetWithRetryId } from "../api/betAttempt";
 import { LEVERAGE_MAX, LEVERAGE_MIN, type BetMode, type Direction, type MarketDto, type RoundBetting } from "../api/contract";
 import { useMarket, useMarkets } from "../api/useMarkets";
 import { effectiveBetMode, fixedModeAvailable, fixedQuote, isFixedMode, loadBetMode, saveBetMode } from "./betModeModel";
@@ -190,7 +191,7 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
     setError(null);
     try {
       const sent = stakeNum.toFixed(3);
-      await api.placeBet({ roundId: round.roundId, direction, leverage, stake: sent, ...(fixed ? { mode: "FIXED" as const } : {}) });
+      await placeBetWithRetryId(api, { roundId: round.roundId, direction, leverage, stake: sent, ...(fixed ? { mode: "FIXED" as const } : {}) });
       notification("success");
       // The room (if it is the one open) reads its round again at once and says the bet is placed; the dock finds the bet on its next read.
       announceDraftPlaced({ roundId: round.roundId, direction, leverage, stake: sent });

@@ -608,6 +608,11 @@ export interface PlaceBetRequest extends WithBetMode {
   direction: Direction;
   leverage: Leverage;
   stake: PlayAmountStr;
+  /** Optional idempotency key of one press of the button (a UUID; 1-64 characters of `A-Z a-z 0-9 - _`). The same id from the same
+   *  player within ten minutes places no second bet and is answered with the first answer, so a retry after a lost answer is safe;
+   *  the same id with a different bet is refused (`BAD_REQUEST`). Absent: the call is as it always was. `placeBetWithRetryId`
+   *  (`betAttempt.ts`) makes and reuses it. */
+  clientRequestId?: string;
 }
 
 // ---------------------------------------------------------------------------

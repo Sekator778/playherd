@@ -80,6 +80,7 @@ public final class EngineHub {
         final ConcurrentHashMap<String, MarketEngines> markets = new ConcurrentHashMap<>();
         final BetWindows betWindows = new BetWindows();
         final ClosedRounds closedRounds = new ClosedRounds();
+        final BetRequests betRequests = new BetRequests();
         final PlayerRoster roster = new PlayerRoster();
         /** The last oracle sequence number issued (architecture plan F4): the engine assigns the next one, {@code RoundResolved}
          *  carries it, and applying the event raises this to it. Touched under the engine lock only. */
@@ -153,6 +154,11 @@ public final class EngineHub {
     /** The rounds that are resolved or cancelled ({@link ClosedRounds}); kept by {@code EventApplier}. */
     public ClosedRounds closedRounds() {
         return state.closedRounds;
+    }
+
+    /** The bets that came with a client request id, for the idempotent retry ({@link BetRequests}); kept by {@code EventApplier}. */
+    public BetRequests betRequests() {
+        return state.betRequests;
     }
 
     /** The players the replay knows ({@link PlayerRoster}); kept by {@code EventApplier}. */

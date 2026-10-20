@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useApi, useConnectModalState, useSession } from "../api/ApiContext";
 import { mutationErrorText } from "../api/apiErrors";
+import { placeBetWithRetryId } from "../api/betAttempt";
 import { STARTER_PACK_PLAY } from "../api/contract";
 import { clearReferral, pendingReferral } from "../api/referral";
 import { checkNickname, hasPlaceholderNickname, NICKNAME_MAX } from "../api/nickname";
@@ -148,7 +149,7 @@ export function ConnectWalletModal() {
     setPlaceError(null);
     try {
       const stake = (Number(draft.stake) || 0).toFixed(3);
-      await api.placeBet({ roundId: draft.roundId, direction: draft.direction, leverage: draft.leverage, stake, ...(draft.mode === "FIXED" ? { mode: "FIXED" as const } : {}) });
+      await placeBetWithRetryId(api, { roundId: draft.roundId, direction: draft.direction, leverage: draft.leverage, stake, ...(draft.mode === "FIXED" ? { mode: "FIXED" as const } : {}) });
       announceDraftPlaced({ roundId: draft.roundId, direction: draft.direction, leverage: draft.leverage, stake });
       if (attemptIdRef.current !== attemptId) return;
       closeInRoom();

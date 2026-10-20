@@ -123,7 +123,7 @@ describe("the bet set up before signing in (F4)", () => {
     await user.click(within(dialog).getByRole("button", { name: "PLACE THIS BET" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(placeBet).toHaveBeenCalledTimes(1);
-    expect(placeBet).toHaveBeenCalledWith({ roundId: theRound.roundId, direction: "DOWN", leverage: 40, stake: "250.000" });
+    expect(placeBet).toHaveBeenCalledWith({ roundId: theRound.roundId, direction: "DOWN", leverage: 40, stake: "250.000", clientRequestId: expect.any(String) });
     // the room is told to read the round, and the slip says the server has the bet
     expect(onChanged).toHaveBeenCalled();
     expect(await screen.findByText(/Saved, refreshing/)).toBeInTheDocument();

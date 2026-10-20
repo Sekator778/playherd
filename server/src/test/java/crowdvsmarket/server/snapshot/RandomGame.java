@@ -145,6 +145,9 @@ final class RandomGame {
             default -> GameEvent.BetPlaced.fixed(player, interval, start, start + length, direction, stake, clock, market,
                     (long) rnd.nextInt(500), (long) rnd.nextInt(50));
         };
+        if (stake % 3 == 0) { // an id on a third of the bets, taken from the bet itself so the random stream is not touched
+            event = event.withClientRequestId("rq-" + clock + "-" + stake / 1000);
+        }
         apply(event);
     }
 

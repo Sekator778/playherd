@@ -21,6 +21,7 @@ import crowdvsmarket.engine.round.LiquidationParams;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.engine.season.Season;
 import crowdvsmarket.server.domain.BetFeed;
+import crowdvsmarket.server.domain.BetRequests;
 import crowdvsmarket.server.domain.ComparisonAccounts;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.PlayerRoster;
@@ -36,7 +37,9 @@ import java.util.Map;
  * The engine state as text, and back (architecture plan F5): everything a replay of the journal builds - the ledger (accounts with
  * their seasons, withdrawal and deposit requests, corrections, the house accounts and counters), per market the crowd account, the
  * comparison lines and the bet books of both series, the index of the windows that hold bets, the memory of the closed rounds, the
- * player roster, the oracle sequence number and the bet feed.
+ * player roster, the oracle sequence number, the bet feed and the memory of the request ids of the bets ({@code betRequest} lines: a
+ * state without such lines - every snapshot taken before the ids existed - restores an empty memory, which is what a replay of a
+ * journal without ids builds too, so {@link #FORMAT_VERSION} stays).
  *
  * <p>The text is canonical: one fact per line, tab separated, strings escaped ({@code \t \n \r \\}, {@code \N} for null), markets and
  * the roster in name order, every other collection in the order the engine keeps it (which a replay reproduces). It is both the
@@ -102,6 +105,10 @@ public final class StateCodec {
                 }
                 hub.closedRounds().latestEnd(market, interval).ifPresent(end -> out.line("latestEnd", market, interval, end));
             }
+        }
+        for (BetRequests.Entry r : hub.betRequests().all()) {
+            out.line("betRequest", r.playerId(), r.requestId(), r.atMs(), r.roundId(), r.direction(), r.leverage(), r.stakeMojos(),
+                    r.feeHerdMojos(), r.feeNetMojos(), r.fixed());
         }
         BetFeed.State fed = feed.state();
         out.line("feedSeq", fed.seq());
@@ -181,6 +188,7 @@ public final class StateCodec {
         Map<String, Map<Interval, List<long[]>>> closed = new LinkedHashMap<>();
         Map<String, Map<Interval, Long>> newest = new LinkedHashMap<>();
         Map<String, List<BetFeed.Entry>> feedRounds = new LinkedHashMap<>();
+        List<BetRequests.Entry> betRequests = new ArrayList<>();
         long feedSeq = 0;
         String feedRound = null;
         long count = 0;
@@ -249,6 +257,10 @@ public final class StateCodec {
                         .add(new long[] {Long.parseLong(f[3]), Long.parseLong(f[4])});
                 case "latestEnd" -> newest.computeIfAbsent(f[1], m -> new LinkedHashMap<>())
                         .put(Interval.valueOf(f[2]), Long.parseLong(f[3]));
+                case "betRequest" -> betRequests.add(new BetRequests.Entry(f[1], f[2], Long.parseLong(f[3]), f[4],
+                        Direction.valueOf(f[5]), Integer.parseInt(f[6]), Long.parseLong(f[7]),
+                        f[8] == null ? null : Long.parseLong(f[8]), f[9] == null ? null : Long.parseLong(f[9]),
+                        Boolean.parseBoolean(f[10])));
                 case "feedSeq" -> feedSeq = Long.parseLong(f[1]);
                 case "feedRound" -> {
                     feedRound = f[1];
@@ -286,6 +298,7 @@ public final class StateCodec {
                         newest.getOrDefault(market, Map.of()).get(interval));
             }
         }
+        hub.betRequests().restore(betRequests);
         feed.restore(new BetFeed.State(feedSeq, feedRounds));
     }
 

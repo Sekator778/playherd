@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiProvider } from "../api/ApiContext";
+import { forgetBetAttempts } from "../api/betAttempt";
 import { TEST_PLAYER, fakeApi, serverInfoDto } from "../api/apiTestUtils";
 import type { Api, Direction, LiquidationPreviewRequest } from "../api/contract";
 import { BetSheetHost } from "./BetSheet";
@@ -87,6 +88,7 @@ const sheet = () => screen.findByRole("dialog", { name: "Place a bet" });
 const pressed = (el: HTMLElement) => el.getAttribute("aria-pressed") === "true";
 
 beforeEach(() => {
+  forgetBetAttempts();
   window.localStorage.clear();
   // the sheet opens on "Win or lose" for a player who never chose (Р-106); these tests are about the "%" mode, so that is the choice made
   window.localStorage.setItem("herd.betMode", "PERCENTAGE");
@@ -154,7 +156,7 @@ describe("the sheet, signed in", () => {
     const go = within(dialog).getByRole("button", { name: "BET 100 ON DOWN" });
     await user.click(go);
     expect(place).toHaveBeenCalledTimes(1);
-    expect(place).toHaveBeenCalledWith({ roundId: round.roundId, direction: "DOWN", leverage: 10, stake: "100.000" });
+    expect(place).toHaveBeenCalledWith({ roundId: round.roundId, direction: "DOWN", leverage: 10, stake: "100.000", clientRequestId: expect.any(String) });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Place a bet" })).not.toBeInTheDocument());
   });
 
@@ -178,7 +180,7 @@ describe("the sheet, signed in", () => {
     expect(await within(dialog).findByText(/you win \+124\.65 after fees/)).toBeInTheDocument();
     await user.click(go);
     expect(place).toHaveBeenCalledTimes(1);
-    expect(place).toHaveBeenCalledWith({ roundId: round.roundId, direction: "UP", leverage: 25, stake: "500.000" });
+    expect(place).toHaveBeenCalledWith({ roundId: round.roundId, direction: "UP", leverage: 25, stake: "500.000", clientRequestId: expect.any(String) });
   });
 
   it("'other' takes any amount of at least the minimum; below it there is no bet", async () => {
@@ -195,6 +197,35 @@ describe("the sheet, signed in", () => {
     await user.type(input, "250");
     await user.click(await within(dialog).findByRole("button", { name: "BET 250 ON UP" }));
     expect(place).toHaveBeenCalledWith(expect.objectContaining({ stake: "250.000" }));
+  });
+
+  it("a press after a network error is a retry: the same request id goes out again, and a new bet after an answer gets a new one", async () => {
+    const calls: Array<string | undefined> = [];
+    let n = 0;
+    const placeBet = vi.fn<Api["placeBet"]>(async (req) => {
+      calls.push(req.clientRequestId);
+      n += 1;
+      if (n === 1) throw new Error("Network error");
+      return { playerId: TEST_PLAYER.playerId, ...req };
+    });
+    const { open, user } = setup({ placeBet });
+    open("UP");
+    let dialog = await sheet();
+    await user.click(await within(dialog).findByRole("button", { name: "BET 100 ON UP" }));
+    await waitFor(() => expect(placeBet).toHaveBeenCalledTimes(1));
+    expect(await within(dialog).findByRole("alert")).toBeInTheDocument(); // the sheet stays open and says it failed
+
+    await user.click(within(dialog).getByRole("button", { name: "BET 100 ON UP" }));
+    await waitFor(() => expect(placeBet).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Place a bet" })).not.toBeInTheDocument());
+    expect(calls[0]).toBeDefined();
+    expect(calls[1]).toBe(calls[0]);
+
+    open("UP");
+    dialog = await sheet();
+    await user.click(await within(dialog).findByRole("button", { name: "BET 100 ON UP" }));
+    await waitFor(() => expect(placeBet).toHaveBeenCalledTimes(3));
+    expect(calls[2]).not.toBe(calls[0]);
   });
 
   it("a stake over the balance cannot be bet: said in words, the button is off", async () => {
@@ -298,7 +329,7 @@ describe("signed out: the first step is in the sheet, and the choice survives th
 
     await user.click(within(connect).getByRole("button", { name: "PLACE THIS BET" }));
     await waitFor(() => expect(place).toHaveBeenCalledTimes(1));
-    expect(place).toHaveBeenCalledWith({ roundId: round.roundId, direction: "DOWN", leverage: 25, stake: "500.000" });
+    expect(place).toHaveBeenCalledWith({ roundId: round.roundId, direction: "DOWN", leverage: 25, stake: "500.000", clientRequestId: expect.any(String) });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Place a bet" })).not.toBeInTheDocument());
   });
 

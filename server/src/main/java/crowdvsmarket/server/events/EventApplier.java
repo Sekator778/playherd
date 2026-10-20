@@ -13,6 +13,7 @@ import crowdvsmarket.engine.round.BetMode;
 import crowdvsmarket.engine.round.RoundPrices;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.domain.BetFeed;
+import crowdvsmarket.server.domain.BetRequests;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.PlayerRoster;
 import crowdvsmarket.server.dto.Enums;
@@ -97,6 +98,10 @@ public final class EventApplier {
                 }
                 recordBetFeedEntry(window.roundId(), e);
                 hub.betWindows().placed(window);
+                if (e.clientRequestId() != null) {
+                    hub.betRequests().remember(new BetRequests.Entry(e.playerId(), e.clientRequestId(), e.atMs(), window.roundId(),
+                            e.direction(), e.leverage(), e.stakeMojos(), e.feeHerdMojos(), e.feeNetMojos(), e.betMode() == BetMode.FIXED));
+                }
                 yield null;
             }
             case GameEvent.BetCancelled e -> {

@@ -71,7 +71,8 @@ class StateCodecTest {
             all += StateCodec.encode(game.hub, game.feed);
         }
         for (String kind : new String[] {"account", "season", "withdrawal", "deposit", "correction", "pack", "feesPaid", "retired",
-                "treasuryDay", "roster", "crowdRound", "hold", "anti", "bet", "window", "closed", "latestEnd", "feedEntry"}) {
+                "treasuryDay", "roster", "crowdRound", "hold", "anti", "bet", "window", "closed", "latestEnd", "feedEntry",
+                "betRequest"}) {
             assertThat(all).as("a random game reaches a line of kind " + kind).contains("\n" + kind + "\t");
         }
         assertThat(all).contains("\\t").contains("\\n").contains("\\\\").contains("\\N");

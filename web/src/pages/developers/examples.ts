@@ -90,7 +90,7 @@ export const CALL_EXAMPLES: CallExample[] = [
   {
     method: "placeBet",
     what: "Bets on the round open for betting. Placing again on the same round replaces the first bet.",
-    args: [{ roundId: "1h-1792058880000", direction: "UP", leverage: 5, stake: "250.000" }],
+    args: [{ roundId: "1h-1792058880000", direction: "UP", leverage: 5, stake: "250.000", clientRequestId: "3f1c2b9e-6d54-4c0a-9a43-0d2f7a7e8b11" }],
     fixture: "home",
     at: "hourly.betting.myBet",
     response: {
@@ -103,7 +103,7 @@ export const CALL_EXAMPLES: CallExample[] = [
       feeNetwork: "0.100",
       maxLeverageForStake: 1200,
     },
-    note: "Optional \"mode\" field: see Payout modes. Left out, the bet pays in the percentage mode.",
+    note: "Optional \"mode\" field: see Payout modes. Left out, the bet pays in the percentage mode. Optional \"clientRequestId\" field: an id you make up for one bet (1-64 characters of `A-Z a-z 0-9 - _`; a UUID is the usual choice). If the answer is lost on the way back (a timeout, a dropped connection), send the SAME request again with the SAME id: the server recognises it, places no second bet and answers with the first answer. An id is remembered for 10 minutes, per key; the same id with a different bet (another round, side, stake, leverage or mode) is refused with `400 BAD_REQUEST`, and a malformed id too. A request that was refused is not remembered - fix it and send it again. Left out, nothing changes: placing again on the round replaces your bet, as above.",
   },
   { method: "cancelBet", what: "Takes back your bet on a round that is still open for betting; stake and fees are refunded.", args: ["1h-1792058880000"], response: {} },
   {
@@ -227,6 +227,7 @@ export const ERROR_ROWS: ErrorRow[] = [
 export const PYTHON_BOT = `import json
 import os
 import time
+import uuid
 import urllib.error
 import urllib.request
 
@@ -257,6 +258,7 @@ def call(method, *args):
 
 last_price = None
 bet_rounds = set()
+request_ids = {}  # one id per round: a retry of the same bet reuses it, so it is never placed twice
 while True:
     try:
         answer = call("markets")
@@ -267,12 +269,14 @@ while True:
         time_left_ms = series["bettingClosesAtMs"] - answer["serverTimeMs"]
         if price is not None and last_price is not None and round_id not in bet_rounds and time_left_ms > 5000:
             direction = "UP" if price > last_price else "DOWN"
-            bet = call("placeBet", {"roundId": round_id, "direction": direction, "leverage": LEVERAGE, "stake": STAKE})
+            request_id = request_ids.setdefault(round_id, str(uuid.uuid4()))
+            bet = call("placeBet", {"roundId": round_id, "direction": direction, "leverage": LEVERAGE, "stake": STAKE,
+                                    "clientRequestId": request_id})
             bet_rounds.add(round_id)
             print(f'{round_id}: {direction} {bet["stake"]} PLAY, fees {bet["feeHerd"]} + {bet["feeNetwork"]}')
         if price is not None:
             last_price = price
-    except HerdError as err:
-        print("refused:", err)
+    except (HerdError, urllib.error.URLError, TimeoutError) as err:
+        print("failed:", err)
     time.sleep(5)
 `;

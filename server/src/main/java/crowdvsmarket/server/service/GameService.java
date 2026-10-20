@@ -32,6 +32,7 @@ import crowdvsmarket.server.config.GameMode;
 import crowdvsmarket.server.core.Command;
 import crowdvsmarket.server.core.CoreWriter;
 import crowdvsmarket.server.core.WriteContext;
+import crowdvsmarket.server.domain.BetRequests;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.PlayerDirectory;
 import crowdvsmarket.server.domain.RoundProgress;
@@ -1414,6 +1415,11 @@ public class GameService implements MarketListener {
     public Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
         RoundWindow.RoundRef ref = parseRoundId(req.roundId());
         marketRegistry.require(ref.market()); // MARKET_NOT_FOUND without waiting for the writer
+        final String requestId = req.clientRequestId();
+        if (requestId != null && !Betting.PlaceBetRequest.validRequestId(requestId)) {
+            throw ApiException.badRequest("invalid clientRequestId: 1-" + Betting.PlaceBetRequest.MAX_REQUEST_ID_LENGTH
+                    + " characters of A-Z a-z 0-9 - _");
+        }
         HerdPlaceBet jfr = new HerdPlaceBet(); // I-2: phases of the call, the clock is read only while JFR records
         boolean rec = jfr.isEnabled();
         if (rec) {
@@ -1424,6 +1430,14 @@ public class GameService implements MarketListener {
             Rounds.BetDto dto = write("bet", nowMs, ctx -> {
                 jfr.waitNs = ctx.queueWaitNanos();
                 long t;
+                if (requestId != null) {
+                    // A repeat of a request the writer has already placed (the client did not get the answer): the first answer
+                    // again, nothing placed. Checked before anything else - the round may be closed by now, the first bet stands.
+                    BetRequests.Entry seen = hub.betRequests().find(playerId, requestId, nowMs);
+                    if (seen != null) {
+                        return repeatedBet(seen, ref, req);
+                    }
+                }
                 // Read again under the lock: a close announced while this call waited for it wins.
                 Market market = marketRegistry.require(ref.market());
                 if (!market.isActive()) {
@@ -1547,6 +1561,9 @@ public class GameService implements MarketListener {
                             market.id(), fees.herd().mojos(), fees.network().mojos(), liquidation.cap(),
                             liquidation.kappa().toPlainString());
                 }
+                if (requestId != null) {
+                    event = event.withClientRequestId(requestId); // the writer's memory of the id is rebuilt from this field
+                }
                 t = JfrClock.nanos(rec);
                 ctx.record(event, nowMs);
                 jfr.applyNs = JfrClock.since(rec, t);
@@ -1567,6 +1584,31 @@ public class GameService implements MarketListener {
                 jfr.commit();
             }
         }
+    }
+
+    /** The answer to a repeated {@code placeBet} ({@code clientRequestId}): the first answer, rebuilt from what the journal event says;
+     *  a request that differs from the first one under the same id is refused. */
+    private Rounds.BetDto repeatedBet(BetRequests.Entry seen, RoundWindow.RoundRef ref, Betting.PlaceBetRequest req) {
+        boolean same = ref.roundId().equals(seen.roundId())
+                && toEngine(req.direction()) == seen.direction()
+                && req.isFixed() == seen.fixed()
+                && (seen.fixed() || req.leverage() == seen.leverage());
+        if (same) {
+            try {
+                same = PlayAmount.fromMoney(new BigDecimal(req.stake())).mojos() == seen.stakeMojos();
+            } catch (RuntimeException e) {
+                same = false;
+            }
+        }
+        if (!same) {
+            throw ApiException.badRequest("clientRequestId was already used for a different bet");
+        }
+        MarketSpec spec = marketRegistry.require(ref.market()).spec();
+        Fees fees = seen.feeHerdMojos() == null ? null
+                : new Fees(new PlayAmount(seen.feeHerdMojos()), new PlayAmount(seen.feeNetMojos()));
+        return betDto(seen.playerId(), seen.roundId(), toDto(seen.direction()), seen.leverage(), new PlayAmount(seen.stakeMojos()),
+                fees, spec, ref.interval(),
+                seen.fixed() ? crowdvsmarket.engine.round.BetMode.FIXED : crowdvsmarket.engine.round.BetMode.PERCENTAGE);
     }
 
     /** A bet as the client sees it: with the fees charged and the highest leverage allowed for its stake when it was
