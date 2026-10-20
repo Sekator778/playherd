@@ -30,6 +30,12 @@ public class RateLimiter {
 
     private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
 
+    /** Forgets every bucket. For tests that share one application with other test classes and would otherwise inherit their
+     *  spent budget for 127.0.0.1. */
+    public void clear() {
+        buckets.clear();
+    }
+
     /** {@code true} if a token was available and has been consumed; {@code false} if the caller
      *  should be refused (429 RATE_LIMITED). The shared budget of {@code herd.ratelimit.*}. */
     public boolean tryAcquire(String key) {

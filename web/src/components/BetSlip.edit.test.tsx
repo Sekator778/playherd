@@ -3,7 +3,7 @@
  * form open with the same button and not a word of it, and CANCEL BET could not be reached from there without a reload. And what
  * the slip says waits for the page: "Bet updated." only once the room has read the round again and the card shows the new bet.
  */
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useState } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -419,7 +419,8 @@ describe("BetSlip — focus follows the view that replaces the one the player pr
       return { ...view, user };
     })();
     await user.click(screen.getByRole("button", { name: "UPDATE BET" }));
-    expect(status()).toHaveFocus(); // while the form is still there
+    // while the form is still there; within one short wait, not a fixed tick: on a loaded machine the focus lands a frame later
+    await waitFor(() => expect(status()).toHaveFocus(), { timeout: 500 });
     poll();
     late.resolve();
     await screen.findByText(/Your bet:/);

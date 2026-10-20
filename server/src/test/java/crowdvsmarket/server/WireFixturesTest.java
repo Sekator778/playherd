@@ -93,6 +93,8 @@ class WireFixturesTest extends LiveRpcTestBase {
 
     @Inject
     MarketViewService marketView;
+    @Inject
+    crowdvsmarket.server.api.RateLimiter rateLimiter;
     @InjectSpy
     PlayerDirectory playersSpy;
     @InjectMock
@@ -261,6 +263,7 @@ class WireFixturesTest extends LiveRpcTestBase {
 
     @Test
     void everyAnswerOfTheServerHasTheShapeOfItsCommittedFixture() throws Exception {
+        rateLimiter.clear(); // this test signs in many players; the classes before it may have spent 127.0.0.1's budget
         Story story = playTheStory();
         WireFixtures fixtures = WireFixtures.fromSystemProperties();
         Session alice = story.alice();
