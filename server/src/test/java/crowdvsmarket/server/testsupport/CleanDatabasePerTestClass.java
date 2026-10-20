@@ -100,6 +100,9 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
         EngineRebuildService rebuildService = Arc.container().instance(EngineRebuildService.class).get();
         // the windows it had failed to settle are gone with the database: nothing may hold a new class's windows back
         Arc.container().instance(RoundSchedulerService.class).get().forgetFailedAttempts();
+        // a fresh deployment also starts with full rate-limit buckets: a class that signs in many players must not inherit the budget of
+        // 127.0.0.1 that the classes before it spent (429 on a sign-in)
+        Arc.container().instance(crowdvsmarket.server.api.RateLimiter.class).get().clear();
         gameService.runExclusively(() -> {
             db.tx(c -> {
                 db.update(c, TRUNCATE_SQL);
