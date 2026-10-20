@@ -172,14 +172,15 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
         Future<?> rebuilding = pool.submit(() -> rebuild.rebuild());
         assertThat(inRebuild.await(10, TimeUnit.SECONDS)).isTrue();
 
-        // the registry itself is not held up by the engine lock: both commit at once; only the listener queues
+        // the registry's journal writes (F6) take their turn on the core writer: they wait for the rebuild, which holds the engine
+        // lock, and are written, and announced to the listener, after it
         Future<Market> listing = pool.submit(() -> list("T_LC_LATE", MarketKind.PERP, Category.CRYPTO, "LTE", 10, 0));
         Future<?> closing = pool.submit(() -> registry.close(doomed.id(), "closed during a rebuild",
                 System.currentTimeMillis()));
-        await().atMost(Duration.ofSeconds(10)).until(
-                () -> registry.byId("T_LC_LATE").isPresent() && !registry.require(doomed.id()).isActive());
-        assertThat(listing.isDone()).as("the listener waits for the engine lock the rebuild holds").isFalse();
+        Thread.sleep(500);
+        assertThat(listing.isDone()).as("the listing waits for the writer's turn").isFalse();
         assertThat(closing.isDone()).isFalse();
+        assertThat(registry.byId("T_LC_LATE")).as("and is not written yet").isEmpty();
 
         release.countDown();
         finish(rebuilding, "the rebuild");
@@ -249,8 +250,8 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
         Future<?> closing = pool.submit(() -> registry.close(doomed.id(), "closed during a settlement",
                 System.currentTimeMillis()));
         Future<?> rebuilding = pool.submit(() -> rebuild.rebuild());   // later needs the bot service's monitor
-        await().atMost(Duration.ofSeconds(10)).until(
-                () -> registry.byId("T_LC_LATE2").isPresent() && !registry.require(doomed.id()).isActive());
+        Thread.sleep(500); // the listing and the closing wait for the writer's turn, behind the settlement
+        assertThat(registry.byId("T_LC_LATE2")).as("not written yet").isEmpty();
         assertThat(settlement.isDone() || botTick.isDone() || listing.isDone() || closing.isDone()
                 || rebuilding.isDone()).as("everyone waits for the settlement").isFalse();
 
