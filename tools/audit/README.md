@@ -53,6 +53,11 @@ tools/audit/funnel.py --exclude <player_id>,<player_id> --detail      # cohort: 
 `coin` control (Newcombe interval), liquidation share, average leverage, PnL before / after fees, return on stake, verdict. Fees come from
 the `BetPlaced` events (`player_round_history.fees_mojos`, V14, is not on the stand at the time of writing).
 
+Since Р-106 the tables are split by payout mode (`player_round_history.mode`, V18): one block `FIXED` ("Win or lose") and one block `PERCENTAGE`, each with the
+same columns, the same Wilson / Newcombe intervals and its own `coin` control of the same round length and mode (CSV: first column `mode`). In `FIXED` there is no
+leverage and no liquidation, so those two columns are blank. The split is internal (Р-105 п. 3). Tests: `python3 -m unittest tools/audit/test_bot_stats.py` (part of
+`make test-tools`).
+
 `funnel.py` — humans only: entered, bet >= 1, >= 3 and >= 5 rounds (old metric), played (new: bets of settled rounds in >= 5 different
 3-minute windows on >= 2 different UTC days), returned (a bet on a later UTC day). Definition: `docs/research/features_growth_2026-10-18.md` §4.
 First outputs: `docs/product/feedback/bot-stats-2026-10-18.md`.

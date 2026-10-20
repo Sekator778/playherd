@@ -9,7 +9,10 @@ import crowdvsmarket.bots.persona.Persona;
 import crowdvsmarket.bots.persona.Sizing;
 import crowdvsmarket.bots.signal.MarketView;
 import crowdvsmarket.bots.signal.Signal;
+import crowdvsmarket.engine.economy.EconomyRules;
+import crowdvsmarket.engine.economy.Fees;
 import crowdvsmarket.engine.ledger.PlayAmount;
+import crowdvsmarket.engine.round.BetMode;
 import crowdvsmarket.engine.round.Direction;
 import java.util.Comparator;
 import java.util.List;
@@ -64,7 +67,8 @@ public final class BotBrain {
             if (intent.isPresent()) {
                 BetIntent i = intent.get();
                 intents.add(i);
-                PlayAmount spent = i.stake().plus(m.fees(i.leverage(), i.stake()).total());
+                Fees fees = i.mode() == BetMode.FIXED ? EconomyRules.fixedFees(i.stake()) : m.fees(i.leverage(), i.stake());
+                PlayAmount spent = i.stake().plus(fees.total());
                 current = current.withBalance(current.balance().minus(spent));
             }
         }
@@ -93,8 +97,10 @@ public final class BotBrain {
         }
         Signal s = signal.get();
         Sizing z = sizing.get();
+        // Р-106: the bot's preferred mode, except where the market refuses it (odds markets play the percentage mode only)
+        BetMode mode = profile.preferredMode() == BetMode.FIXED && !market.odds() ? BetMode.FIXED : BetMode.PERCENTAGE;
         return Optional.of(new BetIntent(profile.botId(), market.marketId(), market.roundId(), s.direction(), z.stake(),
-                z.leverage(), s.confidence(), fallback));
+                z.leverage(), s.confidence(), fallback, mode));
     }
 
     /** |close[last] / close[last - 5] - 1|, 0 when the history is shorter. */

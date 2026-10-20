@@ -25,8 +25,13 @@ public record CatalogEntry(String catalogId, String name, String strategy, Map<S
         return Strategies.create(strategy, params);
     }
 
-    /** The profile of the bot {@code botId} that plays as this entry. */
+    /** The profile of the bot {@code botId} that plays as this entry, with the payout-mode share of {@link PayoutModes#configuredShare()}. */
     public BotProfile profile(String botId) {
-        return new BotProfile(botId, signalStrategy(), Personas.byId(persona));
+        return profile(botId, PayoutModes.configuredShare());
+    }
+
+    /** The profile of the bot {@code botId} with {@code fixedShare} of the catalog on the fixed payout (Р-106). */
+    public BotProfile profile(String botId, double fixedShare) {
+        return new BotProfile(botId, signalStrategy(), Personas.byId(persona), PayoutModes.preferredMode(catalogId, fixedShare));
     }
 }

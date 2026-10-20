@@ -4,6 +4,10 @@
 Read-only (ssh + psql inside a READ ONLY transaction, same mechanism and .local/vps.env as settlement_audit.py).
 Python 3 standard library only.
 
+Everything is split by payout mode (Р-106): FIXED ("Win or lose") and PERCENTAGE, each with its own tables, its own `coin` control
+and the same Wilson / Newcombe columns. The mode is `player_round_history.mode` (V18). In FIXED there is no leverage and no
+liquidation, so those two columns are blank there. The split is internal (Р-105 п. 3), not shown to players.
+
 Per strategy family (bollinger, rsi, ema, coin, donchian, momentum, crowd-follow, crowd-contrarian, legacy names) and per
 full strategy name, per round length (3 min = HOURLY, 15 min = DAILY) and for both together:
 bots, bets, decided bets, win % with a 95 % Wilson interval, difference vs the `coin` control (same round length) in
@@ -33,6 +37,7 @@ Z = 1.959964
 MOJO_PER_PLAY = 1000
 IV_NAME = {"HOURLY": "3 мин", "DAILY": "15 мин"}
 CONTROL = "coin"
+MODES = ("FIXED", "PERCENTAGE")
 
 SQL = """
 with bp as (
@@ -42,7 +47,7 @@ with bp as (
   from game_events g
   where g.event_type = 'BetPlaced' and g.at_ms >= %(lo)d and g.at_ms < %(hi)d
   order by g.payload->>'market', g.payload->>'interval', g.payload->>'windowStart', g.payload->>'playerId', g.id desc)
-select jsonb_build_object('s', p.bot_strategy, 'iv', h.interval, 'bots', count(distinct h.player_id), 'n', count(*),
+select jsonb_build_object('s', p.bot_strategy, 'iv', h.interval, 'mode', h.mode, 'bots', count(distinct h.player_id), 'n', count(*),
   'w', count(*) filter (where h.direction_correct), 'd', count(*) filter (where h.direction_correct is not null),
   'liq', count(*) filter (where h.liquidated), 'lev', sum(h.leverage), 'pnl', sum(h.payout_mojos - h.stake_mojos),
   'st', sum(h.stake_mojos), 'fee', coalesce(sum(bp.fee), 0), 'nofee', count(*) filter (where bp.fee is null))::text
@@ -51,7 +56,7 @@ join players p on p.player_id = h.player_id
 join round_results r on r.round_id = h.round_id
 left join bp on bp.pid = h.player_id and bp.m = h.market and bp.iv = h.interval and bp.ws = r.window_start_ms
 where p.is_bot and h.settled_at_ms >= %(since)d and h.settled_at_ms < %(until)d
-group by p.bot_strategy, h.interval;
+group by p.bot_strategy, h.interval, h.mode;
 """
 
 
@@ -136,39 +141,55 @@ def build(rows, ivs):
     return out
 
 
-def fmt_row(r):
+def split_by_mode(rows):
+    """Raw rows -> {mode: rows}; a row without a mode is a percentage-mode row (the column default)."""
+    by = {m: [] for m in MODES}
+    for r in rows:
+        by.setdefault(r.get("mode") or "PERCENTAGE", []).append(r)
+    return by
+
+
+def fmt_row(r, mode="PERCENTAGE"):
     w = r["win"]
     win = "%s [%s; %s]" % (pct(w[0]), pct(w[1]), pct(w[2])) if w else "—"
     d = r["diff"]
     diff = "%+.1f [%+.1f; %+.1f]" % (100 * d[0], 100 * d[1], 100 * d[2]) if d else "—"
     return [r["name"], IV_NAME.get(r["iv"], "обе"), str(r["bots"]), str(r["bets"]), str(r["decided"]), win, diff,
-            "%d (%s)" % (r["liq"], pct(r["liq_share"])) if r["liq_share"] is not None else "—",
-            "%.1f" % r["avg_lev"] if r["avg_lev"] is not None else "—",
+            "%d (%s)" % (r["liq"], pct(r["liq_share"])) if r["liq_share"] is not None and mode != "FIXED" else "—",
+            "%.1f" % r["avg_lev"] if r["avg_lev"] is not None and mode != "FIXED" else "—",
             "%.1f" % r["pnl_before"], "%.1f" % r["fees"], "%.1f" % r["pnl_after"], "%.0f" % r["staked"],
             pct(r["ret"]) if r["ret"] is not None else "—", r["verdict"]]
 
+
+MODE_TITLE = {"FIXED": "FIXED («Выиграл или проиграл»: 2 x ставка или 0, без плеча и ликвидации)",
+              "PERCENTAGE": "PERCENTAGE (ставка x плечо x движение цены)"}
 
 HEAD = ["Группа", "Раунд", "Ботов", "Ставок", "Решённых", "Угадал, % [95 % Уилсон]", "Разница с монеткой, п.п. [95 %]",
         "Ликвидаций", "Ср. плечо", "PnL до комиссий", "Комиссии", "PnL после комиссий", "Поставлено", "Доходность после комиссий",
         "Вердикт"]
 
 
-def markdown(out, meta):
+def markdown(outs, meta):
+    """outs: {mode: rows of build()}; the same tables once per payout mode, FIXED first."""
     lines = ["Период: %s — %s UTC (%d ч), расчёт сделан %s UTC. Суммы в PLAY (1 PLAY = 1000 mojo). Источник: `player_round_history`, "
              "`players`, `round_results`, событие `BetPlaced`; только боты (`is_bot`). «Угадал» — доля `direction_correct` среди "
              "решённых ставок (ничья и возвраты не входят). Разница с монеткой — интервал Ньюкомба из двух интервалов Уилсона, контроль — "
-             "семейство `coin` того же раунда." % (meta["since"], meta["until"], meta["hours"], meta["at"]), ""]
-    for lname, title in (("family", "По семействам"), ("strategy", "По полным именам стратегий")):
-        lines += ["## " + title, "", "| " + " | ".join(HEAD) + " |", "|" + "---|" * len(HEAD)]
-        for r in out:
-            if r["level"] == lname:
-                lines.append("| " + " | ".join(fmt_row(r)) + " |")
-        lines.append("")
+             "семейство `coin` того же раунда и того же режима выплаты (`player_round_history.mode`)." % (
+                 meta["since"], meta["until"], meta["hours"], meta["at"]), ""]
+    for mode in (m for m in MODES if m in outs):
+        lines += ["# Режим: %s" % MODE_TITLE[mode], ""]
+        for lname, title in (("family", "По семействам"), ("strategy", "По полным именам стратегий")):
+            lines += ["## %s — %s" % (title, mode), "", "| " + " | ".join(HEAD) + " |", "|" + "---|" * len(HEAD)]
+            for r in outs[mode]:
+                if r["level"] == lname:
+                    lines.append("| " + " | ".join(fmt_row(r, mode)) + " |")
+            lines.append("")
     lines.append("Ставки одного бота зависимы друг от друга, интервалы считают их независимыми; на деле интервалы уже, чем показано "
                  "[вывод: ставки одного бота повторяют его правило, а не независимые испытания].")
     lines.append("Строк с вердиктом — десятки; при уровне 95 % часть «отличима» выпадает случайно [вывод: 5 % от числа проверок]; "
                  "вердикт читать вместе с числом ставок и повторяемостью на другом периоде.")
-    miss = sum(r["nofee"] for r in out if r["level"] == "family" and r["iv"] == "ALL")
+    lines.append("В режиме FIXED нет плеча и ликвидации: столбцы «Ликвидаций» и «Ср. плечо» пусты. Статистика внутренняя (Р-105 п. 3).")
+    miss = sum(r["nofee"] for out in outs.values() for r in out if r["level"] == "family" and r["iv"] == "ALL")
     if miss:
         lines.append("Ставок без события `BetPlaced` (комиссия принята за 0): %d." % miss)
     return "\n".join(lines) + "\n"
@@ -188,10 +209,10 @@ def main():
         lo=since - 2 * 3600 * 1000, hi=until, since=since, until=until)
     rows = [json.loads(x) for x in psql(sql, env) if x.startswith("{")]
     ivs = sorted({r["iv"] for r in rows})
-    out = build(rows, ivs)
+    outs = {mode: build(mrows, ivs) for mode, mrows in split_by_mode(rows).items()}
     f = lambda ms: datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%d %H:%M")
     meta = dict(since=f(since), until=f(until), hours=a.hours, at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
-    md = markdown(out, meta)
+    md = markdown(outs, meta)
     if a.out:
         with open(a.out, "w") as fh:
             fh.write(md)
@@ -200,14 +221,15 @@ def main():
     if a.csv:
         with open(a.csv, "w", newline="") as fh:
             w = csv.writer(fh)
-            w.writerow(["level", "name", "interval", "bots", "bets", "decided", "wins", "win_pct", "win_lo", "win_hi",
+            w.writerow(["mode", "level", "name", "interval", "bots", "bets", "decided", "wins", "win_pct", "win_lo", "win_hi",
                         "diff_pp", "diff_lo", "diff_hi", "liquidated", "liq_share", "avg_leverage", "pnl_before_play",
                         "fees_play", "pnl_after_play", "staked_play", "return_after_fees", "verdict"])
-            for r in out:
-                wi, d = r["win"] or (None,) * 3, r["diff"] or (None,) * 3
-                w.writerow([r["level"], r["name"], r["iv"], r["bots"], r["bets"], r["decided"], r["wins"], *wi,
-                            *[None if x is None else 100 * x for x in d], r["liq"], r["liq_share"], r["avg_lev"],
-                            r["pnl_before"], r["fees"], r["pnl_after"], r["staked"], r["ret"], r["verdict"]])
+            for mode, out in outs.items():
+                for r in out:
+                    wi, d = r["win"] or (None,) * 3, r["diff"] or (None,) * 3
+                    w.writerow([mode, r["level"], r["name"], r["iv"], r["bots"], r["bets"], r["decided"], r["wins"], *wi,
+                                *[None if x is None else 100 * x for x in d], r["liq"], r["liq_share"], r["avg_lev"],
+                                r["pnl_before"], r["fees"], r["pnl_after"], r["staked"], r["ret"], r["verdict"]])
 
 
 if __name__ == "__main__":
