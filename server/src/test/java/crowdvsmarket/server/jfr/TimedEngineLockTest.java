@@ -145,10 +145,16 @@ class TimedEngineLockTest {
     @Test
     void waitEventSaysHowManyThreadsWereQueuedOnArrival() throws Exception {
         TimedEngineLock lock = new TimedEngineLock();
+        // the recording sees every herd.LockWait of the JVM, also those of an application a previous test class left running (its push
+        // ticker reads the engine every 250 ms), so only the events of this test's own three threads are counted
+        java.util.Set<Long> ours = java.util.concurrent.ConcurrentHashMap.newKeySet();
         List<RecordedEvent> events = record(() -> {
+            ours.add(Thread.currentThread().threadId());
             lock.writeLock().lock();
             Thread first = queued(lock);
             Thread second = queued(lock);
+            ours.add(first.threadId());
+            ours.add(second.threadId());
             lock.writeLock().unlock();
             try {
                 first.join(10_000);
@@ -156,7 +162,7 @@ class TimedEngineLockTest {
             } catch (InterruptedException e) {
                 throw new IllegalStateException(e);
             }
-        });
+        }).stream().filter(e -> e.getThread() != null && ours.contains(e.getThread().getJavaThreadId())).toList();
         List<RecordedEvent> waits = named(events, "herd.LockWait");
         assertThat(waits).hasSize(3);
         assertThat(waits).extracting(e -> e.getInt("queueLength")).containsExactlyInAnyOrder(0, 0, 1);
