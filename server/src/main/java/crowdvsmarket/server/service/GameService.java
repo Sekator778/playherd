@@ -1642,6 +1642,7 @@ public class GameService implements MarketListener {
         RoundReport report = (RoundReport) ctx.record(event, nowMs); // applied now, in the journal with the batch
         jfr.applyNs = JfrClock.since(rec, t);
         jfr.bets = report.playerOutcomes().size();
+        ctx.afterCommit(() -> jfr.appendNs = ctx.commitNanos()); // the journal write is the batch's commit
         PendingRows pending = new PendingRows(market, window, report, data.sourceTsMs(), data.venue(), oracleSeq);
         storing.put(window.roundId(), pending);
         // a batch that does not commit takes the round back (the rebuild finds it unresolved): nobody waits for its rows

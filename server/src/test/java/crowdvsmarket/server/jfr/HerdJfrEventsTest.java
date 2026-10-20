@@ -77,9 +77,11 @@ class HerdJfrEventsTest extends LiveRpcTestBase {
                 && e.getInt("bets") == 2).findFirst().orElseThrow();
         assertThat(settled.getLong("storeNs")).isPositive();
         assertThat(settled.getLong("appendNs")).isPositive();
-        // the hold is the journal append and the apply; the rows are written after the lock was released (settle_outside_lock)
-        assertThat(settled.getLong("lockedNs")).isGreaterThanOrEqualTo(settled.getLong("appendNs") + settled.getLong("applyNs"));
-        assertThat(settled.getDuration().toNanos()).isGreaterThanOrEqualTo(settled.getLong("lockedNs") + settled.getLong("storeNs"));
+        // the hold is the apply (the journal write is the batch's commit, after the lock was released: appendNs); the rows are
+        // written after the commit (settle_outside_lock)
+        assertThat(settled.getLong("lockedNs")).isGreaterThanOrEqualTo(settled.getLong("applyNs"));
+        assertThat(settled.getDuration().toNanos()).isGreaterThanOrEqualTo(settled.getLong("lockedNs") + settled.getLong("appendNs")
+                + settled.getLong("storeNs"));
 
         List<RecordedEvent> rebuilds = named(events, "herd.Rebuild");
         assertThat(rebuilds).isNotEmpty();
@@ -93,12 +95,12 @@ class HerdJfrEventsTest extends LiveRpcTestBase {
         assertThat(named(events, "herd.Rpc")).extracting(e -> e.getString("result")).contains("200");
         assertThat(named(events, "herd.Session")).anySatisfy(e -> assertThat(e.getBoolean("found")).isTrue());
 
-        // the stack of a hold event names the GameService method that held the lock
+        // the stack of a hold event names the caller that released the lock: the core writer's batch
         assertThat(named(events, "herd.LockHold")).anySatisfy(e -> {
             assertThat(e.getString("mode")).isEqualTo("write");
             assertThat(e.getStackTrace().getFrames().stream().map(RecordedFrame::getMethod)
                     .map(m -> m.getType().getName() + "." + m.getName()))
-                    .contains("crowdvsmarket.server.service.GameService.placeBet");
+                    .contains("crowdvsmarket.server.core.CoreWriter.runStretch");
         });
         assertThat(named(events, "herd.LockWait")).isNotEmpty();
     }
