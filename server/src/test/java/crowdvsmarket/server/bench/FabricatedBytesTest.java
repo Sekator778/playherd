@@ -78,7 +78,7 @@ class FabricatedBytesTest extends LiveGameTestBase {
             world.install(m);
         }
         List<Row> fabricated = new ArrayList<>();
-        BenchWorld.Sink sink = (type, json, atMs) -> fabricated.add(new Row(type, json, atMs, 1));
+        BenchWorld.Sink sink = (type, json, atMs) -> fabricated.add(new Row(type, json, atMs, 2));
         for (Row r : cutover) {
             GameEvent.EconomyCutover e = (GameEvent.EconomyCutover) world.decode(r.type(), r.payload());
             world.emit(BenchWorld.cutover(e.openingTotalMojos(), e.atMs()), r.atMs(), sink);
@@ -87,7 +87,10 @@ class FabricatedBytesTest extends LiveGameTestBase {
         for (Row r : real) {
             GameEvent real1 = world.decode(r.type(), r.payload());
             GameEvent built = switch (real1) {
-                case GameEvent.PlayerRegistered e -> BenchWorld.registered(e.playerId(), e.atMs());
+                case GameEvent.PlayerRegistered e -> e.isRegistration()
+                        ? BenchWorld.registeredPlayer(e.playerId(), e.atMs(), e.walletAddress(), e.playerIndex(), e.displayName(),
+                                e.kind(), e.botStrategy(), e.ownerPlayerId(), e.replacesPlayerId())
+                        : BenchWorld.registered(e.playerId(), e.atMs());
                 case GameEvent.BetPlaced e -> BenchWorld.bet(world.markets.get(e.market()),
                         window(e.market(), e.interval(), e.windowStart(), e.windowEnd()), e.playerId(), e.direction(),
                         e.leverage(), e.stakeMojos(), e.atMs());
@@ -95,9 +98,12 @@ class FabricatedBytesTest extends LiveGameTestBase {
                         window(e.market(), e.interval(), e.windowStart(), e.windowEnd()), e.playerId(), e.atMs());
                 case GameEvent.RoundResolved e -> BenchWorld.resolved(world.markets.get(e.market()),
                         window(e.market(), e.interval(), e.windowStart(), e.windowEnd()), e.openPrice(), e.closePrice(),
-                        EventApplier.toCandles(e.path()), e.atMs(), e.venue());
+                        EventApplier.toCandles(e.path()), e.atMs(), e.venue(), e.oracleSeq());
                 case GameEvent.RoundCancelled e -> BenchWorld.cancelled(world.markets.get(e.market()),
                         window(e.market(), e.interval(), e.windowStart(), e.windowEnd()), e.reason(), e.atMs());
+                // listings and closings are the registry's, not a bet or a round: carried over as they are
+                case GameEvent.MarketListed e -> e;
+                case GameEvent.MarketClosed e -> e;
                 default -> throw new IllegalStateException("unexpected " + r.type());
             };
             world.emit(built, r.atMs(), sink);
@@ -110,7 +116,7 @@ class FabricatedBytesTest extends LiveGameTestBase {
                 try (BenchJournal.Copy copy = new BenchJournal.Copy(c,
                         "COPY fab_events (event_type, payload, at_ms, schema_version) FROM STDIN")) {
                     for (Row r : fabricated) {
-                        copy.row(r.type(), r.payload(), r.atMs(), 1);
+                        copy.row(r.type(), r.payload(), r.atMs(), r.schemaVersion());
                     }
                 }
                 return db.queryList(c, "SELECT event_type, payload::text AS p, at_ms, schema_version FROM fab_events",

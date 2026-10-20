@@ -101,8 +101,10 @@ class JournalSelfContainedTest extends LiveGameTestBase {
         assertThat(aside.oracleSeq()).as("the counter is the highest sequence number in the journal").isEqualTo(hub.oracleSeq());
         assertThat(aside.oracleSeq()).isGreaterThan(0);
         // the roster is filled by the events alone - no table was read
-        assertThat(aside.roster().find(world.human1()).orElseThrow().displayName()).isEqualTo("Alice F4 PURE");
+        assertThat(aside.roster().find(world.human1()).orElseThrow().displayName()).startsWith("Alice F4 PURE (");
         assertThat(aside.roster().find(world.houseBot()).orElseThrow().nickname()).isEqualTo("Bot F4 relabelled PURE");
+        assertThat(aside.roster().find(world.human2()).orElseThrow().displayName()).as("a person without a nickname")
+                .isEqualTo(players.byId(world.human2()).orElseThrow().identity().displayName());
         assertThat(aside.roster().find(world.houseBot()).orElseThrow().botStrategy()).isEqualTo("trend-follower");
         assertThat(aside.roster().find(world.houseBot()).orElseThrow().displaysAsBot()).isTrue();
         assertThat(aside.roster().find(world.apiBot()).orElseThrow().ownerPlayerId()).isEqualTo(world.human1());

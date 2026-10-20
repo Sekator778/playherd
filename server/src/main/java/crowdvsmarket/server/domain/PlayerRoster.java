@@ -1,5 +1,6 @@
 package crowdvsmarket.server.domain;
 
+import crowdvsmarket.engine.player.PlayerIdentity;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
@@ -18,9 +19,9 @@ public final class PlayerRoster {
     public record Entry(String playerId, String walletAddress, String nickname, String kind, String botStrategy,
                         String ownerPlayerId) {
 
-        /** The name the app shows for the player. */
+        /** The name the app shows for the player: what {@code PlayerDirectory.Row#identity()} gives, nickname and short wallet form. */
         public String displayName() {
-            return nickname == null ? shortWallet(walletAddress) : nickname;
+            return new PlayerIdentity(playerId, nickname == null ? shortWallet(walletAddress) : nickname, walletAddress).displayName();
         }
 
         /** Whether the app badges the player as a bot: the house's bots and the API bots alike. */

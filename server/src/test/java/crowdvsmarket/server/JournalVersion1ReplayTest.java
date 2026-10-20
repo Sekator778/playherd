@@ -97,7 +97,7 @@ class JournalVersion1ReplayTest extends LiveGameTestBase {
         assertThat(rewritten).isZero();
         // the roster of the replay was seeded from the table (a version-1 PlayerRegistered carries no player)
         assertThat(hub.roster().all()).hasSize(players.all().size());
-        assertThat(hub.roster().all()).anySatisfy(e -> assertThat(e.displayName()).isEqualTo("Alice V1"));
+        assertThat(hub.roster().all()).anySatisfy(e -> assertThat(e.displayName()).startsWith("Alice V1 ("));
         assertThat(hub.roster().all()).filteredOn(e -> e.displayName().startsWith("Bot V1")).singleElement()
                 .satisfies(e -> assertThat(e.displaysAsBot()).as("a house bot of the old server, kind HUMAN in its table row").isTrue());
         // a game goes on from here: a new player, a bet, and the journal grows in version 2

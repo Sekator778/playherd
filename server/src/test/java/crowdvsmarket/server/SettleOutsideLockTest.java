@@ -179,7 +179,7 @@ class SettleOutsideLockTest extends LiveGameTestBase {
             assertThat(gameService.hasPendingBets(f.betting())).isFalse();
             assertThat(gameService.publicProfile(f.p1()).history()).hasSize(1);
         }
-        assertThat(oracleSeq()).isEqualTo(seqAfterResolving + 3);
+        assertThat(oracleSeq()).as("F4: the repair writes the numbers the events carry, it issues none").isEqualTo(seqAfterResolving);
         String balance1 = gameService.account(f1.p1()).balance();
 
         rebuild.rebuild(f1.betting().endMs());   // another restart: nothing is written twice
@@ -187,7 +187,7 @@ class SettleOutsideLockTest extends LiveGameTestBase {
             assertStoredOnce(f);
             assertThat(gameService.resolveRound(f.betting(), f.betting().endMs())).isNull();
         }
-        assertThat(oracleSeq()).isEqualTo(seqAfterResolving + 3);
+        assertThat(oracleSeq()).as("F4: the repair writes the numbers the events carry, it issues none").isEqualTo(seqAfterResolving);
         assertThat(gameService.account(f1.p1()).balance()).isEqualTo(balance1);
     }
 

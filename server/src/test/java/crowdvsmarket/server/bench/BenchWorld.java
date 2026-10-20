@@ -140,6 +140,14 @@ public final class BenchWorld {
         return new GameEvent.PlayerRegistered(playerId, atMs);
     }
 
+    /** F4: the event of a new player, which carries the player (what {@code GameService#registerOrTouchPlayer} writes). */
+    public static GameEvent.PlayerRegistered registeredPlayer(String playerId, long atMs, String walletAddress, int playerIndex,
+                                                              String displayName, String kind, String botStrategy,
+                                                              String ownerPlayerId, String replacesPlayerId) {
+        return GameEvent.PlayerRegistered.registration(playerId, atMs, walletAddress, playerIndex, displayName, kind, botStrategy,
+                ownerPlayerId, replacesPlayerId);
+    }
+
     public static GameEvent.EconomyCutover cutover(long openingTotalMojos, long atMs) {
         return new GameEvent.EconomyCutover(openingTotalMojos, atMs);
     }
@@ -163,6 +171,13 @@ public final class BenchWorld {
                                                     List<Candle> path, long atMs, String venue) {
         return new GameEvent.RoundResolved(window.interval(), window.startMs(), window.endMs(), open, close,
                 EventApplier.fromCandles(path), atMs, market.id(), venue);
+    }
+
+    /** F4: the settlement event with the oracle sequence number the engine assigned. */
+    public static GameEvent.RoundResolved resolved(Market market, RoundWindow window, String open, String close,
+                                                    List<Candle> path, long atMs, String venue, Long oracleSeq) {
+        return new GameEvent.RoundResolved(window.interval(), window.startMs(), window.endMs(), open, close,
+                EventApplier.fromCandles(path), atMs, market.id(), venue, oracleSeq);
     }
 
     public static GameEvent.RoundCancelled cancelled(Market market, RoundWindow window, String reason, long atMs) {
