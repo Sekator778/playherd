@@ -213,6 +213,21 @@ class ServerBotPortsTest {
     }
 
     @Test
+    void aWinOrLoseBetOfABotReachesTheGameInTheFixedModeAndAPriceMarketIsNotAnOddsOne() {
+        when(gameService.openBetRoundIds("b1")).thenReturn(Set.of());
+        when(gameService.placeBet(anyString(), any(Betting.PlaceBetRequest.class), anyLong())).thenReturn(
+                new Rounds.BetDto("b1", "BTC-1h-x", Enums.Direction.UP, 2, "100.000", "3.000", "0.100", 40));
+
+        ports(null, NOW).place(new BetRequest("b1", "BTC", "BTC-1h-x", Direction.UP, PlayAmount.ofWholePlay(100), 2,
+                crowdvsmarket.engine.round.BetMode.FIXED));
+
+        org.mockito.ArgumentCaptor<Betting.PlaceBetRequest> sent = org.mockito.ArgumentCaptor.forClass(Betting.PlaceBetRequest.class);
+        verify(gameService).placeBet(eq("b1"), sent.capture(), eq(NOW));
+        assertThat(sent.getValue()).isEqualTo(new Betting.PlaceBetRequest("BTC-1h-x", Enums.Direction.UP, 2, "100.000", Enums.BetMode.FIXED));
+        assertThat(ports(null, NOW).markets().get(0).odds()).isFalse();
+    }
+
+    @Test
     void aRefusalOfTheGameIsAResultNotAnException() {
         when(gameService.openBetRoundIds("b1")).thenReturn(Set.of());
         when(gameService.placeBet(anyString(), any(Betting.PlaceBetRequest.class), anyLong()))

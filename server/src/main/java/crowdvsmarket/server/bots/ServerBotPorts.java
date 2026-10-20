@@ -113,7 +113,7 @@ public final class ServerBotPorts implements MarketDataPort, BettingPort, BotSta
             }
             boolean open = market.isActive() && nowMs < betting.startMs() && hasFreshPrice(market);
             out.add(new MarketSnapshot(market.spec(), interval, betting.roundId(), betting.startMs(), betting.endMs(), open,
-                    LedgerBook.MIN_STAKE));
+                    LedgerBook.MIN_STAKE, market.kind() == crowdvsmarket.server.markets.MarketKind.ODDS));
         }
         return out;
     }
@@ -160,9 +160,11 @@ public final class ServerBotPorts implements MarketDataPort, BettingPort, BotSta
             if (gameService.openBetRoundIds(request.botId()).contains(request.roundId())) {
                 return BetResult.refused("the bot already has a bet in " + request.roundId()); // placeBet would replace it
             }
+            // Р-106: a bot that plays win-or-lose sends the mode on (absent = the percentage mode, as before)
             Betting.PlaceBetRequest req = new Betting.PlaceBetRequest(request.roundId(),
                     Enums.Direction.valueOf(request.direction().name()), request.leverage(),
-                    request.stake().toMoney().toPlainString());
+                    request.stake().toMoney().toPlainString(),
+                    request.mode() == crowdvsmarket.engine.round.BetMode.FIXED ? Enums.BetMode.FIXED : null);
             Rounds.BetDto bet = gameService.placeBet(request.botId(), req, nowMs);
             return BetResult.accepted(fees(bet));
         } catch (ApiException e) {
