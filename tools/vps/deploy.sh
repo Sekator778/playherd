@@ -286,7 +286,8 @@ external_checks() {
   # The push socket: Caddy, nginx and the server must all pass a WebSocket upgrade. A handshake answered with 101 proves it. curl does not
   # speak the protocol afterwards, so it is cut after 4 s; the status is known by then. 404 is the server with herd.push.enabled=false
   # (HERD_PUSH_ENABLED=false): the app then polls, which is a choice and not a fault.
-  code="$(curl_code -m 4 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "https://${domain}/api/ws")"
+  # --http1.1: a browser opens a WebSocket with an HTTP/1.1 Upgrade; curl's default over TLS is HTTP/2, where Caddy answers 400
+  code="$(curl_code --http1.1 -m 4 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "https://${domain}/api/ws")"
   case "${code}" in
     101) c_ok "https://${domain}/api/ws -> 101 (the WebSocket upgrade passes Caddy, nginx and the server)" ;;
     404) c_warn "https://${domain}/api/ws -> 404 (the server has the push socket switched off, HERD_PUSH_ENABLED=false: the app polls)" ;;
