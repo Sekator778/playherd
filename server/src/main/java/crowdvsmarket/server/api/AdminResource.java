@@ -183,7 +183,8 @@ public class AdminResource {
             LOG.warnf(e, "the operator status could not read the journal");
         }
         return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker, botDays(),
-                gameService.missingRows(), gameService.ledgerRowsStatus(), snapshotStatus, journalStatus, derivedRows.status());
+                gameService.missingRows(), gameService.ledgerRowsStatus(), snapshotStatus, journalStatus, derivedRows.status(),
+                gameService.writerStats());
     }
 
     /**
@@ -280,7 +281,13 @@ public class AdminResource {
      *  copies it into {@code game_events}: {@code projector.lag} (events the copy is behind), {@code failures} in a row, {@code lastError},
      *  the last batch. {@code derivedRows}: the rows written after a batch by a thread of their own (the result row of a cancelled
      *  round) - {@code pending} jobs, how long the oldest waiting one has waited ({@code oldestPendingMs}), {@code written}, {@code dropped}
-     *  (left to the next rebuild), {@code failedAttempts}, {@code lastError}. Not part of {@code contract.ts}: the operator's own page. */
+     *  (left to the next rebuild), {@code failedAttempts}, {@code lastError}. {@code writer} (F6, the core writer's pipeline):
+     *  {@code pipelineDepth} (the most batches that may be applied and not durable), {@code depthNow} and {@code maxDepthSeen}, the
+     *  {@code batches} handed over, the {@code syncs} of the journal stage and the batches they covered ({@code syncedBatches},
+     *  {@code maxSyncGroup} at most together), {@code syncNanos} spent syncing, {@code backPressureNanos} and {@code backPressureWaits} (the
+     *  logic thread waiting for room in the pipeline), {@code logicBusyNanos} (the logic thread's turns without that wait), and
+     *  {@code journalWaiting} (batches queued for the journal stage now); counted since the writer started; {@code null} before the first
+     *  command. Not part of {@code contract.ts}: the operator's own page. */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                                    java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
                                    java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
@@ -289,7 +296,20 @@ public class AdminResource {
                                    GameService.LedgerRowsStatus ledgerRows,
                                    crowdvsmarket.server.snapshot.SnapshotService.Status snapshots,
                                    crowdvsmarket.server.journal.Journal.Status journal,
-                                   crowdvsmarket.server.service.DerivedRows.Status derivedRows) {
+                                   crowdvsmarket.server.service.DerivedRows.Status derivedRows,
+                                   crowdvsmarket.server.core.CoreWriter.Stats writer) {
+
+        public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
+                              java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
+                              java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
+                              java.util.List<BotMetrics.Day> botDays, java.util.List<GameService.MissingRows> missingRoundRows,
+                              GameService.LedgerRowsStatus ledgerRows,
+                              crowdvsmarket.server.snapshot.SnapshotService.Status snapshots,
+                              crowdvsmarket.server.journal.Journal.Status journal,
+                              crowdvsmarket.server.service.DerivedRows.Status derivedRows) {
+            this(server, recentCancellations, recentLedgerCorrections, priceFeeds, circuitBreakerOpen, botDays,
+                    missingRoundRows, ledgerRows, snapshots, journal, derivedRows, null);
+        }
 
         public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                               java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,

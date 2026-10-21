@@ -650,6 +650,12 @@ public class GameService implements MarketListener {
 
     private enum ViewsInvalid { MARKER }
 
+    /** What the core writer's pipeline has done so far, {@code null} before the first command. */
+    public CoreWriter.Stats writerStats() {
+        CoreWriter w = writer;
+        return w == null ? null : w.stats();
+    }
+
     /** The number of commands waiting for the core writer (0 before the first one). */
     public int writerQueued() {
         CoreWriter w = writer;

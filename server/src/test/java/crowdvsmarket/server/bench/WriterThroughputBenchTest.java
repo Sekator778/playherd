@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundWindow;
+import crowdvsmarket.server.core.CoreWriter;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
@@ -100,6 +101,7 @@ class WriterThroughputBenchTest extends LiveGameTestBase {
             threads[c].start();
         }
         ready.await();
+        CoreWriter.Stats before = gameService.writerStats();
         long start = System.nanoTime();
         go.countDown();
         Thread.sleep(seconds * 1000L);
@@ -108,12 +110,26 @@ class WriterThroughputBenchTest extends LiveGameTestBase {
             t.join();
         }
         double elapsed = (System.nanoTime() - start) / 1e9;
+        CoreWriter.Stats after = gameService.writerStats();
         long[] all = Arrays.stream(latencies).flatMapToLong(Arrays::stream).sorted().toArray();
         int ok = Arrays.stream(accepted).sum();
         int no = Arrays.stream(refused).sum();
         System.out.printf("WRITER-BENCH clients=%d seconds=%.1f accepted=%d refused=%d bets_per_s=%.0f p50_ms=%.2f p99_ms=%.2f "
                         + "max_ms=%.2f%n", clients, elapsed, ok, no, ok / elapsed, ms(all, 0.50), ms(all, 0.99),
                 all.length == 0 ? 0 : all[all.length - 1] / 1e6);
+        if (before != null && after != null) {
+            long batches = after.batches() - before.batches();
+            long syncs = after.syncs() - before.syncs();
+            double window = elapsed * 1e3; // ms
+            System.out.printf("WRITER-PIPELINE clients=%d batches=%d syncs=%d batches_per_sync=%.2f sync_ms_each=%.3f "
+                            + "sync_busy_pct=%.1f logic_busy_pct=%.1f backpressure_pct=%.1f backpressure_waits=%d max_depth=%d%n",
+                    clients, batches, syncs, syncs == 0 ? 0 : (after.syncedBatches() - before.syncedBatches()) / (double) syncs,
+                    syncs == 0 ? 0 : (after.syncNanos() - before.syncNanos()) / 1e6 / syncs,
+                    (after.syncNanos() - before.syncNanos()) / 1e6 / window * 100,
+                    (after.logicBusyNanos() - before.logicBusyNanos()) / 1e6 / window * 100,
+                    (after.backPressureNanos() - before.backPressureNanos()) / 1e6 / window * 100,
+                    after.backPressureWaits() - before.backPressureWaits(), after.maxDepthSeen());
+        }
     }
 
     private static double ms(long[] sorted, double q) {
