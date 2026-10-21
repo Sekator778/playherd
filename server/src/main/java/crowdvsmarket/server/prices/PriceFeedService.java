@@ -183,8 +183,17 @@ public class PriceFeedService {
         if (binding == null) {
             return;
         }
+        List<Market> active;
+        try {
+            active = registry.active();
+        } catch (crowdvsmarket.server.dto.ApiException e) {
+            if (e.code() == crowdvsmarket.server.dto.Enums.ApiErrorCode.ENGINE_NOT_READY) {
+                return; // the registry is loaded at start, before the first rebuild; a tick that comes earlier waits for the next one
+            }
+            throw e;
+        }
         // instruments: a market with a backup exchange is polled on two feeds, itself on its own and its shadow on the backup's
-        List<Market> markets = registry.active().stream().flatMap(m -> Instruments.of(m).stream())
+        List<Market> markets = active.stream().flatMap(m -> Instruments.of(m).stream())
                 .filter(m -> binding.feed().handles().test(m)).toList();
         if (markets.isEmpty()) {
             return;
