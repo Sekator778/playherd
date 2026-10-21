@@ -2,7 +2,11 @@ package crowdvsmarket.server.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import crowdvsmarket.engine.ledger.LedgerBook;
 import crowdvsmarket.engine.ledger.PlayAmount;
+import crowdvsmarket.engine.ledger.SeasonRecord;
+import crowdvsmarket.engine.rating.RatingBook;
+import crowdvsmarket.engine.season.Season;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.Direction;
 import crowdvsmarket.engine.round.RoundWindow;
@@ -15,8 +19,11 @@ import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.markets.MarketStatus;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -84,6 +91,7 @@ class ReadViewsTest {
         ReadViews.Snapshot incremental = views.publishBatch(batch, hub, feed, progress, version);
         ReadViews.Snapshot full = new ReadViews().publishFull(hub, feed, progress, version);
         assertSame(full, incremental, batch);
+        assertTheSnapshotAnswersWhatTheLedgerComputes(incremental);
         return incremental;
     }
 
@@ -95,6 +103,54 @@ class ReadViewsTest {
         assertThat(incremental.playersForTest()).as("players " + after).isEqualTo(full.playersForTest());
         assertThat(incremental.cursorsForTest()).as("cursors " + after).isEqualTo(full.cursorsForTest());
         assertThat(incremental.feed().asMap()).as("feed " + after).isEqualTo(full.feed().asMap());
+        assertThat(incremental.boardsForTest()).as("season boards " + after).isEqualTo(full.boardsForTest());
+        assertThat(incremental.correctionsForTest()).as("corrections " + after).isEqualTo(full.correctionsForTest());
+        assertThat(incremental.economyForTest()).as("economy " + after).isEqualTo(full.economyForTest());
+    }
+
+    /**
+     * What the locked reads used to compute from the ledger on the same state, against what the snapshot answers: the season boards
+     * ({@link RatingBook} walks the whole ledger), a player's season record, the corrections, the house figures and the breaker.
+     */
+    private void assertTheSnapshotAnswersWhatTheLedgerComputes(ReadViews.Snapshot snapshot) {
+        LedgerBook ledger = hub.ledger();
+        RatingBook book = new RatingBook(ledger);
+        Season season = Season.of(Instant.ofEpochMilli(START));
+        for (Season s : List.of(new Season(2023, 10), season, new Season(2023, 12), new Season(2024, 1))) {
+            Season checked = s;
+            assertThat(snapshot.richBoard(s).stream().map(r -> r.entry().playerId() + " " + r.entry().growth() + " "
+                    + r.entry().roundsPlayed()).toList()).as("rich " + checked)
+                    .isEqualTo(book.richList(s, Map.of()).stream().map(e -> e.playerId() + " " + e.growth() + " "
+                            + e.roundsPlayed()).toList());
+            assertThat(snapshot.prophetBoard(s).stream().map(r -> r.entry().playerId() + " " + r.entry().accuracy() + " "
+                    + r.entry().eligibleRounds() + " " + r.entry().roundsPlayed()).toList()).as("prophets " + checked)
+                    .isEqualTo(book.prophetList(s, Map.of()).stream().map(e -> e.playerId() + " " + e.accuracy() + " "
+                            + e.eligibleRounds() + " " + e.roundsPlayed()).toList());
+            for (String playerId : ledger.playerIds()) {
+                assertThat(snapshot.seasonRecord(playerId, s)).as(playerId + " " + checked).isEqualTo(ledger.seasonRecord(playerId, s));
+            }
+        }
+        assertThat(snapshot.seasonRecord("ghost", season)).isEmpty();
+        assertThat(snapshot.corrections()).isEqualTo(ledger.corrections());
+        for (String playerId : ledger.playerIds()) {
+            assertThat(snapshot.isRetired(playerId)).isEqualTo(ledger.isRetired(playerId));
+        }
+        assertThat(snapshot.economy().economyActive()).isEqualTo(ledger.economyActive());
+        assertThat(snapshot.economy().treasury()).isEqualTo(ledger.treasury());
+        assertThat(snapshot.economy().herd()).isEqualTo(ledger.herd());
+        assertThat(snapshot.economy().openStakes()).isEqualTo(ledger.openStakes());
+        assertThat(snapshot.economy().playersTotal()).isEqualTo(ledger.playersTotal());
+        assertThat(snapshot.economy().openingTotal()).isEqualTo(ledger.openingTotal());
+        assertThat(snapshot.economy().externalFlowSinceCutover()).isEqualTo(ledger.externalFlowSinceCutover());
+        assertThat(snapshot.economy().depositedTotal()).isEqualTo(ledger.depositedTotal());
+        assertThat(snapshot.economy().depositedSinceCutover()).isEqualTo(ledger.depositedSinceCutover());
+        assertThat(snapshot.economy().withdrawnConfirmed()).isEqualTo(ledger.withdrawnConfirmed());
+        assertThat(snapshot.economy().withdrawalsPending()).isEqualTo(ledger.withdrawalsPending());
+        for (long day = -2; day < 70; day += 7) {
+            Instant now = Instant.ofEpochMilli(START + day * 86_400_000L);
+            assertThat(snapshot.economy().circuitBreakerOpen(now)).as("breaker at " + now).isEqualTo(ledger.circuitBreakerOpen(now));
+            assertThat(snapshot.economy().treasuryMax30d(now)).isEqualTo(ledger.treasuryMax30d(now));
+        }
     }
 
     @Test
@@ -111,6 +167,12 @@ class ReadViewsTest {
         commit(new GameEvent.DepositRequested("p2", PlayAmount.ofWholePlay(250).mojos(), START));
         String deposit = (String) results.get(0);
         commit(new GameEvent.DepositConfirmed(deposit, START));
+        commit(new GameEvent.WithdrawalRequested("p3", PlayAmount.ofWholePlay(100).mojos(), START));
+        commit(new GameEvent.WithdrawalFailed((String) results.get(0), START));
+        commit(new GameEvent.WithdrawalReversed("p1", PlayAmount.ofWholePlay(500).mojos(), Season.of(Instant.ofEpochMilli(START)).id(),
+                "test", withdrawal, START));
+        commit(new GameEvent.DepositReversed("p2", PlayAmount.ofWholePlay(250).mojos(), Season.of(Instant.ofEpochMilli(START)).id(),
+                "test", deposit, START));
         commit(new GameEvent.NicknameChanged("p1", "nick", START));
         commit(new GameEvent.EconomyCutover(PlayAmount.ofWholePlay(100_000).mojos(), START));
         commit(new GameEvent.DepositConfirmedOnChain("p3", 3, PlayAmount.ofWholePlay(100).mojos(), "coin-1", 10L, START));
@@ -135,6 +197,59 @@ class ReadViewsTest {
         assertThat(listed.hasMarket("SOL")).as("a listing creates engines").isTrue();
         commit(new GameEvent.MarketClosed("SOL", "test", START));
         commit(new GameEvent.HerdSweptToTreasury(0L, START));
+        ReadViews.Snapshot afterCorrections = commit(new GameEvent.BotRetired("p3", START));
+        assertThat(afterCorrections.isRetired("p3")).isTrue();
+        assertThat(afterCorrections.corrections()).hasSize(2);
+    }
+
+    /**
+     * A random game over a few months: players bet in and out of rounds, win and lose by chance (so ranks tie and untie), a bot is
+     * retired, one withdraws, a month turns. After every batch the incremental snapshot equals the full one, and the boards equal
+     * what a walk over the ledger gives (see {@link #commit}).
+     */
+    @Test
+    void aRandomGameKeepsTheBoardsAndTheLedgerReadsEqualToTheLedgersOwnAnswers() {
+        Random random = new Random(20261021L);
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            String id = "r" + i;
+            ids.add(id);
+            commit(new GameEvent.PlayerRegistered(id, START - 1_000));
+        }
+        commit(new GameEvent.EconomyCutover(PlayAmount.ofWholePlay(1_000_000).mojos(), START - 500));
+        long hour = 3_600_000L;
+        boolean sawABoard = false;
+        for (int round = 0; round < 40; round++) {
+            long start = round < 25 ? START + round * hour : START + 20L * 86_400_000L + (round - 25) * hour; // the month turns
+            long end = start + hour;
+            List<GameEvent> bets = new ArrayList<>();
+            for (String id : ids) {
+                if (random.nextInt(10) < 8 && !hub.ledger().isRetired(id)) {
+                    bets.add(new GameEvent.BetPlaced(id, Interval.HOURLY, start, end,
+                            random.nextBoolean() ? Direction.UP : Direction.DOWN, 2 + random.nextInt(5),
+                            PlayAmount.ofWholePlay(100 + 10L * random.nextInt(10)).mojos(), start - 1, "ETH"));
+                }
+            }
+            if (!bets.isEmpty()) {
+                commit(bets.toArray(new GameEvent[0]));
+            }
+            if (random.nextInt(8) == 0 && !bets.isEmpty()) {
+                GameEvent.BetPlaced first = (GameEvent.BetPlaced) bets.get(0);
+                commit(new GameEvent.BetCancelled(first.playerId(), Interval.HOURLY, start, end, start, "ETH"));
+            }
+            int move = random.nextInt(5); // 0 down, 1 flat, 2.. up
+            String close = move == 0 ? "24000.00" : move == 1 ? "25000.00" : "26000.00";
+            ReadViews.Snapshot snapshot = commit(new GameEvent.RoundResolved(Interval.HOURLY, start, end, "25000.00", close,
+                    List.of(new GameEvent.CandleData(start, end - 1, "25000.00", "26100.00", "24000.00", close, "0", 0)), end, "ETH"));
+            sawABoard |= !snapshot.richBoard(Season.of(Instant.ofEpochMilli(start))).isEmpty();
+            if (round == 15) {
+                commit(new GameEvent.BotRetired("r3", end));
+            }
+            if (round == 20) {
+                commit(new GameEvent.WithdrawalRequested("r5", PlayAmount.ofWholePlay(50).mojos(), end));
+            }
+        }
+        assertThat(sawABoard).as("the game was long enough for somebody to pass the threshold of rounds").isTrue();
     }
 
     @Test

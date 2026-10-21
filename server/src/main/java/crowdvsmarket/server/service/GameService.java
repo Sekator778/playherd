@@ -6,6 +6,7 @@ import crowdvsmarket.engine.economy.Fees;
 import crowdvsmarket.engine.game.GameEngine;
 import crowdvsmarket.engine.game.PlayerRoundOutcome;
 import crowdvsmarket.engine.game.RoundReport;
+import crowdvsmarket.engine.ledger.EconomyFigures;
 import crowdvsmarket.engine.ledger.LedgerBook;
 import crowdvsmarket.engine.ledger.LedgerEntry;
 import crowdvsmarket.engine.ledger.PlayAmount;
@@ -142,10 +143,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * a round, the bet feed, the crowd accounts, the stake in play, what the scheduler asks of the bet books - do not touch the
  * engine at all: the writer publishes {@link ReadViews immutable views} of the committed state after each commit (before the
  * caller is answered), and a read takes the latest through one volatile reference ({@link #snapshot}), with no lock. A read
- * therefore never sees what a batch has applied and not yet committed. What still takes the engine's read lock ({@link #lockRead})
- * is what needs the whole ledger or a consistent walk the views do not hold: the season records, the ratings (and the ratings
- * part of {@code home}), the weekly boards' retired filter, the ledger corrections, the economy flags, the circuit breaker, the
- * reconciliation. They can still see an applied, uncommitted batch.
+ * therefore never sees what a batch has applied and not yet committed. The season records, the season boards (the ratings and the
+ * ratings part of {@code home}), the weekly boards' retired filter, the ledger corrections, the economy flags, the circuit breaker and
+ * the reconciliation are in the views too, and {@code home} reads all its parts from one snapshot. No read takes the engine's lock
+ * any more; what still does is the writer's own work (a command, the ledger flush, a rebuild).
  * Inside a command no database query and no network call: whatever needs them is done before the command is submitted, or is
  * staged as a write of the batch's transaction ({@link WriteContext#work}).
  *
@@ -385,9 +386,11 @@ public class GameService implements MarketListener {
         return storing.containsKey(roundId);
     }
 
-    /** Whether the engine has the round as resolved or cancelled (the journal's word, not the table's). */
+    /** Whether the round is resolved or cancelled as of the last commit (the journal's word, not the table's), from the read views; {@code false}
+     *  while there are none (a rebuild; whoever acts on the answer asks again on the writer). */
     public boolean isClosed(RoundWindow window) {
-        return hub.closedRounds().isClosed(window);
+        ReadViews.Snapshot snapshot = views.current();
+        return snapshot != null && snapshot.isClosed(window);
     }
 
     @PreDestroy
@@ -704,17 +707,6 @@ public class GameService implements MarketListener {
             } catch (ExecutionException | TimeoutException e) {
                 return;
             }
-        }
-    }
-
-    /** The read lock, taken by every read that comes from the engine, only while it is ready: the first check answers at
-     *  once, without queueing behind a rebuild; the second one counts (a recovery may have failed while this call waited). */
-    private void lockRead() {
-        requireReady();
-        engineLock.readLock().lock();
-        if (!rebuildService.isReady()) {
-            engineLock.readLock().unlock();
-            throw ApiException.engineNotReady();
         }
     }
 
@@ -1513,7 +1505,7 @@ public class GameService implements MarketListener {
                 }
                 // Economy stage B (plan B6): with TREASURY more than 10% below its 30-day maximum a new bet takes at most cap/4
                 boolean breaker = ledger.circuitBreakerOpen(now);
-                noteBreaker(breaker, ledger, now);
+                noteBreaker(breaker, ledger.treasury(), () -> ledger.treasuryMax30d(now));
                 if (breaker && !fixed) { // the breaker lowers the leverage cap; a fixed-payout bet has none
                     int allowedNow = Math.min(EconomyRules.maxLeverage(spec, ref.interval(), stake),
                             EconomyLimits.breakerMaxLeverage(spec.capFor(ref.interval())));
@@ -2092,10 +2084,15 @@ public class GameService implements MarketListener {
     /** The running and betting round of {@code marketIdOrNull}'s series ({@code null}: BTC). */
     public Rounds.RoundsPairDto roundsPair(Enums.Interval intervalDto, String marketIdOrNull,
                                            String viewerPlayerIdOrNull) {
+        requireMarket(marketIdOrNull);
+        awaitStored();
+        return roundsPair(intervalDto, marketIdOrNull, viewerPlayerIdOrNull, snapshot());
+    }
+
+    private Rounds.RoundsPairDto roundsPair(Enums.Interval intervalDto, String marketIdOrNull, String viewerPlayerIdOrNull,
+                                            ReadViews.Snapshot snapshot) {
         Market market = requireMarket(marketIdOrNull);
         Interval interval = toEngine(intervalDto);
-        awaitStored();
-        ReadViews.Snapshot snapshot = snapshot();
         RoundWindow runningWindow = runningWindowOf(market, interval, snapshot);
         RoundWindow bettingWindow = RoundClock.next(runningWindow);
         Rounds.RoundDto running = roundResults.findRoundDto(runningWindow.roundId())
@@ -2489,16 +2486,14 @@ public class GameService implements MarketListener {
 
     public Ledger.SeasonRecordDto seasonRecord(String playerId, String seasonIdOrNull) {
         Season season = seasonIdOrNull == null ? Season.of(Instant.now()) : parseSeason(seasonIdOrNull);
-        lockRead();
-        try {
-            Optional<SeasonRecord> record = hub.ledger().seasonRecord(playerId, season);
-            return record.map(sr -> new Ledger.SeasonRecordDto(sr.season().id(), sr.baselineBalance().toMoney().toPlainString(),
-                            sr.deposited().toMoney().toPlainString(), sr.withdrawn().toMoney().toPlainString(),
-                            sr.roundsPlayed(), sr.directionEligibleRounds(), sr.directionCorrectRounds()))
-                    .orElseGet(() -> new Ledger.SeasonRecordDto(season.id(), "0.000", "0.000", "0.000", 0, 0, 0));
-        } finally {
-            engineLock.readLock().unlock();
-        }
+        return snapshot().seasonRecord(playerId, season).map(GameService::toSeasonRecordDto)
+                .orElseGet(() -> new Ledger.SeasonRecordDto(season.id(), "0.000", "0.000", "0.000", 0, 0, 0));
+    }
+
+    private static Ledger.SeasonRecordDto toSeasonRecordDto(SeasonRecord sr) {
+        return new Ledger.SeasonRecordDto(sr.season().id(), sr.baselineBalance().toMoney().toPlainString(),
+                sr.deposited().toMoney().toPlainString(), sr.withdrawn().toMoney().toPlainString(),
+                sr.roundsPlayed(), sr.directionEligibleRounds(), sr.directionCorrectRounds());
     }
 
     private static Season parseSeason(String id) {
@@ -2910,26 +2905,21 @@ public class GameService implements MarketListener {
     public Paging.Page<Ledger.LedgerCorrectionDto> ledgerCorrections(Paging.PageParams params) {
         long before = params.before() == null ? Long.MAX_VALUE : params.before();
         int limit = params.limitOrDefault();
-        lockRead();
-        try {
-            List<crowdvsmarket.engine.ledger.LedgerCorrection> all = hub.ledger().corrections();
-            List<Ledger.LedgerCorrectionDto> filtered = new ArrayList<>();
-            for (int i = all.size() - 1; i >= 0; i--) {
-                crowdvsmarket.engine.ledger.LedgerCorrection c = all.get(i);
-                if (c.atEpochMs() >= before) {
-                    continue;
-                }
-                filtered.add(toLedgerCorrectionDto(c));
-                if (filtered.size() > limit) {
-                    break;
-                }
+        List<crowdvsmarket.engine.ledger.LedgerCorrection> all = snapshot().corrections();
+        List<Ledger.LedgerCorrectionDto> filtered = new ArrayList<>();
+        for (int i = all.size() - 1; i >= 0; i--) {
+            crowdvsmarket.engine.ledger.LedgerCorrection c = all.get(i);
+            if (c.atEpochMs() >= before) {
+                continue;
             }
-            boolean hasMore = filtered.size() > limit;
-            List<Ledger.LedgerCorrectionDto> page = hasMore ? filtered.subList(0, limit) : filtered;
-            return new Paging.Page<>(page, hasMore);
-        } finally {
-            engineLock.readLock().unlock();
+            filtered.add(toLedgerCorrectionDto(c));
+            if (filtered.size() > limit) {
+                break;
+            }
         }
+        boolean hasMore = filtered.size() > limit;
+        List<Ledger.LedgerCorrectionDto> page = hasMore ? filtered.subList(0, limit) : filtered;
+        return new Paging.Page<>(page, hasMore);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -2939,8 +2929,12 @@ public class GameService implements MarketListener {
     /** One market's crowd account (Т-6): its own capital, its own chart, its own "hold the asset" and
      *  "anti-crowd" lines. {@code null}: BTC. */
     public Crowd.CrowdAccountDto crowdAccount(String marketIdOrNull) {
+        return crowdAccount(marketIdOrNull, snapshot());
+    }
+
+    private Crowd.CrowdAccountDto crowdAccount(String marketIdOrNull, ReadViews.Snapshot snapshot) {
         Market market = requireMarket(marketIdOrNull);
-        ReadViews.CrowdView crowd = snapshot().crowd(market.id()).orElse(ReadViews.CrowdView.FRESH);
+        ReadViews.CrowdView crowd = snapshot.crowd(market.id()).orElse(ReadViews.CrowdView.FRESH);
         List<CrowdAccount.RoundResult> history = crowd.history();
         List<BigDecimal> hold = crowd.hold();
         List<BigDecimal> antiCrowd = crowd.antiCrowd();
@@ -3007,31 +3001,42 @@ public class GameService implements MarketListener {
 
     private Ratings.RatingsDto ratings(String seasonIdOrNull, boolean apiBots) {
         Season season = seasonIdOrNull == null ? Season.of(Instant.now()) : parseSeason(seasonIdOrNull);
-        lockRead();
-        try {
-            RatingBook ratingBook = new RatingBook(hub.ledger());
-            Map<String, PlayerIdentity> identities = players.identitiesById();
-            java.util.function.Predicate<String> onThisBoard =
-                    id -> players.byId(id).map(PlayerDirectory.Row::isApiBot).orElse(false) == apiBots;
-            List<RatingBook.RichEntry> rich = ratingBook.richList(season, identities).stream()
-                    .filter(e -> onThisBoard.test(e.playerId())).toList();
-            List<RatingBook.ProphetEntry> prophets = ratingBook.prophetList(season, identities).stream()
-                    .filter(e -> onThisBoard.test(e.playerId())).toList();
-            List<Ratings.RichEntryDto> richDtos = new ArrayList<>();
-            for (int i = 0; i < rich.size(); i++) {
-                RatingBook.RichEntry e = rich.get(i);
-                richDtos.add(new Ratings.RichEntryDto(i + 1, summary(e.playerId()), e.growth().toMoney().toPlainString(), e.roundsPlayed()));
+        return ratings(season, apiBots, snapshot(), Integer.MAX_VALUE);
+    }
+
+    /**
+     * The boards of {@code season} from the committed views: the rows of the season's sorted boards that belong to this board (the
+     * people and the house's bots, or the API bots), the first {@code limit} of each with their ranks.
+     */
+    private Ratings.RatingsDto ratings(Season season, boolean apiBots, ReadViews.Snapshot snapshot, int limit) {
+        List<Ratings.RichEntryDto> richDtos = new ArrayList<>();
+        for (SeasonBoards.RichRow row : snapshot.richBoard(season)) {
+            if (richDtos.size() >= limit) {
+                break;
             }
-            List<Ratings.ProphetEntryDto> prophetDtos = new ArrayList<>();
-            for (int i = 0; i < prophets.size(); i++) {
-                RatingBook.ProphetEntry e = prophets.get(i);
-                prophetDtos.add(new Ratings.ProphetEntryDto(i + 1, summary(e.playerId()), e.accuracy().doubleValue(),
+            RatingBook.RichEntry e = row.entry();
+            if (onBoard(e.playerId(), apiBots)) {
+                richDtos.add(new Ratings.RichEntryDto(richDtos.size() + 1, summary(e.playerId()), e.growth().toMoney().toPlainString(),
+                        e.roundsPlayed()));
+            }
+        }
+        List<Ratings.ProphetEntryDto> prophetDtos = new ArrayList<>();
+        for (SeasonBoards.ProphetRow row : snapshot.prophetBoard(season)) {
+            if (prophetDtos.size() >= limit) {
+                break;
+            }
+            RatingBook.ProphetEntry e = row.entry();
+            if (onBoard(e.playerId(), apiBots)) {
+                prophetDtos.add(new Ratings.ProphetEntryDto(prophetDtos.size() + 1, summary(e.playerId()), e.accuracy().doubleValue(),
                         e.eligibleRounds(), e.roundsPlayed()));
             }
-            return new Ratings.RatingsDto(season.id(), RatingBook.DEFAULT_ROUNDS_THRESHOLD, richDtos, prophetDtos);
-        } finally {
-            engineLock.readLock().unlock();
         }
+        return new Ratings.RatingsDto(season.id(), RatingBook.DEFAULT_ROUNDS_THRESHOLD, richDtos, prophetDtos);
+    }
+
+    /** Whether the player belongs to the people's boards ({@code apiBots} false) or to the API bots'. */
+    private boolean onBoard(String playerId, boolean apiBots) {
+        return players.byId(playerId).map(PlayerDirectory.Row::isApiBot).orElse(false) == apiBots;
     }
 
     /** The people's "This week" boards (the house's bots with them, as in {@link #ratings}); the API bots have {@link #botWeeklyRatings}. */
@@ -3048,14 +3053,9 @@ public class GameService implements MarketListener {
         awaitStored();
         long weekStart = crowdvsmarket.server.domain.WeeklyBoards.weekStartMs(nowMs);
         List<crowdvsmarket.server.domain.WeeklyBoards.Totals> totals = new ArrayList<>(roundResults.weeklyTotals(weekStart, nowMs));
-        lockRead();
-        try {
-            // a retired bot is in no list (as in the season's); the API bots have a board of their own
-            totals.removeIf(t -> hub.ledger().isRetired(t.playerId())
-                    || players.byId(t.playerId()).map(PlayerDirectory.Row::isApiBot).orElse(false) != apiBots);
-        } finally {
-            engineLock.readLock().unlock();
-        }
+        ReadViews.Snapshot snapshot = snapshot();
+        // a retired bot is in no list (as in the season's); the API bots have a board of their own
+        totals.removeIf(t -> snapshot.isRetired(t.playerId()) || !onBoard(t.playerId(), apiBots));
         int threshold = RatingBook.DEFAULT_ROUNDS_THRESHOLD;
         List<Ratings.RichEntryDto> richDtos = new ArrayList<>();
         List<crowdvsmarket.server.domain.WeeklyBoards.Rich> rich = crowdvsmarket.server.domain.WeeklyBoards.rich(totals, threshold);
@@ -3101,17 +3101,8 @@ public class GameService implements MarketListener {
         ensurePlayerKnown(playerId);
         awaitStored();
         Identity.PlayerSummaryDto player = summary(playerId);
-        Ledger.SeasonRecordDto seasonRecord;
-        lockRead();
-        try {
-            seasonRecord = hub.ledger().seasonRecord(playerId, Season.of(Instant.now()))
-                    .map(sr -> new Ledger.SeasonRecordDto(sr.season().id(), sr.baselineBalance().toMoney().toPlainString(),
-                            sr.deposited().toMoney().toPlainString(), sr.withdrawn().toMoney().toPlainString(),
-                            sr.roundsPlayed(), sr.directionEligibleRounds(), sr.directionCorrectRounds()))
-                    .orElse(null);
-        } finally {
-            engineLock.readLock().unlock();
-        }
+        Ledger.SeasonRecordDto seasonRecord = snapshot().seasonRecord(playerId, Season.of(Instant.now()))
+                .map(GameService::toSeasonRecordDto).orElse(null);
         List<Identity.ProfileRoundEntryDto> history = roundResults.playerHistory(playerId, PROFILE_HISTORY_LIMIT);
         // over every settled round of the player, not just the page above (Р-71)
         WinStreak.Result streak = roundResults.playerStreak(playerId);
@@ -3194,39 +3185,29 @@ public class GameService implements MarketListener {
 
     /** Whether the economy has been cut over (the TREASURY and HERD accounts exist). */
     public boolean economyActive() {
-        lockRead();
-        try {
-            return hub.ledger().economyActive();
-        } finally {
-            engineLock.readLock().unlock();
-        }
+        return snapshot().economy().economyActive();
     }
 
     /** B6: whether TREASURY is below 90% of its 30-day maximum now. Said in the log when it changes. */
     public boolean circuitBreakerOpen(long nowMs) {
-        lockRead();
-        try {
-            LedgerBook ledger = hub.ledger();
-            boolean open = ledger.circuitBreakerOpen(Instant.ofEpochMilli(nowMs));
-            noteBreaker(open, ledger, Instant.ofEpochMilli(nowMs));
-            return open;
-        } finally {
-            engineLock.readLock().unlock();
-        }
+        EconomyFigures economy = snapshot().economy();
+        boolean open = economy.circuitBreakerOpen(Instant.ofEpochMilli(nowMs));
+        noteBreaker(open, economy.treasury(), () -> economy.treasuryMax30d(Instant.ofEpochMilli(nowMs)));
+        return open;
     }
 
     /** Logs the circuit breaker opening and closing, once each (the numbers stay in the log, the status shows the flag only). */
-    private void noteBreaker(boolean open, LedgerBook ledger, Instant now) {
+    private void noteBreaker(boolean open, PlayAmount treasury, java.util.function.Supplier<PlayAmount> max30d) {
         if (open == breakerWasOpen) {
             return;
         }
         breakerWasOpen = open;
         if (open) {
             LOG.warnf("CIRCUIT BREAKER OPEN: TREASURY %s is below 90%% of its 30-day maximum %s - new bets take at most "
-                    + "a quarter of the usual leverage cap until it recovers", ledger.treasury(), ledger.treasuryMax30d(now));
+                    + "a quarter of the usual leverage cap until it recovers", treasury, max30d.get());
         } else {
             LOG.infof("circuit breaker closed: TREASURY %s is back above 90%% of its 30-day maximum %s",
-                    ledger.treasury(), ledger.treasuryMax30d(now));
+                    treasury, max30d.get());
         }
     }
 
@@ -3412,39 +3393,34 @@ public class GameService implements MarketListener {
         } catch (RuntimeException e) {
             LOG.debugf(e, "the treasury coin could not be read from the chain service");
         }
-        lockRead();
-        try {
-            LedgerBook ledger = hub.ledger();
-            PlayAmount ledgerTotal = ledger.treasury().plus(ledger.herd()).plus(ledger.playersTotal()).plus(ledger.openStakes());
-            PlayAmount expected = ledger.openingTotal().plus(ledger.externalFlowSinceCutover());
-            PlayAmount bookDelta = ledgerTotal.minus(expected);
-            boolean active = ledger.economyActive();
-            boolean booksBalanced = !active || bookDelta.mojos() == 0;
-            PlayAmount onChain = chain == null ? null : new PlayAmount(chain.amountMojos());
-            PlayAmount chainDelta = onChain == null || !active ? null : ledgerTotal.minus(onChain);
-            Boolean chainConsistent = chainDelta == null ? null
-                    : chainDelta.compareTo(ledger.withdrawalsPending().negate()) >= 0
-                            && chainDelta.compareTo(ledger.depositedSinceCutover()) <= 0;
-            boolean breaker = ledger.circuitBreakerOpen(Instant.ofEpochMilli(nowMs));
-            if (!booksBalanced) {
-                LOG.warnf("RECONCILIATION MISMATCH: TREASURY %s + HERD %s + players %s + open stakes %s = %s, expected %s "
-                        + "(opening %s + deposits minus withdrawals since the cutover %s): off by %s", ledger.treasury(), ledger.herd(),
-                        ledger.playersTotal(), ledger.openStakes(), ledgerTotal, expected, ledger.openingTotal(),
-                        ledger.externalFlowSinceCutover(), bookDelta);
-            }
-            if (Boolean.FALSE.equals(chainConsistent)) {
-                LOG.warnf("RECONCILIATION MISMATCH: the books hold %s, the treasury coin on chain %s: the difference %s is outside "
-                        + "[-pending withdrawals %s, +deposits since the cutover %s]", ledgerTotal, onChain, chainDelta,
-                        ledger.withdrawalsPending(), ledger.depositedSinceCutover());
-            }
-            return new Economy.ReconciliationDto(active, money(ISSUED), onChain == null ? null : money(onChain),
-                    money(ledger.treasury()), money(ledger.herd()), money(ledger.playersTotal()), money(ledger.openStakes()),
-                    money(ledger.withdrawnConfirmed()), money(ledger.withdrawalsPending()), money(ledger.depositedTotal()),
-                    money(ledger.openingTotal()), money(expected), money(ledgerTotal), money(bookDelta),
-                    chainDelta == null ? null : money(chainDelta), booksBalanced, chainConsistent, breaker, nowMs);
-        } finally {
-            engineLock.readLock().unlock();
+        EconomyFigures ledger = snapshot().economy();
+        PlayAmount ledgerTotal = ledger.treasury().plus(ledger.herd()).plus(ledger.playersTotal()).plus(ledger.openStakes());
+        PlayAmount expected = ledger.openingTotal().plus(ledger.externalFlowSinceCutover());
+        PlayAmount bookDelta = ledgerTotal.minus(expected);
+        boolean active = ledger.economyActive();
+        boolean booksBalanced = !active || bookDelta.mojos() == 0;
+        PlayAmount onChain = chain == null ? null : new PlayAmount(chain.amountMojos());
+        PlayAmount chainDelta = onChain == null || !active ? null : ledgerTotal.minus(onChain);
+        Boolean chainConsistent = chainDelta == null ? null
+                : chainDelta.compareTo(ledger.withdrawalsPending().negate()) >= 0
+                        && chainDelta.compareTo(ledger.depositedSinceCutover()) <= 0;
+        boolean breaker = ledger.circuitBreakerOpen(Instant.ofEpochMilli(nowMs));
+        if (!booksBalanced) {
+            LOG.warnf("RECONCILIATION MISMATCH: TREASURY %s + HERD %s + players %s + open stakes %s = %s, expected %s "
+                    + "(opening %s + deposits minus withdrawals since the cutover %s): off by %s", ledger.treasury(), ledger.herd(),
+                    ledger.playersTotal(), ledger.openStakes(), ledgerTotal, expected, ledger.openingTotal(),
+                    ledger.externalFlowSinceCutover(), bookDelta);
         }
+        if (Boolean.FALSE.equals(chainConsistent)) {
+            LOG.warnf("RECONCILIATION MISMATCH: the books hold %s, the treasury coin on chain %s: the difference %s is outside "
+                    + "[-pending withdrawals %s, +deposits since the cutover %s]", ledgerTotal, onChain, chainDelta,
+                    ledger.withdrawalsPending(), ledger.depositedSinceCutover());
+        }
+        return new Economy.ReconciliationDto(active, money(ISSUED), onChain == null ? null : money(onChain),
+                money(ledger.treasury()), money(ledger.herd()), money(ledger.playersTotal()), money(ledger.openStakes()),
+                money(ledger.withdrawnConfirmed()), money(ledger.withdrawalsPending()), money(ledger.depositedTotal()),
+                money(ledger.openingTotal()), money(expected), money(ledgerTotal), money(bookDelta),
+                chainDelta == null ? null : money(chainDelta), booksBalanced, chainConsistent, breaker, nowMs);
     }
 
     private static final long SUPPLY_CACHE_MS = 10_000;
@@ -3490,15 +3466,16 @@ public class GameService implements MarketListener {
      *  account; the other markets have their own calls. BTC is {@link #defaultMarket}: after its price moved to
      *  another source, the market that took it over. */
     public Home.HomeSummaryDto home(String viewerPlayerIdOrNull) {
-        // F8: the rounds and the crowd account come from the committed views, with no lock; only the ratings (built over the
-        // whole ledger, which the views do not hold) take the engine's read lock, inside ratings().
+        // F8: every part reads the same committed snapshot, with no lock - the rounds, the crowd account and the boards are of one version
+        awaitStored();
+        ReadViews.Snapshot snapshot = snapshot();
         String bitcoin = defaultMarket().id();
-        Rounds.RoundsPairDto hourly = roundsPair(Enums.Interval.HOURLY, bitcoin, viewerPlayerIdOrNull);
-        Rounds.RoundsPairDto daily = roundsPair(Enums.Interval.DAILY, bitcoin, viewerPlayerIdOrNull);
-        Crowd.CrowdAccountDto crowd = crowdAccount(bitcoin);
-        Ratings.RatingsDto ratings = ratings(null);
-        List<Ratings.RichEntryDto> topRich = ratings.rich().stream().limit(HOME_TOP_N).toList();
-        List<Ratings.ProphetEntryDto> topProphets = ratings.prophets().stream().limit(HOME_TOP_N).toList();
+        Rounds.RoundsPairDto hourly = roundsPair(Enums.Interval.HOURLY, bitcoin, viewerPlayerIdOrNull, snapshot);
+        Rounds.RoundsPairDto daily = roundsPair(Enums.Interval.DAILY, bitcoin, viewerPlayerIdOrNull, snapshot);
+        Crowd.CrowdAccountDto crowd = crowdAccount(bitcoin, snapshot);
+        Ratings.RatingsDto ratings = ratings(Season.of(Instant.now()), false, snapshot, HOME_TOP_N);
+        List<Ratings.RichEntryDto> topRich = ratings.rich();
+        List<Ratings.ProphetEntryDto> topProphets = ratings.prophets();
         return new Home.HomeSummaryDto(hourly, daily, crowd, topRich, topProphets);
     }
 }

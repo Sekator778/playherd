@@ -2,6 +2,7 @@ package crowdvsmarket.engine.rating;
 
 import crowdvsmarket.engine.ledger.LedgerBook;
 import crowdvsmarket.engine.ledger.PlayAmount;
+import crowdvsmarket.engine.ledger.PlayerAccount;
 import crowdvsmarket.engine.ledger.SeasonRecord;
 import crowdvsmarket.engine.player.PlayerIdentity;
 import crowdvsmarket.engine.season.Season;
@@ -59,18 +60,26 @@ public final class RatingBook {
             if (ledger.isRetired(playerId)) {
                 continue; // a retired bot is in no list (economy stage B4)
             }
-            Optional<SeasonRecord> maybe = ledger.seasonRecord(playerId, season);
-            if (maybe.isEmpty() || maybe.get().roundsPlayed() < roundsThreshold) {
-                continue;
-            }
-            SeasonRecord sr = maybe.get();
-            PlayAmount balanceAtSeasonEnd = ledger.seasonEndBalance(playerId, season);
-            PlayAmount growth = balanceAtSeasonEnd.plus(sr.withdrawn()).minus(sr.deposited())
-                    .minus(sr.baselineBalance().plus(sr.starterPack()));
-            entries.add(new RichEntry(playerId, displayName(playerId, identities), growth, sr.roundsPlayed()));
+            richEntry(ledger.playerAccount(playerId), season, roundsThreshold, displayName(playerId, identities)).ifPresent(entries::add);
         }
         entries.sort(Comparator.comparing(RichEntry::growth).reversed());
         return entries;
+    }
+
+    /**
+     * The player's row of the "богачи" list of {@code season}, empty when the player has no record of the season or has played fewer
+     * rounds than the threshold. The one place the row is computed: the list above and the read views both ask it. A retired
+     * player is not asked about (the caller leaves them out).
+     */
+    public static Optional<RichEntry> richEntry(PlayerAccount account, Season season, int roundsThreshold, String displayName) {
+        SeasonRecord sr = account.seasons().get(season);
+        if (sr == null || sr.roundsPlayed() < roundsThreshold) {
+            return Optional.empty();
+        }
+        PlayAmount balanceAtSeasonEnd = account.seasonEndBalance(season);
+        PlayAmount growth = balanceAtSeasonEnd.plus(sr.withdrawn()).minus(sr.deposited())
+                .minus(sr.baselineBalance().plus(sr.starterPack()));
+        return Optional.of(new RichEntry(account.playerId(), displayName, growth, sr.roundsPlayed()));
     }
 
     /**
@@ -86,20 +95,21 @@ public final class RatingBook {
             if (ledger.isRetired(playerId)) {
                 continue; // a retired bot is in no list (economy stage B4)
             }
-            Optional<SeasonRecord> maybe = ledger.seasonRecord(playerId, season);
-            if (maybe.isEmpty()) {
-                continue;
-            }
-            SeasonRecord sr = maybe.get();
-            if (sr.roundsPlayed() < roundsThreshold || sr.directionEligibleRounds() == 0) {
-                continue;
-            }
-            BigDecimal accuracy = BigDecimal.valueOf(sr.directionCorrectRounds())
-                    .divide(BigDecimal.valueOf(sr.directionEligibleRounds()), MathContext.DECIMAL128);
-            entries.add(new ProphetEntry(playerId, displayName(playerId, identities), accuracy, sr.directionEligibleRounds(), sr.roundsPlayed()));
+            prophetEntry(ledger.playerAccount(playerId), season, roundsThreshold, displayName(playerId, identities)).ifPresent(entries::add);
         }
         entries.sort(Comparator.comparing(ProphetEntry::accuracy).reversed());
         return entries;
+    }
+
+    /** The player's row of the "пророки" list of {@code season}; see {@link #richEntry}. */
+    public static Optional<ProphetEntry> prophetEntry(PlayerAccount account, Season season, int roundsThreshold, String displayName) {
+        SeasonRecord sr = account.seasons().get(season);
+        if (sr == null || sr.roundsPlayed() < roundsThreshold || sr.directionEligibleRounds() == 0) {
+            return Optional.empty();
+        }
+        BigDecimal accuracy = BigDecimal.valueOf(sr.directionCorrectRounds())
+                .divide(BigDecimal.valueOf(sr.directionEligibleRounds()), MathContext.DECIMAL128);
+        return Optional.of(new ProphetEntry(account.playerId(), displayName, accuracy, sr.directionEligibleRounds(), sr.roundsPlayed()));
     }
 
     private static String displayName(String playerId, Map<String, PlayerIdentity> identities) {

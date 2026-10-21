@@ -39,6 +39,8 @@ public final class LedgerBook {
     public static final PlayAmount MIN_STAKE = PlayAmount.ofWholePlay(100);
 
     private final Map<String, PlayerAccount> accounts = new LinkedHashMap<>();
+    /** The place of each account in {@link #accounts}' order (0, 1, 2, ...): accounts are never removed, so it never changes. */
+    private final Map<String, Integer> joinOrder = new java.util.HashMap<>();
     /** The audit log; {@code null} when the book does not retain its entries ({@link #LedgerBook(boolean)}). */
     private final List<LedgerEntry> entries;
     private final List<LedgerListener> listeners = new ArrayList<>();
@@ -137,6 +139,7 @@ public final class LedgerBook {
         }
         for (PlayerAccount account : state.accounts()) {
             accounts.put(account.playerId(), account);
+            joinOrder.putIfAbsent(account.playerId(), joinOrder.size());
         }
         for (WithdrawalRequest w : state.withdrawals()) {
             withdrawals.put(w.requestId(), w);
@@ -198,14 +201,27 @@ public final class LedgerBook {
      * @throws NoSuchElementException for an unknown player, like {@link #balance}
      */
     public PlayAmount seasonEndBalance(String playerId, Season season) {
-        PlayerAccount acc = account(playerId);
-        Season next = null;
-        for (Season candidate : acc.seasons().keySet()) {
-            if (candidate.compareTo(season) > 0 && (next == null || candidate.compareTo(next) < 0)) {
-                next = candidate;
-            }
+        return account(playerId).seasonEndBalance(season);
+    }
+
+    /**
+     * The place of the player's account in {@link #playerIds()}' order (0 for the first player the book saw): what breaks a tie in
+     * a ranking the way a walk over {@link #playerIds()} does. Accounts are never removed, so it never changes.
+     *
+     * @throws NoSuchElementException for an unknown player, like {@link #balance}
+     */
+    public int joinOrder(String playerId) {
+        Integer order = joinOrder.get(playerId);
+        if (order == null) {
+            throw new NoSuchElementException("unknown player: " + playerId);
         }
-        return next == null ? acc.balance() : acc.seasons().get(next).baselineBalance();
+        return order;
+    }
+
+    /** The player's whole account: balance, season and every season record. Immutable.
+     *  @throws NoSuchElementException for an unknown player, like {@link #balance} */
+    public PlayerAccount playerAccount(String playerId) {
+        return account(playerId);
     }
 
     public Collection<String> playerIds() {
@@ -265,6 +281,7 @@ public final class LedgerBook {
         if (acc == null) {
             accounts.put(playerId, new PlayerAccount(playerId, PlayAmount.ZERO, season,
                     new LinkedHashMap<>(Map.of(season, SeasonRecord.starting(season, PlayAmount.ZERO, packFor(PlayAmount.ZERO))))));
+            joinOrder.put(playerId, joinOrder.size());
             grantPack(playerId, packFor(PlayAmount.ZERO), now);
             return accounts.get(playerId);
         }
@@ -932,24 +949,24 @@ public final class LedgerBook {
 
     /** The highest TREASURY balance of the last 30 days up to {@code now}, the current one included (plan B6). */
     public PlayAmount treasuryMax30d(Instant now) {
-        long day = Math.floorDiv(now.toEpochMilli(), MILLIS_PER_DAY);
-        PlayAmount max = treasury;
-        for (PlayAmount value : treasuryDayMax.tailMap(day - (BREAKER_WINDOW_DAYS - 1), true).values()) {
-            if (value.compareTo(max) > 0) {
-                max = value;
-            }
-        }
-        return max;
+        return EconomyFigures.treasuryMax30d(treasury, treasuryDayMax, now);
     }
 
     /** Whether TREASURY is below 90% of its maximum of the last 30 days (plan B6). Always {@code false} before the cutover. */
     public boolean circuitBreakerOpen(Instant now) {
-        if (!economyActive) {
-            return false;
-        }
-        long lhs = Math.multiplyExact(treasury.mojos(), 10L);
-        long rhs = Math.multiplyExact(treasuryMax30d(now).mojos(), 9L);
-        return lhs < rhs;
+        return EconomyFigures.circuitBreakerOpen(economyActive, treasury, treasuryDayMax, now);
+    }
+
+    /**
+     * The house figures as of now, as one immutable value (architecture plan F8: the read views keep one per commit).
+     *
+     * @param withdrawalsPending what {@link #withdrawalsPending()} answers if the caller knows it (it walks every request), or
+     *        {@code null} to have it computed
+     */
+    public EconomyFigures economyFigures(PlayAmount withdrawalsPending) {
+        return new EconomyFigures(economyActive, treasury, herd, openStakes, playersTotal, openingTotal,
+                externalFlowSinceCutover(), depositedTotal, depositedSinceCutover(), withdrawnConfirmed,
+                withdrawalsPending == null ? withdrawalsPending() : withdrawalsPending, new TreeMap<>(treasuryDayMax));
     }
 
     /**

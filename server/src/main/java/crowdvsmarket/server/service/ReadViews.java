@@ -2,11 +2,15 @@ package crowdvsmarket.server.service;
 
 import crowdvsmarket.engine.crowd.CrowdAccount;
 import crowdvsmarket.engine.game.GameEngine;
+import crowdvsmarket.engine.ledger.EconomyFigures;
 import crowdvsmarket.engine.ledger.LedgerBook;
+import crowdvsmarket.engine.ledger.LedgerCorrection;
 import crowdvsmarket.engine.ledger.PlayAmount;
+import crowdvsmarket.engine.ledger.PlayerAccount;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.RoundWindow;
+import crowdvsmarket.engine.season.Season;
 import crowdvsmarket.server.domain.BetFeed;
 import crowdvsmarket.server.domain.ClosedRounds;
 import crowdvsmarket.server.domain.EngineHub;
@@ -38,7 +42,11 @@ import java.util.Set;
  *   <li>per round that has bets: the bets, in the order of the bet book, and by player ({@link RoundBets}) - the lobby's split,
  *       a player's open positions and the stake in play, a round's crowd split and its list of positions;
  *   <li>per market: its crowd account ({@link CrowdView}) - capital, history, the comparison lines and the counters the lobby shows;
- *   <li>per player: the PLAY balance and what may be withdrawn ({@link PlayerView});
+ *   <li>per player: the PLAY balance and what may be withdrawn, the whole ledger account with its season records, whether the player is
+ *       retired ({@link PlayerView});
+ *   <li>the season leaderboards of every season, kept sorted and moved per touched player ({@link SeasonBoards});
+ *   <li>the operator's ledger corrections, and the house figures ({@link EconomyFigures}: the economy flag, TREASURY, HERD, the
+ *       reconciliation, the circuit breaker's inputs);
  *   <li>the bet feed ({@link BetFeed.Rows}) and the cursors of the running series ({@link RoundProgress}) as of the commit;
  *   <li>the set of rounds that are resolved or cancelled in the journal ({@link ClosedRounds}; a structure of its own, updated after
  *       each commit, so it can be a moment ahead of the rest of the snapshot, never ahead of the journal).
@@ -62,8 +70,12 @@ public final class ReadViews {
     /** Shards of the players' table: a batch copies the shards of the players it touched, not the table. */
     static final int PLAYER_SHARDS = 1024;
 
-    /** A player's PLAY balance and what of it may be withdrawn; a player the ledger does not know has no view. */
-    public record PlayerView(PlayAmount balance, PlayAmount withdrawable) {
+    /**
+     * A player's PLAY balance and what of it may be withdrawn, the ledger's account (immutable: the season records the ratings and the
+     * profile read), whether the player is a retired bot and where the player joined the ledger (a tie in a ranking is broken by it);
+     * a player the ledger does not know has no view.
+     */
+    public record PlayerView(PlayAmount balance, PlayAmount withdrawable, PlayerAccount account, boolean retired, int joinOrder) {
     }
 
     /** The bets of one round, in the order of the bet book, and by player. */
@@ -163,10 +175,13 @@ public final class ReadViews {
         private final BetFeed.Rows feed;
         private final ClosedRounds closed;
         private final Players players;
+        private final SeasonBoards boards;
+        private final List<LedgerCorrection> corrections;
+        private final EconomyFigures economy;
 
         private Snapshot(long version, Map<String, CrowdView> crowds, Map<String, RoundBets> rounds,
                          Map<RoundProgress.SeriesKey, RoundWindow> cursors, BetFeed.Rows feed, ClosedRounds closed,
-                         Players players) {
+                         Players players, SeasonBoards boards, List<LedgerCorrection> corrections, EconomyFigures economy) {
             this.version = version;
             this.crowds = crowds;
             this.rounds = rounds;
@@ -174,6 +189,9 @@ public final class ReadViews {
             this.feed = feed;
             this.closed = closed;
             this.players = players;
+            this.boards = boards;
+            this.corrections = corrections;
+            this.economy = economy;
         }
 
         /** The id of the last event of the journal this snapshot includes. */
@@ -222,6 +240,38 @@ public final class ReadViews {
             return Optional.ofNullable(players.get(playerId));
         }
 
+        /** The player's season record, empty for a player the ledger does not know or without a record of the season. */
+        public Optional<crowdvsmarket.engine.ledger.SeasonRecord> seasonRecord(String playerId, Season season) {
+            PlayerView view = players.get(playerId);
+            return view == null ? Optional.empty() : Optional.ofNullable(view.account().seasons().get(season));
+        }
+
+        /** The "богачи" board of the season (people and API bots together, retired players left out), best first. */
+        List<SeasonBoards.RichRow> richBoard(Season season) {
+            return boards.rich(season);
+        }
+
+        /** The "пророки" board of the season, best first; see {@link #richBoard}. */
+        List<SeasonBoards.ProphetRow> prophetBoard(Season season) {
+            return boards.prophets(season);
+        }
+
+        /** Whether the player is a retired bot; {@code false} for a player the ledger does not know. */
+        public boolean isRetired(String playerId) {
+            PlayerView view = players.get(playerId);
+            return view != null && view.retired();
+        }
+
+        /** Every operator ledger correction ever issued, in order. */
+        public List<LedgerCorrection> corrections() {
+            return corrections;
+        }
+
+        /** The house figures: the economy flag, the accounts, the circuit breaker's inputs. */
+        public EconomyFigures economy() {
+            return economy;
+        }
+
         public BetFeed.Rows feed() {
             return feed;
         }
@@ -263,8 +313,20 @@ public final class ReadViews {
             return cursors;
         }
 
+        Map<Season, List<List<?>>> boardsForTest() {
+            return boards.forTest();
+        }
+
+        List<LedgerCorrection> correctionsForTest() {
+            return corrections;
+        }
+
+        EconomyFigures economyForTest() {
+            return economy;
+        }
+
         Snapshot withCursors(Map<RoundProgress.SeriesKey, RoundWindow> next) {
-            return new Snapshot(version, crowds, rounds, next, feed, closed, players);
+            return new Snapshot(version, crowds, rounds, next, feed, closed, players, boards, corrections, economy);
         }
     }
 
@@ -299,8 +361,10 @@ public final class ReadViews {
                 }
             });
         }
+        Map<String, PlayerView> everyone = allPlayers(hub.ledger());
         Snapshot snapshot = new Snapshot(version, Map.copyOf(crowds), Map.copyOf(rounds), cursorsOf(progress), feed.rows(),
-                hub.closedRounds().copy(), Players.of(allPlayers(hub.ledger())));
+                hub.closedRounds().copy(), Players.of(everyone), SeasonBoards.of(everyone.values()),
+                hub.ledger().corrections(), hub.ledger().economyFigures(null));
         current = snapshot;
         return snapshot;
     }
@@ -374,14 +438,22 @@ public final class ReadViews {
         }
 
         Players players = old.players;
+        SeasonBoards boards = old.boards;
         LedgerBook ledger = hub.ledger();
         if (touched.allPlayers) {
-            players = Players.of(allPlayers(ledger));
+            Map<String, PlayerView> everyone = allPlayers(ledger);
+            players = Players.of(everyone);
+            boards = SeasonBoards.of(everyone.values());
         } else if (!touched.players.isEmpty()) {
             Map<String, PlayerView> changed = new HashMap<>();
+            Map<String, PlayerView> before = new HashMap<>();
             Set<String> gone = new HashSet<>();
             for (String playerId : touched.players) {
                 PlayerView view = playerOf(ledger, playerId);
+                PlayerView was = old.players.get(playerId);
+                if (was != null) {
+                    before.put(playerId, was);
+                }
                 if (view == null) {
                     gone.add(playerId);
                 } else {
@@ -389,10 +461,17 @@ public final class ReadViews {
                 }
             }
             players = players.with(changed, gone);
+            boards = boards.with(before, changed);
+        }
+
+        List<LedgerCorrection> corrections = touched.corrections ? ledger.corrections() : old.corrections;
+        EconomyFigures economy = ledger.economyFigures(touched.withdrawals || touched.allPlayers ? null : old.economy.withdrawalsPending());
+        if (economy.equals(old.economy)) {
+            economy = old.economy;
         }
 
         Snapshot snapshot = new Snapshot(version < 0 ? old.version : version, crowds, rounds, cursorsOf(progress), rows,
-                old.closed, players);
+                old.closed, players, boards, corrections, economy);
         current = snapshot;
         return snapshot;
     }
@@ -417,6 +496,10 @@ public final class ReadViews {
         final Set<String> feedRounds = new LinkedHashSet<>();
         final List<RoundWindow> closedWindows = new ArrayList<>();
         boolean allPlayers;
+        /** An operator correction was booked. */
+        boolean corrections;
+        /** A withdrawal request was made or moved on: what is pending changed. */
+        boolean withdrawals;
 
         private final Snapshot old;
         private final EngineHub hub;
@@ -449,14 +532,24 @@ public final class ReadViews {
                     RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
                     roundEnded(window, e.market(), e.interval());
                 }
-                case GameEvent.WithdrawalRequested e -> players.add(e.playerId());
+                case GameEvent.WithdrawalRequested e -> {
+                    players.add(e.playerId());
+                    withdrawals = true;
+                }
                 case GameEvent.WithdrawalConfirmed e -> ofWithdrawal(e.requestId());
                 case GameEvent.WithdrawalFailed e -> ofWithdrawal(e.requestId());
                 case GameEvent.DepositRequested e -> players.add(e.playerId());
                 case GameEvent.DepositConfirmed e -> ofDeposit(e.requestId());
                 case GameEvent.DepositFailed e -> ofDeposit(e.requestId());
-                case GameEvent.WithdrawalReversed e -> players.add(e.playerId());
-                case GameEvent.DepositReversed e -> players.add(e.playerId());
+                case GameEvent.WithdrawalReversed e -> {
+                    players.add(e.playerId());
+                    corrections = true;
+                    withdrawals = true;
+                }
+                case GameEvent.DepositReversed e -> {
+                    players.add(e.playerId());
+                    corrections = true;
+                }
                 case GameEvent.DepositConfirmedOnChain e -> players.add(e.playerId());
                 case GameEvent.WithdrawalConfirmedOnChain e -> ofWithdrawal(e.requestId());
                 case GameEvent.EconomyCutover e -> allPlayers = true; // what may be withdrawn changes for everybody
@@ -487,6 +580,7 @@ public final class ReadViews {
         }
 
         private void ofWithdrawal(String requestId) {
+            withdrawals = true;
             hub.ledger().withdrawal(requestId).ifPresent(r -> players.add(r.playerId()));
         }
 
@@ -549,7 +643,8 @@ public final class ReadViews {
 
     private static PlayerView playerOf(LedgerBook ledger, String playerId) {
         try {
-            return new PlayerView(ledger.balance(playerId), ledger.withdrawable(playerId));
+            return new PlayerView(ledger.balance(playerId), ledger.withdrawable(playerId), ledger.playerAccount(playerId),
+                    ledger.isRetired(playerId), ledger.joinOrder(playerId));
         } catch (NoSuchElementException e) {
             return null;
         }

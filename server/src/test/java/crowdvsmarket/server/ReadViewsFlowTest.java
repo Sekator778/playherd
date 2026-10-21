@@ -6,12 +6,16 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 
 import crowdvsmarket.engine.economy.Fees;
+import crowdvsmarket.engine.ledger.LedgerBook;
 import crowdvsmarket.engine.ledger.PlayAmount;
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.Bet;
 import crowdvsmarket.engine.round.RoundWindow;
 import crowdvsmarket.server.dto.ApiException;
+import crowdvsmarket.server.dto.Economy;
 import crowdvsmarket.server.dto.Enums;
+import crowdvsmarket.server.dto.Ledger;
+import crowdvsmarket.server.dto.Paging;
 import crowdvsmarket.server.dto.Markets;
 import crowdvsmarket.server.dto.Rounds;
 import crowdvsmarket.server.events.EventStore;
@@ -160,6 +164,9 @@ class ReadViewsFlowTest extends LiveGameTestBase {
         String player = signUp("lost");
         String balance = gameService.account(player).balance();
         long version = gameService.snapshot().version();
+        long now = System.currentTimeMillis();
+        Economy.ReconciliationDto books = gameService.reconciliation(now);
+        Ledger.SeasonRecordDto seasonRecord = gameService.seasonRecord(player, null);
         CountDownLatch inAppend = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         AtomicBoolean armed = new AtomicBoolean(true);
@@ -180,6 +187,11 @@ class ReadViewsFlowTest extends LiveGameTestBase {
         assertThat(hub.engine(market.id(), HOURLY).betBook().betsFor(betting.roundId())).as("applied, not committed").hasSize(1);
         assertThat(placing.isDone()).isFalse();
         assertNothingOfTheBetIsRead(player, balance, version);
+        assertThat(hub.ledger().openStakes()).as("the engine holds the stake").isNotEqualTo(PlayAmount.ZERO);
+        assertThat(gameService.reconciliation(now)).as("the books of the last commit, not of the batch under way").isEqualTo(books);
+        assertThat(gameService.seasonRecord(player, null)).isEqualTo(seasonRecord);
+        assertThat(gameService.publicProfile(player).seasonRecord()).isEqualTo(seasonRecord);
+        assertThat(gameService.home(player).topRich()).isEmpty();
 
         release.countDown();
         assertThatThrownBy(() -> placing.get(10, TimeUnit.SECONDS)).hasCauseInstanceOf(ApiException.class)
@@ -188,6 +200,7 @@ class ReadViewsFlowTest extends LiveGameTestBase {
 
         assertThat(hub.engine(market.id(), HOURLY).betBook().betsFor(betting.roundId())).as("rebuilt from the journal").isEmpty();
         assertNothingOfTheBetIsRead(player, balance, gameService.snapshot().version());
+        assertThat(gameService.reconciliation(now)).isEqualTo(books);
         assertThat(gameService.snapshot().version()).as("the rebuild published the journal's version").isEqualTo(lastEventId());
 
         gameService.placeBet(player, bet(betting, Enums.Direction.UP, 5, "300.000"), betting.startMs() - 1);
@@ -224,6 +237,19 @@ class ReadViewsFlowTest extends LiveGameTestBase {
                     assertThat(bettingRound(player).participantCount()).isEqualTo(1);
                     assertThat(gameService.crowdAccount(market.id()).capital()).isNotNull();
                     marketViews.crowdOverview();
+                    assertThat(gameService.seasonRecord(player, null).season()).isNotNull();
+                    gameService.publicProfile(player);
+                    gameService.ratings(null);
+                    gameService.botRatings(null);
+                    gameService.weeklyRatings(System.currentTimeMillis());
+                    gameService.botWeeklyRatings(System.currentTimeMillis());
+                    gameService.ledgerCorrections(new Paging.PageParams(20, null));
+                    gameService.economyActive();
+                    gameService.circuitBreakerOpen(System.currentTimeMillis());
+                    gameService.reconciliation(System.currentTimeMillis());
+                    gameService.supply(System.currentTimeMillis());
+                    assertThat(gameService.isClosed(betting)).isFalse();
+                    gameService.home(player);
                     answered.incrementAndGet();
                 }
             });
@@ -335,5 +361,54 @@ class ReadViewsFlowTest extends LiveGameTestBase {
         assertThat(after.feed().latest(betting.roundId(), 10)).hasSize(2);
         assertThat(after.cursor(market.id(), HOURLY)).isEqualTo(roundProgress.findNext(market.id(), HOURLY));
         assertThat(gameService.account(a).inPlay()).isEqualTo("300.000");
+    }
+
+    @Test
+    void theMovedReadsAnswerWhatTheLedgerComputesOnTheSameState() {
+        String a = signUp("cmpa");
+        String b = signUp("cmpb");
+        gameService.placeBet(a, bet(betting, Enums.Direction.UP, 5, "300.000"), betting.startMs() - 1);
+        gameService.placeBet(b, bet(betting, Enums.Direction.DOWN, 3, "200.000"), betting.startMs() - 1);
+        scheduler.tick(running.endMs());
+        prices.script(market, betting, "2500.000", "2400.000", "2400.000", "2510.000");
+        scheduler.tick(betting.endMs());
+        LedgerBook ledger = hub.ledger();
+        long now = System.currentTimeMillis();
+
+        for (String id : List.of(a, b)) {
+            var expected = ledger.seasonRecord(id, crowdvsmarket.engine.season.Season.of(java.time.Instant.ofEpochMilli(now)));
+            Ledger.SeasonRecordDto dto = gameService.seasonRecord(id, null);
+            assertThat(expected).isPresent();
+            assertThat(dto.baselineBalance()).isEqualTo(expected.get().baselineBalance().toMoney().toPlainString());
+            assertThat(dto.deposited()).isEqualTo(expected.get().deposited().toMoney().toPlainString());
+            assertThat(dto.withdrawn()).isEqualTo(expected.get().withdrawn().toMoney().toPlainString());
+            assertThat(dto.roundsPlayed()).isEqualTo(expected.get().roundsPlayed());
+            assertThat(dto.directionEligibleRounds()).isEqualTo(expected.get().directionEligibleRounds());
+            assertThat(dto.directionCorrectRounds()).isEqualTo(expected.get().directionCorrectRounds());
+            assertThat(gameService.publicProfile(id).seasonRecord()).isEqualTo(dto);
+        }
+        assertThat(gameService.seasonRecord("nobody", null).roundsPlayed()).isZero();
+
+        Economy.ReconciliationDto books = gameService.reconciliation(now);
+        assertThat(books.economyActive()).isEqualTo(ledger.economyActive());
+        assertThat(gameService.economyActive()).isEqualTo(ledger.economyActive());
+        assertThat(books.players()).isEqualTo(ledger.playersTotal().toMoney().toPlainString());
+        assertThat(books.openStakes()).isEqualTo(ledger.openStakes().toMoney().toPlainString());
+        assertThat(books.treasury()).isEqualTo(ledger.treasury().toMoney().toPlainString());
+        assertThat(books.herd()).isEqualTo(ledger.herd().toMoney().toPlainString());
+        assertThat(books.withdrawalsPending()).isEqualTo(ledger.withdrawalsPending().toMoney().toPlainString());
+        assertThat(books.circuitBreakerOpen()).isEqualTo(ledger.circuitBreakerOpen(java.time.Instant.ofEpochMilli(now)));
+        assertThat(gameService.circuitBreakerOpen(now)).isEqualTo(books.circuitBreakerOpen());
+        assertThat(gameService.ledgerCorrections(new Paging.PageParams(20, null)).items())
+                .hasSameSizeAs(ledger.corrections());
+
+        var season = crowdvsmarket.engine.season.Season.of(java.time.Instant.ofEpochMilli(now));
+        var book = new crowdvsmarket.engine.rating.RatingBook(ledger);
+        var people = gameService.ratings(null);
+        var bots = gameService.botRatings(null);
+        assertThat(people.season()).isEqualTo(season.id());
+        assertThat(people.rich().size() + bots.rich().size()).isEqualTo(book.richList(season, java.util.Map.of()).size());
+        assertThat(people.prophets().size() + bots.prophets().size()).isEqualTo(book.prophetList(season, java.util.Map.of()).size());
+        assertThat(gameService.home(a).topRich()).hasSizeLessThanOrEqualTo(5);
     }
 }
