@@ -199,6 +199,10 @@ public class PolymarketCatalog {
     @Scheduled(every = REFRESH_TICK, delayed = "10s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
             identity = JOB_REFRESH)
     void refreshJob() {
+        WhenReady.run(JOB_REFRESH, this::refreshJobNow);
+    }
+
+    private void refreshJobNow() {
         if (!enabled()) {
             return;
         }
@@ -212,6 +216,10 @@ public class PolymarketCatalog {
     @Scheduled(every = WATCH_EVERY, delayed = "15s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
             identity = JOB_WATCH)
     void watchJob() {
+        WhenReady.run(JOB_WATCH, this::watchJobNow);
+    }
+
+    private void watchJobNow() {
         if (enabled()) {
             watch(clock.getAsLong());
         }

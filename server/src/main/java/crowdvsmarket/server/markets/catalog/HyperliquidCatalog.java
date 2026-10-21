@@ -125,6 +125,10 @@ public class HyperliquidCatalog {
     @Scheduled(every = EVERY, delayed = "3s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
             identity = JOB)
     void run() {
+        WhenReady.run(JOB, this::runNow);
+    }
+
+    private void runNow() {
         if (config.liveSources() && !config.venueDisabled(HyperliquidPriceSource.NAME)) { // a venue that is off is not asked
             sync(clock.getAsLong());
         }
@@ -134,6 +138,10 @@ public class HyperliquidCatalog {
     @Scheduled(every = WATCH_EVERY, delayed = "15s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
             identity = JOB_WATCH)
     void watchJob() {
+        WhenReady.run(JOB_WATCH, this::watchJobNow);
+    }
+
+    private void watchJobNow() {
         if (config.liveSources()) {
             watch(clock.getAsLong());
         }

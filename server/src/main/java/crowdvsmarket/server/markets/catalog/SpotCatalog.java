@@ -146,6 +146,10 @@ public class SpotCatalog {
 
     @Scheduled(every = EVERY, delayed = "3s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP, identity = JOB)
     void run() {
+        WhenReady.run(JOB, this::runNow);
+    }
+
+    private void runNow() {
         if (config.liveSources()) {
             sync(clock.getAsLong());
         }
