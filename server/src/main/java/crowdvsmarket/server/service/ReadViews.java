@@ -328,9 +328,20 @@ public final class ReadViews {
         Snapshot withCursors(Map<RoundProgress.SeriesKey, RoundWindow> next) {
             return new Snapshot(version, crowds, rounds, next, feed, closed, players, boards, corrections, economy);
         }
+
+        Snapshot withVersion(long next) {
+            return new Snapshot(next, crowds, rounds, cursors, feed, closed, players, boards, corrections, economy);
+        }
     }
 
     private volatile Snapshot current;
+    /** The newest snapshot that has been <i>prepared</i>, published or not: what the next {@link #prepareBatch} builds on. It is ahead of
+     *  {@link #current} for as long as batches are applied and not yet durable (the pipeline of the core writer); equal to it when none is.
+     *  Guarded by {@code this}. */
+    private Snapshot tail;
+    /** Counts the publications that start a new line (a full one, an {@link #invalidate}): a {@link Prepared} of an older line is dropped
+     *  by {@link #publish}. Guarded by {@code this}. */
+    private long epoch;
 
     /** The latest published snapshot, {@code null} before the first one (the engine is not ready then) and after {@link #invalidate}. */
     public Snapshot current() {
@@ -340,14 +351,25 @@ public final class ReadViews {
     /** Forgets the snapshot: reads answer 503 until the next full publication. For a publication that failed. */
     public synchronized void invalidate() {
         current = null;
+        tail = null;
+        epoch++;
     }
 
     // ---------------------------------------------------------------------------------------
     // Publication
     // ---------------------------------------------------------------------------------------
 
-    /** Builds the whole snapshot from the engine and publishes it with {@code version}. */
+    /** Builds the whole snapshot from the engine and publishes it with {@code version}. It starts a new line: whatever was prepared and not
+     *  published is dropped. */
     public synchronized Snapshot publishFull(EngineHub hub, BetFeed feed, RoundProgress progress, long version) {
+        Snapshot snapshot = buildFull(hub, feed, progress, version);
+        epoch++;
+        tail = snapshot;
+        current = snapshot;
+        return snapshot;
+    }
+
+    private Snapshot buildFull(EngineHub hub, BetFeed feed, RoundProgress progress, long version) {
         Map<String, RoundBets> rounds = new HashMap<>();
         Map<String, CrowdView> crowds = new HashMap<>();
         for (String marketId : hub.marketIds()) {
@@ -362,31 +384,63 @@ public final class ReadViews {
             });
         }
         Map<String, PlayerView> everyone = allPlayers(hub.ledger());
-        Snapshot snapshot = new Snapshot(version, Map.copyOf(crowds), Map.copyOf(rounds), cursorsOf(progress), feed.rows(),
+        return new Snapshot(version, Map.copyOf(crowds), Map.copyOf(rounds), cursorsOf(progress), feed.rows(),
                 hub.closedRounds().copy(), Players.of(everyone), SeasonBoards.of(everyone.values()),
                 hub.ledger().corrections(), hub.ledger().economyFigures(null));
-        current = snapshot;
-        return snapshot;
     }
 
     /** Moves the cursors of the series to where {@code progress} has them now, nothing else: for a cursor moved outside a batch. */
     public synchronized void publishCursors(RoundProgress progress) {
         Snapshot old = current;
         if (old != null) {
-            current = old.withCursors(cursorsOf(progress));
+            Map<RoundProgress.SeriesKey, RoundWindow> cursors = cursorsOf(progress);
+            current = old.withCursors(cursors);
+            // nothing is prepared and waiting here: the caller holds the writer's gate with the pipeline drained
+            tail = tail == null ? current : tail.withCursors(cursors);
         }
     }
 
     /**
-     * Publishes the snapshot that follows a committed batch. {@code events} are the batch's events, in order; {@code version} is the
-     * id of the last event of the journal now, or a negative number when the batch wrote none (the version stays). Without a
-     * previous snapshot this is a full publication.
+     * What {@link #prepareBatch} hands over for {@link #publish}: the next snapshot, built from the engine as the batch left it (the engine
+     * may be ahead of it by now), and the windows whose closing the batch records. Nothing of it is visible to a reader.
+     */
+    public static final class Prepared {
+        private final long epoch;
+        private final Snapshot snapshot;
+        private final List<RoundWindow> closedWindows;
+
+        private Prepared(long epoch, Snapshot snapshot, List<RoundWindow> closedWindows) {
+            this.epoch = epoch;
+            this.snapshot = snapshot;
+            this.closedWindows = closedWindows;
+        }
+    }
+
+    /**
+     * Publishes the snapshot that follows a committed batch: {@link #prepareBatch} and {@link #publish} in one. {@code events} are the
+     * batch's events, in order; {@code version} is the id of the last event of the journal now, or a negative number when the batch wrote
+     * none (the version stays). Without a previous snapshot this is a full publication.
      */
     public synchronized Snapshot publishBatch(List<GameEvent> events, EngineHub hub, BetFeed feed, RoundProgress progress,
                                               long version) {
-        Snapshot old = current;
-        if (old == null) {
+        if (tail == null) {
             return publishFull(hub, feed, progress, Math.max(version, 0));
+        }
+        return publish(prepareBatch(events, hub, feed, progress), version);
+    }
+
+    /**
+     * Builds the snapshot that follows the batch whose {@code events} the engine has just applied, on top of the newest prepared one, and
+     * publishes nothing: the core writer calls it on its own thread right after the batch's commands have run (the engine is then exactly the
+     * state after the batch) and {@link #publish}es the result once the batch is durable. Without a previous snapshot the result is a full
+     * one.
+     */
+    public synchronized Prepared prepareBatch(List<GameEvent> events, EngineHub hub, BetFeed feed, RoundProgress progress) {
+        Snapshot old = tail;
+        if (old == null) {
+            Snapshot full = buildFull(hub, feed, progress, -1);
+            tail = full;
+            return new Prepared(epoch, full, List.of());
         }
         Touched touched = new Touched(old, hub);
         for (GameEvent event : events) {
@@ -433,10 +487,6 @@ public final class ReadViews {
             rows = rows.with(entries);
         }
 
-        for (RoundWindow window : touched.closedWindows) {
-            old.closed.closed(window);
-        }
-
         Players players = old.players;
         SeasonBoards boards = old.boards;
         LedgerBook ledger = hub.ledger();
@@ -470,8 +520,34 @@ public final class ReadViews {
             economy = old.economy;
         }
 
-        Snapshot snapshot = new Snapshot(version < 0 ? old.version : version, crowds, rounds, cursorsOf(progress), rows,
-                old.closed, players, boards, corrections, economy);
+        Snapshot snapshot = new Snapshot(-1, crowds, rounds, cursorsOf(progress), rows, old.closed, players, boards, corrections,
+                economy);
+        tail = snapshot;
+        return new Prepared(epoch, snapshot, List.copyOf(touched.closedWindows));
+    }
+
+    /** Builds the whole snapshot from the engine as {@link #prepareBatch} would when it has nothing to build on, and publishes nothing. */
+    public synchronized Prepared prepareFull(EngineHub hub, BetFeed feed, RoundProgress progress) {
+        Snapshot full = buildFull(hub, feed, progress, -1);
+        epoch++; // the batches prepared on the old line are dropped
+        tail = full;
+        return new Prepared(epoch, full, List.of());
+    }
+
+    /**
+     * Makes what {@link #prepareBatch} built visible to the readers, with {@code version} (the id of the last event of the journal, a negative
+     * number when the batch wrote none: the version stays). Called once the batch is durable. A {@code Prepared} of a line that a full
+     * publication or an {@link #invalidate} has ended since is dropped (returns {@code null}).
+     */
+    public synchronized Snapshot publish(Prepared prepared, long version) {
+        if (prepared.epoch != epoch) {
+            return null;
+        }
+        Snapshot now = current;
+        for (RoundWindow window : prepared.closedWindows) {
+            prepared.snapshot.closed.closed(window);
+        }
+        Snapshot snapshot = prepared.snapshot.withVersion(version >= 0 ? version : now == null ? 0 : now.version);
         current = snapshot;
         return snapshot;
     }

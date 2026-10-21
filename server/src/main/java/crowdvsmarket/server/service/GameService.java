@@ -134,15 +134,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p><b>The core writer (architecture plan F6):</b> since then no method here takes the write lock itself. Every call that
  * changes anything is a {@link Command} that {@link CoreWriter}'s one thread runs, holding the engine write lock for the
- * command's own work only; the events of the commands of a batch go to the journal in ONE transaction that is committed
- * with the engine lock released, and the caller is answered after that commit (a player never gets "OK" for a bet that is not
- * durable). A batch that fails to commit answers 503 to its commands and rebuilds the engine from the journal. A rebuild
- * and the ledger flush take {@code writerGate} first, so they never see a batch half way.
+ * command's own work only, and never waits for the disk: the events of the commands of a batch go to the journal as ONE excerpt,
+ * written and synced by a stage of its own (batches that wait share a sync), and the caller is answered after that sync (a
+ * player never gets "OK" for a bet that is not durable). A batch that fails to commit answers 503 to its commands, with every
+ * batch applied after it, and the engine is rebuilt from the journal. A rebuild, a snapshot and the ledger flush enter through
+ * {@code writerGate} ({@link #enterGate}) and wait until the pipeline is drained, so they see the engine exactly as the journal
+ * holds it.
  *
  * <p><b>The read views (architecture plan F8):</b> the hot reads - the lobby, a player's account, positions and open bets,
  * a round, the bet feed, the crowd accounts, the stake in play, what the scheduler asks of the bet books - do not touch the
- * engine at all: the writer publishes {@link ReadViews immutable views} of the committed state after each commit (before the
- * caller is answered), and a read takes the latest through one volatile reference ({@link #snapshot}), with no lock. A read
+ * engine at all: the writer builds {@link ReadViews immutable views} of each batch when it applies it and publishes them when the
+ * batch is durable (before the caller is answered), and a read takes the latest through one volatile reference ({@link #snapshot}), with no lock. A read
  * therefore never sees what a batch has applied and not yet committed. The season records, the season boards (the ratings and the
  * ratings part of {@code home}), the weekly boards' retired filter, the ledger corrections, the economy flags, the circuit breaker and
  * the reconciliation are in the views too, and {@code home} reads all its parts from one snapshot. No read takes the engine's lock
@@ -325,7 +327,7 @@ public class GameService implements MarketListener {
             // the gate: between two batches of the core writer, never while one is applied in memory and not committed - a
             // movement written to the table for an event that then fails to commit would stay there, and the rebuild would
             // take its sequence number for a stored one
-            writerGate.lock();
+            enterGate();
             try {
                 engineLock.readLock().lock();
                 try {
@@ -457,7 +459,7 @@ public class GameService implements MarketListener {
         // would be the wrong order).
         ledgerFlushLock.lock();
         try {
-            writerGate.lock();
+            enterGate();
             try {
                 engineLock.writeLock().lock();
                 try {
@@ -489,9 +491,26 @@ public class GameService implements MarketListener {
     @ConfigProperty(name = "herd.writer.queue-capacity", defaultValue = "10000")
     int writerQueueCapacity;
 
-    /** Held by the core writer for a whole cycle and by whoever replaces the engine's state or takes the ledger movements;
-     *  see {@link CoreWriter}. Lock order: the ledger flush lock, this, the engine lock. */
-    private final java.util.concurrent.locks.ReentrantLock writerGate = new java.util.concurrent.locks.ReentrantLock();
+    /** How many batches the core writer's logic thread may have applied and not yet seen through the journal and the output stage
+     *  ({@link CoreWriter}); when that many are in the pipeline it waits (back-pressure). */
+    @ConfigProperty(name = "herd.writer.pipeline-depth", defaultValue = "8")
+    int writerPipelineDepth;
+
+    /** Held by the core writer's logic thread for its turn and by whoever replaces the engine's state, snapshots it or takes the ledger
+     *  movements ({@link #enterGate}); see {@link CoreWriter}. Fair, so that the logic thread cannot starve those. Lock order: the ledger flush
+     *  lock, this, the engine lock. */
+    private final java.util.concurrent.locks.ReentrantLock writerGate = new java.util.concurrent.locks.ReentrantLock(true);
+
+    /** Takes {@link #writerGate} and waits until the core writer's pipeline is drained: the engine is then exactly what the journal holds
+     *  (see {@link CoreWriter#enterGate}). Release with {@code writerGate.unlock()}. */
+    private void enterGate() {
+        CoreWriter w = writer;
+        if (w == null) {
+            writerGate.lock();
+        } else {
+            w.enterGate();
+        }
+    }
     private volatile CoreWriter writer;
 
     private CoreWriter writer() {
@@ -532,12 +551,18 @@ public class GameService implements MarketListener {
                         }
 
                         @Override
-                        public void committed(List<GameEvent> events, long version) {
-                            publishViews(events, version);
+                        public Object prepareViews(List<GameEvent> events) {
+                            return prepareViewsOf(events);
+                        }
+
+                        @Override
+                        public void publishViews(Object prepared, long version) {
+                            publishPreparedViews(prepared, version);
                         }
 
                     }, eventStore, writerMaxBatch <= 0 ? 256 : writerMaxBatch, writerMaxWaitMs,
-                            writerQueueCapacity <= 0 ? 10_000 : writerQueueCapacity);
+                            writerQueueCapacity <= 0 ? 10_000 : writerQueueCapacity,
+                            writerPipelineDepth <= 0 ? CoreWriter.DEFAULT_PIPELINE_DEPTH : writerPipelineDepth);
                     writer = w;
                 }
             }
@@ -589,30 +614,41 @@ public class GameService implements MarketListener {
         views.publishFull(hub, betFeedStore, roundProgress, version);
     }
 
-    /** After a committed batch, on the writer thread: the incremental publication; when it fails, the full one; when that fails
-     *  too, no views, so reads answer 503 rather than something old. */
-    private void publishViews(List<GameEvent> events, long version) {
+    /** After a batch has been applied, on the logic thread: builds the next views from the engine as the batch left it and publishes
+     *  nothing (they become visible when the batch is durable, {@link #publishPreparedViews}). Falls back to a full build, and when that
+     *  fails too, to a marker that invalidates the views, so that reads answer 503 rather than something old. Never throws. */
+    private Object prepareViewsOf(List<GameEvent> events) {
         if (!rebuildService.isReady()) {
-            return; // the engine cannot be trusted: the rebuild that makes it ready publishes the views in full
+            return null; // the engine cannot be trusted: the rebuild that makes it ready publishes the views in full
         }
         try {
-            views.publishBatch(events, hub, betFeedStore, roundProgress, version);
+            return views.prepareBatch(events, hub, betFeedStore, roundProgress);
         } catch (RuntimeException | Error e) {
-            LOG.error("the read views could not be updated after a commit - publishing them in full", e);
-            publishViewsAfterFailure(version);
+            LOG.error("the read views could not be prepared after a batch - preparing them in full", e);
+        }
+        try {
+            return views.prepareFull(hub, betFeedStore, roundProgress);
+        } catch (RuntimeException | Error e) {
+            LOG.error("the read views could not be prepared in full either - reads answer 503 until a rebuild publishes them", e);
+            return ViewsInvalid.MARKER;
         }
     }
 
-    private void publishViewsAfterFailure(long version) {
+    /** The prepared views of a durable batch become visible, on the output stage. Never throws. */
+    private void publishPreparedViews(Object prepared, long version) {
         try {
-            ReadViews.Snapshot old = views.current();
-            long keep = version >= 0 ? version : old == null ? 0 : old.version();
-            publishAllViews(keep);
+            if (prepared instanceof ReadViews.Prepared p) {
+                views.publish(p, version);
+            } else if (prepared == ViewsInvalid.MARKER) {
+                views.invalidate();
+            }
         } catch (RuntimeException | Error e) {
-            LOG.error("the read views could not be published in full either - reads answer 503 until a rebuild publishes them", e);
+            LOG.error("the read views could not be published after the commit of a batch - reads answer 503 until a rebuild publishes them", e);
             views.invalidate();
         }
     }
+
+    private enum ViewsInvalid { MARKER }
 
     /** The number of commands waiting for the core writer (0 before the first one). */
     public int writerQueued() {
@@ -692,10 +728,10 @@ public class GameService implements MarketListener {
      *  any other thread the views take the cursors as they are once the batch in flight (if any) is over. */
     private void cursorsMovedOutsideTheWriter() {
         CoreWriter w = writer;
-        if (w != null && w.onWriterThread()) {
+        if (w != null && w.onPipelineThread()) {
             return;
         }
-        writerGate.lock();
+        enterGate();
         try {
             views.publishCursors(roundProgress);
         } finally {
@@ -2817,7 +2853,7 @@ public class GameService implements MarketListener {
     /** Takes the reservation of {@code coinId} back when its event is not in the journal - decided holding the writer's gate, so that no
      *  rebuild is half way through appending it (a reserved coin without an event is the rebuild's to credit). */
     private void releaseReservation(String coinId) {
-        writerGate.lock();
+        enterGate();
         try {
             boolean credited = eventStore.loadOfTypes(List.of("DepositConfirmedOnChain")).stream()
                     .anyMatch(e -> ((GameEvent.DepositConfirmedOnChain) e).coinId().equals(coinId));

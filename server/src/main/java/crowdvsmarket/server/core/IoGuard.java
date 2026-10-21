@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * The runtime half of the rule "no database and no network under the engine lock, none inside a turn of the core writer"
+ * The runtime half of the rule "no database, no network and no disk under the engine lock, none inside a turn of the core writer"
  * (architecture plan, docs/research/lmax_roadmap.md step 1; the static half is {@code EngineIoRuleTest}).
  *
  * <p>{@link crowdvsmarket.server.persistence.Db} and the HTTP clients call {@link #check} before they reach for a connection or a
@@ -22,9 +22,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * <ul>
  *   <li>holds the engine <b>write</b> lock ({@link crowdvsmarket.server.jfr.TimedEngineLock} tells {@link #writeLockAcquired} /
  *       {@link #writeLockReleasing}; the read lock is not counted), or
- *   <li>is the core writer's thread ({@link #WRITER_THREAD}). Since Р-107 the batch's own commit is the append of the journal (a
- *       Chronicle Queue on disk), which is not a database or network call, and no command stages a database write: the rows derived from
- *       events are written by the caller of the command or by {@code DerivedRows}, after the batch is durable.
+ *   <li>is the core writer's logic thread ({@link #WRITER_THREAD}). Since the writer is a pipeline (docs/research/lmax_roadmap.md §1) the
+ *       logic thread never waits for the disk: the batch's commit - the append of the journal, a Chronicle Queue on disk, and its sync - is
+ *       done by the journal stage's own thread ({@code herd-core-journal}), which this guard does not watch, and no command stages a database
+ *       write: the rows derived from events are written by the caller of the command or by {@code DerivedRows}, after the batch is durable.
+ *       The journal's reads and appends ({@code EventStore}) are checked as {@code disk}, so the logic thread cannot touch the journal
+ *       except in the rebuild after a failure.
  * </ul>
  * unless a frame of its stack is in {@link #ALLOWED}: the known exceptions, each with its reason and the step of the plan that removes
  * it. A violation is recorded (the file {@code target/io-guard/*.txt}, written when the JVM ends) and, in mode {@code fail}, thrown
@@ -62,7 +65,7 @@ public final class IoGuard {
     static final Map<String, String> ALLOWED = new TreeMap<>(Map.ofEntries(
             Map.entry("EngineRebuildService.rebuildStateLocked", "the rebuild of the engine (startup, an operator's, after a failed "
                     + "commit through CoreWriter.recover, the scheduler's retry) reads snapshot, journal, ledger rows, players, markets "
-                    + "and the oracle counter holding the engine write lock, with the writer stopped. TODO plan F5/F7: rebuild into a "
+                    + "and the oracle counter holding the engine write lock, with the pipeline of the writer drained. TODO plan F5/F7: rebuild into a "
                     + "copy of the state off the lock and swap it in")));
 
     /** Exceptions registered at run time by test fixtures ({@link #allow}); never by the application. */

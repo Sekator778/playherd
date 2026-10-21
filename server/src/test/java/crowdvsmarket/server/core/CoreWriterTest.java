@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
 class CoreWriterTest {
 
     /** The engine and the database as the writer sees them. */
-    private static final class World implements CoreWriter.Host {
+    static final class World implements CoreWriter.Host {
         final ReentrantLock gate = new ReentrantLock();
         final ReentrantLock engine = new ReentrantLock();
         volatile boolean ready = true;
@@ -42,14 +42,22 @@ class CoreWriterTest {
         /** The events that reached the "journal", in order, per transaction. */
         final List<List<GameEvent>> journalBatches = Collections.synchronizedList(new ArrayList<>());
         /** What the writer handed over for publication (F8): the batch's events, the version, and what the journal held then. */
-        record Published(List<GameEvent> events, long version, int journalSize, boolean gateHeld, boolean engineLocked) {
+        record Published(List<GameEvent> events, long version, int journalSize, String thread) {
+        }
+
+        /** The views the writer had built (not published) when it applied a batch: the events, and whether the gate and the engine lock were held. */
+        record Prepared(List<GameEvent> events, boolean gateHeld, boolean engineLocked, String thread) {
         }
 
         final List<Published> published = Collections.synchronizedList(new ArrayList<>());
+        final List<Prepared> prepared = Collections.synchronizedList(new ArrayList<>());
         final AtomicInteger recoveries = new AtomicInteger();
         final AtomicInteger transactions = new AtomicInteger();
         volatile RuntimeException commitFailure;
         volatile CountDownLatch commitGate;
+
+        /** The events that are in the journal (synced), for a caller that checks its own event when it is answered. */
+        final java.util.Set<GameEvent> journaled = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
         final EventStore store = mock(EventStore.class);
 
@@ -68,6 +76,7 @@ class CoreWriterTest {
                 }
                 List<EventStore.Pending> events = inv.getArgument(0);
                 journalBatches.add(events.stream().map(EventStore.Pending::event).toList());
+                events.forEach(p -> journaled.add(p.event()));
                 return (long) journal().size();
             }).when(store).appendAll(any());
         }
@@ -107,9 +116,16 @@ class CoreWriterTest {
         }
 
         @Override
-        public void committed(List<GameEvent> events, long version) {
-            published.add(new Published(List.copyOf(events), version, journal().size(), gate.isHeldByCurrentThread(),
-                    engine.isLocked()));
+        public Object prepareViews(List<GameEvent> events) {
+            Prepared p = new Prepared(List.copyOf(events), gate.isHeldByCurrentThread(), engine.isHeldByCurrentThread(),
+                    Thread.currentThread().getName());
+            prepared.add(p);
+            return p;
+        }
+
+        @Override
+        public void publishViews(Object preparedViews, long version) {
+            published.add(new Published(((Prepared) preparedViews).events(), version, journal().size(), Thread.currentThread().getName()));
         }
 
         @Override
@@ -314,9 +330,14 @@ class CoreWriterTest {
             published.addAll(p.events());
             assertThat(p.journalSize()).as("the batch is in the journal when it is published")
                     .isGreaterThanOrEqualTo(published.size());
-            assertThat(p.version()).as("the version is the last id of the journal").isEqualTo(p.journalSize());
-            assertThat(p.gateHeld()).as("on the writer, holding the gate").isTrue();
-            assertThat(p.engineLocked()).as("with the engine lock released").isFalse();
+            assertThat(p.version()).as("the version is the last id of the journal the batch includes (batches that shared a sync "
+                    + "each have their own)").isEqualTo(published.size());
+            assertThat(p.thread()).as("published by the output stage, not by the logic thread").isEqualTo(OutputStage.THREAD);
+        }
+        for (World.Prepared p : world.prepared) {
+            assertThat(p.thread()).isEqualTo(IoGuard.WRITER_THREAD);
+            assertThat(p.gateHeld()).as("built by the logic thread, holding the gate").isTrue();
+            assertThat(p.engineLocked()).as("and the engine lock").isTrue();
         }
         assertThat(published).as("every event, once, in the order of the journal").containsExactlyElementsOf(world.journal());
     }
@@ -365,7 +386,8 @@ class CoreWriterTest {
         assertThat(world.journal()).containsExactly(event(0), event(1));
         List<GameEvent> published = new ArrayList<>();
         world.published.forEach(p -> published.addAll(p.events()));
-        assertThat(published).as("the engine held an uncommitted event: the rebuild publishes the second batch, not the writer")
-                .containsExactly(event(0));
+        assertThat(published).as("the engine held an uncommitted event: no view is built from it (the rebuild publishes the state in full); "
+                + "the views of the batches before it are published as they were prepared")
+                .doesNotContain(event(2)).startsWith(event(0)).isSubsetOf(world.journal());
     }
 }

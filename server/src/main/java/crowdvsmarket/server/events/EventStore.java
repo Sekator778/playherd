@@ -1,5 +1,6 @@
 package crowdvsmarket.server.events;
 
+import crowdvsmarket.server.core.IoGuard;
 import crowdvsmarket.server.journal.Journal;
 import crowdvsmarket.server.journal.JournalProjector;
 import crowdvsmarket.server.journal.JournalRecord;
@@ -107,6 +108,7 @@ public class EventStore {
         if (events.isEmpty()) {
             return journal.lastSeq();
         }
+        IoGuard.check("disk", "journal append");
         List<JournalRecord> records = new ArrayList<>(events.size());
         for (Pending p : events) {
             records.add(record(p));
@@ -208,11 +210,13 @@ public class EventStore {
 
     /** {@link #replayAfter(long, Replayed)} for the events with {@code afterId < seq <= upToId} only. */
     public long replayAfter(long afterId, long upToId, Replayed sink) {
+        IoGuard.check("disk", "journal replay");
         return journal.store().replay(afterId, upToId, r -> sink.accept(r.seq(), decode(r)));
     }
 
     /** The events of the given types ({@code event_type} names), in order: what the repair of a projection folds. */
     public List<GameEvent> loadOfTypes(java.util.Collection<String> types) {
+        IoGuard.check("disk", "journal read");
         java.util.Set<String> wanted = new java.util.HashSet<>(types);
         List<GameEvent> out = new ArrayList<>();
         journal.store().replay(0, Long.MAX_VALUE, r -> {
@@ -226,6 +230,7 @@ public class EventStore {
     /** The ids of the rounds with a {@code RoundResolved} or {@code RoundCancelled} event at or before {@code upToId}, read without
      *  decoding the events (their price paths are the bulk of the journal): the rounds that must have a result row. */
     public java.util.Set<String> resolvedRoundIds(long upToId) {
+        IoGuard.check("disk", "journal read");
         java.util.Set<String> ids = new java.util.HashSet<>();
         journal.store().replay(0, upToId, r -> {
             if (!"RoundResolved".equals(r.type()) && !"RoundCancelled".equals(r.type())) {
@@ -247,6 +252,7 @@ public class EventStore {
     /** Whether any event at or before {@code upToId} is of schema version 1 (a journal from before F4, which does not carry the
      *  roster). Version 2 is only ever written after version 1, so the first event of the journal says. */
     public boolean hasLegacyRows(long upToId) {
+        IoGuard.check("disk", "journal read");
         try (var cursor = journal.store().cursor(0)) {
             List<JournalRecord> first = cursor.next(1);
             return !first.isEmpty() && first.get(0).seq() <= upToId && first.get(0).schemaVersion() == LEGACY_SCHEMA_VERSION;

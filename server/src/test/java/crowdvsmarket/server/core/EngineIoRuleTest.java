@@ -36,9 +36,13 @@ import org.junit.jupiter.api.Test;
  *       JAX-RS client and any {@code @RegisterRestClient} interface. No command is exempt (the solo commands are gone). A lambda built
  *       inside the walk and passed on as a {@code Db.SqlWork} or {@code Runnable} (the after-commit actions, which run after the engine
  *       lock is released) is not followed.
- *   <li><b>The writer</b> ({@code CoreWriter}): outside the batch's append to the journal ({@code runStretch}: {@code EventStore.appendAll},
- *       Р-107: a Chronicle Queue on disk, no database) none of its methods reaches a sink, again by the call graph; the only boundary is
- *       the rebuild after a failed commit ({@code recover}).
+ *   <li><b>The writer's stages.</b> The logic thread ({@code CoreWriter}) and the output stage ({@code OutputStage}, with the batch and slot
+ *       classes they share) reach no sink at all, again by the call graph - no database, no network, and not the journal: the logic thread
+ *       never waits for the disk. The journal stage ({@code JournalStage}) is the one place where a batch is appended and synced
+ *       ({@code EventStore.appendAll}, Р-107: a Chronicle Queue on disk, no database); nothing else in it reaches a sink. The only boundary is
+ *       the rebuild after a failed commit ({@code CoreWriter.recover}).
+ *   <li><b>The journal is written by the journal stage only</b> ({@link #onlyTheJournalStageWritesTheJournalForTheCommands}): no other class of
+ *       the application calls {@code EventStore.append}/{@code appendAll} but the ones listed there, which run with the pipeline drained.
  * </ol>
  * The graph follows calls it can see in the bytecode; a call through a {@code Supplier}, a {@code Function} or a reflective lookup is
  * not seen (the runtime guard sees those). The known exceptions are {@link #BOUNDARIES}: a method on the walk that is allowed to reach a
@@ -49,6 +53,11 @@ class EngineIoRuleTest {
 
     private static final String COMMAND = "Lcrowdvsmarket/server/core/Command;";
     private static final String WRITER = "crowdvsmarket/server/core/CoreWriter";
+    /** The classes of the logic thread and the output stage: no sink at all. */
+    private static final List<String> NO_IO_STAGES = List.of(WRITER, "crowdvsmarket/server/core/OutputStage",
+            "crowdvsmarket/server/core/WriterSlot", "crowdvsmarket/server/core/WriterBatch");
+    /** The journal stage: the one place that appends to the journal. */
+    private static final String JOURNAL_STAGE = "crowdvsmarket/server/core/JournalStage";
 
     /**
      * Methods ({@code package/Class.method}, any overload) where the walk stops and the I/O behind is allowed, each with why and the
@@ -132,25 +141,74 @@ class EngineIoRuleTest {
     }
 
     private List<String> writerViolations(Walk walk) {
-        ClassFile writer = app.get(WRITER);
-        assertThat(writer).isNotNull();
-        walk.exemptEdges = (from, call) -> (from.startsWith(WRITER + ".runStretch") || from.startsWith(WRITER + ".lambda$runStretch$"))
-                && isCommitCall(call);
+        assertThat(app.get(WRITER)).isNotNull();
+        assertThat(app.get(JOURNAL_STAGE)).isNotNull();
+        walk.exemptEdges = (from, call) -> from.startsWith(JOURNAL_STAGE + ".write") && isCommitCall(call);
         List<String> violations = new ArrayList<>();
         int roots = 0;
-        for (ClassFile.Method m : writer.methods) {
-            roots++;
-            if (BOUNDARIES.containsKey(WRITER + "." + m.name)) {
-                walk.metBoundaries.add(WRITER + "." + m.name);
-                continue; // the writer's own exception, named in BOUNDARIES
-            }
-            String path = walk.findSink(WRITER + "." + m.name + m.desc);
-            if (path != null) {
-                violations.add(path);
+        List<String> stages = new ArrayList<>(NO_IO_STAGES);
+        stages.add(JOURNAL_STAGE);
+        for (String stage : stages) {
+            ClassFile cf = app.get(stage);
+            assertThat(cf).as(stage).isNotNull();
+            for (ClassFile.Method m : cf.methods) {
+                roots++;
+                if (BOUNDARIES.containsKey(stage + "." + m.name)) {
+                    walk.metBoundaries.add(stage + "." + m.name);
+                    continue; // the writer's own exception, named in BOUNDARIES
+                }
+                String path = walk.findSink(stage + "." + m.name + m.desc);
+                if (path != null) {
+                    violations.add(path);
+                }
             }
         }
-        assertThat(roots).isGreaterThan(10);
+        assertThat(roots).isGreaterThan(30);
         return violations;
+    }
+
+    @Test
+    void theJournalStageIsTheOneThatAppendsAndTheLogicThreadReachesNoDiskAtAll() {
+        // the exemption is for the journal stage's write only: the same walk without it finds the append there, and nowhere else
+        Walk walk = new Walk();
+        assertThat(walk.findSink(JOURNAL_STAGE + ".write(Ljava/util/List;)V")).as("the journal stage's write reaches the journal")
+                .isNotNull().contains("EventStore.appendAll");
+        for (String stage : NO_IO_STAGES) {
+            for (ClassFile.Method m : app.get(stage).methods) {
+                if (BOUNDARIES.containsKey(stage + "." + m.name)) {
+                    continue;
+                }
+                assertThat(walk.findSink(stage + "." + m.name + m.desc)).as(stage + "." + m.name).isNull();
+            }
+        }
+    }
+
+    /** The classes other than the stage that call {@code EventStore.append}/{@code appendAll}, each with why it may. */
+    private static final Map<String, String> JOURNAL_WRITERS = new TreeMap<>(Map.of(
+            "crowdvsmarket/server/events/EventStore", "append(Connection...) is appendAll with one event",
+            "crowdvsmarket/server/core/JournalStage", "the stage",
+            "crowdvsmarket/server/markets/DbMarketRegistry", "a registry that is not part of the running game appends its events itself "
+                    + "(the running game's registry takes its turn on the writer)",
+            "crowdvsmarket/server/service/SidecarReconciler", "the rebuild's reconciliation, with the pipeline drained",
+            "crowdvsmarket/server/service/RoundCancellations", "the cancel of a round in a state built aside by the rebuild, with the "
+                    + "pipeline drained"));
+
+    @Test
+    void onlyTheJournalStageWritesTheJournalForTheCommands() {
+        List<String> callers = new ArrayList<>();
+        for (ClassFile cf : app.values()) {
+            for (ClassFile.Method m : cf.methods) {
+                for (ClassFile.Call call : m.calls) {
+                    if (call.owner().equals("crowdvsmarket/server/events/EventStore")
+                            && (call.name().equals("append") || call.name().equals("appendAll"))
+                            && !JOURNAL_WRITERS.containsKey(cf.name.replaceAll("\\$.*", ""))) {
+                        callers.add(cf.name + "." + m.name);
+                    }
+                }
+            }
+        }
+        assertThat(callers).as("classes that append to the journal without being the journal stage or a listed rebuild-time writer")
+                .isEmpty();
     }
 
     @Test

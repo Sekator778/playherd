@@ -169,4 +169,32 @@ class IoGuardTest {
         writer.join();
         assertThat(thrown.get()).isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void theLogicThreadMayNotTouchTheJournalButTheJournalStageMay() throws Exception {
+        AtomicReference<Throwable> onLogic = new AtomicReference<>();
+        Thread logic = new Thread(() -> {
+            try {
+                IoGuard.check("disk", "journal append");
+            } catch (Throwable e) {
+                onLogic.set(e);
+            }
+        }, IoGuard.WRITER_THREAD);
+        logic.start();
+        logic.join();
+        assertThat(onLogic.get()).isInstanceOf(IllegalStateException.class).hasMessageContaining("disk journal append")
+                .hasMessageContaining("core writer's thread");
+
+        AtomicReference<Throwable> onStage = new AtomicReference<>();
+        Thread stage = new Thread(() -> {
+            try {
+                IoGuard.check("disk", "journal append");
+            } catch (Throwable e) {
+                onStage.set(e);
+            }
+        }, JournalStage.THREAD);
+        stage.start();
+        stage.join();
+        assertThat(onStage.get()).as("the journal stage is where the journal is written").isNull();
+    }
 }
