@@ -27,6 +27,8 @@ class SnapshotLegacyJournalTest extends LiveGameTestBase {
     private static final Path DIR = Path.of("src/test/resources/events/journal-v1");
 
     @Inject
+    crowdvsmarket.server.journal.Journal journal;
+    @Inject
     SnapshotService snapshots;
     @Inject
     BetFeed betFeed;
@@ -49,13 +51,14 @@ class SnapshotLegacyJournalTest extends LiveGameTestBase {
         db.tx(c -> {
             db.update(c, "TRUNCATE TABLE game_events, players, round_results, player_round_history, withdrawal_requests, "
                     + "deposit_requests, auth_challenges, sessions, oracle_records, player_deposit_addresses, deposit_confirmations, "
-                    + "price_snapshots, round_venues, feedback, registration_ips, ledger_entries, engine_snapshots RESTART IDENTITY CASCADE");
+                    + "price_snapshots, round_venues, feedback, registration_ips, ledger_entries, engine_snapshots, player_sidecar RESTART IDENTITY CASCADE");
             db.update(c, "DELETE FROM markets");
             return null;
         });
         load("markets", "markets.json");
         load("players", "players.json");
         load("game_events", "game_events.json");
+        journal.reimportFromTableForTests(); // Р-107: the fixture is the table of an old server; the first start imports it into the journal
         load("round_results", "round_results.json");
         load("player_round_history", "player_round_history.json");
         load("oracle_records", "oracle_records.json");

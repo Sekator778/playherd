@@ -522,6 +522,52 @@ check_memory() {
   fi
 }
 
+# Р-107: the event journal. The volume of the journal is there and mounted in the server, and the copy of the journal in Postgres (the projector's)
+# is close behind it: the lag is the events the journal holds that game_events does not yet (a few at most when healthy; the start waits for none
+# of it, but the stand is not "up" while the lag grows). The status is the operator's (/api/admin/status), asked from inside the server container
+# with the token of .env.
+JOURNAL_MAX_LAG="${HERD_JOURNAL_MAX_LAG:-1000}"
+check_journal() {
+  local cid vol status token lag failures i
+  cid="$(compose ps -q server 2>/dev/null | head -n 1 || true)"
+  [[ -n "${cid}" ]] || return 0
+  vol="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/herd/journal"}}{{.Name}}{{end}}{{end}}' "${cid}" 2>/dev/null || true)"
+  if [[ -z "${vol}" ]]; then
+    fail "journal: /var/lib/herd/journal of the server is not a named volume -- the event journal would be lost with the container (docker-compose.yml: herd_journal_live)"
+    return 0
+  fi
+  if docker volume inspect "${vol}" >/dev/null 2>&1; then
+    ok "journal: the volume ${vol} is mounted at /var/lib/herd/journal"
+  else
+    fail "journal: the volume ${vol} does not exist"
+    return 0
+  fi
+  token="$(grep -m1 '^HERD_OPERATOR_TOKEN=' "${APP_DIR}/.env" 2>/dev/null | cut -d= -f2- || true)"
+  if [[ -z "${token}" ]]; then
+    warn "journal: no HERD_OPERATOR_TOKEN in .env, the projector's lag is not checked"
+    return 0
+  fi
+  lag=""
+  for ((i = 0; i < 12; i++)); do
+    status="$(docker exec "${cid}" curl -sf -m 10 -H "Authorization: Bearer ${token}" http://127.0.0.1:8081/api/admin/status 2>/dev/null || true)"
+    lag="$(printf '%s' "${status}" | grep -o '"projector":{[^}]*' | grep -o '"lag":[0-9]*' | head -n 1 | cut -d: -f2 || true)"
+    if [[ "${lag}" =~ ^[0-9]+$ ]] && ((lag <= JOURNAL_MAX_LAG)); then break; fi
+    sleep 5
+  done
+  if ! [[ "${lag}" =~ ^[0-9]+$ ]]; then
+    warn "journal: /api/admin/status gave no projector lag (the server is not up yet, or the answer has no journal section)"
+    return 0
+  fi
+  failures="$(printf '%s' "${status}" | grep -o '"projector":{[^}]*' | grep -o '"failures":[0-9]*' | head -n 1 | cut -d: -f2 || true)"
+  if ((lag > JOURNAL_MAX_LAG)); then
+    fail "journal: the copy in Postgres is ${lag} events behind the journal after a minute (limit ${JOURNAL_MAX_LAG}): the projector is not keeping up or is failing (${failures:-?} failure(s) in a row; docker logs, /api/admin/status journal.projector.lastError)"
+  elif [[ "${failures:-0}" != 0 ]]; then
+    warn "journal: the projector is ${lag} events behind with ${failures} failure(s) in a row (/api/admin/status journal.projector.lastError)"
+  else
+    ok "journal: the copy in Postgres is ${lag} event(s) behind the journal"
+  fi
+}
+
 cmd_verify() {
   local domain="${1:-}" ratelimit=1 flag
   [[ -n "${domain}" ]] || die "usage: verify DOMAIN [--no-ratelimit] [--insecure]"
@@ -540,6 +586,7 @@ cmd_verify() {
   check_binds
   check_chainsvc
   check_seq_floor
+  check_journal
   check_web_through_caddy "${domain}"
   if ((ratelimit)); then check_ratelimit; fi
   check_memory

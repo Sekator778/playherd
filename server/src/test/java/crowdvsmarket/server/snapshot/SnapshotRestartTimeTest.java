@@ -28,6 +28,8 @@ import org.junit.jupiter.api.Test;
 class SnapshotRestartTimeTest extends LiveGameTestBase {
 
     @Inject
+    crowdvsmarket.server.journal.Journal journal;
+    @Inject
     SnapshotService snapshots;
     @Inject
     BetFeed betFeed;
@@ -42,7 +44,7 @@ class SnapshotRestartTimeTest extends LiveGameTestBase {
 
     private Map<String, String> run(String mode, String... kv) {
         BenchJournal.Args args = BenchJournal.Args.of(kv);
-        return db.tx(c -> {
+        Map<String, String> result = db.tx(c -> {
             try {
                 return BenchJournal.run(c, mode, args);
             } catch (RuntimeException e) {
@@ -51,6 +53,8 @@ class SnapshotRestartTimeTest extends LiveGameTestBase {
                 throw new IllegalStateException(e);
             }
         });
+        journal.reimportFromTableForTests(); // Р-107: the fabricator fills the table, as an old server's; the first start imports it into the journal
+        return result;
     }
 
     /** The first line where two canonical texts differ, with its neighbours; {@code null} when they are equal. */

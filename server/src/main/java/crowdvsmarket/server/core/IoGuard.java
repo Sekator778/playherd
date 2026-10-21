@@ -159,8 +159,8 @@ public final class IoGuard {
         for (int i = 0; i + 1 < frames.size(); i++) {
             if ((is(frames.get(i), "crowdvsmarket.server.persistence.Db", "tx")
                     || is(frames.get(i), "crowdvsmarket.server.persistence.Db_ClientProxy", "tx")) // the CDI proxy in between
-                    && is(frames.get(i + 1), "crowdvsmarket.server.core.CoreWriter", "runStretch")) {
-                return; // the commit of a batch: the writer's own database turn, the engine lock released
+                    && is(frames.get(i + 1), "crowdvsmarket.server.core.CoreWriter", "sidecar")) {
+                return; // the database writes of the few commands that have some, after their batch is in the journal; the engine lock released
             }
         }
         String chain = chain(frames);

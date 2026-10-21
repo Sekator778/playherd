@@ -320,10 +320,56 @@ public final class PlayerDirectory {
         return written;
     }
 
-    /** Writes a bot's key (a new one, or {@code null} for a revoked one) within the caller's transaction ({@link #cacheKey} after the commit). */
+    /**
+     * Writes a bot's key (a new one, or {@code null} for a revoked one) within the caller's transaction ({@link #cacheKey} after the
+     * commit). The key is not in the journal: {@code player_sidecar} is where it lives (V21) - written first, before the command that
+     * registers the bot, and here for a new or revoked key - and the {@code players} row, when the projector has written it, gets the same
+     * value in the same transaction (a row it has not written yet gets the key from the sidecar when it does).
+     */
     public void updateKey(Connection c, String playerId, String keyHash, String keyHint) throws SQLException {
+        db.update(c, "INSERT INTO player_sidecar (player_id, api_key_hash, api_key_hint) VALUES (?, ?, ?) "
+                + "ON CONFLICT (player_id) DO UPDATE SET api_key_hash = EXCLUDED.api_key_hash, api_key_hint = EXCLUDED.api_key_hint",
+                playerId, keyHash, keyHint);
         db.update(c, "UPDATE players SET api_key_hash = ?, api_key_hint = ? WHERE player_id = ? AND kind = ?",
                 keyHash, keyHint, playerId, KIND_API_BOT);
+    }
+
+    /** Takes back the sidecar row of an API bot whose registration did not happen. */
+    public void forgetKey(String playerId) {
+        db.tx(c -> db.update(c, "DELETE FROM player_sidecar WHERE player_id = ?", playerId));
+    }
+
+    /**
+     * Р-107: writes the {@code players} rows that the journal's events describe, in the projector's transaction: a registration inserts
+     * the row (and takes the invite columns and the key from {@code player_sidecar}), a nickname, a strategy or a retirement updates it.
+     * Idempotent: a row that exists is left as it is by the insert, the updates write what the journal says. Events of other types are
+     * ignored. Does not touch the cache (the commands that made the events did).
+     */
+    public void projectEvents(Connection c, List<GameEvent> events) throws SQLException {
+        for (GameEvent event : events) {
+            switch (event) {
+                case GameEvent.PlayerRegistered e when e.isRegistration() -> {
+                    db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, "
+                                    + "created_at_ms, kind, owner_player_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                            e.playerId(), e.walletAddress(), e.displayName(), KIND_HOUSE_BOT.equals(e.kind()), e.botStrategy(),
+                            e.playerIndex(), e.atMs(), e.kind(), e.ownerPlayerId());
+                    db.update(c, "UPDATE players p SET invite_code = s.invite_code, referred_by = s.referred_by, source = s.source, "
+                            + "api_key_hash = s.api_key_hash, api_key_hint = s.api_key_hint FROM player_sidecar s "
+                            + "WHERE s.player_id = p.player_id AND p.player_id = ?", e.playerId());
+                    if (e.replacesPlayerId() != null) {
+                        db.update(c, "UPDATE players SET replaced = TRUE WHERE player_id = ?", e.replacesPlayerId());
+                    }
+                }
+                case GameEvent.NicknameChanged e ->
+                        db.update(c, "UPDATE players SET nickname = ? WHERE player_id = ?", e.nickname(), e.playerId());
+                case GameEvent.BotStrategyAssigned e ->
+                        db.update(c, "UPDATE players SET bot_strategy = ? WHERE player_id = ? AND is_bot", e.botStrategy(), e.playerId());
+                case GameEvent.BotRetired e ->
+                        db.update(c, "UPDATE players SET retired_at_ms = ? WHERE player_id = ?", e.atMs(), e.playerId());
+                default -> {
+                }
+            }
+        }
     }
 
     /** The cache's side of {@link #updateKey}, after the commit: the old hash stops opening the bot at once. */

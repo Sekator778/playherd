@@ -77,6 +77,8 @@ class EngineRebuildServiceTest {
             return null;
         }).when(gameService).runExclusively(any(Runnable.class));
         service.gameService = gameService;
+        service.reconciler = mock(crowdvsmarket.server.service.SidecarReconciler.class);
+        service.projector = mock(crowdvsmarket.server.journal.JournalProjector.class);
         service.retryGapMs = 0;
     }
 

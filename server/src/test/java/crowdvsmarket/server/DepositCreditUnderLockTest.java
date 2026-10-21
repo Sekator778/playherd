@@ -143,24 +143,34 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
         assertThat(gameService.account(player).balance()).isEqualTo("10500.000");
     }
 
+    /**
+     * Р-107: the coin is reserved in the database (committed) and then its event is appended to the journal. An append that fails leaves
+     * a reserved coin without its event - the poller's next offer would find the coin "already credited" - so the rebuild that follows the
+     * failure appends the event from the reservation (SidecarReconciler), and the credit happens once, then.
+     */
     @Test
-    void aDepositWhoseEventCannotBeWrittenLeavesNoReservationAndTheNextOfferCreditsIt() throws Exception {
+    void aDepositWhoseEventCannotBeWrittenKeepsItsReservationAndTheRebuildAppendsTheEvent() throws Exception {
         String player = signUp("noevent");
-        doThrow(new IllegalStateException("db flapping while writing the event")).when(eventStoreSpy)
-                .append(any(Connection.class), any(GameEvent.DepositConfirmedOnChain.class), anyLong());
+        org.mockito.Mockito.doAnswer(inv -> {
+            throw new IllegalStateException("disk flapping while writing the event"); // a new exception each time: the recovery's own attempt fails too
+        }).when(eventStoreSpy).append(any(), any(GameEvent.DepositConfirmedOnChain.class), anyLong());
 
         assertThatThrownBy(() -> gameService.creditOnChainDeposit(player, 2, PlayAmount.ofWholePlay(250),
-                "coin-noevent", 9L, System.currentTimeMillis())).hasMessageContaining("db flapping");
+                "coin-noevent", 9L, System.currentTimeMillis())).hasMessageContaining("disk flapping");
 
-        assertThat(reservations("coin-noevent")).as("the reservation and the event are one transaction").isZero();
-        assertThat(rebuild.isReady()).as("memory was never touched: nothing to recover from").isTrue();
-        assertThat(gameService.account(player).balance()).isEqualTo("10000.000");
+        assertThat(reservations("coin-noevent")).as("the reservation was committed first").isEqualTo(1);
+        assertThat(depositEvents("coin-noevent")).as("and the event is not in the journal").isZero();
+        assertThat(rebuild.isReady()).as("the recovery could not append the event either: the engine waits for a rebuild that can").isFalse();
 
         Mockito.reset(eventStoreSpy);
-        assertThat(gameService.creditOnChainDeposit(player, 2, PlayAmount.ofWholePlay(250), "coin-noevent", 9L,
-                System.currentTimeMillis())).isTrue();
+        rebuild.rebuild();
+
+        assertThat(rebuild.isReady()).isTrue();
+        assertThat(depositEvents("coin-noevent")).as("the rebuild appended the event of the reserved coin").isEqualTo(1);
         assertThat(gameService.account(player).balance()).isEqualTo("10250.000");
-        assertThat(reservations("coin-noevent")).isEqualTo(1);
+        assertThat(gameService.creditOnChainDeposit(player, 2, PlayAmount.ofWholePlay(250), "coin-noevent", 9L,
+                System.currentTimeMillis())).as("the next offer of the coin finds it credited").isFalse();
+        assertThat(gameService.account(player).balance()).as("credited once").isEqualTo("10250.000");
         assertThat(depositEvents("coin-noevent")).isEqualTo(1);
     }
 

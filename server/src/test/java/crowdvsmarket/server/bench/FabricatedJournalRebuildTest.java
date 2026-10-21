@@ -30,13 +30,15 @@ import org.junit.jupiter.api.Test;
 class FabricatedJournalRebuildTest extends LiveGameTestBase {
 
     @Inject
+    crowdvsmarket.server.journal.Journal journal;
+    @Inject
     SessionService sessions;
     @Inject
     PlayerDirectory directory;
 
     private Map<String, String> run(String mode, String... kv) {
         BenchJournal.Args args = BenchJournal.Args.of(kv);
-        return db.tx(c -> {
+        Map<String, String> result = db.tx(c -> {
             try {
                 return BenchJournal.run(c, mode, args);
             } catch (RuntimeException e) {
@@ -45,6 +47,8 @@ class FabricatedJournalRebuildTest extends LiveGameTestBase {
                 throw new IllegalStateException(e);
             }
         });
+        journal.reimportFromTableForTests(); // Р-107: the fabricator fills the table, as an old server's; the first start imports it into the journal
+        return result;
     }
 
     private long eventRows() {

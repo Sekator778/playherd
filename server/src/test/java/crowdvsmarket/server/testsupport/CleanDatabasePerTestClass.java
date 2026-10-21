@@ -66,7 +66,7 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
     private static final String TRUNCATE_SQL = "TRUNCATE TABLE game_events, players, round_results, "
             + "player_round_history, withdrawal_requests, deposit_requests, auth_challenges, sessions, "
             + "oracle_records, player_deposit_addresses, deposit_confirmations, price_snapshots, round_venues, "
-            + "feedback, registration_ips, ledger_entries, engine_snapshots RESTART IDENTITY CASCADE";
+            + "feedback, registration_ips, ledger_entries, engine_snapshots, player_sidecar RESTART IDENTITY CASCADE";
 
     /** V7's {@code markets} table: every market a test listed goes, but BTC's row (id 0, created by the
      *  migration, always present) stays — back to ACTIVE in case a test closed it. */
@@ -116,6 +116,8 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
                 db.update(c, REOPEN_BTC_SQL);
                 return null;
             });
+            // Р-107: the journal is the truth and game_events its copy: emptied together
+            Arc.container().instance(crowdvsmarket.server.journal.Journal.class).get().resetForTests();
             // Same code path a real restart uses: resets every in-memory singleton (EngineHub with its
             // per-market ComparisonAccounts, BetFeed, RoundProgress, PlayerDirectory, the market
             // registry) from the now-empty tables — necessary even when Quarkus itself did restart for

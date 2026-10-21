@@ -46,6 +46,11 @@ public class DepositConfirmationRepository {
                 "SELECT * FROM deposit_confirmations WHERE coin_id = ?", this::toRow, coinId)));
     }
 
+    /** Every reserved coin, oldest first: what the rebuild compares with the journal's credits. */
+    public List<Row> all() {
+        return db.read(c -> db.queryList(c, "SELECT * FROM deposit_confirmations ORDER BY credited_at_ms ASC, coin_id ASC", this::toRow));
+    }
+
     public List<Row> forPlayer(String playerId) {
         return db.read(c -> db.queryList(c,
                 "SELECT * FROM deposit_confirmations WHERE player_id = ? ORDER BY credited_at_ms DESC",

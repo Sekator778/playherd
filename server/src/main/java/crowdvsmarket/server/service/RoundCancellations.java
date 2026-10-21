@@ -86,6 +86,26 @@ public class RoundCancellations {
     }
 
     /**
+     * The result row of a cancelled round whose {@code RoundCancelled} event is in the journal and whose row was never written (the process
+     * stopped between the two, Р-107: the row is written after the event is durable). Written from the event; {@code refundedBetCount} is
+     * the number of bets the round held when the event was applied (the replay counts it).
+     */
+    public void repairRow(Market market, GameEvent.RoundCancelled event, int refundedBetCount) {
+        RoundWindow window = new RoundWindow(event.market(), event.interval(), event.windowStart(), event.windowEnd());
+        if (roundResults.exists(window.roundId())) {
+            return;
+        }
+        String venue = Instruments.hasBackup(market) ? venues.venueOfRound(window.roundId()).orElse(null) : null;
+        var canonical = ResultsHasher.build(market.id(), window.roundId(), window.interval().name(), "CANCELLED",
+                null, null, List.of(), null, venue);
+        db.tx(c -> {
+            roundResults.insertCancelled(c, market.id(), window.roundId(), window.interval(), window.startMs(), window.endMs(),
+                    event.reason(), event.atMs(), refundedBetCount, canonical.hash(), canonical.json(), venue);
+            return null;
+        });
+    }
+
+    /**
      * {@link #cancel(EventApplier, EngineHub, Market, RoundWindow, String, long, AtomicBoolean)} for the live engine, inside
      * a command of the core writer: the event is applied now and goes to the journal with the batch, the cancelled result row
      * is written in the batch's transaction. A failure of either fails the batch; the engine is rebuilt behind it.

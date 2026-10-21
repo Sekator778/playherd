@@ -29,6 +29,8 @@ class JournalColumnsTest {
     Db db;
     @Inject
     EventStore eventStore;
+    @Inject
+    crowdvsmarket.server.journal.Journal journal;
 
     private record Row(long id, String type, String market, String player, JsonNode payload) {
     }
@@ -82,13 +84,10 @@ class JournalColumnsTest {
             });
             // ... several, more than one INSERT statement of appendAll
             List<EventStore.Pending> pending = new ArrayList<>();
-            for (int i = 0; i < EventStore.APPEND_CHUNK + 5; i++) {
+            for (int i = 0; i < 205; i++) {
                 pending.add(new EventStore.Pending(events.get(1 + i % 3), 2L));
             }
-            db.tx(c -> {
-                eventStore.appendAll(c, pending);
-                return null;
-            });
+            eventStore.appendAll(pending);
 
             List<Row> rows = rows(before);
             assertThat(rows).hasSize(1 + pending.size());
@@ -109,7 +108,10 @@ class JournalColumnsTest {
             assertThat(rows.get(2).market()).isNull();
             assertThat(rows.get(3).player()).isEqualTo("jc-bot");
         } finally {
-            deleteAfter(before);
+            // Р-107: the events are in the journal, which cannot be trimmed; this class starts with an empty journal and table
+            // (CleanDatabasePerTestClass) and leaves both empty, so no later rebuild replays a bet of a player nobody registered
+            journal.resetForTests();
+            db.tx(c -> db.update(c, "DELETE FROM game_events"));
         }
     }
 
@@ -153,7 +155,7 @@ class JournalColumnsTest {
     }
 
     private void insertOld(String type, JsonNode payload) {
-        db.tx(c -> db.update(c, "INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES (?, ?, 0, 1)", type,
+        db.tx(c -> db.update(c, "INSERT INTO game_events (id, event_type, payload, at_ms, schema_version) VALUES (4000000000000000000 + nextval('game_events_id_seq'), ?, ?, 0, 1)", type,
                 Db.jsonb(payload)));
     }
 

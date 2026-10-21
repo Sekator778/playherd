@@ -37,8 +37,9 @@ import org.junit.jupiter.api.Test;
  *       one kind that does its own transactions by design. A lambda built inside the walk and passed on as a {@code Db.SqlWork}
  *       or {@code Runnable} (the staged writes and the after-commit actions, which run after the engine lock is released) is not
  *       followed.
- *   <li><b>The writer</b> ({@code CoreWriter}): outside the batch commit ({@code runStretch}: {@code Db.tx}, {@code EventStore.appendAll},
- *       {@code EventStore.lastId(Connection)}) none of its methods reaches a sink, again by the call graph.
+ *   <li><b>The writer</b> ({@code CoreWriter}): outside the batch's append to the journal ({@code runStretch}: {@code EventStore.appendAll},
+ *       Р-107: a Chronicle Queue on disk, no database) and the few database writes staged by commands that have some, run after the append
+ *       ({@code sidecar}: {@code Db.tx}), none of its methods reaches a sink, again by the call graph.
  * </ol>
  * The graph follows calls it can see in the bytecode; a call through a {@code Supplier}, a {@code Function} or a reflective lookup is
  * not seen (the runtime guard sees those). The known exceptions are {@link #BOUNDARIES}: a method on the walk that is allowed to reach a
@@ -146,8 +147,8 @@ class EngineIoRuleTest {
     private List<String> writerViolations(Walk walk) {
         ClassFile writer = app.get(WRITER);
         assertThat(writer).isNotNull();
-        walk.exemptEdges = (from, call) -> (from.startsWith(WRITER + ".runStretch") || from.startsWith(WRITER + ".lambda$runStretch$"))
-                && isCommitCall(call);
+        walk.exemptEdges = (from, call) -> (from.startsWith(WRITER + ".runStretch") || from.startsWith(WRITER + ".lambda$runStretch$")
+                || from.startsWith(WRITER + ".sidecar") || from.startsWith(WRITER + ".lambda$sidecar$")) && isCommitCall(call);
         List<String> violations = new ArrayList<>();
         int roots = 0;
         for (ClassFile.Method m : writer.methods) {
@@ -169,7 +170,7 @@ class EngineIoRuleTest {
     void theScanSeesASinkWhenThereIsOne() {
         // the scan itself: a walk from a method that is known to call Db must find it (a scan that finds nothing proves nothing)
         Walk walk = new Walk();
-        assertThat(walk.findSink("crowdvsmarket/server/events/EventStore.loadAll()Ljava/util/List;")).isNotNull()
+        assertThat(walk.findSink("crowdvsmarket/server/persistence/RegistrationIpRepository.record(Ljava/lang/String;J)V")).isNotNull()
                 .contains("persistence/Db");
         // a sink two calls away is found too: the state rebuild reads the journal through the event store
         assertThat(walk.findSink("crowdvsmarket/server/scheduler/EngineRebuildService.rebuild()V")).isNotNull();
@@ -187,8 +188,7 @@ class EngineIoRuleTest {
     private static boolean isCommitCall(ClassFile.Call call) {
         String o = call.owner();
         return o.equals("crowdvsmarket/server/persistence/Db") && call.name().equals("tx")
-                || o.equals("crowdvsmarket/server/events/EventStore")
-                && (call.name().equals("appendAll") || call.name().equals("lastId") && call.desc().startsWith("(Ljava/sql/Connection;"));
+                || o.equals("crowdvsmarket/server/events/EventStore") && call.name().equals("appendAll");
     }
 
     /** Whether calling a method of {@code owner} is reaching the database or the network. */

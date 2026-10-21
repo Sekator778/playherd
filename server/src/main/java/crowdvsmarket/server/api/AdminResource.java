@@ -53,6 +53,10 @@ public class AdminResource {
     BotMetrics botMetrics;
     @Inject
     crowdvsmarket.server.snapshot.SnapshotService snapshotService;
+    @Inject
+    crowdvsmarket.server.journal.Journal journal;
+    @Inject
+    crowdvsmarket.server.journal.JournalProjector projector;
 
     private void requireOperator(String authorizationHeader) {
         String expected = "Bearer " + config.operatorToken();
@@ -170,8 +174,14 @@ public class AdminResource {
         } catch (RuntimeException e) {
             LOG.warnf(e, "the operator status could not read the snapshots");
         }
+        crowdvsmarket.server.journal.Journal.Status journalStatus = null;
+        try {
+            journalStatus = journal.status(projector.status());
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "the operator status could not read the journal");
+        }
         return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker, botDays(),
-                gameService.missingRows(), gameService.ledgerRowsStatus(), snapshotStatus);
+                gameService.missingRows(), gameService.ledgerRowsStatus(), snapshotStatus, journalStatus);
     }
 
     /**
@@ -263,14 +273,28 @@ public class AdminResource {
      *  that failed, since when ({@code sinceMs}) and why ({@code lastError}). {@code snapshots} (F5): whether snapshots are on, how many are
      *  stored, the newest one's journal row ({@code lastSeq}) and time, the journal's last row, the last write error and
      *  {@code lastCheck}, the nightly comparison of a replay from zero with the newest snapshot ({@code ok} false is a mismatch; also an
-     *  ERROR in the log); {@code null} while the database does not answer. Not part of {@code contract.ts}: the operator's own page. */
+     *  ERROR in the log); {@code null} while the database does not answer. {@code journal} (Р-107): the journal's directory and last seq,
+     *  what the first start imported from {@code game_events} ({@code importedFromTable}: rows, last id, sha256), and the projector that
+     *  copies it into {@code game_events}: {@code projector.lag} (events the copy is behind), {@code failures} in a row, {@code lastError},
+     *  the last batch. Not part of {@code contract.ts}: the operator's own page. */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                                    java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
                                    java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
                                    java.util.List<BotMetrics.Day> botDays,
                                    java.util.List<GameService.MissingRows> missingRoundRows,
                                    GameService.LedgerRowsStatus ledgerRows,
-                                   crowdvsmarket.server.snapshot.SnapshotService.Status snapshots) {
+                                   crowdvsmarket.server.snapshot.SnapshotService.Status snapshots,
+                                   crowdvsmarket.server.journal.Journal.Status journal) {
+
+        public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
+                              java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
+                              java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
+                              java.util.List<BotMetrics.Day> botDays, java.util.List<GameService.MissingRows> missingRoundRows,
+                              GameService.LedgerRowsStatus ledgerRows,
+                              crowdvsmarket.server.snapshot.SnapshotService.Status snapshots) {
+            this(server, recentCancellations, recentLedgerCorrections, priceFeeds, circuitBreakerOpen, botDays,
+                    missingRoundRows, ledgerRows, snapshots, null);
+        }
 
         public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                               java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,

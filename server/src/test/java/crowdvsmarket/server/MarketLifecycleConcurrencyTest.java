@@ -230,11 +230,14 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
 
         CountDownLatch inSettlement = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        doAnswer(inv -> {                                   // inside the settlement transaction: the engine lock is held
-            inSettlement.countDown();
-            assertThat(release.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+        doAnswer(inv -> {                                   // inside the append of the settlement's batch to the journal (Р-107)
+            List<EventStore.Pending> batch = inv.getArgument(0);
+            if (batch.stream().anyMatch(p -> p.event() instanceof GameEvent.RoundResolved)) {
+                inSettlement.countDown();
+                assertThat(release.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+            }
             return inv.callRealMethod();
-        }).when(eventStoreSpy).append(any(Connection.class), any(GameEvent.RoundResolved.class), anyLong());
+        }).when(eventStoreSpy).appendAll(any());
         ExecutorService pool = pool(6);
         Future<?> settlement = pool.submit(() -> gameService.resolveRound(betting, betting.endMs()));
         assertThat(inSettlement.await(10, TimeUnit.SECONDS)).isTrue();

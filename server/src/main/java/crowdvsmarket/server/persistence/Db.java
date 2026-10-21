@@ -130,7 +130,12 @@ public class Db {
         PreparedStatement ps = c.prepareStatement(sql);
         for (int i = 0; i < params.length; i++) {
             Object p = params[i];
-            if (p instanceof Jsonb j) {
+            if (p instanceof JsonText t) {
+                PGobject pg = new PGobject();
+                pg.setType("jsonb");
+                pg.setValue(t.text());
+                ps.setObject(i + 1, pg);
+            } else if (p instanceof Jsonb j) {
                 PGobject pg = new PGobject();
                 pg.setType("jsonb");
                 try {
@@ -154,6 +159,14 @@ public class Db {
     }
 
     public record Jsonb(Object json) {
+    }
+
+    /** Wrap JSON that is already text (the journal's payloads) to be written into a {@code jsonb} column as it is. */
+    public static JsonText jsonText(String json) {
+        return new JsonText(json);
+    }
+
+    public record JsonText(String text) {
     }
 
     /** Reads a {@code jsonb}/{@code json} column back into {@code type} via Jackson. */

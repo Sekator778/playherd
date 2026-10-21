@@ -26,9 +26,12 @@ public final class HerdWriterBatch extends Event {
     @Label("Under the engine lock (hold)")
     @Timespan(Timespan.NANOSECONDS)
     public long lockedNs;
-    @Label("Commit of the batch")
+    @Label("Append of the batch to the journal and sync to disk (the durability point)")
     @Timespan(Timespan.NANOSECONDS)
     public long commitNs;
+    @Label("Database writes of the commands that have some (after the journal)")
+    @Timespan(Timespan.NANOSECONDS)
+    public long sidecarNs;
     @Label("Outcome")
     public String outcome;
 }

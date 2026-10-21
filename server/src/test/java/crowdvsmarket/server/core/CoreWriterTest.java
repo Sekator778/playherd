@@ -60,24 +60,25 @@ class CoreWriterTest {
         World() throws Exception {
             Connection connection = mock(Connection.class);
             when(db.tx(any())).thenAnswer(inv -> {
+                Db.SqlWork<?> work = inv.getArgument(0);
+                return work.run(connection);
+            });
+            when(store.lastId()).thenAnswer(inv -> (long) journal().size());
+            // the batch's commit is the append to the journal (Р-107): the gate holds it, the failure fails it
+            org.mockito.Mockito.doAnswer(inv -> {
                 transactions.incrementAndGet();
                 CountDownLatch hold = commitGate;
                 if (hold != null) {
                     hold.await();
                 }
                 RuntimeException failure = commitFailure;
-                Db.SqlWork<?> work = inv.getArgument(0);
                 if (failure != null) {
                     throw failure;
                 }
-                return work.run(connection);
-            });
-            when(store.lastId(any())).thenAnswer(inv -> (long) journal().size());
-            org.mockito.Mockito.doAnswer(inv -> {
-                List<EventStore.Pending> events = inv.getArgument(1);
+                List<EventStore.Pending> events = inv.getArgument(0);
                 journalBatches.add(events.stream().map(EventStore.Pending::event).toList());
-                return null;
-            }).when(store).appendAll(any(), any());
+                return (long) journal().size();
+            }).when(store).appendAll(any());
         }
 
         List<GameEvent> journal() {

@@ -68,7 +68,7 @@ class EventStoreMarketFixturesTest {
 
         Object node = db.json().readTree(fixtureJson);
         long rowId = db.tx(c -> db.queryOne(c,
-                "INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES (?, ?, ?, 1) "
+                "INSERT INTO game_events (id, event_type, payload, at_ms, schema_version) VALUES (4000000000000000000 + nextval('game_events_id_seq'), ?, ?, ?, 1) "
                         + "RETURNING id",
                 rs -> rs.getLong("id"), fixture.typeName(), Db.jsonb(node), 0L));
         try {

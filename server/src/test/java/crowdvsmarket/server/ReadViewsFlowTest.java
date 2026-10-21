@@ -170,7 +170,7 @@ class ReadViewsFlowTest extends LiveGameTestBase {
                 throw new IllegalStateException("injected commit failure");
             }
             return inv.callRealMethod();
-        }).when(eventStoreSpy).appendAll(any(), any());
+        }).when(eventStoreSpy).appendAll(any());
 
         Future<Rounds.BetDto> placing = pool.submit(() -> gameService.placeBet(player,
                 bet(betting, Enums.Direction.UP, 5, "300.000"), betting.startMs() - 1));

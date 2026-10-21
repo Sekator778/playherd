@@ -34,6 +34,11 @@
     <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
     <surefire-plugin.version>3.6.0</surefire-plugin.version>
     <herd.io-guard>fail</herd.io-guard>
+    <!-- Chronicle Queue on Java 17+ (https://chronicle.software/insights/blogs/running-chronicle-on-java-17-and-later-the-required-jvm-arguments-explained,
+         read 2026-10-21); the same list is in the Dockerfile. -->
+    <herd.chronicle.jvm-args>--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED --add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED</herd.chronicle.jvm-args>
+    <herd.journal.test-dir>${project.build.directory}/test-journal/${maven.build.timestamp}</herd.journal.test-dir>
+    <maven.build.timestamp.format>yyyyMMdd-HHmmss-SSS</maven.build.timestamp.format>
   </properties>
 
   <dependencyManagement>
@@ -120,6 +125,16 @@
       <version>4.2.0</version>
     </dependency>
 
+    <!-- The event journal (Р-107, docs/research/lmax_roadmap.md step 3): Chronicle Queue, Apache-2.0 (SPDX header of the POM and of the
+         sources; its chronicle-core/bytes/wire/threads/posix/affinity dependencies are Apache-2.0 too). 2026.7 is the newest release on
+         Maven Central (maven-metadata.xml, lastUpdated 2026-10-06; checked 2026-10-21). Needs the add-exports and add-opens JVM flags of
+         docs/kb/topics/methods.md "Journal storage" on Java 21 (surefire argLine here, JAVA_OPTS in the Dockerfile). -->
+    <dependency>
+      <groupId>net.openhft</groupId>
+      <artifactId>chronicle-queue</artifactId>
+      <version>2026.7</version>
+    </dependency>
+
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-junit</artifactId>
@@ -180,7 +195,9 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>${surefire-plugin.version}</version>
         <configuration>
+          <argLine>${herd.chronicle.jvm-args}</argLine>
           <systemPropertyVariables>
+            <herd.journal.dir>${herd.journal.test-dir}</herd.journal.dir>
             <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
             <maven.home>${maven.home}</maven.home>
             <!-- The rule "no database and no network under the engine lock" (crowdvsmarket.server.core.IoGuard): a call that breaks it

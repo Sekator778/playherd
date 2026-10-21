@@ -5,13 +5,21 @@
 #   backup.sh pre-deploy        the same, taken by remote.sh before a deploy replaces the running stand
 #   backup.sh list              what there is
 #   backup.sh restore FILE --yes   put a database dump back: the schema is dropped and recreated from the dump, in one
-#                                  transaction (rewinds the game: see README, "Откат")
+#                                  transaction (rewinds the game: see README, "Откат"), and the journal archive with the same stamp
+#                                  back into the journal volume. A dump taken before Р-107 has none: add --empty-journal, and the server
+#                                  imports the restored table into a new journal on its start
 #
 # Each run writes two files into ~/backups (mode 600) and keeps the newest HERD_BACKUP_KEEP (7) of each kind:
 #   pg/herd-<kind>-<UTC time>.sql.gz   pg_dump of the stand's database, taken inside the db container; --clean --if-exists
 #                                      so that a restore into a database that already has tables replaces them. Checked
 #                                      after writing (gzip -t, and pg_dump's closing line is there); a dump that fails
 #                                      the check is deleted and the run exits non-zero
+#   journal/journal-<kind>-<UTC time>.tar.gz   (Р-107) the event journal, the Chronicle Queue files of the server: the TRUTH of the game, of which
+#                                      the database is a copy. Taken right AFTER the dump with the same time stamp, so the journal is never
+#                                      behind the dump (a journal ahead of the database is what a crash leaves; the start repairs it; the
+#                                      other way round the server refuses to start). The files only grow at their end and the reader takes a
+#                                      half-written last batch as not there, so a copy of the running queue is consistent. Checked after
+#                                      writing (tar -t)
 #   c2/c2-<kind>-<UTC time>.tar.gz     ~/.c2/testnet11: the operator key and the chain service's state. Same disk as the
 #                                      stand: this is protection against a bad deploy, not against losing the VPS (the
 #                                      README says how to copy the files off it)
@@ -26,6 +34,8 @@ KEEP="${HERD_BACKUP_KEEP:-7}"
 C2_PARENT="${HERD_C2_PARENT:-${HOME}/.c2}"
 C2_PROFILE=testnet11
 PROJECT=herd
+JOURNAL_DIR=/var/lib/herd/journal
+JOURNAL_VOLUME=herd_journal_live
 APP_DIR="${HERD_APP_DIR:-${HOME}/herd}"
 
 log() { printf '[backup %s] %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
@@ -74,6 +84,30 @@ backup_pg() { # backup_pg KIND TS
   prune "${BACKUP_DIR}/pg" "herd-${kind}-*.sql.gz"
 }
 
+backup_journal() { # backup_journal KIND TS
+  local kind="$1" ts="$2" cid out tmp
+  cid="$(stand_container server)"
+  if [[ -z "${cid}" ]]; then
+    log "no running server container of the stand: no journal archive"
+    return 0
+  fi
+  out="${BACKUP_DIR}/journal/journal-${kind}-${ts}.tar.gz"
+  tmp="${out}.partial"
+  if ! docker exec "${cid}" tar -C "${JOURNAL_DIR}" -cf - . | gzip -1 >"${tmp}"; then
+    rm -f "${tmp}"
+    log "tar of the journal failed"
+    return 1
+  fi
+  if ! gzip -t "${tmp}" || ! gzip -dc "${tmp}" | tar -tf - >/dev/null; then
+    rm -f "${tmp}"
+    log "the journal archive did not pass the check (gzip -t / tar -t): deleted"
+    return 1
+  fi
+  mv -f "${tmp}" "${out}"
+  log "journal: ${out} ($(wc -c <"${out}" | tr -d ' ') bytes)"
+  prune "${BACKUP_DIR}/journal" "journal-${kind}-*.tar.gz"
+}
+
 backup_c2() { # backup_c2 KIND TS
   local kind="$1" ts="$2" out tmp rc=0
   if [[ ! -d "${C2_PARENT}/${C2_PROFILE}" ]]; then
@@ -104,23 +138,24 @@ cmd_backup() { # cmd_backup KIND
   local kind="$1" ts rc=0
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
   umask 077
-  mkdir -p "${BACKUP_DIR}/pg" "${BACKUP_DIR}/c2"
+  mkdir -p "${BACKUP_DIR}/pg" "${BACKUP_DIR}/c2" "${BACKUP_DIR}/journal"
   backup_pg "${kind}" "${ts}" || rc=1
+  backup_journal "${kind}" "${ts}" || rc=1 # after the dump: never behind it
   backup_c2 "${kind}" "${ts}" || rc=1
   return "${rc}"
 }
 
 cmd_list() {
   local d
-  for d in pg c2; do
+  for d in pg journal c2; do
     echo "${BACKUP_DIR}/${d}:"
     { ls -lh "${BACKUP_DIR}/${d}" 2>/dev/null || true; } | sed 's/^/  /'
   done
 }
 
 cmd_restore() {
-  local file="${1:-}" yes="${2:-}" cid candidate found=""
-  [[ -n "${file}" ]] || die "usage: backup.sh restore FILE.sql.gz --yes   (a path, or a name from 'backup.sh list')"
+  local file="${1:-}" yes="${2:-}" empty_journal="${3:-}" cid candidate found="" journal_file="" jbase image
+  [[ -n "${file}" ]] || die "usage: backup.sh restore FILE.sql.gz --yes [--empty-journal]   (a path, or a name from 'backup.sh list')"
   for candidate in "${file}" "${BACKUP_DIR}/${file}" "${BACKUP_DIR}/pg/${file}"; do
     if [[ -f "${candidate}" ]]; then
       found="${candidate}"
@@ -130,7 +165,20 @@ cmd_restore() {
   [[ -n "${found}" ]] || die "no such dump: ${1}"
   file="${found}"
   [[ "${yes}" == "--yes" ]] || die "restore replaces the database of the running stand with the one in ${file}: everything played since is gone. Repeat with --yes."
+  [[ -z "${empty_journal}" || "${empty_journal}" == "--empty-journal" ]] || die "unknown flag ${empty_journal}"
   gzip -t "${file}" || die "${file} is not a valid gzip file"
+  # Р-107: the journal is the truth and the database a copy of it, so the dump goes back WITH the journal of the same stamp - a dump alone would be
+  # filled again with everything played since by the projector. A dump from before the journal existed has none: --empty-journal, and the server
+  # imports the restored table into a new journal on its start.
+  jbase="$(basename "${file}")"
+  jbase="${jbase#herd-}"
+  jbase="${jbase%.sql.gz}"
+  candidate="${BACKUP_DIR}/journal/journal-${jbase}.tar.gz"
+  if [[ "${empty_journal}" != "--empty-journal" ]]; then
+    [[ -f "${candidate}" ]] || die "no journal archive ${candidate} for this dump: the journal is the truth of the game and goes back with the dump. A dump from before the journal existed: repeat with --empty-journal (the server imports the table into a new journal)"
+    gzip -t "${candidate}" && gzip -dc "${candidate}" | tar -tf - >/dev/null || die "${candidate} is not a valid journal archive"
+    journal_file="${candidate}"
+  fi
   cid="$(stand_container db)"
   [[ -n "${cid}" ]] || die "the db container of the stand is not running"
   log "stopping the server (nothing writes to the database while it is replaced)"
@@ -143,6 +191,18 @@ cmd_restore() {
     | docker exec -i "${cid}" psql -q -v ON_ERROR_STOP=1 -1 -U herd -d herd >/dev/null; then
     log "restore FAILED -- the database is as before; starting the server again"
     docker compose -p "${PROJECT}" -f "${APP_DIR}/docker-compose.yml" start server
+    return 1
+  fi
+  # the journal volume is replaced after the database, which is the transaction that can fail
+  image="$(docker inspect -f '{{.Image}}' "$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT}" --filter "label=com.docker.compose.service=server" | head -n 1)" 2>/dev/null || true)"
+  if [[ -z "${image}" ]]; then
+    log "the database is restored, but there is no server container to take the image from to replace the journal volume ${JOURNAL_VOLUME}: restore the journal by hand (the server stays stopped)"
+    return 1
+  fi
+  log "replacing the journal in volume ${JOURNAL_VOLUME}: ${journal_file:-(emptied)}"
+  if ! { if [[ -n "${journal_file}" ]]; then gzip -dc "${journal_file}"; else :; fi; } \
+    | docker run --rm -i -v "${JOURNAL_VOLUME}:/j" --entrypoint sh "${image}" -c 'find /j -mindepth 1 -delete && if [ -n "$1" ]; then tar -C /j -xf -; fi' sh "${journal_file}"; then
+    log "the database is restored but the journal volume could not be replaced -- the server stays stopped: replace the journal, then 'docker compose -p ${PROJECT} start server'"
     return 1
   fi
   docker compose -p "${PROJECT}" -f "${APP_DIR}/docker-compose.yml" start server

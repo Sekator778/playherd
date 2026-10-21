@@ -200,8 +200,13 @@ class AtomicSettlementTest extends LiveGameTestBase {
         assertThat(count("SELECT COUNT(*) AS n FROM player_round_history WHERE round_id = ?", betting.roundId())).isEqualTo(1);
     }
 
+    /**
+     * Р-107: the cancellation is the event in the journal; the result row is written after it is durable. A failure of the row does not undo
+     * the cancellation (the journal is the truth, its callers are answered), it leaves the round without a row, and the next rebuild
+     * writes the row from the event.
+     */
     @Test
-    void aFailureWhileCancellingRollsBackTheRefundToo() throws Exception {
+    void aFailureWhileWritingTheCancelledRowKeepsTheCancellationAndTheRebuildWritesTheRow() throws Exception {
         Market market = list("T_ATOMIC3", MarketKind.PERP, Category.CRYPTO, "AT3", 10, 0);
         prices.setPrice(market, "100.00");
         alignTo(market, Interval.HOURLY, roundProgress.next("BTC", Interval.HOURLY));
@@ -214,21 +219,21 @@ class AtomicSettlementTest extends LiveGameTestBase {
                 any(Connection.class), anyString(), anyString(), any(Interval.class), anyLong(), anyLong(),
                 anyString(), anyLong(), anyInt(), anyString(), anyString(), any());
 
-        assertThatThrownBy(() -> gameService.cancelRoundById(betting.roundId(), "operator test", betting.startMs() - 1))
-                .hasMessageContaining("injected cancel failure");
+        Rounds.CancellationDto cancellation = gameService.cancelRoundById(betting.roundId(), "operator test", betting.startMs() - 1);
 
-        // the refund that had been applied inside the transaction is gone again, along with the event
+        assertThat(cancellation.refundedBetCount()).isEqualTo(1);
         assertThat(count("SELECT COUNT(*) AS n FROM game_events WHERE event_type = 'RoundCancelled' "
-                + "AND payload->>'market' = ?", market.id())).isZero();
-        assertThat(roundResults.exists(betting.roundId())).isFalse();
-        assertThat(snapshot(p, market, betting)).isEqualTo(before);
+                + "AND payload->>'market' = ?", market.id())).as("the event is in the journal").isEqualTo(1);
+        assertThat(gameService.account(p).balance()).as("the refund is applied").isEqualTo("10000.000");
+        assertThat(roundResults.exists(betting.roundId())).as("the row is what failed").isFalse();
 
         Mockito.reset(roundResultsSpy);
-        Rounds.CancellationDto cancellation = gameService.cancelRoundById(betting.roundId(), "operator test",
-                betting.startMs() - 1);
-        assertThat(cancellation.refundedBetCount()).isEqualTo(1);
+        rebuild.rebuild();
+
+        assertThat(roundResults.exists(betting.roundId())).as("the rebuild writes the row from the event").isTrue();
         assertThat(gameService.account(p).balance()).isEqualTo("10000.000");
         assertThat(count("SELECT COUNT(*) AS n FROM game_events WHERE event_type = 'RoundCancelled' "
                 + "AND payload->>'market' = ?", market.id())).isEqualTo(1);
+        assertThat(count("SELECT refunded_bet_count AS n FROM round_results WHERE round_id = ?", betting.roundId())).isEqualTo(1);
     }
 }

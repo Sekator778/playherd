@@ -83,6 +83,8 @@ public class EngineStateBuilder {
     ServerMetaRepository serverMeta;
     @Inject
     SnapshotService snapshots;
+    @Inject
+    crowdvsmarket.server.service.SidecarReconciler reconciler;
 
     /** How many ledger movements a replay collects before it writes them to the table (a first start with an empty table). */
     static final int LEDGER_SPILL_BATCH = 5_000;
@@ -113,6 +115,9 @@ public class EngineStateBuilder {
         final EventApplier applier = EventApplier.over(hub, betFeed);
         final List<GameEvent.RoundResolved> unwrittenEvents = new ArrayList<>();
         final List<RoundReport> unwrittenReports = new ArrayList<>();
+        /** Cancelled rounds whose result row the table lacks (Р-107), with the bets each held when it was cancelled. */
+        final List<GameEvent.RoundCancelled> unwrittenCancelled = new ArrayList<>();
+        final List<Integer> unwrittenCancelledBets = new ArrayList<>();
         long snapshotSeq;
         long lastEventId;
         int applied;
@@ -158,6 +163,13 @@ public class EngineStateBuilder {
         t = JfrClock.nanos(rec);
         Replay state = replay;
         state.lastEventId = eventStore.replayAfter(state.snapshotSeq, (id, event) -> {
+            if (event instanceof GameEvent.RoundCancelled cancelled) {
+                RoundWindow window = new RoundWindow(cancelled.market(), cancelled.interval(), cancelled.windowStart(), cancelled.windowEnd());
+                if (!withRows.contains(window.roundId())) {
+                    state.unwrittenCancelled.add(cancelled);
+                    state.unwrittenCancelledBets.add(state.hub.engine(cancelled.market(), cancelled.interval()).betBook().count(window.roundId()));
+                }
+            }
             Object result = state.applier.apply(event); // also keeps the hub's index of the windows that hold bets
             if (event instanceof GameEvent.RoundResolved resolved) {
                 RoundReport report = (RoundReport) result;
@@ -194,6 +206,17 @@ public class EngineStateBuilder {
                 notWritten.add(state.unwrittenEvents.get(i));
             }
         }
+        for (int i = 0; i < state.unwrittenCancelled.size(); i++) {
+            GameEvent.RoundCancelled cancelled = state.unwrittenCancelled.get(i);
+            Market market = markets.stream().filter(m -> m.id().equals(cancelled.market())).findFirst().orElse(null);
+            if (market != null) {
+                LOG.warnf("round %s is cancelled in the journal but has no result row - writing it from the event",
+                        new RoundWindow(cancelled.market(), cancelled.interval(), cancelled.windowStart(), cancelled.windowEnd()).roundId());
+                cancellations.repairRow(market, cancelled, state.unwrittenCancelledBets.get(i));
+            }
+        }
+        // Р-107: the rows of withdrawal requests are written after their events are durable; what a stop left out is written from the engine
+        reconciler.withdrawalRows(hub.ledger().exportState().withdrawals(), players);
         cancelRoundsOfClosedMarkets(applier, hub, markets, nowMs);
         hub.ledgerOutbox().endReplay();
 

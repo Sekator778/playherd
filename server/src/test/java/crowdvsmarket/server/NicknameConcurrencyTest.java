@@ -62,45 +62,9 @@ class NicknameConcurrencyTest extends LiveGameTestBase {
                 rs -> rs.getString("nickname"), playerId));
     }
 
-    @Test
-    void aRebuildWaitsForANicknameChangeInFlightInsteadOfReloadingTheDirectoryUnderIt() throws Exception {
-        String player = signUp("nickhold");
-        CountDownLatch updated = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        // the change is held after its UPDATE, before its commit
-        doAnswer(inv -> {
-            inv.callRealMethod();
-            updated.countDown();
-            assertThat(release.await(30, TimeUnit.SECONDS)).isTrue();
-            return null;
-        }).when(playersSpy).updateNickname(any(Connection.class), eq(player), eq("Brand New"));
-        ExecutorService pool = Executors.newFixedThreadPool(2);
-        try {
-            Future<?> changing = pool.submit(() -> gameService.setNickname(player, "Brand New"));
-            assertThat(updated.await(10, TimeUnit.SECONDS)).isTrue();
-            AtomicReference<Thread> rebuilder = new AtomicReference<>();
-            Future<?> rebuilding = pool.submit(() -> {
-                rebuilder.set(Thread.currentThread());
-                rebuild.rebuild();
-            });
-
-            // the rebuild is parked on the lock the nickname change holds — not running, not finished
-            await().atMost(Duration.ofSeconds(10)).until(() -> rebuilder.get() != null
-                    && rebuilder.get().getState() == Thread.State.WAITING);
-            assertThat(rebuilding.isDone()).isFalse();
-            assertThat(storedNickname(player)).as("the commit has not happened").isNotEqualTo("Brand New");
-
-            release.countDown();
-            changing.get(20, TimeUnit.SECONDS);
-            rebuilding.get(20, TimeUnit.SECONDS);
-        } finally {
-            release.countDown();
-            pool.shutdownNow();
-        }
-
-        assertThat(storedNickname(player)).isEqualTo("Brand New");
-        assertThat(gameService.summary(player).nickname()).as("the directory agrees with the table").isEqualTo("Brand New");
-    }
+    // Р-107: a nickname is an event of the journal and a row the projector writes afterwards; the old test here held the command between its
+    // UPDATE and its commit, which no longer exist. The rebuild that meets a nickname the projector has not written yet is
+    // JournalCrashTest#aRebuildSeesANicknameTheProjectorHasNotWrittenYet.
 
     @Test
     void nicknamesSignInsBotsAndRebuildsRunningTogetherLeaveTheDirectoryAndTheTableInAgreement() throws Exception {

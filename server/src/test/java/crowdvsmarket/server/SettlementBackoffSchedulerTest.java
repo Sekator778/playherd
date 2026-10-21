@@ -20,6 +20,7 @@ import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.persistence.Db;
+import crowdvsmarket.server.service.GameService;
 import crowdvsmarket.server.scheduler.OraclePublisherService;
 import crowdvsmarket.server.testsupport.LiveGameTestBase;
 import crowdvsmarket.server.testsupport.LiveMarketsProfile;
@@ -213,8 +214,13 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         var ledgerBefore = hub.ledger();
         // the event is applied in the writer before the batch is written, so a write that fails leaves the engine ahead of
         // the journal: the engine is rebuilt (the batch's events never reached the journal, so the rebuilt state lacks them)
-        doThrow(new IllegalStateException("db flapping while writing the event")).when(eventStoreSpy)
-                .append(any(Connection.class), any(GameEvent.RoundResolved.class), anyLong());
+        doAnswer(inv -> {
+            List<EventStore.Pending> batch = inv.getArgument(0);
+            if (batch.stream().anyMatch(p -> p.event() instanceof GameEvent.RoundResolved)) {
+                throw new IllegalStateException("disk flapping while writing the event");
+            }
+            return inv.callRealMethod();
+        }).when(eventStoreSpy).appendAll(any());
         Mockito.clearInvocations(eventStoreSpy);
         long t0 = f.betting().endMs() + 1;
 
@@ -236,23 +242,29 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
         assertThat(gameService.account(f.player()).balance()).isEqualTo("10059.840");
     }
 
+    /**
+     * Р-107: the settlement is the event in the journal; a database that is down does not stop it. The round is settled for the game (the
+     * balances are the engine's); its result rows follow when the database answers again (the background retry), and nothing is rebuilt.
+     */
     @Test
-    void aDatabaseThatDoesNotGiveAConnectionFailsTheBatchAndTheEngineIsRebuiltOnceItAnswers() throws Exception {
+    void aDatabaseThatDoesNotGiveAConnectionDoesNotStopTheSettlementAndItsRowsFollowWhenItAnswers() throws Exception {
         Fixture f = marketWithABetAndTheRunningWindowSettled("T_BO_NOCONN", "BON");
         var ledgerBefore = hub.ledger();
-        Mockito.clearInvocations(eventStoreSpy);
-        // every transaction fails before its work runs - what a database that is down looks like to the settlement
+        // every transaction fails before its work runs - what a database that is down looks like to the rows of the settlement
         doThrow(new RuntimeException("db connection failure")).when(dbSpy).tx(any());
         long t0 = f.betting().endMs() + 1;
 
         scheduler.tick(t0);
-        Mockito.reset(dbSpy);
-        scheduler.tick(t0 + 2_000L);   // the database is back (the rebuild of the failed batch, or the retry of it)
 
-        verify(eventStoreSpy, Mockito.atLeastOnce()).replayAfter(anyLong(), any());
         assertThat(rebuild.isReady()).isTrue();
-        assertThat(hub.ledger()).isNotSameAs(ledgerBefore);
-        assertThat(roundResults.exists(f.betting().roundId())).as("and the retry settles the round").isTrue();
+        assertThat(hub.ledger()).as("no rebuild: the journal took the batch").isSameAs(ledgerBefore);
+        assertThat(gameService.account(f.player()).balance()).as("the round is settled for the game").isEqualTo("10059.840");
+        assertThat(roundResults.exists(f.betting().roundId())).as("the rows wait for the database").isFalse();
+        assertThat(gameService.missingRows()).extracting(GameService.MissingRows::roundId).contains(f.betting().roundId());
+
+        Mockito.reset(dbSpy);
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(30)).pollInterval(java.time.Duration.ofMillis(200))
+                .until(() -> roundResults.exists(f.betting().roundId()));
         assertThat(gameService.account(f.player()).balance()).isEqualTo("10059.840");
     }
 

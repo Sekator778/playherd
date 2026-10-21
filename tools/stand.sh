@@ -18,6 +18,9 @@ DEFAULT_WEB_PORT=8480
 # replay-epoch volume `herd_pg` (an archive of the BTC-only accelerated-history game) is no longer
 # declared in the compose file and is never touched by this script.
 DB_VOLUME=herd_pg_live
+# Р-107: the event journal is the truth and the database a copy of it; they are reset together (a database emptied beside a journal that
+# stays would be filled with the old game again by the projector)
+JOURNAL_VOLUME=herd_journal_live
 ARCHIVE_DB_VOLUME=herd_pg
 # Where the server fetches live prices over REST — used only for the reachability check after `up`: Hyperliquid (the default
 # of herd.prices.hyperliquid.url), and the two exchanges of the crypto markets, Coinbase Exchange (herd.prices.coinbase.url,
@@ -290,6 +293,10 @@ cmd_reset() {
     log "removed volume ${DB_VOLUME} — the next up starts an empty database"
   else
     log "volume ${DB_VOLUME} does not exist — nothing to remove"
+  fi
+  if docker volume inspect "${JOURNAL_VOLUME}" >/dev/null 2>&1; then
+    docker volume rm "${JOURNAL_VOLUME}" >/dev/null
+    log "removed volume ${JOURNAL_VOLUME} — the event journal goes with the database"
   fi
 }
 

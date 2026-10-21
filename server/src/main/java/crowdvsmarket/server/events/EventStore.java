@@ -1,15 +1,26 @@
 package crowdvsmarket.server.events;
 
+import crowdvsmarket.server.journal.Journal;
+import crowdvsmarket.server.journal.JournalProjector;
+import crowdvsmarket.server.journal.JournalRecord;
 import crowdvsmarket.server.persistence.Db;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import java.sql.Connection;
-import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
-/** Append-only persistence for {@link GameEvent} (the {@code game_events} table) — see that
- *  interface's javadoc for what this log is (and is not) used for. */
+/**
+ * Append-only persistence for {@link GameEvent} — see that interface's javadoc for what this log is (and is not) used for.
+ *
+ * <p>Since Р-107 the events live in the {@link Journal} (a Chronicle Queue on disk); {@code game_events} is a copy that the
+ * {@link JournalProjector} fills after it. Everything that used to read or write the table goes through here and now reads or writes
+ * the journal: an event is accepted when {@link #appendAll} has returned (its excerpt is synced to disk), and the rebuild of the engine
+ * reads the journal, never the table.
+ */
 @ApplicationScoped
 public class EventStore {
 
@@ -51,13 +62,60 @@ public class EventStore {
     @Inject
     Db db;
 
-    /** Appends one event within the caller's already-open transaction (a mutating service method
-     *  always writes its event and its read-model rows in the same {@link Db#tx}). */
-    public void append(Connection c, GameEvent event, long atMs) throws SQLException {
-        String type = event.getClass().getSimpleName();
-        db.update(c, "INSERT INTO game_events (event_type, payload, at_ms, schema_version, market, player_id) "
-                + "VALUES (?, ?, ?, ?, ?, ?)",
-                type, Db.jsonb(event), atMs, CURRENT_SCHEMA_VERSION, marketOf(event), playerOf(event));
+    @Inject
+    Journal journal;
+
+    /** Lazily: the projector reads events back through this class. */
+    @Inject
+    Instance<JournalProjector> projector;
+
+    /** Test and diagnostic mode: every append waits until the projector has written the copy, so that a read of {@code game_events}
+     *  right after an answer sees it (the server tests run so; production does not: the game never waits for the copy). */
+    @ConfigProperty(name = "herd.journal.project-synchronously", defaultValue = "false")
+    boolean projectSynchronously;
+
+    /** How long a synchronous append waits for the copy. */
+    private static final long PROJECT_WAIT_MS = 30_000L;
+
+    /**
+     * Appends one event to the journal (durable when this returns). {@code c} is not used: the journal is not in the caller's
+     * transaction any more; the parameter stays so that a caller that writes its own rows in the same transaction reads as before
+     * (the event is written first, the rows after it: a crash in between leaves the event, and the rows are repaired from it).
+     */
+    public void append(Connection c, GameEvent event, long atMs) {
+        appendAll(List.of(new Pending(event, atMs)));
+    }
+
+    /** The journal's record of {@code event}: the columns of the {@code game_events} row it becomes. */
+    public JournalRecord record(Pending p) {
+        GameEvent event = p.event();
+        try {
+            return new JournalRecord(0, event.getClass().getSimpleName(), CURRENT_SCHEMA_VERSION, p.atMs(), marketOf(event),
+                    playerOf(event), db.json().writeValueAsString(event));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("cannot serialize " + event.getClass().getSimpleName(), e);
+        }
+    }
+
+    /**
+     * Appends {@code events}, in this order, as ONE excerpt of the journal and syncs it to disk: all or none. This is the durability
+     * point of the core writer's batch ({@code CoreWriter}).
+     *
+     * @return the seq of the last event, the journal's last seq when {@code events} is empty
+     */
+    public long appendAll(List<Pending> events) {
+        if (events.isEmpty()) {
+            return journal.lastSeq();
+        }
+        List<JournalRecord> records = new ArrayList<>(events.size());
+        for (Pending p : events) {
+            records.add(record(p));
+        }
+        long last = journal.append(records);
+        if (projectSynchronously) {
+            projector.get().awaitProjected(last, PROJECT_WAIT_MS);
+        }
+        return last;
     }
 
     /**
@@ -125,80 +183,84 @@ public class EventStore {
         };
     }
 
-    /** All events in insertion order, for the startup rebuild ({@code EngineRebuildService#rebuild}). */
+    /** All events in journal order, for the startup rebuild ({@code EngineRebuildService#rebuild}). */
     public List<GameEvent> loadAll() {
-        return db.read(c -> db.queryList(c,
-                "SELECT id, event_type, payload, schema_version FROM game_events ORDER BY id ASC",
-                rs -> decode(rs.getLong("id"), rs.getString("event_type"), rs.getString("payload"),
-                        rs.getInt("schema_version"))));
+        List<GameEvent> all = new ArrayList<>();
+        replayAfter(0, (id, event) -> all.add(event));
+        return all;
     }
 
-    /** What {@link #replayAfter} hands over: an event with the id of its row (its place in the journal). */
+    /** What {@link #replayAfter} hands over: an event with its seq (its place in the journal). */
     @FunctionalInterface
     public interface Replayed {
         void accept(long id, GameEvent event);
     }
 
-    /** The rows read per round trip by {@link #replayAfter}. */
-    static final int REPLAY_PAGE = 5_000;
-
     /**
-     * Hands every event with {@code id > afterId} to {@code sink}, in order, read in pages of {@link #REPLAY_PAGE} rows
-     * (architecture plan F5: the journal is not held in memory; only a page is). A row that cannot be decoded stops the replay
-     * with the exception of {@link #decode}.
+     * Hands every event with {@code seq > afterId} to {@code sink}, in order, read from the journal page by page (architecture plan F5:
+     * the journal is not held in memory). A record that cannot be decoded stops the replay with the exception of {@link #decode}.
      *
-     * @return the id of the last row handed over, {@code afterId} when there was none
+     * @return the seq of the last event handed over, {@code afterId} when there was none
      */
     public long replayAfter(long afterId, Replayed sink) {
         return replayAfter(afterId, Long.MAX_VALUE, sink);
     }
 
-    /** {@link #replayAfter(long, Replayed)} for the rows with {@code afterId < id <= upToId} only. */
+    /** {@link #replayAfter(long, Replayed)} for the events with {@code afterId < seq <= upToId} only. */
     public long replayAfter(long afterId, long upToId, Replayed sink) {
-        long last = afterId;
-        while (true) {
-            long from = last;
-            List<Object[]> page = db.read(c -> db.queryList(c,
-                    "SELECT id, event_type, payload, schema_version FROM game_events WHERE id > ? AND id <= ? ORDER BY id ASC LIMIT ?",
-                    rs -> new Object[] {rs.getLong("id"), rs.getString("event_type"), rs.getString("payload"),
-                            rs.getInt("schema_version")}, from, upToId, REPLAY_PAGE));
-            for (Object[] row : page) {
-                long id = (Long) row[0];
-                sink.accept(id, decode(id, (String) row[1], (String) row[2], (Integer) row[3]));
-                last = id;
-            }
-            if (page.size() < REPLAY_PAGE) {
-                return last;
-            }
-        }
+        return journal.store().replay(afterId, upToId, r -> sink.accept(r.seq(), decode(r)));
     }
 
     /** The events of the given types ({@code event_type} names), in order: what the repair of a projection folds. */
     public List<GameEvent> loadOfTypes(java.util.Collection<String> types) {
-        return db.read(c -> db.queryList(c,
-                "SELECT id, event_type, payload, schema_version FROM game_events WHERE event_type = ANY (?) ORDER BY id ASC",
-                rs -> decode(rs.getLong("id"), rs.getString("event_type"), rs.getString("payload"),
-                        rs.getInt("schema_version")),
-                (Object) types.toArray(new String[0])));
+        java.util.Set<String> wanted = new java.util.HashSet<>(types);
+        List<GameEvent> out = new ArrayList<>();
+        journal.store().replay(0, Long.MAX_VALUE, r -> {
+            if (wanted.contains(r.type())) {
+                out.add(decode(r));
+            }
+        });
+        return out;
     }
 
-    /** The ids of the rounds with a {@code RoundResolved} event at or before {@code upToId}, read without decoding the events
-     *  (their price paths are the bulk of the journal). */
+    /** The ids of the rounds with a {@code RoundResolved} or {@code RoundCancelled} event at or before {@code upToId}, read without
+     *  decoding the events (their price paths are the bulk of the journal): the rounds that must have a result row. */
     public java.util.Set<String> resolvedRoundIds(long upToId) {
-        return new java.util.HashSet<>(db.read(c -> db.queryList(c,
-                "SELECT COALESCE(payload->>'market', 'BTC') AS market, payload->>'interval' AS interval, "
-                        + "(payload->>'windowStart')::bigint AS start FROM game_events "
-                        + "WHERE event_type = 'RoundResolved' AND id <= ?",
-                rs -> new crowdvsmarket.engine.round.RoundWindow.RoundRef(rs.getString("market"),
-                        crowdvsmarket.engine.market.Interval.valueOf(rs.getString("interval")), rs.getLong("start")).roundId(),
-                upToId)));
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        journal.store().replay(0, upToId, r -> {
+            if (!"RoundResolved".equals(r.type()) && !"RoundCancelled".equals(r.type())) {
+                return;
+            }
+            try {
+                com.fasterxml.jackson.databind.JsonNode json = db.json().readTree(r.payload());
+                String market = json.hasNonNull("market") ? json.get("market").asText() : "BTC";
+                ids.add(new crowdvsmarket.engine.round.RoundWindow.RoundRef(market,
+                        crowdvsmarket.engine.market.Interval.valueOf(json.get("interval").asText()),
+                        json.get("windowStart").asLong()).roundId());
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new IllegalStateException("journal event " + r.seq() + " (RoundResolved) is not JSON", e);
+            }
+        });
+        return ids;
     }
 
-    /** Whether any row at or before {@code upToId} is of schema version 1 (a journal from before F4, which does not carry the
-     *  roster). */
+    /** Whether any event at or before {@code upToId} is of schema version 1 (a journal from before F4, which does not carry the
+     *  roster). Version 2 is only ever written after version 1, so the first event of the journal says. */
     public boolean hasLegacyRows(long upToId) {
-        return db.read(c -> db.queryOne(c, "SELECT 1 AS x FROM game_events WHERE schema_version = ? AND id <= ? LIMIT 1",
-                rs -> Boolean.TRUE, LEGACY_SCHEMA_VERSION, upToId)) != null;
+        try (var cursor = journal.store().cursor(0)) {
+            List<JournalRecord> first = cursor.next(1);
+            return !first.isEmpty() && first.get(0).seq() <= upToId && first.get(0).schemaVersion() == LEGACY_SCHEMA_VERSION;
+        }
+    }
+
+    /** {@link #decode(long, String, String, int)} for tests in other packages (the cutover test decodes table rows with it). */
+    public GameEvent decodeForTests(long rowId, String type, String payloadJson, int schemaVersion) {
+        return decode(rowId, type, payloadJson, schemaVersion);
+    }
+
+    /** The event a journal record holds. */
+    public GameEvent decode(JournalRecord r) {
+        return decode(r.seq(), r.type(), r.payload(), r.schemaVersion());
     }
 
     /** Package-private (not {@code private}) so {@code EventStoreSchemaEvolutionTest} can drive it
@@ -214,7 +276,7 @@ public class EventStore {
      * failing startup loudly with enough detail — the row id — for an operator to go look at it). */
     GameEvent decode(long rowId, String type, String payloadJson, int schemaVersion) {
         if (schemaVersion != CURRENT_SCHEMA_VERSION && schemaVersion != LEGACY_SCHEMA_VERSION) {
-            throw new IllegalStateException("game_events row id=" + rowId + " (type=" + type
+            throw new IllegalStateException("journal event seq=" + rowId + " (type=" + type
                     + ") has unsupported schema_version=" + schemaVersion + " — this server only understands "
                     + LEGACY_SCHEMA_VERSION + " and " + CURRENT_SCHEMA_VERSION
                     + "; add a decode branch for it before replaying this data");
@@ -223,7 +285,7 @@ public class EventStore {
         if (schemaVersion == LEGACY_SCHEMA_VERSION && SINCE_VERSION_2.contains(resolvedType)) {
             // Version 1: the records read the old shapes as they are (PlayerRegistered without a row is a pack grant, RoundResolved
             // without a sequence number takes it from server_meta when its rows are written); a type born in version 2 cannot be there.
-            throw new IllegalStateException("game_events row id=" + rowId + " has event_type " + type
+            throw new IllegalStateException("journal event seq=" + rowId + " has event_type " + type
                     + " that did not exist in schema_version 1");
         }
         try {
@@ -250,7 +312,7 @@ public class EventStore {
                 case "BotStrategyAssigned" -> GameEvent.BotStrategyAssigned.class;
                 case "MarketListed" -> GameEvent.MarketListed.class;
                 case "MarketClosed" -> GameEvent.MarketClosed.class;
-                default -> throw new IllegalStateException("game_events row id=" + rowId
+                default -> throw new IllegalStateException("journal event seq=" + rowId
                         + " has unknown event_type: " + type
                         + (resolvedType.equals(type) ? "" : " (alias table pointed it at unknown type: " + resolvedType + ")"));
             };
@@ -258,7 +320,7 @@ public class EventStore {
         } catch (IllegalStateException e) {
             throw e; // already names rowId — don't double-wrap
         } catch (Exception e) {
-            throw new RuntimeException("failed to decode game_events row id=" + rowId + " of type " + type, e);
+            throw new RuntimeException("failed to decode journal event seq=" + rowId + " of type " + type, e);
         }
     }
 
@@ -266,50 +328,9 @@ public class EventStore {
     public record Pending(GameEvent event, long atMs) {
     }
 
-    /** The id of the last event in the journal ({@code 0} when it is empty), read in the caller's transaction: the version of
-     *  the read views the core writer publishes after a batch has committed (architecture plan F8). */
-    public long lastId(Connection c) throws SQLException {
-        Long last = db.queryOne(c, "SELECT COALESCE(MAX(id), 0) AS last_id FROM game_events", rs -> rs.getLong("last_id"));
-        return last == null ? 0L : last;
-    }
-
-    /** {@link #lastId(Connection)} in a transaction of its own (also the journal's position a snapshot is taken at, F5). */
+    /** The seq of the last event in the journal ({@code 0} when it is empty): the version of the read views the core writer
+     *  publishes after a batch has committed (architecture plan F8), the position a snapshot is taken at (F5). */
     public long lastId() {
-        return db.read(this::lastId);
-    }
-
-    /** Rows per INSERT statement of {@link #appendAll} (six parameters a row, far below the driver's limit). */
-    static final int APPEND_CHUNK = 200;
-
-    /**
-     * Appends {@code events}, in this order, within the caller's open transaction: the batch of the core writer
-     * ({@code CoreWriter}). Every row is what {@link #append} writes (type, payload, time, schema version, market, player); a single event is
-     * written by {@link #append} itself, more than one by multi-row {@code INSERT} statements of {@link #APPEND_CHUNK} rows,
-     * whose rows get their ids in the order of the {@code VALUES} list.
-     */
-    public void appendAll(Connection c, List<Pending> events) throws SQLException {
-        if (events.isEmpty()) {
-            return;
-        }
-        if (events.size() == 1) {
-            append(c, events.get(0).event(), events.get(0).atMs());
-            return;
-        }
-        for (int from = 0; from < events.size(); from += APPEND_CHUNK) {
-            List<Pending> chunk = events.subList(from, Math.min(events.size(), from + APPEND_CHUNK));
-            StringBuilder sql = new StringBuilder("INSERT INTO game_events (event_type, payload, at_ms, schema_version, market, player_id) VALUES ");
-            Object[] params = new Object[chunk.size() * 6];
-            for (int i = 0; i < chunk.size(); i++) {
-                sql.append(i == 0 ? "(?, ?, ?, ?, ?, ?)" : ", (?, ?, ?, ?, ?, ?)");
-                Pending p = chunk.get(i);
-                params[i * 6] = p.event().getClass().getSimpleName();
-                params[i * 6 + 1] = Db.jsonb(p.event());
-                params[i * 6 + 2] = p.atMs();
-                params[i * 6 + 3] = CURRENT_SCHEMA_VERSION;
-                params[i * 6 + 4] = marketOf(p.event());
-                params[i * 6 + 5] = playerOf(p.event());
-            }
-            db.update(c, sql.toString(), params);
-        }
+        return journal.lastSeq();
     }
 }

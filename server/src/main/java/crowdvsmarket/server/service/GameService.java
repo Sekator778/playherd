@@ -864,9 +864,10 @@ public class GameService implements MarketListener {
         // the writer asks again, so a second sign-in of a wallet that registers in the meantime is a returning one there.
         NewPlayerPrep prep = null;
         if (players.playerIdForWallet(walletAddress).isEmpty()) {
-            prep = prepareNewPlayer(clientIp, referralCode, nowMs);
+            prep = prepareNewPlayer(clientIp, referralCode, source, nowMs);
         }
         final NewPlayerPrep newPlayer = prep;
+        boolean registeredHere = false;
         try {
             Registration r = write("sign-in", nowMs, ctx -> {
                 Optional<String> existing = players.playerIdForWallet(walletAddress);
@@ -878,9 +879,7 @@ public class GameService implements MarketListener {
                     if (newPlayer == null) {
                         throw new IllegalStateException("no preparation for the new player " + walletAddress);
                     }
-                    playerId = UUID.randomUUID().toString();
-                    String finalPlayerId = playerId;
-                    String ipHash = newPlayer.ipHash();
+                    playerId = newPlayer.playerId();
                     GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
                             newPlayer.playerIndex(), null, PlayerDirectory.KIND_HUMAN, null, null, null);
                     ctx.touch();
@@ -888,14 +887,6 @@ public class GameService implements MarketListener {
                     // to commit is followed by a rebuild, which reloads the directory from the table. The row itself (the
                     // projection of the event) is written in the batch's transaction.
                     players.cache(PlayerDirectory.rowOf(registered, null, null));
-                    ctx.work(c -> {
-                        players.project(c, registered, null, null);
-                        invites.recordAtRegistration(c, finalPlayerId, newPlayer.referrerId(), source);
-                        if (ipHash != null) {
-                            registrationIps.record(c, ipHash, nowMs);
-                        }
-                        return null;
-                    });
                     packGranted = hub.ledger().seasonPackAmount(playerId, now).isPositive(); // a player nobody has seen: the first pack
                     ctx.record(registered, nowMs);
                 } else {
@@ -909,10 +900,13 @@ public class GameService implements MarketListener {
                 }
                 return new Registration(playerId, isNew, packGranted);
             });
+            registeredHere = r.isNew();
             return new PlayerTouchResult(summary(r.playerId()), r.isNew(), r.starterPackGranted());
         } finally {
-            if (newPlayer != null && newPlayer.ipHash() != null) {
-                registrationsInFlight.merge(newPlayer.ipHash(), -1, (a, b) -> a + b == 0 ? null : a + b);
+            if (newPlayer != null && !registeredHere) {
+                // the sign-in did not register the player prepared for it (the wallet was registered meanwhile, or the batch did not
+                // commit): what was written for the registration is taken back, so that no place of the address is spent on it
+                newPlayer.forget(registrationIps, invites, nowMs);
             }
         }
     }
@@ -920,40 +914,55 @@ public class GameService implements MarketListener {
     private record Registration(String playerId, boolean isNew, boolean starterPackGranted) {
     }
 
-    /** What a new player's registration needs from the database, found before the writer's turn: the hash of the address
-     *  (when the address is limited), the player index reserved for the player, and the referrer. */
-    private record NewPlayerPrep(String ipHash, int playerIndex, String referrerId) {
+    /**
+     * What a new player's registration needs from the database, found before the writer's turn: the id the player will have, the hash of the
+     * address (when the address is limited), the player index reserved for the player, and the referrer. Р-107: what the registration
+     * records that is NOT in the journal - the place spent on the address ({@code registration_ips}), the invite code, the referrer and
+     * the channel ({@code player_sidecar}) - is already written when this record exists, in one transaction, before the command: a crash
+     * leaves a place spent and a sidecar row nothing refers to, never a registered player without them.
+     */
+    private record NewPlayerPrep(String playerId, String ipHash, int playerIndex, String referrerId) {
+
+        void forget(crowdvsmarket.server.persistence.RegistrationIpRepository registrationIps,
+                    crowdvsmarket.server.persistence.InviteRepository invites, long nowMs) {
+            try {
+                if (ipHash != null) {
+                    registrationIps.forget(ipHash, nowMs);
+                }
+                invites.forget(playerId);
+            } catch (RuntimeException e) {
+                LOG.warnf(e, "could not take back the registration prepared for %s - a place of the address stays spent", playerId);
+            }
+        }
     }
 
-    /** New players that passed the per-address limit and are not in {@code registration_ips} yet, per address hash: counted
-     *  with the table's rows, so that simultaneous sign-ups from one address cannot all pass the last place. */
-    private final ConcurrentHashMap<String, Integer> registrationsInFlight = new ConcurrentHashMap<>();
     private final Object registrationLimitMonitor = new Object();
 
-    private NewPlayerPrep prepareNewPlayer(String clientIp, String referralCode, long nowMs) {
+    private NewPlayerPrep prepareNewPlayer(String clientIp, String referralCode, String source, long nowMs) {
         String ipHash = null;
         if (clientIp != null && !clientIp.isBlank() && !"unknown".equals(clientIp)) {
             ipHash = registrationIps.hash(clientIp);
-            int perDay = config.registrationMaxPerIpPerDay();
-            synchronized (registrationLimitMonitor) {
-                int inFlight = registrationsInFlight.getOrDefault(ipHash, 0);
-                if (registrationIps.countInWindow(ipHash, nowMs) + inFlight >= perDay) {
-                    throw ApiException.registrationLimit("this network has already registered " + perDay
-                            + " new player" + (perDay == 1 ? "" : "s") + " in the last 24 hours - no more new players can sign "
-                            + "up from it until then (a player who already signed up can still sign in)");
-                }
-                registrationsInFlight.merge(ipHash, 1, Integer::sum);
-            }
         }
-        try {
-            int playerIndex = serverMeta.reserveNextPlayerIndex();
-            String referrerId = referralCode == null ? null : invites.playerIdForCode(referralCode).orElse(null);
-            return new NewPlayerPrep(ipHash, playerIndex, referrerId);
-        } catch (RuntimeException | Error e) {
-            if (ipHash != null) {
-                registrationsInFlight.merge(ipHash, -1, (a, b) -> a + b == 0 ? null : a + b);
+        String playerId = UUID.randomUUID().toString();
+        String referrerId = referralCode == null ? null : invites.playerIdForCode(referralCode).orElse(null);
+        int perDay = config.registrationMaxPerIpPerDay();
+        String hash = ipHash;
+        // the count of the address and the place spent on it are one step: simultaneous sign-ups from one address cannot all pass the last place
+        synchronized (registrationLimitMonitor) {
+            if (hash != null && registrationIps.countInWindow(hash, nowMs) >= perDay) {
+                throw ApiException.registrationLimit("this network has already registered " + perDay
+                        + " new player" + (perDay == 1 ? "" : "s") + " in the last 24 hours - no more new players can sign "
+                        + "up from it until then (a player who already signed up can still sign in)");
             }
-            throw e;
+            int playerIndex = serverMeta.reserveNextPlayerIndex();
+            db.tx(c -> {
+                invites.recordAtRegistration(c, playerId, referrerId, source);
+                if (hash != null) {
+                    registrationIps.record(c, hash, nowMs);
+                }
+                return null;
+            });
+            return new NewPlayerPrep(playerId, hash, playerIndex, referrerId);
         }
     }
 
@@ -979,13 +988,6 @@ public class GameService implements MarketListener {
                     playerIndex, nickname, PlayerDirectory.KIND_HOUSE_BOT, strategy, null, replacesPlayerId);
             ctx.touch();
             players.cache(PlayerDirectory.rowOf(registered, null, null));
-            ctx.work(c -> {
-                players.project(c, registered, null, null);
-                if (replacesPlayerId != null) {
-                    players.updateReplaced(c, replacesPlayerId);
-                }
-                return null;
-            });
             if (replacesPlayerId != null) {
                 players.cacheReplaced(replacesPlayerId);
             }
@@ -1033,18 +1035,29 @@ public class GameService implements MarketListener {
         String key = ApiKeys.generate();
         String hash = ApiKeys.hash(key);
         String hint = ApiKeys.hint(key);
-        PlayerDirectory.Row row = write("api bot", nowMs, ctx -> {
-            requireApiBotPlace(ownerId); // the decision, on the state of the writer: two simultaneous calls cannot both take the last place
-            GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
-                    playerIndex, nickname, PlayerDirectory.KIND_API_BOT, null, ownerId, null);
-            PlayerDirectory.Row created = PlayerDirectory.rowOf(registered, hash, hint);
-            ctx.touch();
-            players.cache(created);
-            ctx.work(c -> players.project(c, registered, hash, hint)); // the key is in the table, never in the journal
-            ctx.record(registered, nowMs);
-            ctx.afterCommit(() -> apiBotSeasonTouched.put(playerId, Season.of(Instant.ofEpochMilli(nowMs)).id()));
-            return created;
+        // Р-107: the key is not in the journal, so it is written first (player_sidecar; the projector copies it into the players row with
+        // the registration): a crash leaves a key nothing refers to, never a registered bot without its key
+        db.tx(c -> {
+            players.updateKey(c, playerId, hash, hint);
+            return null;
         });
+        PlayerDirectory.Row row;
+        try {
+            row = write("api bot", nowMs, ctx -> {
+                requireApiBotPlace(ownerId); // the decision, on the state of the writer: two simultaneous calls cannot both take the last place
+                GameEvent.PlayerRegistered registered = GameEvent.PlayerRegistered.registration(playerId, nowMs, walletAddress,
+                        playerIndex, nickname, PlayerDirectory.KIND_API_BOT, null, ownerId, null);
+                PlayerDirectory.Row created = PlayerDirectory.rowOf(registered, hash, hint);
+                ctx.touch();
+                players.cache(created);
+                ctx.record(registered, nowMs);
+                ctx.afterCommit(() -> apiBotSeasonTouched.put(playerId, Season.of(Instant.ofEpochMilli(nowMs)).id()));
+                return created;
+            });
+        } catch (RuntimeException | Error e) {
+            players.forgetKey(playerId); // the bot was not registered: the key is taken back
+            throw e;
+        }
         return new Bots.ApiBotKeyDto(toDto(row), key);
     }
 
@@ -1067,33 +1080,31 @@ public class GameService implements MarketListener {
 
     /** A new key for the bot; the old one stops opening it at once. Returned in full, once. */
     public Bots.ApiBotKeyDto regenerateApiKey(String ownerId, String botId) {
-        return write(ctx -> {
-            requireOwnedApiBot(ownerId, botId);
-            String key = ApiKeys.generate();
-            String hash = ApiKeys.hash(key);
-            String hint = ApiKeys.hint(key);
-            ctx.touch();
-            ctx.work(c -> {
-                players.updateKey(c, botId, hash, hint);
-                return null;
-            });
-            players.cacheKey(botId, hash, hint);
-            return new Bots.ApiBotKeyDto(toDto(players.byId(botId).orElseThrow()), key);
+        requireReady();
+        requireOwnedApiBot(ownerId, botId);
+        String key = ApiKeys.generate();
+        String hash = ApiKeys.hash(key);
+        String hint = ApiKeys.hint(key);
+        // no event, nothing for the writer: a key is a database write (player_sidecar and, once projected, the players row), done
+        // synchronously, and the cache follows the commit
+        db.tx(c -> {
+            players.updateKey(c, botId, hash, hint);
+            return null;
         });
+        players.cacheKey(botId, hash, hint);
+        return new Bots.ApiBotKeyDto(toDto(players.byId(botId).orElseThrow()), key);
     }
 
     /** Revokes the bot's key: nothing opens the bot until a new key is generated. Idempotent. */
     public Bots.ApiBotDto revokeApiKey(String ownerId, String botId) {
-        return write(ctx -> {
-            requireOwnedApiBot(ownerId, botId);
-            ctx.touch();
-            ctx.work(c -> {
-                players.updateKey(c, botId, null, null);
-                return null;
-            });
-            players.cacheKey(botId, null, null);
-            return toDto(players.byId(botId).orElseThrow());
+        requireReady();
+        requireOwnedApiBot(ownerId, botId);
+        db.tx(c -> {
+            players.updateKey(c, botId, null, null);
+            return null;
         });
+        players.cacheKey(botId, null, null);
+        return toDto(players.byId(botId).orElseThrow());
     }
 
     /** The API bot a key opens: the SHA-256 of the key is looked up; empty for an unknown or revoked key. */
@@ -1147,10 +1158,6 @@ public class GameService implements MarketListener {
                     .orElseThrow(() -> ApiException.notFound("unknown bot " + playerId));
             GameEvent.BotStrategyAssigned event = new GameEvent.BotStrategyAssigned(playerId, botStrategy, System.currentTimeMillis());
             ctx.touch();
-            ctx.work(c -> {
-                players.updateBotStrategy(c, playerId, botStrategy);
-                return null;
-            });
             players.cacheBotStrategy(playerId, botStrategy);
             ctx.record(event, event.atMs());
             return null;
@@ -1165,10 +1172,6 @@ public class GameService implements MarketListener {
                     .orElseThrow(() -> ApiException.notFound("unknown bot " + playerId));
             GameEvent.NicknameChanged event = new GameEvent.NicknameChanged(playerId, nickname, System.currentTimeMillis());
             ctx.touch();
-            ctx.work(c -> {
-                players.updateNickname(c, playerId, nickname);
-                return null;
-            });
             players.cacheNickname(playerId, nickname);
             ctx.record(event, event.atMs());
             return null;
@@ -1206,10 +1209,6 @@ public class GameService implements MarketListener {
             players.byId(playerId).orElseThrow(() -> ApiException.notFound("unknown player " + playerId));
             GameEvent.NicknameChanged event = new GameEvent.NicknameChanged(playerId, trimmed, System.currentTimeMillis());
             ctx.touch();
-            ctx.work(c -> {
-                players.updateNickname(c, playerId, trimmed);
-                return null;
-            });
             players.cacheNickname(playerId, trimmed);
             ctx.record(event, event.atMs());
             return summary(playerId);
@@ -2802,14 +2801,17 @@ public class GameService implements MarketListener {
         return writeSolo("deposit " + coinId, nowMs, ctx -> {
             GameEvent.DepositConfirmedOnChain event =
                     new GameEvent.DepositConfirmedOnChain(playerId, playerIndex, amount.mojos(), coinId, height, nowMs);
-            if (!db.tx(c -> {
-                if (!depositConfirmations.tryReserve(c, coinId, playerId, playerIndex, amount.mojos(), height, nowMs)) {
-                    return false;
-                }
-                eventStore.append(c, event, nowMs);
-                return true;
-            })) {
+            // Р-107: the reservation (Postgres) is committed first, then the event is appended to the journal (durable): a crash between
+            // the two leaves a reserved coin whose event is missing, which the rebuild finds and appends (DepositReconciler); the other
+            // order could credit a coin twice
+            if (!db.tx(c -> depositConfirmations.tryReserve(c, coinId, playerId, playerIndex, amount.mojos(), height, nowMs))) {
                 return false;
+            }
+            try {
+                eventStore.append(null, event, nowMs);
+            } catch (RuntimeException | Error e) {
+                rebuildService.recoverAfterFailure(e, "deposit " + coinId, nowMs); // reconciles first: the reserved coin gets its event
+                throw e;
             }
             try {
                 eventApplier.apply(event);
@@ -3340,10 +3342,6 @@ public class GameService implements MarketListener {
                 }
                 GameEvent.BotRetired event = new GameEvent.BotRetired(bot.playerId(), nowMs);
                 ctx.record(event, nowMs);
-                ctx.work(c -> {
-                    players.updateRetired(c, bot.playerId(), nowMs);
-                    return null;
-                });
                 players.cacheRetired(bot.playerId(), nowMs);
                 retired.add(bot.playerId());
                 LOG.debugf("bot %s retired with %s", bot.playerId(), balance);

@@ -82,6 +82,10 @@ public class EngineRebuildService {
     BotService botService;
     @Inject
     GameService gameService;
+    @Inject
+    crowdvsmarket.server.service.SidecarReconciler reconciler;
+    @Inject
+    crowdvsmarket.server.journal.JournalProjector projector;
 
     /** The least time between two attempts of {@link #retryPendingRebuild} (milliseconds): a rebuild
      *  that cannot succeed (the database is down, an event cannot be replayed) must not read the whole
@@ -184,6 +188,10 @@ public class EngineRebuildService {
         long startedAtNanos = lastAttemptAtNanos;
         boolean recovering = recoveryPending;
         roundCalendar.init(nowMs);
+        // Р-107: what the database holds beside the journal is made to agree with it first (a deposit coin reserved without its event),
+        // and the copy of the journal in the tables is brought up to the journal's end: everything below reads the tables
+        reconciler.depositEvents();
+        projector.catchUp();
         players.reload();
         marketRegistry.reload();
 

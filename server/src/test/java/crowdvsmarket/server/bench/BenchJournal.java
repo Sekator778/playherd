@@ -227,6 +227,11 @@ public final class BenchJournal {
     private static final String EVENTS_COPY = "COPY game_events (event_type, payload, at_ms, schema_version) FROM STDIN";
 
     private static Copy eventsCopy(Connection c) throws SQLException {
+        // Р-107: the projector writes game_events with the journal's ids and never takes the sequence: the ids this copy takes by default
+        // continue after the largest one in the table
+        try (Statement st = c.createStatement()) {
+            st.execute("SELECT setval(pg_get_serial_sequence('game_events', 'id'), (SELECT COALESCE(MAX(id), 0) + 1 FROM game_events), false)");
+        }
         return new Copy(c, EVENTS_COPY);
     }
 

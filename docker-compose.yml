@@ -227,6 +227,9 @@ services:
       HERD_FEEDBACK_RATE_LIMIT_CAPACITY: ${HERD_FEEDBACK_RATE_LIMIT_CAPACITY:-5}
       HERD_FEEDBACK_RATE_LIMIT_REFILL_PER_HOUR: ${HERD_FEEDBACK_RATE_LIMIT_REFILL_PER_HOUR:-6}
       HERD_FEEDBACK_MAX_PER_DAY: ${HERD_FEEDBACK_MAX_PER_DAY:-1000}
+      # Р-107: the event journal, a Chronicle Queue, is the truth of the game; Postgres holds a copy filled after it. The directory is the
+      # named volume herd_journal_live (below), which belongs to this database: tools/stand.sh reset removes both.
+      HERD_JOURNAL_DIR: /var/lib/herd/journal
       HERD_DB_USER: herd
       # Task item 3: same value as `db`'s own POSTGRES_PASSWORD above (tools/stand.sh generates
       # it into .env once, reused by both, same "one shared secret, two env var names" pattern as
@@ -252,6 +255,8 @@ services:
       HERD_ECONOMY_TREASURY_OPENING_PLAY: "${HERD_ECONOMY_TREASURY_OPENING_PLAY:-99998100}"
       HERD_REGISTRATION_MAX_PER_IP_PER_DAY: "${HERD_REGISTRATION_MAX_PER_IP_PER_DAY:-20}"
       HERD_BOTS_RESPAWN_DELAY_MS: "${HERD_BOTS_RESPAWN_DELAY_MS:-3600000}"
+    volumes:
+      - herd_journal_live:/var/lib/herd/journal
     depends_on:
       db:
         condition: service_healthy
@@ -297,6 +302,10 @@ services:
     restart: unless-stopped
 
 volumes:
+  # The event journal (Р-107): the Chronicle Queue files of the server. Same life as herd_pg_live - the database is a copy of it and the
+  # journal is the truth, so neither is ever reset without the other (tools/stand.sh reset removes both by name).
+  herd_journal_live:
+    name: herd_journal_live
   # Live-price epoch database (Р-70/Р-71): a NEW volume on purpose. The replay-epoch volume `herd_pg`
   # (BTC only, accelerated history, rounds anchored to the first server start) is no longer
   # declared here — it stays on the machine untouched as an archive of that game. A new database

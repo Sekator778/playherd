@@ -194,12 +194,12 @@ class CoreWriterGameTest extends LiveGameTestBase {
             }
             // a batch of more than one command cannot be written; a lone command can
             doAnswer(inv -> {
-                List<?> events = inv.getArgument(1);
+                List<?> events = inv.getArgument(0);
                 if (events.size() >= 2) {
                     throw new IllegalStateException("injected commit failure");
                 }
                 return inv.callRealMethod();
-            }).when(eventStoreSpy).appendAll(any(Connection.class), anyList());
+            }).when(eventStoreSpy).appendAll(anyList());
             release.countDown();
             holder.get(30, TimeUnit.SECONDS);
 

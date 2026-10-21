@@ -38,6 +38,9 @@ networks:
 volumes:
   herd_pg_live:
     name: herdbench_pg
+  # Р-107: the bench's own journal, beside its own database (the stand's herd_journal_live is overridden like herd_pg_live)
+  herd_journal_live:
+    name: herdbench_journal
 
 services:
   db:

@@ -115,7 +115,7 @@ class EventStoreGoldenFixturesTest {
         // this test, which only exercises decode()'s reading of event_type/payload/schema_version.
         Object node = db.json().readTree(fixtureJson);
         long rowId = db.tx(c -> db.queryOne(c,
-                "INSERT INTO game_events (event_type, payload, at_ms, schema_version) VALUES (?, ?, ?, ?) "
+                "INSERT INTO game_events (id, event_type, payload, at_ms, schema_version) VALUES (4000000000000000000 + nextval('game_events_id_seq'), ?, ?, ?, ?) "
                         + "RETURNING id",
                 rs -> rs.getLong("id"), fixture.typeName(), Db.jsonb(node), 0L, fixture.version()));
         try {

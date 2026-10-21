@@ -42,6 +42,9 @@ WORKDIR /deployments
 # Non-root runtime user, standard Quarkus container convention.
 RUN useradd --system --create-home --shell /bin/bash herd
 RUN chown herd:herd /deployments
+# Р-107: the event journal (a Chronicle Queue) lives here; docker-compose.yml mounts a named volume on it. The directory is made and owned
+# by herd in the image so that a new, empty volume mounted on it is writable by the server.
+RUN mkdir -p /var/lib/herd/journal && chown -R herd:herd /var/lib/herd
 USER herd
 
 COPY --chown=herd:herd --from=build /build/server/target/quarkus-app/lib/ /deployments/lib/
@@ -51,5 +54,13 @@ COPY --chown=herd:herd --from=build /build/server/target/quarkus-app/quarkus/ /d
 
 EXPOSE 8081
 
-ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0"
-ENTRYPOINT ["java", "-Dquarkus.http.host=0.0.0.0", "-jar", "/deployments/quarkus-run.jar"]
+ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0" HERD_JOURNAL_DIR=/var/lib/herd/journal
+# The first line of options is what Chronicle Queue needs on Java 17+ (https://chronicle.software/insights/blogs/running-chronicle-on-java-17-and-later-the-required-jvm-arguments-explained,
+# read 2026-10-21; the list is in server/pom.xml as herd.chronicle.jvm-args); they are here and not in JDK_JAVA_OPTIONS because
+# docker-compose.yml sets that variable for the heap. chronicle.analytics.disable: Chronicle's usage statistics to a third party stay off.
+ENTRYPOINT ["java", \
+  "--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED", "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED", \
+  "--add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED", "--add-opens=java.base/java.lang=ALL-UNNAMED", \
+  "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED", \
+  "--add-opens=java.base/java.util=ALL-UNNAMED", "-Dchronicle.analytics.disable=true", \
+  "-Dquarkus.http.host=0.0.0.0", "-jar", "/deployments/quarkus-run.jar"]

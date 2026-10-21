@@ -13,6 +13,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jboss.logging.Logger;
 
@@ -25,16 +26,19 @@ import org.jboss.logging.Logger;
  *   <li>under the engine write lock run the commands one after the other: each validates against the state the ones before it
  *       left and applies its events to the engine ({@link WriteContext#record}); a refusal is answered at once and leaves
  *       nothing behind;
- *   <li>release the engine lock, then ONE transaction for the whole batch: the staged database writes, then all the events
- *       in one multi-row {@code INSERT} ({@link EventStore#appendAll});
- *   <li>after the commit, run the commands' after-commit actions and answer the callers: <b>a caller is answered only when
- *       its command is durable</b>.
+ *   <li>release the engine lock, then ONE append of the whole batch to the journal, and its sync to disk ({@link EventStore#appendAll}:
+ *       one excerpt of a Chronicle Queue, all or nothing - Р-107; Postgres is not touched);
+ *   <li>the staged database writes ({@link WriteContext#work}) of the few commands that have some (withdrawal rows, the result row of a
+ *       cancelled round): after the journal, in one transaction, and a failure of it is logged and repaired by the next rebuild, not
+ *       reported to a caller whose command is durable already;
+ *   <li>after the append, publish the read views, run the commands' after-commit actions and answer the callers: <b>a caller is answered
+ *       only when its command is durable</b>.
  * </ol>
  * The engine write lock is therefore held for the commands' own work (memory, tens of microseconds each) and never across a
- * database round trip; the batch commit happens with the lock released, and the commits of successive batches are in the
+ * disk or database round trip; the append happens with the lock released, and the appends of successive batches are in the
  * order of the batches, so the journal is in the order the events were applied.
  *
- * <p><b>Fail-stop.</b> A commit that fails leaves the engine ahead of the journal by the batch's events: every command of
+ * <p><b>Fail-stop.</b> An append (or its sync) that fails leaves the engine ahead of the journal by the batch's events: every command of
  * the batch is answered 503 {@code ENGINE_NOT_READY} (the failure attached as its cause), the engine is rebuilt from the
  * journal ({@link Host#recover}), and the writer goes on with the commands behind. A command that throws after it has applied
  * something has the same effect for itself: what the commands before it in the batch had accepted is committed, the engine is
@@ -393,27 +397,28 @@ public final class CoreWriter implements AutoCloseable {
             }
             Throwable commitFailure = null;
             long commitNs = 0;
+            long sidecarNs = 0;
             long version = -1;
-            if (!events.isEmpty() || !works.isEmpty()) {
+            if (!events.isEmpty()) {
                 long t0 = System.nanoTime();
                 try {
-                    version = db.tx(c -> {
-                        for (Db.SqlWork<?> w : works) {
-                            w.run(c);
-                        }
-                        eventStore.appendAll(c, events);
-                        return events.isEmpty() ? -1L : eventStore.lastId(c);
-                    });
+                    version = eventStore.appendAll(events); // the durability point: the excerpt is on disk when this returns
                 } catch (Throwable e) {
                     commitFailure = e;
                 }
                 commitNs = System.nanoTime() - t0;
+            }
+            if (commitFailure == null && !works.isEmpty()) {
+                long t0 = System.nanoTime();
+                sidecar(works);
+                sidecarNs = System.nanoTime() - t0;
             }
             ctx.commitTook(commitNs);
             if (rec) {
                 jfr.commands = accepted.size() + (tainted == null ? 0 : 1);
                 jfr.events = events.size();
                 jfr.commitNs = commitNs;
+                jfr.sidecarNs = sidecarNs;
             }
 
             if (commitFailure == null) {
@@ -471,6 +476,30 @@ public final class CoreWriter implements AutoCloseable {
                 jfr.commit();
             }
         }
+    }
+
+    /** Database writes staged by the commands of a batch that is durable in the journal already, in one transaction. A failure is logged,
+     *  not thrown: the callers' commands happened; what the rows lack is written again by the next rebuild. */
+    private void sidecar(List<Db.SqlWork<?>> works) {
+        try {
+            db.tx(c -> {
+                for (Db.SqlWork<?> w : works) {
+                    w.run(c);
+                }
+                return null;
+            });
+        } catch (Throwable e) {
+            sidecarFailures.incrementAndGet();
+            LOG.errorf(e, "the database rows of a batch that is in the journal could not be written - the events are durable, "
+                    + "the rows are written again by the next rebuild of the engine");
+        }
+    }
+
+    private final AtomicLong sidecarFailures = new AtomicLong();
+
+    /** How many batches had database writes after their append that failed. */
+    public long sidecarFailures() {
+        return sidecarFailures.get();
     }
 
     /** Hands the committed batch to the host, which publishes its read views; a failure is logged, never thrown. */

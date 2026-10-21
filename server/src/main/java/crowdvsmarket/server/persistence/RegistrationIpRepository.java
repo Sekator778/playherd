@@ -72,6 +72,12 @@ public class RegistrationIpRepository {
         db.tx(c -> db.update(c, "INSERT INTO registration_ips (ip_hash, at_ms) VALUES (?, ?)", ipHash, nowMs));
     }
 
+    /** Takes back one registration recorded for the address at {@code nowMs} (a registration that did not happen after all). */
+    public void forget(String ipHash, long nowMs) {
+        db.tx(c -> db.update(c, "DELETE FROM registration_ips WHERE ctid = (SELECT ctid FROM registration_ips WHERE ip_hash = ? AND at_ms = ? LIMIT 1)",
+                ipHash, nowMs));
+    }
+
     /** {@link #record(String, long)} within the caller's transaction (the batch of the core writer). */
     public void record(Connection c, String ipHash, long nowMs) throws SQLException {
         db.update(c, "INSERT INTO registration_ips (ip_hash, at_ms) VALUES (?, ?)", ipHash, nowMs);
