@@ -2,6 +2,11 @@
 target/
 *.class
 
+# The event journal of a server started from the repository directory (Р-107; herd.journal.dir, default ./journal)
+/journal/
+/server/journal/
+*.importing
+
 # Rust
 chain/target/
 

@@ -167,6 +167,26 @@ class JournalCutoverTest {
         assertThat(journal.cutover()).as("no import on this start").isNull();
     }
 
+    /** A measurement, not a gate: {@code -Dherd.test.cutover-rows=350000} imports a table of the size of the live stand's and prints the time. */
+    @Test
+    void theImportOfALargeTableIsTimed() {
+        int rows = Integer.getInteger("herd.test.cutover-rows", 0);
+        org.junit.jupiter.api.Assumptions.assumeTrue(rows > 0, "measurement: run with -Dherd.test.cutover-rows=350000");
+        journal.resetForTests();
+        db.tx(c -> db.update(c, "TRUNCATE TABLE game_events"));
+        db.tx(c -> db.update(c, "INSERT INTO game_events (id, event_type, payload, at_ms, schema_version, market, player_id) "
+                + "SELECT i, 'BetPlaced', jsonb_build_object('playerId', 'player-' || (i % 5000), 'interval', 'HOURLY', 'windowStart', 1700000000000, "
+                + "'windowEnd', 1700003600000, 'direction', 'UP', 'leverage', 5, 'stakeMojos', 100000, 'atMs', 1700000000000 + i, 'market', 'BTC', "
+                + "'pad', repeat('x', 150)), 1700000000000 + i, 2, 'BTC', 'player-' || (i % 5000) FROM generate_series(1, ?) AS i", rows));
+
+        long t0 = System.nanoTime();
+        JournalCutover.Result result = journal.reimportFromTableForTests();
+        long ms = (System.nanoTime() - t0) / 1_000_000L;
+
+        System.out.println("CUTOVER-TIME rows=" + result.rows() + " total_ms=" + ms + " import_ms=" + result.tookMs() + " sha256=" + result.sha256());
+        assertThat(result.rows()).isEqualTo(rows);
+    }
+
     @Test
     void aTableAheadOfTheJournalIsRefused() {
         journal.append(List.of(new JournalRecord(0, "BotRetired", 2, 1, null, "bot-x", "{\"playerId\":\"bot-x\",\"atMs\":1}")));
