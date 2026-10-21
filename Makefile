@@ -91,7 +91,7 @@ build-web: web-deps ## production web bundle
 	cd web && npm run build
 
 apk: web-deps ## Android debug APK (Capacitor); HERD_APP_URL=https://host points it at a real server (default: emulator, http://10.0.2.2:8480)
-	cd web && export HERD_APP_URL='$(HERD_APP_URL)' && npm run build:capacitor && npx cap sync android && cd android && ./gradlew assembleDebug
+	cd web && export HERD_APP_URL='$(HERD_APP_URL)' && npm run build:capacitor && npx cap sync android && cd android && $(MVN_JAVA) ./gradlew assembleDebug
 
 # --- local stand (docker compose project "herd", via tools/stand.sh) and e2e ---
 
