@@ -2636,6 +2636,11 @@ public class GameService implements MarketListener {
             });
             return new Requested(requestId, toAddress);
         });
+        // Р-107: the row is written after the request's event is durable (the batch's staged write); when that write failed the request is
+        // escrowed all the same, so the row is written here (the rebuild would write it too) and the caller gets its answer
+        if (withdrawalDeposits.findWithdrawal(requested.requestId()).isEmpty()) {
+            withdrawalDeposits.ensureWithdrawal(requested.requestId(), playerId, amt.mojos(), requested.toAddress(), nowMs);
+        }
         withdrawalSubmitter.submit(requested.requestId(), requested.toAddress(), amt.mojos(), nowMs);
         return withdrawalDeposits.findWithdrawal(requested.requestId()).orElseThrow();
     }

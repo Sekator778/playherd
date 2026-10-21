@@ -17,10 +17,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The {@code players} dimension table (wallet address, nickname, bot flag/strategy) plus an
- * in-memory cache of it. Since architecture plan F4 the table is a projection of the journal: a player's row is written in the
- * transaction of its {@code PlayerRegistered} event (and a nickname, strategy or retirement in the transaction of its event), and a
- * rebuild repairs the table from the journal ({@link #repairFromJournal}) before the cache is read. Not in the journal, by design:
- * the API key of an API bot and the referral columns.
+ * in-memory cache of it. Since architecture plan F4 the table is a projection of the journal, and since Р-107 it is written by the
+ * journal projector after the event is durable ({@link #projectEvents}), and a rebuild repairs it from the journal
+ * ({@link #repairFromJournal}) before the cache is read. Not in the journal, by design: the API key of an API bot and the referral
+ * columns, which live in {@code player_sidecar} (written before the command) and are copied into the row by the projector.
  *
  * <p><b>The cache never runs ahead of the table.</b> {@link #insert} and {@link #updateNickname}
  * write the row inside the caller's transaction and touch no memory; the caller puts the result
@@ -190,10 +190,8 @@ public final class PlayerDirectory {
         return maps.byId.values().stream().filter(Row::isBot).toList();
     }
 
-    /** Inserts a brand-new player row within the caller's transaction and returns it; the cache is
-     *  not touched — pass the row to {@link #cache} after the commit. {@code playerIndex} must come
-     *  from {@code ServerMetaRepository#reserveNextPlayerIndex()} — allocated once, before this
-     *  call, never re-derived (Р-53). */
+    /** Inserts a brand-new player row within the caller's transaction and returns it; the cache is not touched. Not used by the game any
+     *  more (Р-107: the projector writes the rows, {@link #projectEvents}); the directory's own test builds its fixtures with it. */
     public Row insert(Connection c, String playerId, String walletAddress, String nickname, boolean isBot,
                         String botStrategy, int playerIndex, long atMs) throws SQLException {
         db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, "
@@ -202,34 +200,8 @@ public final class PlayerDirectory {
         return new Row(playerId, walletAddress, nickname, isBot, botStrategy, playerIndex, atMs);
     }
 
-    /** Р-106: inserts an API bot (not a house bot: {@code is_bot} stays false) with its first key, within the caller's transaction;
-     *  the cache gets the row through {@link #cache} after the commit. */
-    public Row insertApiBot(Connection c, String playerId, String walletAddress, String nickname, int playerIndex,
-                            String ownerId, String keyHash, String keyHint, long atMs) throws SQLException {
-        db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, "
-                        + "created_at_ms, kind, owner_player_id, api_key_hash, api_key_hint) "
-                        + "VALUES (?, ?, ?, FALSE, NULL, ?, ?, ?, ?, ?, ?)",
-                playerId, walletAddress, nickname, playerIndex, atMs, KIND_API_BOT, ownerId, keyHash, keyHint);
-        return new Row(playerId, walletAddress, nickname, false, null, playerIndex, atMs, null, false, KIND_API_BOT, ownerId,
-                keyHash, keyHint);
-    }
-
-    /**
-     * F4: writes the {@code players} row that the registration event describes, within the caller's transaction (the transaction that
-     * appended the event), and returns it; the cache gets it through {@link #cache} after the commit. Idempotent: a row that exists
-     * is left as it is. {@code keyHash} / {@code keyHint} are an API bot's first key: they are in the table and never in the journal.
-     */
-    public Row project(Connection c, GameEvent.PlayerRegistered e, String keyHash, String keyHint) throws SQLException {
-        db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, player_index, "
-                        + "created_at_ms, kind, owner_player_id, api_key_hash, api_key_hint) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-                e.playerId(), e.walletAddress(), e.displayName(), KIND_HOUSE_BOT.equals(e.kind()), e.botStrategy(), e.playerIndex(),
-                e.atMs(), e.kind(), e.ownerPlayerId(), keyHash, keyHint);
-        return rowOf(e, keyHash, keyHint);
-    }
-
-    /** The row {@link #project} writes for the registration event, without writing it: what the cache gets at once when the write is
-     *  staged for the batch of the core writer. */
+    /** The row the projector writes ({@link #projectEvents}) for the registration event, without writing it: what the cache gets at once, in
+     *  the command that records the event. */
     public static Row rowOf(GameEvent.PlayerRegistered e, String keyHash, String keyHint) {
         return new Row(e.playerId(), e.walletAddress(), e.displayName(), KIND_HOUSE_BOT.equals(e.kind()), e.botStrategy(),
                 e.playerIndex(), e.atMs(), null, false, e.kind(), e.ownerPlayerId(), keyHash, keyHint);
@@ -398,29 +370,14 @@ public final class PlayerDirectory {
         current.byId.computeIfPresent(playerId, (id, prev) -> prev.withNickname(nickname));
     }
 
-    /** Writes the retirement of a bot within the caller's transaction ({@link #cacheRetired} after the commit). */
-    public void updateRetired(Connection c, String playerId, long atMs) throws SQLException {
-        db.update(c, "UPDATE players SET retired_at_ms = ? WHERE player_id = ?", atMs, playerId);
-    }
-
     /** The cache's side of {@link #updateRetired}, after the commit. */
     public void cacheRetired(String playerId, long atMs) {
         maps.byId.computeIfPresent(playerId, (id, prev) -> prev.withRetiredAt(atMs));
     }
 
-    /** Writes that a new bot has taken the place of the retired {@code playerId}, within the caller's transaction. */
-    public void updateReplaced(Connection c, String playerId) throws SQLException {
-        db.update(c, "UPDATE players SET replaced = TRUE WHERE player_id = ?", playerId);
-    }
-
     /** The cache's side of {@link #updateReplaced}, after the commit. */
     public void cacheReplaced(String playerId) {
         maps.byId.computeIfPresent(playerId, (id, prev) -> prev.withReplaced(true));
-    }
-
-    /** Writes the strategy (catalog id) of a bot within the caller's transaction ({@link #cacheBotStrategy} after the commit). */
-    public void updateBotStrategy(Connection c, String playerId, String botStrategy) throws SQLException {
-        db.update(c, "UPDATE players SET bot_strategy = ? WHERE player_id = ? AND is_bot", botStrategy, playerId);
     }
 
     /** The cache's side of {@link #updateBotStrategy}, after the commit. */

@@ -181,10 +181,23 @@ case "$1" in
     case "$*" in
       *service=chainsvc*) [[ "${FAKE_VPS_CHAINSVC:-0}" != 1 ]] || echo "chainsvc0001" ;;
       *service=db*) [[ "${FAKE_VPS_DB:-1}" != 1 ]] || echo "db0001" ;;
+      *service=server*) [[ "${FAKE_VPS_SERVER:-1}" != 1 ]] || echo "serverc0001" ;;
     esac
+    ;;
+  volume) [[ "${FAKE_JOURNAL_VOLUME_MISSING:-0}" != 1 ]] ;;
+  run)
+    wc -c >>"${FAKE_JOURNAL_BYTES:-/dev/null}"
+    [[ "${FAKE_JOURNAL_FAIL:-0}" != 1 ]] || exit 4
     ;;
   exec)
     case "$*" in
+      *"tar -C /var/lib/herd/journal"*)
+        d="$(mktemp -d)"
+        printf 'journal bytes\n' >"${d}/20261021F.cq4"
+        tar -C "${d}" -cf - .
+        rm -rf "${d}"
+        ;;
+      *curl*admin/status*) printf '{"journal":{"projector":{"running":true,"lag":%s,"failures":%s}}}' "${FAKE_JOURNAL_LAG:-3}" "${FAKE_JOURNAL_FAILURES:-0}" ;;
       *pg_dump*)
         [[ "${FAKE_PGDUMP_FAIL:-0}" != 1 ]] || exit 1
         echo "-- PostgreSQL database dump"
@@ -205,7 +218,13 @@ case "$1" in
     esac
     ;;
   stats) printf '%s\n' "${FAKE_STATS:-}" ;;
-  inspect) printf 'PATH=/usr/bin\nJDK_JAVA_OPTIONS=%s\n' "${FAKE_JDK_OPTS:-}" ;;
+  inspect)
+    case "$*" in
+      *Mounts*) printf '%s' "${FAKE_JOURNAL_VOLUME-herd_journal_live}" ;;
+      *.Image*) echo "sha256:fakeimage" ;;
+      *) printf 'PATH=/usr/bin\nJDK_JAVA_OPTIONS=%s\n' "${FAKE_JDK_OPTS:-}" ;;
+    esac
+    ;;
   *) echo "fake docker (vps side): unexpected $*" >&2; exit 99 ;;
 esac
 EOF
@@ -932,6 +951,15 @@ test_backup() {
   ok "both files are mode 600 (the archive holds the operator key)" "$?"
   grep -q 'pg_dump -U herd -d herd --clean --if-exists' "${SANDBOX}/docker.log"
   ok "pg_dump runs with --clean --if-exists (a restore replaces what is there)" "$?"
+  # Р-107: the event journal (a Chronicle Queue) is archived next to the dump, with the same stamp, after it
+  local jr
+  jr="$(ls "${bk}"/journal/journal-nightly-*.tar.gz 2>/dev/null | head -n 1)"
+  [[ -n "${jr}" && "$(mode_of "${jr}")" == 600 ]] && gzip -t "${jr}" && gzip -dc "${jr}" | tar -tf - | grep -q '20261021F.cq4'
+  ok "nightly archives the journal (valid, mode 600, the queue file in it)" "$?"
+  [[ "$(basename "${pg}" .sql.gz | sed 's/^herd-//')" == "$(basename "${jr}" .tar.gz | sed 's/^journal-//')" ]]
+  ok "... with the same kind and time stamp as the dump" "$?"
+  grep -q 'exec serverc0001 tar -C /var/lib/herd/journal -cf - .' "${SANDBOX}/docker.log"
+  ok "... taken inside the server container, from the journal directory" "$?"
 
   # retention: 9 old nightlies, 3 old pre-deploy ones
   local i
@@ -995,6 +1023,34 @@ test_backup() {
   rc=$?
   [[ ${rc} -ne 0 ]] && [[ "$(grep -c 'start server' "${SANDBOX}/docker.log")" == 1 ]]
   ok "a failing restore: non-zero exit, the server is started again" "$?"
+
+  # Р-107: the journal goes back with the dump
+  : >"${SANDBOX}/journal.bytes"
+  FAKE_JOURNAL_BYTES="${SANDBOX}/journal.bytes" b restore "${pg}" --yes >/dev/null 2>&1
+  rc=$?
+  ok "restore with the journal archive of the same stamp runs" "${rc}"
+  [[ "$(tr -d ' \n' <"${SANDBOX}/journal.bytes")" -gt 20 ]]
+  ok "restore: the journal archive reached the journal volume (docker run ... sh -c 'find /j ... tar -xf -')" "$?"
+  local stamp
+  stamp="$(basename "${pg}" .sql.gz | sed 's/^herd-//')"
+  mv "${bk}/journal/journal-${stamp}.tar.gz" "${bk}/journal.hidden"
+  : >"${SANDBOX}/docker.log"
+  b restore "${pg}" --yes >/dev/null 2>&1
+  rc=$?
+  [[ ${rc} -ne 0 ]] && ! grep -q 'stop server' "${SANDBOX}/docker.log"
+  ok "restore without the journal archive of the dump: refused before anything is stopped or replaced" "$?"
+  : >"${SANDBOX}/journal.bytes"
+  FAKE_JOURNAL_BYTES="${SANDBOX}/journal.bytes" b restore "${pg}" --yes --empty-journal >/dev/null 2>&1
+  rc=$?
+  ok "restore --empty-journal (a dump from before the journal existed) runs" "${rc}"
+  [[ "$(tr -d ' \n' <"${SANDBOX}/journal.bytes")" == 0 ]]
+  ok "... and sends the journal volume nothing to unpack (it is emptied; the server imports the table)" "$?"
+  mv "${bk}/journal.hidden" "${bk}/journal/journal-${stamp}.tar.gz"
+  : >"${SANDBOX}/docker.log"
+  FAKE_JOURNAL_FAIL=1 b restore "${pg}" --yes >/dev/null 2>&1
+  rc=$?
+  [[ ${rc} -ne 0 ]] && ! grep -q 'start server' "${SANDBOX}/docker.log"
+  ok "a journal volume that cannot be replaced: non-zero exit and the server stays stopped (the database is already the old one)" "$?"
 }
 
 # --- remote.sh verify helpers ----------------------------------------------------------------------------------------------------------------
@@ -1256,10 +1312,16 @@ printf 'docker %s\n' "$*" >>"${state}/docker.log"
 case "$1" in
   info) exit 0 ;;
   run) exit 0 ;; # caddy validate
-  volume) exit 1 ;;
+  volume)
+    case "$*" in
+      "volume inspect herd_journal_live") exit 0 ;;
+      *) exit 1 ;;
+    esac
+    ;;
   restart) exit 0 ;;
   inspect)
     case "$*" in
+      *Mounts*) printf 'herd_journal_live' ;;
       *State.Running*edge-caddy*) [[ -f "${state}/edge-up" ]] && echo true || echo false ;;
       *State.Status*edge-caddy*) [[ -f "${state}/edge-up" ]] && echo running ;;
       *State.StartedAt*) echo "2026-10-08T20:00:00.000000000Z" ;;
@@ -1280,7 +1342,12 @@ case "$1" in
       *) ;;
     esac
     ;;
-  exec) exit 0 ;;
+  exec)
+    case "$*" in
+      *curl*admin/status*) printf '{"journal":{"projector":{"running":true,"lag":2,"failures":0}}}' ;;
+    esac
+    exit 0
+    ;;
   logs)
     case "$*" in
       *server0001*) echo "2026-10-08 20:01:02 INFO  [crowdvsmarket.server.chain.ChainOracleSeqGate] oracle seq floor obtained: chainsvc maxKnownSeq=10804, the counter is at 10804 — settlement may issue seq 10805 and on" ;;

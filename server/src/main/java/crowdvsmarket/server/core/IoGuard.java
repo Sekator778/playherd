@@ -22,8 +22,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * <ul>
  *   <li>holds the engine <b>write</b> lock ({@link crowdvsmarket.server.jfr.TimedEngineLock} tells {@link #writeLockAcquired} /
  *       {@link #writeLockReleasing}; the read lock is not counted), or
- *   <li>is the core writer's thread ({@link #WRITER_THREAD}) and is not in the batch commit ({@code Db.tx} called by
- *       {@code CoreWriter.runStretch}, which runs with the engine lock released).
+ *   <li>is the core writer's thread ({@link #WRITER_THREAD}) and is not in the database writes that a few commands stage and the writer
+ *       runs after the batch is in the journal ({@code Db.tx} called by {@code CoreWriter.sidecar}, engine lock released). Since
+ *       Р-107 the batch's own commit is the append of the journal (a Chronicle Queue on disk), which is not a database or network call.
  * </ul>
  * unless a frame of its stack is in {@link #ALLOWED}: the known exceptions, each with its reason and the step of the plan that removes
  * it. A violation is recorded (the file {@code target/io-guard/*.txt}, written when the JVM ends) and, in mode {@code fail}, thrown

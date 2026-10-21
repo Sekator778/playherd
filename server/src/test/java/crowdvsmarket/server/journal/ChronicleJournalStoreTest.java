@@ -173,6 +173,40 @@ class ChronicleJournalStoreTest {
     }
 
     @Test
+    void theDailyFileRollsOverAndReadersAndRestartsFollowAcrossTheFiles() throws Exception {
+        long day = 24L * 3_600_000L;
+        long start = 20_000L * day;
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(start + 3_600_000L);
+        try (ChronicleJournalStore store = ChronicleJournalStore.open(dir, clock::get)) {
+            store.append(batch(0, 3));
+            store.append(batch(3, 2));
+            clock.set(start + day + 5_000L);
+            store.append(batch(5, 4));
+            clock.set(start + 3 * day + 5_000L);
+            store.append(batch(9, 1));
+            store.append(batch(10, 6));
+            assertThat(store.durableSeq()).isEqualTo(16);
+            List<Long> seqs = new ArrayList<>();
+            store.replay(0, Long.MAX_VALUE, r -> seqs.add(r.seq()));
+            assertThat(seqs).isEqualTo(java.util.stream.LongStream.rangeClosed(1, 16).boxed().toList());
+            seqs.clear();
+            store.replay(7, 12, r -> seqs.add(r.seq()));
+            assertThat(seqs).containsExactly(8L, 9L, 10L, 11L, 12L);
+        }
+        try (var files = Files.list(dir)) {
+            assertThat(files.filter(p -> p.toString().endsWith(".cq4")).count()).as("one file for each day with an append").isEqualTo(3);
+        }
+        clock.set(start + 4 * day);
+        try (ChronicleJournalStore store = ChronicleJournalStore.open(dir, clock::get)) {
+            assertThat(store.durableSeq()).isEqualTo(16);
+            assertThat(store.append(batch(16, 1))).isEqualTo(17);
+            List<Long> seqs = new ArrayList<>();
+            store.replay(14, Long.MAX_VALUE, r -> seqs.add(r.seq()));
+            assertThat(seqs).containsExactly(15L, 16L, 17L);
+        }
+    }
+
+    @Test
     void aDamagedExcerptIsRefusedOnOpen() throws Exception {
         try (ChronicleJournalStore store = ChronicleJournalStore.open(dir)) {
             store.append(batch(0, 1));

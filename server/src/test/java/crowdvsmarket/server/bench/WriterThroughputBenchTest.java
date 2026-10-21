@@ -9,7 +9,7 @@ import crowdvsmarket.server.markets.Category;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.markets.MarketKind;
 import crowdvsmarket.server.testsupport.LiveGameTestBase;
-import crowdvsmarket.server.testsupport.LiveMarketsProfile;
+import crowdvsmarket.server.testsupport.JournalAsyncProfile;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
 import java.util.ArrayList;
@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  * {@code WRITER-BENCH}.
  */
 @QuarkusTest
-@TestProfile(LiveMarketsProfile.class)
+@TestProfile(JournalAsyncProfile.class)
 class WriterThroughputBenchTest extends LiveGameTestBase {
 
     @Test

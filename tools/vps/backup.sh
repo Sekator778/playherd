@@ -176,7 +176,7 @@ cmd_restore() {
   candidate="${BACKUP_DIR}/journal/journal-${jbase}.tar.gz"
   if [[ "${empty_journal}" != "--empty-journal" ]]; then
     [[ -f "${candidate}" ]] || die "no journal archive ${candidate} for this dump: the journal is the truth of the game and goes back with the dump. A dump from before the journal existed: repeat with --empty-journal (the server imports the table into a new journal)"
-    gzip -t "${candidate}" && gzip -dc "${candidate}" | tar -tf - >/dev/null || die "${candidate} is not a valid journal archive"
+    if ! gzip -t "${candidate}" || ! gzip -dc "${candidate}" | tar -tf - >/dev/null; then die "${candidate} is not a valid journal archive"; fi
     journal_file="${candidate}"
   fi
   cid="$(stand_container db)"

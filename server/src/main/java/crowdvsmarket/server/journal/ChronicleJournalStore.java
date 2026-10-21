@@ -113,16 +113,24 @@ public final class ChronicleJournalStore implements AutoCloseable {
 
     /** Opens (creating it when it is not there) the journal in {@code dir}. */
     public static ChronicleJournalStore open(Path dir) {
+        return open(dir, null);
+    }
+
+    /** {@link #open(Path)} with a clock of its own (a test rolls the daily file over without waiting for midnight); {@code null}: the system's. */
+    static ChronicleJournalStore open(Path dir, java.util.function.LongSupplier clockMs) {
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
             throw new UncheckedIOException("cannot create the journal directory " + dir, e);
         }
-        ChronicleQueue queue = SingleChronicleQueueBuilder.single(dir.toFile())
+        SingleChronicleQueueBuilder builder = SingleChronicleQueueBuilder.single(dir.toFile())
                 .rollCycle(RollCycles.FAST_DAILY)
                 .syncMode(SyncMode.SYNC)
-                .timeoutMS(5_000L)
-                .build();
+                .timeoutMS(5_000L);
+        if (clockMs != null) {
+            builder.timeProvider(clockMs::getAsLong);
+        }
+        ChronicleQueue queue = builder.build();
         ChronicleJournalStore store = new ChronicleJournalStore(dir, queue);
         try {
             store.recoverPosition();

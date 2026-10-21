@@ -29,6 +29,15 @@ public class WithdrawalDepositRepository {
                 + "VALUES (?, ?, ?, 'REQUESTED', ?, ?)", requestId, playerId, amountMojos, toAddress, atMs);
     }
 
+    /** {@link #insertWithdrawal} in a transaction of its own that leaves an existing row alone: the row of a request whose event is in the
+     *  journal and whose staged write after it failed (Р-107), written by the caller that needs it. */
+    public void ensureWithdrawal(String requestId, String playerId, long amountMojos, String toAddress, long atMs) {
+        db.tx(c -> db.update(c, "INSERT INTO withdrawal_requests "
+                + "(request_id, player_id, amount_mojos, state, to_address, requested_at_ms) "
+                + "VALUES (?, ?, ?, 'REQUESTED', ?, ?) ON CONFLICT (request_id) DO NOTHING",
+                requestId, playerId, amountMojos, toAddress, atMs));
+    }
+
     public void updateWithdrawalState(Connection c, String requestId, Enums.WithdrawalState state)
             throws SQLException {
         db.update(c, "UPDATE withdrawal_requests SET state = ? WHERE request_id = ?", state.name(), requestId);
