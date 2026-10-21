@@ -79,7 +79,6 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
         long betEventsBefore = count("SELECT COUNT(*) AS n FROM game_events WHERE event_type = 'BetPlaced'");
         EngineLockProbe.Probe depositCall = new EngineLockProbe.Probe();
         EngineLockProbe.Probe betCall = new EngineLockProbe.Probe();
-        EngineLockProbe.Probe readCall = new EngineLockProbe.Probe();
         EngineLockProbe.Probe holderIn = new EngineLockProbe.Probe();
         ExecutorService pool = Executors.newFixedThreadPool(4);
         try {
@@ -88,7 +87,6 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
                 // the three calls pass their first readiness check and queue for the lock this thread holds
                 EngineLockProbe.awaitQueued(depositCall);
                 EngineLockProbe.awaitQueued(betCall);
-                EngineLockProbe.awaitQueued(readCall);
                 // a settlement of this thread failed, and so did its recovery: the engine is not ready
                 doThrow(new IllegalStateException("db flapping")).when(eventStoreSpy).replayAfter(anyLong(), any());
                 rebuild.recoverAfterFailure(new IllegalStateException("the settlement failed"));
@@ -105,13 +103,11 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
                 return catching(() -> gameService.placeBet(player,
                         bet(betting, Enums.Direction.UP, 3, "100.000"), betting.startMs() - 1));
             });
-            Future<Throwable> read = pool.submit(() -> {
-                readCall.arrive();
-                // a read that still takes the engine's read lock (F8: account() is from the views and takes none)
-                return catching(() -> gameService.ratings(null));
-            });
 
             holder.get(30, TimeUnit.SECONDS);
+            // a read takes no lock (F8: it comes from the views): it has nothing to queue behind, and asked once the recovery has
+            // failed it answers 503 as well
+            Future<Throwable> read = pool.submit(() -> catching(() -> gameService.ratings(null)));
             for (Future<Throwable> call : java.util.List.of(deposit, bet, read)) {
                 assertThat(call.get(30, TimeUnit.SECONDS)).isInstanceOfSatisfying(ApiException.class, e -> {
                     assertThat(e.code()).isEqualTo(Enums.ApiErrorCode.ENGINE_NOT_READY);

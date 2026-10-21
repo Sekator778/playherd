@@ -347,6 +347,8 @@ class EconomyStageBFlowTest extends LiveGameTestBase {
         java.time.Instant now = java.time.Instant.now();
         ledger().reserveStake(player, "synthetic-round", play(stake), now);
         ledger().settleRound(player, "synthetic-round", play(stake), play(payout), java.util.Optional.of(true), now);
+        // no event, so no batch published it: the reads (the breaker, the reconciliation) take the views, which are told
+        gameService.publishAllViews(gameService.snapshot().version());
     }
 
     // --- B7: the reconciliation ---
