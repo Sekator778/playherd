@@ -24,10 +24,9 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Cancels one round with a refund of every pending bet, in ONE database transaction like the
- * settlement (docs/research/markets_architecture.md §4 п.3): the {@code RoundCancelled} event, its
- * application to the engine (every stake refunded, the round's bet book entry cleared) and the
- * cancelled result row. {@link #cancel} never touches {@code RoundProgress} — the scheduler steps over
+ * Cancels one round with a refund of every pending bet (docs/research/markets_architecture.md §4 п.3): the
+ * {@code RoundCancelled} event and its application to the engine (every stake refunded, the round's bet book entry cleared); the
+ * cancelled result row follows once the event is durable ({@link DerivedRows}). {@link #cancel} never touches {@code RoundProgress} — the scheduler steps over
  * the round when it sees the row; {@link #closeSeries} stops a closed market's series.
  *
  * <p>It works on the state it is given, not on the live one: {@code GameService} cancels a round of
@@ -53,6 +52,8 @@ public class RoundCancellations {
     SeriesSeeder seeder;
     @Inject
     RoundVenues venues;
+    @Inject
+    DerivedRows derivedRows;
 
     /**
      * A market closed: cancels, with a refund, the running round and the round open for betting of each
@@ -95,37 +96,38 @@ public class RoundCancellations {
         if (roundResults.exists(window.roundId())) {
             return;
         }
+        writeRow(market, window, event.reason(), event.atMs(), refundedBetCount);
+    }
+
+    /** Writes the result row of a cancelled round, unless it is there: looks the round's venue up (database) and hashes the result. Not for
+     *  the core writer's turn - {@link #cancel(WriteContext, EngineHub, Market, RoundWindow, String, long)} queues it for {@link DerivedRows}. */
+    void writeRow(Market market, RoundWindow window, String reason, long cancelledAtMs, int refundedBetCount) {
         String venue = Instruments.hasBackup(market) ? venues.venueOfRound(window.roundId()).orElse(null) : null;
         var canonical = ResultsHasher.build(market.id(), window.roundId(), window.interval().name(), "CANCELLED",
                 null, null, List.of(), null, venue);
         db.tx(c -> {
             roundResults.insertCancelled(c, market.id(), window.roundId(), window.interval(), window.startMs(), window.endMs(),
-                    event.reason(), event.atMs(), refundedBetCount, canonical.hash(), canonical.json(), venue);
+                    reason, cancelledAtMs, refundedBetCount, canonical.hash(), canonical.json(), venue);
             return null;
         });
     }
 
     /**
      * {@link #cancel(EventApplier, EngineHub, Market, RoundWindow, String, long, AtomicBoolean)} for the live engine, inside
-     * a command of the core writer: the event is applied now and goes to the journal with the batch, the cancelled result row
-     * is written in the batch's transaction. A failure of either fails the batch; the engine is rebuilt behind it.
+     * a command of the core writer: the event is applied now and goes to the journal with the batch. Nothing here touches the database:
+     * the cancelled result row (with the venue the round ran on, which is looked up for it) is written by {@link DerivedRows} once the
+     * batch is durable, and by the next rebuild if that does not happen. A batch that fails to commit has the engine rebuilt behind it.
      */
     public Rounds.CancellationDto cancel(WriteContext ctx, EngineHub hub, Market market, RoundWindow window,
                                          String reason, long nowMs) {
         int refundedBetCount = hub.engine(market.id(), window.interval()).betBook().count(window.roundId());
         GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
                 window.endMs(), reason, nowMs, market.id());
-        String venue = Instruments.hasBackup(market) ? venues.venueOfRound(window.roundId()).orElse(null) : null;
-        var canonical = ResultsHasher.build(market.id(), window.roundId(), window.interval().name(), "CANCELLED",
-                null, null, List.of(), null, venue);
         ctx.record(event, nowMs); // refunds every pending bet and clears the round's BetBook entry
         // after the batch has committed (a cancel by an operator, by the scheduler, or by a market close): the round, its market, every player
         ctx.afterCommit(() -> publisher.roundCancelled(market.id(), window.roundId()));
-        ctx.work(c -> {
-            roundResults.insertCancelled(c, market.id(), window.roundId(), window.interval(), window.startMs(),
-                    window.endMs(), reason, nowMs, refundedBetCount, canonical.hash(), canonical.json(), venue);
-            return null;
-        });
+        ctx.afterCommit(() -> derivedRows.submit("cancelled round " + window.roundId(),
+                () -> writeRow(market, window, reason, nowMs, refundedBetCount)));
         return new Rounds.CancellationDto(window.roundId(), market.id(), market.symbol(), reason, nowMs,
                 refundedBetCount);
     }

@@ -57,6 +57,8 @@ public class AdminResource {
     crowdvsmarket.server.journal.Journal journal;
     @Inject
     crowdvsmarket.server.journal.JournalProjector projector;
+    @Inject
+    crowdvsmarket.server.service.DerivedRows derivedRows;
 
     private void requireOperator(String authorizationHeader) {
         String expected = "Bearer " + config.operatorToken();
@@ -181,7 +183,7 @@ public class AdminResource {
             LOG.warnf(e, "the operator status could not read the journal");
         }
         return new AdminStatusDto(info, cancellations, corrections, priceFeeds(), breaker, botDays(),
-                gameService.missingRows(), gameService.ledgerRowsStatus(), snapshotStatus, journalStatus);
+                gameService.missingRows(), gameService.ledgerRowsStatus(), snapshotStatus, journalStatus, derivedRows.status());
     }
 
     /**
@@ -276,7 +278,9 @@ public class AdminResource {
      *  ERROR in the log); {@code null} while the database does not answer. {@code journal} (Р-107): the journal's directory and last seq,
      *  what the first start imported from {@code game_events} ({@code importedFromTable}: rows, last id, sha256), and the projector that
      *  copies it into {@code game_events}: {@code projector.lag} (events the copy is behind), {@code failures} in a row, {@code lastError},
-     *  the last batch. Not part of {@code contract.ts}: the operator's own page. */
+     *  the last batch. {@code derivedRows}: the rows written after a batch by a thread of their own (the result row of a cancelled
+     *  round) - {@code pending} jobs, how long the oldest waiting one has waited ({@code oldestPendingMs}), {@code written}, {@code dropped}
+     *  (left to the next rebuild), {@code failedAttempts}, {@code lastError}. Not part of {@code contract.ts}: the operator's own page. */
     public record AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                                    java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
                                    java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
@@ -284,7 +288,19 @@ public class AdminResource {
                                    java.util.List<GameService.MissingRows> missingRoundRows,
                                    GameService.LedgerRowsStatus ledgerRows,
                                    crowdvsmarket.server.snapshot.SnapshotService.Status snapshots,
-                                   crowdvsmarket.server.journal.Journal.Status journal) {
+                                   crowdvsmarket.server.journal.Journal.Status journal,
+                                   crowdvsmarket.server.service.DerivedRows.Status derivedRows) {
+
+        public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
+                              java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,
+                              java.util.List<PriceSource.FeedStatus> priceFeeds, Boolean circuitBreakerOpen,
+                              java.util.List<BotMetrics.Day> botDays, java.util.List<GameService.MissingRows> missingRoundRows,
+                              GameService.LedgerRowsStatus ledgerRows,
+                              crowdvsmarket.server.snapshot.SnapshotService.Status snapshots,
+                              crowdvsmarket.server.journal.Journal.Status journal) {
+            this(server, recentCancellations, recentLedgerCorrections, priceFeeds, circuitBreakerOpen, botDays,
+                    missingRoundRows, ledgerRows, snapshots, journal, null);
+        }
 
         public AdminStatusDto(ServerInfo.ServerInfoDto server, java.util.List<Rounds.CancellationDto> recentCancellations,
                               java.util.List<Ledger.LedgerCorrectionDto> recentLedgerCorrections,

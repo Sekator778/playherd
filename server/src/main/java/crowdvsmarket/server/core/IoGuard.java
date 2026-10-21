@@ -22,9 +22,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * <ul>
  *   <li>holds the engine <b>write</b> lock ({@link crowdvsmarket.server.jfr.TimedEngineLock} tells {@link #writeLockAcquired} /
  *       {@link #writeLockReleasing}; the read lock is not counted), or
- *   <li>is the core writer's thread ({@link #WRITER_THREAD}) and is not in the database writes that a few commands stage and the writer
- *       runs after the batch is in the journal ({@code Db.tx} called by {@code CoreWriter.sidecar}, engine lock released). Since
- *       Р-107 the batch's own commit is the append of the journal (a Chronicle Queue on disk), which is not a database or network call.
+ *   <li>is the core writer's thread ({@link #WRITER_THREAD}). Since Р-107 the batch's own commit is the append of the journal (a
+ *       Chronicle Queue on disk), which is not a database or network call, and no command stages a database write: the rows derived from
+ *       events are written by the caller of the command or by {@code DerivedRows}, after the batch is durable.
  * </ul>
  * unless a frame of its stack is in {@link #ALLOWED}: the known exceptions, each with its reason and the step of the plan that removes
  * it. A violation is recorded (the file {@code target/io-guard/*.txt}, written when the JVM ends) and, in mode {@code fail}, thrown
@@ -60,26 +60,10 @@ public final class IoGuard {
      * An entry is a debt: new code does not get one without the owner's word.
      */
     static final Map<String, String> ALLOWED = new TreeMap<>(Map.ofEntries(
-            Map.entry("CoreWriter.runSolo", "a solo command needs the database's answer to decide and runs alone, between two batches, "
-                    + "holding the engine lock across its own transactions (the CoreWriter class comment): the market list and close "
-                    + "of the registry, creditOnChainDeposit. TODO plan step 3-4: give each solo command its answer before the turn or "
-                    + "after the commit, so none is left"),
             Map.entry("EngineRebuildService.rebuildStateLocked", "the rebuild of the engine (startup, an operator's, after a failed "
                     + "commit through CoreWriter.recover, the scheduler's retry) reads snapshot, journal, ledger rows, players, markets "
-                    + "and the oracle counter holding the engine write lock. TODO plan F5/F7: rebuild into a copy of the state off the "
-                    + "lock and swap it in"),
-            Map.entry("SnapshotService.take", "the snapshot reads the journal's last id inside GameService.runExclusively so that it is "
-                    + "taken between two batches. TODO plan F5: take the position from the writer's own counter (EventStore.lastId "
-                    + "needs no database once the writer knows the id of its last event)"),
-            Map.entry("GameService.publishAllViews", "the views are published with the journal's last id as their version, read "
-                    + "under the lock the rebuild and the exclusive actions hold. TODO plan F8: the writer hands the version over "
-                    + "(CoreWriter.Host.committed already does after a batch)"),
-            Map.entry("GameService.ensureSeriesLocked", "seeding the series of a market reads the last settled window of the "
-                    + "database (SeriesSeeder.seedFor), in the turn of the command that lists a market or on the scheduler holding "
-                    + "the lock. TODO plan step 1 'database query out from under the lock': read before the turn, pass in"),
-            Map.entry("RoundCancellations.cancel", "the cancellation of a round looks the venue of the round up in the database "
-                    + "(RoundVenues.venueOfRound) inside the writer's turn. TODO plan step 1 'database query out from under the "
-                    + "lock': look it up before the turn, or keep the venues in the engine state (F4)")));
+                    + "and the oracle counter holding the engine write lock, with the writer stopped. TODO plan F5/F7: rebuild into a "
+                    + "copy of the state off the lock and swap it in")));
 
     /** Exceptions registered at run time by test fixtures ({@link #allow}); never by the application. */
     private static final Map<String, String> FIXTURES = new ConcurrentHashMap<>();
@@ -157,13 +141,6 @@ public final class IoGuard {
             return;
         }
         List<StackWalker.StackFrame> frames = StackWalker.getInstance().walk(s -> s.toList());
-        for (int i = 0; i + 1 < frames.size(); i++) {
-            if ((is(frames.get(i), "crowdvsmarket.server.persistence.Db", "tx")
-                    || is(frames.get(i), "crowdvsmarket.server.persistence.Db_ClientProxy", "tx")) // the CDI proxy in between
-                    && is(frames.get(i + 1), "crowdvsmarket.server.core.CoreWriter", "sidecar")) {
-                return; // the database writes of the few commands that have some, after their batch is in the journal; the engine lock released
-            }
-        }
         String chain = chain(frames);
         for (StackWalker.StackFrame f : frames) {
             String key = key(f);
@@ -174,17 +151,13 @@ public final class IoGuard {
             }
         }
         String why = (locked ? "holds the engine write lock" : "") + (locked && writer ? " and " : "")
-                + (writer ? "is the core writer's thread outside the batch commit" : "");
+                + (writer ? "is the core writer's thread" : "");
         String detail = kind + " " + what + " by a thread that " + why + ": " + chain;
         note(VIOLATIONS, kind + " " + chain, detail);
         if (m == Mode.FAIL) {
             throw new IllegalStateException("engine I/O rule: " + detail
                     + " - no database and no network under the engine lock or inside a writer turn (crowdvsmarket.server.core.IoGuard)");
         }
-    }
-
-    private static boolean is(StackWalker.StackFrame f, String cls, String method) {
-        return f.getClassName().equals(cls) && f.getMethodName().equals(method);
     }
 
     /** {@code SimpleClass.method}; a lambda body is the method it is written in. */

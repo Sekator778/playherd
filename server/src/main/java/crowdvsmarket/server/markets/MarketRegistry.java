@@ -45,7 +45,7 @@ public interface MarketRegistry {
 
     void setListener(MarketListener listener);
 
-    /** F6: where the journal writes of a listing and a closing take their turn ({@link WriterTurn}); a default no-op. */
+    /** F6: where the journal writes of a listing and a closing take their turn ({@link WriterTurn}: a command of the core writer); a default no-op. */
     default void setWriterTurn(WriterTurn turn) {
     }
 

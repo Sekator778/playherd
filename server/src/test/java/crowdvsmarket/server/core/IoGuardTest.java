@@ -72,7 +72,7 @@ class IoGuardTest {
     }
 
     @Test
-    void theWriterThreadMayNotDoIoOutsideTheBatchCommit() throws Exception {
+    void theWriterThreadMayNotDoIoAtAll() throws Exception {
         AtomicReference<Throwable> thrown = new AtomicReference<>();
         Thread writer = new Thread(() -> {
             try {
@@ -84,7 +84,7 @@ class IoGuardTest {
         writer.start();
         writer.join();
         assertThat(thrown.get()).isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("core writer's thread outside the batch commit");
+                .hasMessageContaining("core writer's thread");
     }
 
     @Test
@@ -141,5 +141,32 @@ class IoGuardTest {
             assertThat(frame).matches("[A-Za-z]+\\.[A-Za-z]+");
             assertThat(reason).contains("TODO plan");
         });
+    }
+
+    @Test
+    void theOnlyAllowedExceptionIsTheRebuild() {
+        // the solo commands, the series seeding, the cancellation's venue lookup, the snapshot's journal position and the views' version
+        // have each left the list: a database call under any of them is a violation again (the game tests run with the guard in fail mode)
+        assertThat(IoGuard.ALLOWED.keySet()).containsExactly("EngineRebuildService.rebuildStateLocked");
+    }
+
+    @Test
+    void aFormerExceptionIsAViolationNow() throws Exception {
+        for (String frame : new String[] {"CoreWriter.runSolo", "CoreWriter.sidecar", "GameService.ensureSeriesLocked",
+                "RoundCancellations.cancel", "SnapshotService.take", "GameService.publishAllViews"}) {
+            assertThat(IoGuard.ALLOWED).as(frame).doesNotContainKey(frame);
+        }
+        // the batch's old write path (CoreWriter.sidecar -> Db.tx) is no exemption either: the writer's thread is checked whatever is on its stack
+        AtomicReference<Throwable> thrown = new AtomicReference<>();
+        Thread writer = new Thread(() -> {
+            try {
+                IoGuard.check("database", "Db.tx");
+            } catch (Throwable e) {
+                thrown.set(e);
+            }
+        }, IoGuard.WRITER_THREAD);
+        writer.start();
+        writer.join();
+        assertThat(thrown.get()).isInstanceOf(IllegalStateException.class);
     }
 }

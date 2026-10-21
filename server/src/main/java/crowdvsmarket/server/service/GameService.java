@@ -206,6 +206,8 @@ public class GameService implements MarketListener {
     @Inject
     RoundCancellations cancellations;
     @Inject
+    DerivedRows derivedRows;
+    @Inject
     BoundaryPrices boundaries;
     @Inject
     WithdrawalSubmitter withdrawalSubmitter;
@@ -534,11 +536,7 @@ public class GameService implements MarketListener {
                             publishViews(events, version);
                         }
 
-                        @Override
-                        public void committedSolo() {
-                            publishViewsInFull();
-                        }
-                    }, db, eventStore, writerMaxBatch <= 0 ? 256 : writerMaxBatch, writerMaxWaitMs,
+                    }, eventStore, writerMaxBatch <= 0 ? 256 : writerMaxBatch, writerMaxWaitMs,
                             writerQueueCapacity <= 0 ? 10_000 : writerQueueCapacity);
                     writer = w;
                 }
@@ -605,19 +603,6 @@ public class GameService implements MarketListener {
         }
     }
 
-    /** After a command that did its own transactions: the full publication, with the version read from the journal. */
-    private void publishViewsInFull() {
-        if (!rebuildService.isReady()) {
-            return;
-        }
-        try {
-            publishAllViews();
-        } catch (RuntimeException | Error e) {
-            LOG.error("the read views could not be published after a command that did its own transactions", e);
-            publishViewsAfterFailure(-1);
-        }
-    }
-
     private void publishViewsAfterFailure(long version) {
         try {
             ReadViews.Snapshot old = views.current();
@@ -640,7 +625,7 @@ public class GameService implements MarketListener {
      *  every command of a batch that failed to commit. Every changing call of this class goes through here. */
     private <T> T write(String key, long nowMs, Command<T> command) {
         requireReady();
-        return writer().submit(command, true, false, key, nowMs);
+        return writer().submit(command, true, key, nowMs);
     }
 
     private <T> T write(Command<T> command) {
@@ -649,14 +634,7 @@ public class GameService implements MarketListener {
 
     /** {@link #write} for a command that is meant to run, and decide for itself, while the engine is not ready. */
     private <T> T writeWhateverTheState(String key, long nowMs, Command<T> command) {
-        return writer().submit(command, false, false, key, nowMs);
-    }
-
-    /** {@link #write} for a command that needs the database's answer to decide, so it does its own transactions: it runs alone
-     *  between two batches, holding the engine lock across them. */
-    private <T> T writeSolo(String key, long nowMs, Command<T> command) {
-        requireReady();
-        return writer().submit(command, true, true, key, nowMs);
+        return writer().submit(command, false, key, nowMs);
     }
 
     /** What a caller outside the game's own HTTP face wants of a failed batch: the failure itself, not "503, try again" -
@@ -733,11 +711,21 @@ public class GameService implements MarketListener {
         marketRegistry.setListener(this);
         // F8: a cursor moved outside the writer (the scheduler skips an empty window, steps over a round that is closed) reaches the views
         roundProgress.setChangeListener(this::cursorsMovedOutsideTheWriter);
-        // the registry's journal writes (MarketListed, MarketClosed) take their turn on the core writer: alone, between two batches
+        // the registry's journal writes (MarketListed, MarketClosed) take their turn on the core writer, in a batch like any command
         marketRegistry.setWriterTurn(new WriterTurn() {
             @Override
-            public <T> T run(java.util.function.Supplier<T> work) {
-                return writer().submit(ctx -> work.get(), false, true, "market", System.currentTimeMillis());
+            public <T> T run(java.util.function.Function<Turn, T> work) {
+                return writer().submit(ctx -> work.apply(new Turn() {
+                    @Override
+                    public void record(GameEvent event, long atMs) {
+                        ctx.stage(event, atMs); // the engine has nothing to do with a listing; the listener makes the engines (when ready)
+                    }
+
+                    @Override
+                    public void onRollback(Runnable action) {
+                        ctx.onRollback(action);
+                    }
+                }), false, "market", System.currentTimeMillis());
             }
         });
     }
@@ -1369,6 +1357,7 @@ public class GameService implements MarketListener {
             cancellations.closeSeries(ctx, hub, market, "market closed: " + reason, nowMs);
             return null;
         });
+        derivedRows.awaitIdle(STORE_WAIT_MS); // the cancelled rounds' result rows are written off the writer; the closer waits for them
     }
 
     /** Whether any bet waits in {@code window}'s round. */
@@ -2047,7 +2036,7 @@ public class GameService implements MarketListener {
     public Rounds.CancellationDto cancelRound(RoundWindow window, String reason, long nowMs) {
         Market market = marketRegistry.require(window.market());
         try {
-            return write("cancel " + window.roundId(), nowMs, ctx -> {
+            Rounds.CancellationDto done = write("cancel " + window.roundId(), nowMs, ctx -> {
                 if (hub.closedRounds().isClosed(window)) {
                     throw ApiException.badRequest("round " + window.roundId() + " is already resolved");
                 }
@@ -2058,11 +2047,13 @@ public class GameService implements MarketListener {
                             + window.interval());
                 }
                 hub.ensureMarket(market);
-                // with the batch's transaction, like the settlement; never touches RoundProgress (the scheduler steps over)
+                // the event goes with the batch, its result row follows (DerivedRows); never touches RoundProgress (the scheduler steps over)
                 Rounds.CancellationDto cancelled = cancellations.cancel(ctx, hub, market, window, reason, nowMs);
                 ctx.afterCommit(() -> rebuildService.recovered(window.roundId()));
                 return cancelled;
             });
+            derivedRows.awaitIdle(STORE_WAIT_MS); // the operator's answer comes with the cancelled round's result row (written off the writer)
+            return done;
         } catch (ApiException e) {
             throw failureBehind(e); // a batch that did not commit: the operator is told why
         }
@@ -2625,17 +2616,11 @@ public class GameService implements MarketListener {
             // GameEvent.WithdrawalRequested's javadoc and EventApplier's WithdrawalRequested case.
             String requestId = (String) ctx.record(event, nowMs);
             ctx.afterCommit(() -> publisher.changed(crowdvsmarket.server.push.PushTopics.player(playerId)));
-            ctx.work(c -> {
-                withdrawalDeposits.insertWithdrawal(c, requestId, playerId, amt.mojos(), toAddress, nowMs);
-                return null;
-            });
             return new Requested(requestId, toAddress);
         });
-        // Р-107: the row is written after the request's event is durable (the batch's staged write); when that write failed the request is
-        // escrowed all the same, so the row is written here (the rebuild would write it too) and the caller gets its answer
-        if (withdrawalDeposits.findWithdrawal(requested.requestId()).isEmpty()) {
-            withdrawalDeposits.ensureWithdrawal(requested.requestId(), playerId, amt.mojos(), requested.toAddress(), nowMs);
-        }
+        // Р-107: the row is written here, by the caller, once the request's event is durable - never in the writer's turn (a stop in between
+        // leaves the request escrowed without its row, which the rebuild writes from the engine, SidecarReconciler.withdrawalRows)
+        withdrawalDeposits.ensureWithdrawal(requested.requestId(), playerId, amt.mojos(), requested.toAddress(), nowMs);
         withdrawalSubmitter.submit(requested.requestId(), requested.toAddress(), amt.mojos(), nowMs);
         return withdrawalDeposits.findWithdrawal(requested.requestId()).orElseThrow();
     }
@@ -2649,19 +2634,24 @@ public class GameService implements MarketListener {
      *  WithdrawalConfirmed} — the escrow debit already happened at request time) and makes {@code
      *  coinId}/{@code height} public in the player's own withdrawal view (task requirement). */
     public void confirmWithdrawalOnChain(String requestId, String coinId, long height, long nowMs) {
-        write("withdrawal confirmed", nowMs, ctx -> {
+        boolean confirmed = write("withdrawal confirmed", nowMs, ctx -> {
+            Optional<WithdrawalRequest> current = hub.ledger().withdrawal(requestId);
+            if (current.isPresent() && current.get().state() == WithdrawalState.CONFIRMED) {
+                return true; // recorded by an earlier call (or by the journal before this one): only its row may still be behind
+            }
             if (!withdrawalAwaitingChain(requestId)) {
-                return null;
+                return false;
             }
             GameEvent.WithdrawalConfirmedOnChain event =
                     new GameEvent.WithdrawalConfirmedOnChain(requestId, coinId, height, nowMs);
             ctx.record(event, nowMs);
-            ctx.work(c -> {
-                withdrawalDeposits.markWithdrawalConfirmedOnChain(c, requestId, coinId, height, nowMs);
-                return null;
-            });
-            return null;
+            return true;
         });
+        if (confirmed) {
+            // Р-107: the row follows the durable event, written by the caller (idempotent; a call that fails here is offered again by the
+            // poller and finds the event recorded already)
+            withdrawalDeposits.markWithdrawalConfirmedOnChain(requestId, coinId, height, nowMs);
+        }
     }
 
     /** Р-53: {@code WithdrawalPollerService}'s entry point once {@code GET
@@ -2670,20 +2660,23 @@ public class GameService implements MarketListener {
      *  the escrowed amount, needs no {@code coinId}/{@code height}), recording {@code reason} only
      *  in the read model. */
     public void failWithdrawalOnChain(String requestId, String reason, long nowMs) {
-        write("withdrawal failed", nowMs, ctx -> {
+        boolean failed = write("withdrawal failed", nowMs, ctx -> {
+            Optional<WithdrawalRequest> current = hub.ledger().withdrawal(requestId);
+            if (current.isPresent() && current.get().state() == WithdrawalState.FAILED) {
+                return true; // recorded already: only its row may still be behind
+            }
             if (!withdrawalAwaitingChain(requestId)) {
-                return null;
+                return false;
             }
             GameEvent.WithdrawalFailed event = new GameEvent.WithdrawalFailed(requestId, nowMs);
             ctx.record(event, nowMs);
             hub.ledger().withdrawal(requestId).ifPresent(w -> ctx.afterCommit(
                     () -> publisher.changed(crowdvsmarket.server.push.PushTopics.player(w.playerId())))); // the escrow is credited back
-            ctx.work(c -> {
-                withdrawalDeposits.markWithdrawalFailed(c, requestId, reason, nowMs);
-                return null;
-            });
-            return null;
+            return true;
         });
+        if (failed) {
+            withdrawalDeposits.markWithdrawalFailed(requestId, reason, nowMs); // as in confirmWithdrawalOnChain
+        }
     }
 
     /** Idempotence guard for the two on-chain entry points above, checked under the write lock
@@ -2795,34 +2788,47 @@ public class GameService implements MarketListener {
      */
     public boolean creditOnChainDeposit(String playerId, int playerIndex, PlayAmount amount, String coinId,
                                          long height, long nowMs) {
-        // solo: the reservation of the coin is the database's answer, and the event is written only when it is ours - the
-        // command runs alone between two batches and does its own transaction (the one command that still holds the engine
-        // lock across a commit; a deposit coin is rare)
-        return writeSolo("deposit " + coinId, nowMs, ctx -> {
-            GameEvent.DepositConfirmedOnChain event =
-                    new GameEvent.DepositConfirmedOnChain(playerId, playerIndex, amount.mojos(), coinId, height, nowMs);
-            // Р-107: the reservation (Postgres) is committed first, then the event is appended to the journal (durable): a crash between
-            // the two leaves a reserved coin whose event is missing, which the rebuild finds and appends (DepositReconciler); the other
-            // order could credit a coin twice
-            if (!db.tx(c -> depositConfirmations.tryReserve(c, coinId, playerId, playerIndex, amount.mojos(), height, nowMs))) {
-                return false;
+        requireReady();
+        GameEvent.DepositConfirmedOnChain event =
+                new GameEvent.DepositConfirmedOnChain(playerId, playerIndex, amount.mojos(), coinId, height, nowMs);
+        // Р-107: the reservation (Postgres) is committed first, here, before the command - the writer's turn never touches the database -
+        // and then the event is journaled by an ordinary command: a crash between the two leaves a reserved coin whose event is missing,
+        // which the rebuild finds and appends (SidecarReconciler.depositEvents); the other order could credit a coin twice
+        if (!depositConfirmations.tryReserve(coinId, playerId, playerIndex, amount.mojos(), height, nowMs)) {
+            return false;
+        }
+        try {
+            write("deposit " + coinId, nowMs, ctx -> {
+                ctx.record(event, nowMs);
+                ctx.afterCommit(() -> publisher.changed(crowdvsmarket.server.push.PushTopics.player(playerId))); // the deposit is committed
+                return null;
+            });
+        } catch (ApiException e) {
+            if (e.code() == Enums.ApiErrorCode.ENGINE_NOT_READY && e.getCause() == null) {
+                releaseReservation(coinId); // the command was refused and never ran: the coin is offered again when the engine is ready
             }
-            try {
-                eventStore.append(null, event, nowMs);
-            } catch (RuntimeException | Error e) {
-                rebuildService.recoverAfterFailure(e, "deposit " + coinId, nowMs); // reconciles first: the reserved coin gets its event
-                throw e;
+            // a batch that did not commit (the cause is attached) has had the engine rebuilt behind it, and that rebuild appends the
+            // event of the reserved coin
+            throw e;
+        }
+        return true;
+    }
+
+    /** Takes the reservation of {@code coinId} back when its event is not in the journal - decided holding the writer's gate, so that no
+     *  rebuild is half way through appending it (a reserved coin without an event is the rebuild's to credit). */
+    private void releaseReservation(String coinId) {
+        writerGate.lock();
+        try {
+            boolean credited = eventStore.loadOfTypes(List.of("DepositConfirmedOnChain")).stream()
+                    .anyMatch(e -> ((GameEvent.DepositConfirmedOnChain) e).coinId().equals(coinId));
+            if (!credited) {
+                depositConfirmations.release(coinId);
             }
-            try {
-                eventApplier.apply(event);
-                publisher.changed(crowdvsmarket.server.push.PushTopics.player(playerId)); // the deposit is committed
-            } catch (RuntimeException | Error e) {
-                // committed and reserved: no later offer of the coin can credit it, so the rebuild must (it replays it)
-                rebuildService.recoverAfterFailure(e, "deposit " + coinId, nowMs);
-                throw e;
-            }
-            return true;
-        });
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "the reservation of deposit coin %s could not be taken back - the next rebuild credits it", coinId);
+        } finally {
+            writerGate.unlock();
+        }
     }
 
     // ---------------------------------------------------------------------------------------

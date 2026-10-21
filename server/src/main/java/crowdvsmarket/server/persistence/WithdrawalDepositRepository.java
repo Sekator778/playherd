@@ -67,6 +67,13 @@ public class WithdrawalDepositRepository {
      *  requesting player's own withdrawal-request view ({@code GameService#withdrawal}). Called
      *  from within the same {@code db.tx} as the matching {@code WithdrawalConfirmedOnChain}
      *  event's append (see {@code GameService#confirmWithdrawalOnChain}). */
+    public void markWithdrawalConfirmedOnChain(String requestId, String coinId, long height, long atMs) {
+        db.tx(c -> {
+            markWithdrawalConfirmedOnChain(c, requestId, coinId, height, atMs);
+            return null;
+        });
+    }
+
     public void markWithdrawalConfirmedOnChain(Connection c, String requestId, String coinId, long height, long atMs)
             throws SQLException {
         db.update(c, "UPDATE withdrawal_requests SET state = 'CONFIRMED', chain_state = ?, "
@@ -78,6 +85,13 @@ public class WithdrawalDepositRepository {
      *  from within the same {@code db.tx} as the matching {@code WithdrawalFailed} event's append
      *  (see {@code GameService#failWithdrawalOnChain}); the balance refund itself is the event's
      *  engine-side effect, not something this read-model write does. */
+    public void markWithdrawalFailed(String requestId, String reason, long atMs) {
+        db.tx(c -> {
+            markWithdrawalFailed(c, requestId, reason, atMs);
+            return null;
+        });
+    }
+
     public void markWithdrawalFailed(Connection c, String requestId, String reason, long atMs) throws SQLException {
         db.update(c, "UPDATE withdrawal_requests SET state = 'FAILED', chain_state = ?, "
                 + "failure_reason = ?, last_checked_at_ms = ? WHERE request_id = ?",

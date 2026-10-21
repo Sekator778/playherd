@@ -377,9 +377,9 @@ class DbMarketRegistryTest {
 
     @Test
     void concurrentListingsGetDistinctConsecutiveIndexes() throws Exception {
-        // two registries over one table = two processes: the table lock serializes the MAX+1
+        // the index is the highest one in memory plus one, decided in the registry's turn (no database): threads listing at once get
+        // distinct consecutive indexes, and the table has the same
         DbMarketRegistry one = registry(null);
-        DbMarketRegistry two = registry(null);
         int threads = 8;
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch start = new CountDownLatch(1);
@@ -390,8 +390,7 @@ class DbMarketRegistryTest {
             pool.submit(() -> {
                 try {
                     start.await();
-                    DbMarketRegistry target = n % 2 == 0 ? one : two;
-                    listed.add(target.list(perp("C" + n, Category.CRYPTO, 10, 0), 1_000L + n));
+                    listed.add(one.list(perp("C" + n, Category.CRYPTO, 10, 0), 1_000L + n));
                 } catch (Throwable t) {
                     errors.add(t);
                 }
@@ -405,6 +404,9 @@ class DbMarketRegistryTest {
         Set<Integer> indexes = new TreeSet<>();
         listed.forEach(m -> indexes.add(m.oracleIndex()));
         assertThat(indexes).containsExactly(1, 2, 3, 4, 5, 6, 7, 8);
+        DbMarketRegistry reloaded = registry(null);
+        reloaded.reload();
+        assertThat(reloaded.all()).as("the rows are in the table with the same indexes").containsAll(listed);
     }
 
     @Test

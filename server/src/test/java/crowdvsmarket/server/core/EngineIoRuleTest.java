@@ -33,13 +33,12 @@ import org.junit.jupiter.api.Test;
  *       is a root of a call graph over the application's classes: the calls it makes, those of the methods it calls, an interface or
  *       abstract call going to every implementation in the application. No path may end in a <i>sink</i>: {@code Db}, {@code EventStore},
  *       {@code java.sql}/{@code javax.sql}/{@code org.postgresql}, {@code java.net} sockets and connections, {@code java.net.http}, the
- *       JAX-RS client and any {@code @RegisterRestClient} interface. A command written with {@code writeSolo} is exempt: it is the
- *       one kind that does its own transactions by design. A lambda built inside the walk and passed on as a {@code Db.SqlWork}
- *       or {@code Runnable} (the staged writes and the after-commit actions, which run after the engine lock is released) is not
- *       followed.
+ *       JAX-RS client and any {@code @RegisterRestClient} interface. No command is exempt (the solo commands are gone). A lambda built
+ *       inside the walk and passed on as a {@code Db.SqlWork} or {@code Runnable} (the after-commit actions, which run after the engine
+ *       lock is released) is not followed.
  *   <li><b>The writer</b> ({@code CoreWriter}): outside the batch's append to the journal ({@code runStretch}: {@code EventStore.appendAll},
- *       Р-107: a Chronicle Queue on disk, no database) and the few database writes staged by commands that have some, run after the append
- *       ({@code sidecar}: {@code Db.tx}), none of its methods reaches a sink, again by the call graph.
+ *       Р-107: a Chronicle Queue on disk, no database) none of its methods reaches a sink, again by the call graph; the only boundary is
+ *       the rebuild after a failed commit ({@code recover}).
  * </ol>
  * The graph follows calls it can see in the bytecode; a call through a {@code Supplier}, a {@code Function} or a reflective lookup is
  * not seen (the runtime guard sees those). The known exceptions are {@link #BOUNDARIES}: a method on the walk that is allowed to reach a
@@ -56,20 +55,8 @@ class EngineIoRuleTest {
      * plan step that takes it away. Debts: new code does not get an entry without the owner's word.
      */
     static final Map<String, String> BOUNDARIES = new TreeMap<>(Map.ofEntries(
-            Map.entry("crowdvsmarket/server/core/CoreWriter.runSolo", "a solo command does its own transactions between two batches "
-                    + "(market list/close, creditOnChainDeposit); the commands written with writeSolo are exempt for the same reason. "
-                    + "TODO plan step 3-4: give each its answer before the turn or after the commit"),
             Map.entry("crowdvsmarket/server/core/CoreWriter.recover", "the rebuild after a failed commit (EngineRebuildService.rebuildStateLocked: snapshot, "
-                    + "journal, ledger rows, players, markets under the engine write lock). TODO plan F5/F7: rebuild off the lock and swap"),
-            Map.entry("crowdvsmarket/server/service/GameService.publishAllViews", "reads the journal's last id as the version of the views "
-                    + "(after a solo command, in a rebuild). TODO plan F8: the writer hands the version over"),
-            Map.entry("crowdvsmarket/server/service/GameService.ensureSeriesLocked", "seeding a market's series reads the last settled "
-                    + "window (SeriesSeeder.seedFor) in the turn of the command. TODO plan step 1: read before the turn, pass in"),
-            Map.entry("crowdvsmarket/server/service/RoundCancellations.cancel", "looks the venue of the round up in the database "
-                    + "(RoundVenues.venueOfRound) in the turn. TODO plan step 1: look it up before the turn or keep venues in the state"),
-            Map.entry("crowdvsmarket/server/markets/DbMarketRegistry.snapshot", "loads the market list on first use; the rebuild loads it "
-                    + "before any command runs, so a command finds it loaded (the runtime guard has never seen this read). "
-                    + "TODO plan F4: the registry as a projection of the journal, no lazy load")));
+                    + "journal, ledger rows, players, markets under the engine write lock). TODO plan F5/F7: rebuild off the lock and swap")));
 
     // ---------------------------------------------------------------------------------------
 
@@ -147,8 +134,8 @@ class EngineIoRuleTest {
     private List<String> writerViolations(Walk walk) {
         ClassFile writer = app.get(WRITER);
         assertThat(writer).isNotNull();
-        walk.exemptEdges = (from, call) -> (from.startsWith(WRITER + ".runStretch") || from.startsWith(WRITER + ".lambda$runStretch$")
-                || from.startsWith(WRITER + ".sidecar") || from.startsWith(WRITER + ".lambda$sidecar$")) && isCommitCall(call);
+        walk.exemptEdges = (from, call) -> (from.startsWith(WRITER + ".runStretch") || from.startsWith(WRITER + ".lambda$runStretch$"))
+                && isCommitCall(call);
         List<String> violations = new ArrayList<>();
         int roots = 0;
         for (ClassFile.Method m : writer.methods) {
@@ -187,8 +174,7 @@ class EngineIoRuleTest {
 
     private static boolean isCommitCall(ClassFile.Call call) {
         String o = call.owner();
-        return o.equals("crowdvsmarket/server/persistence/Db") && call.name().equals("tx")
-                || o.equals("crowdvsmarket/server/events/EventStore") && call.name().equals("appendAll");
+        return o.equals("crowdvsmarket/server/events/EventStore") && call.name().equals("appendAll");
     }
 
     /** Whether calling a method of {@code owner} is reaching the database or the network. */
@@ -197,8 +183,9 @@ class EngineIoRuleTest {
             return methodName == null || !methodName.equals("json") && !methodName.equals("jsonb");
         }
         if (owner.equals("crowdvsmarket/server/events/EventStore")) {
+            // marketOf/playerOf/resolveTypeAlias are pure; lastId is the journal's last seq (Р-107: a Chronicle Queue on disk, no database)
             return methodName == null || !methodName.equals("marketOf") && !methodName.equals("playerOf")
-                    && !methodName.equals("resolveTypeAlias");
+                    && !methodName.equals("resolveTypeAlias") && !methodName.equals("lastId");
         }
         if (owner.startsWith("java/sql/") || owner.startsWith("javax/sql/") || owner.startsWith("org/postgresql/")
                 || owner.startsWith("java/net/http/") || owner.startsWith("jakarta/ws/rs/client/")) {

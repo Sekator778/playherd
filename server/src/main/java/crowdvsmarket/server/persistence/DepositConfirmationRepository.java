@@ -41,6 +41,11 @@ public class DepositConfirmationRepository {
                 coinId, playerId, playerIndex, amountMojos, height, creditedAtMs) == 1;
     }
 
+    /** Takes the reservation of a coin back: only for a coin whose event is not in the journal (see {@code GameService#creditOnChainDeposit}). */
+    public void release(String coinId) {
+        db.tx(c -> db.update(c, "DELETE FROM deposit_confirmations WHERE coin_id = ?", coinId));
+    }
+
     public Optional<Row> find(String coinId) {
         return Optional.ofNullable(db.read(c -> db.queryOne(c,
                 "SELECT * FROM deposit_confirmations WHERE coin_id = ?", this::toRow, coinId)));

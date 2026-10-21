@@ -2,14 +2,13 @@ package crowdvsmarket.server.core;
 
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
-import crowdvsmarket.server.persistence.Db;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * What a {@link Command} sees while {@link CoreWriter} runs it: the engine is its to change (the writer holds the engine
- * write lock), the journal and the database are not - events and writes are <i>staged</i> and go to the database in the one
- * transaction of the batch the command is in.
+ * write lock), the journal and the database are not - events are <i>staged</i> and go to the journal with the batch the command is
+ * in; there is no way to stage a database write (the rows derived from events are written after the batch, outside the writer).
  *
  * <p>Nothing here may be used after the command has returned.
  */
@@ -18,7 +17,6 @@ public final class WriteContext {
     /** What one command has staged. Kept apart per command so that a refused command leaves nothing in the batch. */
     static final class Staged {
         final List<EventStore.Pending> events = new ArrayList<>();
-        final List<Db.SqlWork<?>> works = new ArrayList<>();
         final List<Runnable> afterCommit = new ArrayList<>();
         final List<Runnable> onRollback = new ArrayList<>();
         boolean touched;
@@ -57,11 +55,13 @@ public final class WriteContext {
         return result;
     }
 
-    /** Stages a database write for the batch's transaction. It runs after the batch's commands, before the events are
-     *  inserted, in the order the commands were run; it must not decide anything (no result is read back): whatever the
-     *  command needs to know has to be known without the database. */
-    public void work(Db.SqlWork<?> work) {
-        staged.works.add(work);
+    /**
+     * Stages {@code event} for the journal without applying it to the engine: for an event the engine has nothing to do with (the market
+     * registry's {@code MarketListed} / {@code MarketClosed}, which the registry applies to its own memory). Unlike {@link #record} it
+     * does not count as having touched the engine, so it is safe to use while the engine cannot be trusted.
+     */
+    public void stage(GameEvent event, long atMs) {
+        staged.events.add(new EventStore.Pending(event, atMs));
     }
 
     /** Runs {@code action} on the writer thread once the batch has committed, before any caller is answered. */

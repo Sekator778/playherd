@@ -228,7 +228,7 @@ public class EngineStateBuilder {
             }
             for (Interval interval : Interval.values()) {
                 RoundProgress.SeriesKey key = new RoundProgress.SeriesKey(market.id(), interval);
-                RoundWindow seed = seeder.seedFor(hub, market, interval, nowMs);
+                RoundWindow seed = seeder.seedFor(hub, market, interval, nowMs, roundResults.latestWindowEnd(market.id(), interval));
                 cursors.put(key, seed);
                 series.append(' ').append(market.id()).append('/').append(interval).append(".next=")
                         .append(seed.roundId());

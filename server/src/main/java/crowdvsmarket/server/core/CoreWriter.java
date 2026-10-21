@@ -4,7 +4,6 @@ import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.jfr.HerdWriterBatch;
-import crowdvsmarket.server.persistence.Db;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -13,7 +12,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jboss.logging.Logger;
 
@@ -28,9 +26,6 @@ import org.jboss.logging.Logger;
  *       nothing behind;
  *   <li>release the engine lock, then ONE append of the whole batch to the journal, and its sync to disk ({@link EventStore#appendAll}:
  *       one excerpt of a Chronicle Queue, all or nothing - Р-107; Postgres is not touched);
- *   <li>the staged database writes ({@link WriteContext#work}) of the few commands that have some (withdrawal rows, the result row of a
- *       cancelled round): after the journal, in one transaction, and a failure of it is logged and repaired by the next rebuild, not
- *       reported to a caller whose command is durable already;
  *   <li>after the append, publish the read views, run the commands' after-commit actions and answer the callers: <b>a caller is answered
  *       only when its command is durable</b>.
  * </ol>
@@ -48,9 +43,11 @@ import org.jboss.logging.Logger;
  * the engine's state (a rebuild) or takes what the engine has produced (the ledger rows) takes it first, so they never see a
  * batch half way: applied in memory, not yet in the journal.
  *
- * <p>A command that needs the database's answer to decide (the reservation of an on-chain deposit coin) is {@code solo}: it
- * runs alone, between two batches, holding the engine lock and doing its own transactions - the way every command ran
- * before - and is the only kind that still holds the engine lock across a commit.
+ * <p><b>No database in the turn.</b> A command touches the engine and stages events, nothing else: a command that needs the database
+ * (the reservation of an on-chain deposit coin, a market's row) has its database work done by its caller before it is submitted, and
+ * the rows that are derived from its events (a withdrawal's row, the result row of a cancelled round, a market's row) are written
+ * by its caller or by {@code DerivedRows} after the batch is durable, and are repaired from the journal by the next rebuild.
+ * The only database access of this class's thread is the rebuild after a failed commit ({@link Host#recover}).
  */
 public final class CoreWriter implements AutoCloseable {
 
@@ -83,10 +80,6 @@ public final class CoreWriter implements AutoCloseable {
          * throw.
          */
         void committed(List<GameEvent> events, long version);
-
-        /** A command that did its own transactions ({@code solo}) has completed: whatever it changed is durable. Same place and
-         *  rules as {@link #committed}. Must not throw. */
-        void committedSolo();
     }
 
     private final AtomicInteger inFlight = new AtomicInteger();
@@ -94,7 +87,6 @@ public final class CoreWriter implements AutoCloseable {
     private final class Slot<T> {
         final Command<T> command;
         final boolean needsReady;
-        final boolean solo;
         final String key;
         final long nowMs;
         final long submittedNanos = System.nanoTime();
@@ -102,10 +94,9 @@ public final class CoreWriter implements AutoCloseable {
         final WriteContext.Staged staged = new WriteContext.Staged();
         T result;
 
-        Slot(Command<T> command, boolean needsReady, boolean solo, String key, long nowMs) {
+        Slot(Command<T> command, boolean needsReady, String key, long nowMs) {
             this.command = command;
             this.needsReady = needsReady;
-            this.solo = solo;
             this.key = key == null ? "command" : key;
             this.nowMs = nowMs;
         }
@@ -124,7 +115,6 @@ public final class CoreWriter implements AutoCloseable {
     }
 
     private final Host host;
-    private final Db db;
     private final EventStore eventStore;
     private final int maxBatch;
     private final long maxWaitMs;
@@ -133,9 +123,8 @@ public final class CoreWriter implements AutoCloseable {
     private final Thread thread;
     private volatile boolean running = true;
 
-    public CoreWriter(Host host, Db db, EventStore eventStore, int maxBatch, long maxWaitMs, int queueCapacity) {
+    public CoreWriter(Host host, EventStore eventStore, int maxBatch, long maxWaitMs, int queueCapacity) {
         this.host = host;
-        this.db = db;
         this.eventStore = eventStore;
         this.maxBatch = Math.max(1, maxBatch);
         this.maxWaitMs = Math.max(0, maxWaitMs);
@@ -157,18 +146,17 @@ public final class CoreWriter implements AutoCloseable {
      * is running.
      *
      * @param needsReady the command is refused with 503 while the engine cannot be trusted
-     * @param solo       see the class comment
      * @param key        what to call the command in the log of a rebuild it causes
      * @param nowMs      the clock of the command (a rebuild seeds the series as of that instant)
      */
-    public <T> T submit(Command<T> command, boolean needsReady, boolean solo, String key, long nowMs) {
+    public <T> T submit(Command<T> command, boolean needsReady, String key, long nowMs) {
         if (onWriterThread()) {
             return command.run(ctx);
         }
         if (!running) {
             throw ApiException.engineNotReady();
         }
-        Slot<T> slot = new Slot<>(command, needsReady, solo, key, nowMs);
+        Slot<T> slot = new Slot<>(command, needsReady, key, nowMs);
         inFlight.incrementAndGet();
         try {
             queue.put(slot);
@@ -282,53 +270,12 @@ public final class CoreWriter implements AutoCloseable {
         }
     }
 
-    /** Runs {@code batch}: its stretches of ordinary commands as one transaction each, a solo command alone. What is left
-     *  after a command made the engine be rebuilt goes to {@code carry}, for the next cycle. */
+    /** Runs {@code batch} as one stretch (one batch). What is left after a command made the engine be rebuilt goes to {@code carry},
+     *  for the next cycle. */
     private void cycle(List<Slot<?>> batch, List<Slot<?>> carry) {
-        int i = 0;
-        while (i < batch.size()) {
-            Slot<?> s = batch.get(i);
-            if (s.solo) {
-                runSolo(s);
-                i++;
-                continue;
-            }
-            int j = i;
-            while (j < batch.size() && !batch.get(j).solo) {
-                j++;
-            }
-            List<Slot<?>> stretch = batch.subList(i, j);
-            int consumed = runStretch(stretch);
-            if (consumed < stretch.size()) {
-                carry.addAll(batch.subList(i + consumed, batch.size()));
-                return;
-            }
-            i = j;
-        }
-    }
-
-    private void runSolo(Slot<?> s) {
-        host.gate().lock();
-        try {
-            host.lockEngine();
-            try {
-                if (s.needsReady && !host.ready()) {
-                    s.fail(ApiException.engineNotReady());
-                    return;
-                }
-                ctx.begin(s.staged, System.nanoTime() - s.submittedNanos);
-                try {
-                    runAndKeep(s);
-                    publishSolo();
-                    s.succeed();
-                } catch (Throwable e) {
-                    s.fail(e);
-                }
-            } finally {
-                host.unlockEngine();
-            }
-        } finally {
-            host.gate().unlock();
+        int consumed = runStretch(batch);
+        if (consumed < batch.size()) {
+            carry.addAll(batch.subList(consumed, batch.size()));
         }
     }
 
@@ -390,14 +337,11 @@ public final class CoreWriter implements AutoCloseable {
             }
 
             List<EventStore.Pending> events = new ArrayList<>();
-            List<Db.SqlWork<?>> works = new ArrayList<>();
             for (Slot<?> s : accepted) {
                 events.addAll(s.staged.events);
-                works.addAll(s.staged.works);
             }
             Throwable commitFailure = null;
             long commitNs = 0;
-            long sidecarNs = 0;
             long version = -1;
             if (!events.isEmpty()) {
                 long t0 = System.nanoTime();
@@ -408,17 +352,11 @@ public final class CoreWriter implements AutoCloseable {
                 }
                 commitNs = System.nanoTime() - t0;
             }
-            if (commitFailure == null && !works.isEmpty()) {
-                long t0 = System.nanoTime();
-                sidecar(works);
-                sidecarNs = System.nanoTime() - t0;
-            }
             ctx.commitTook(commitNs);
             if (rec) {
                 jfr.commands = accepted.size() + (tainted == null ? 0 : 1);
                 jfr.events = events.size();
                 jfr.commitNs = commitNs;
-                jfr.sidecarNs = sidecarNs;
             }
 
             if (commitFailure == null) {
@@ -478,30 +416,6 @@ public final class CoreWriter implements AutoCloseable {
         }
     }
 
-    /** Database writes staged by the commands of a batch that is durable in the journal already, in one transaction. A failure is logged,
-     *  not thrown: the callers' commands happened; what the rows lack is written again by the next rebuild. */
-    private void sidecar(List<Db.SqlWork<?>> works) {
-        try {
-            db.tx(c -> {
-                for (Db.SqlWork<?> w : works) {
-                    w.run(c);
-                }
-                return null;
-            });
-        } catch (Throwable e) {
-            sidecarFailures.incrementAndGet();
-            LOG.errorf(e, "the database rows of a batch that is in the journal could not be written - the events are durable, "
-                    + "the rows are written again by the next rebuild of the engine");
-        }
-    }
-
-    private final AtomicLong sidecarFailures = new AtomicLong();
-
-    /** How many batches had database writes after their append that failed. */
-    public long sidecarFailures() {
-        return sidecarFailures.get();
-    }
-
     /** Hands the committed batch to the host, which publishes its read views; a failure is logged, never thrown. */
     private void publish(List<EventStore.Pending> events, long version) {
         try {
@@ -512,14 +426,6 @@ public final class CoreWriter implements AutoCloseable {
             host.committed(committed, version);
         } catch (Throwable e) {
             LOG.error("the read views could not be published after the commit of the batch", e);
-        }
-    }
-
-    private void publishSolo() {
-        try {
-            host.committedSolo();
-        } catch (Throwable e) {
-            LOG.error("the read views could not be published after a command that did its own transactions", e);
         }
     }
 

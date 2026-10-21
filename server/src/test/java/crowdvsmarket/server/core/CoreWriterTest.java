@@ -11,8 +11,6 @@ import crowdvsmarket.server.dto.ApiException;
 import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
-import crowdvsmarket.server.persistence.Db;
-import java.sql.Connection;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -48,21 +46,14 @@ class CoreWriterTest {
         }
 
         final List<Published> published = Collections.synchronizedList(new ArrayList<>());
-        final AtomicInteger soloPublications = new AtomicInteger();
         final AtomicInteger recoveries = new AtomicInteger();
         final AtomicInteger transactions = new AtomicInteger();
         volatile RuntimeException commitFailure;
         volatile CountDownLatch commitGate;
 
-        final Db db = mock(Db.class);
         final EventStore store = mock(EventStore.class);
 
         World() throws Exception {
-            Connection connection = mock(Connection.class);
-            when(db.tx(any())).thenAnswer(inv -> {
-                Db.SqlWork<?> work = inv.getArgument(0);
-                return work.run(connection);
-            });
             when(store.lastId()).thenAnswer(inv -> (long) journal().size());
             // the batch's commit is the append to the journal (Р-107): the gate holds it, the failure fails it
             org.mockito.Mockito.doAnswer(inv -> {
@@ -122,11 +113,6 @@ class CoreWriterTest {
         }
 
         @Override
-        public void committedSolo() {
-            soloPublications.incrementAndGet();
-        }
-
-        @Override
         public void recover(Throwable cause, String key, long nowMs) {
             recoveries.incrementAndGet();
             assertThat(engine.isHeldByCurrentThread()).as("a rebuild runs under the engine lock").isTrue();
@@ -142,7 +128,7 @@ class CoreWriterTest {
     @BeforeEach
     void start() throws Exception {
         world = new World();
-        writer = new CoreWriter(world, world.db, world.store, 256, 0, 1000);
+        writer = new CoreWriter(world, world.store, 256, 0, 1000);
         callers = Executors.newCachedThreadPool();
     }
 
@@ -160,14 +146,14 @@ class CoreWriterTest {
         return submittingCommand(ctx -> {
             ctx.record(event(n), n);
             return n;
-        }, false, "t" + n, n);
+        }, "t" + n, n);
     }
 
     /** Submits from a thread of its own and returns once the writer has the command (waiting or in its batch), so that
      *  commands submitted one after the other are in the writer's order. */
-    private Future<Long> submittingCommand(Command<Long> command, boolean solo, String key, long nowMs) {
+    private Future<Long> submittingCommand(Command<Long> command, String key, long nowMs) {
         int before = writer.inFlight();
-        Future<Long> future = callers.submit(() -> writer.submit(command, true, solo, key, nowMs));
+        Future<Long> future = callers.submit(() -> writer.submit(command, true, key, nowMs));
         await().atMost(Duration.ofSeconds(10)).until(() -> writer.inFlight() > before);
         return future;
     }
@@ -215,9 +201,8 @@ class CoreWriterTest {
         world.gate.lock();
         Future<Long> good1 = submitting(1);
         Future<Long> refused = submittingCommand(ctx -> {
-            ctx.work(c -> null); // staged, then refused: dropped with the command
             throw ApiException.badRequest("no");
-        }, false, "refused", 2);
+        }, "refused", 2);
         Future<Long> good2 = submitting(3);
         world.gate.unlock();
 
@@ -240,7 +225,7 @@ class CoreWriterTest {
                 ctx.record(event(n), n);
                 ctx.onRollback(() -> rollbacks.add(() -> { }));
                 return n;
-            }, false, "t" + n, n));
+            }, "t" + n, n));
         }
         world.gate.unlock();
 
@@ -261,7 +246,7 @@ class CoreWriterTest {
         Long answer = writer.submit(ctx -> {
             ctx.record(event(9), 9);
             return 9L;
-        }, true, false, "t9", 9);
+        }, true, "t9", 9);
         assertThat(answer).isEqualTo(9L);
         assertThat(world.journal()).containsExactly(event(9));
     }
@@ -273,7 +258,7 @@ class CoreWriterTest {
         Future<Long> broken = submittingCommand(ctx -> {
             ctx.record(event(2), 2);
             throw new IllegalStateException("failed after the apply");
-        }, false, "broken", 2);
+        }, "broken", 2);
         Future<Long> after = submitting(3);
         world.gate.unlock();
 
@@ -289,9 +274,9 @@ class CoreWriterTest {
     @Test
     void whileTheEngineIsNotReadyACommandIsRefusedWith503() {
         world.ready = false;
-        assertThatThrownBy(() -> writer.submit(ctx -> "x", true, false, "t", 0L)).isInstanceOfSatisfying(ApiException.class,
+        assertThatThrownBy(() -> writer.submit(ctx -> "x", true, "t", 0L)).isInstanceOfSatisfying(ApiException.class,
                 e -> assertThat(e.code()).isEqualTo(Enums.ApiErrorCode.ENGINE_NOT_READY));
-        String answer = writer.submit(ctx -> "x", false, false, "t", 0L);
+        String answer = writer.submit(ctx -> "x", false, "t", 0L);
         assertThat(answer).as("one that decides for itself runs").isEqualTo("x");
     }
 
@@ -302,33 +287,13 @@ class CoreWriterTest {
             writer.submit(inner -> {
                 inner.record(event(2), 2);
                 return null;
-            }, true, false, "inner", 2);
+            }, true, "inner", 2);
             return 5L;
-        }, true, false, "outer", 1);
+        }, true, "outer", 1);
 
         assertThat(answer).isEqualTo(5L);
         assertThat(world.journalBatches).as("one transaction").hasSize(1);
         assertThat(world.journal()).containsExactly(event(1), event(2));
-    }
-
-    @Test
-    void aSoloCommandRunsAloneBetweenTwoBatches() throws Exception {
-        world.gate.lock();
-        Future<Long> first = submitting(1);
-        List<Integer> transactionsWhenSoloRan = Collections.synchronizedList(new ArrayList<>());
-        Future<Long> solo = submittingCommand(ctx -> {
-            transactionsWhenSoloRan.add(world.transactions.get());
-            assertThat(world.engine.isHeldByCurrentThread()).isTrue();
-            return 7L;
-        }, true, "solo", 2);
-        Future<Long> last = submitting(3);
-        world.gate.unlock();
-
-        assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(1L);
-        assertThat(solo.get(10, TimeUnit.SECONDS)).isEqualTo(7L);
-        assertThat(last.get(10, TimeUnit.SECONDS)).isEqualTo(3L);
-        assertThat(transactionsWhenSoloRan).as("the batch before the solo command had committed already").containsExactly(1);
-        assertThat(world.journal()).containsExactly(event(1), event(3));
     }
 
     // ---------------------------------------------------------------------------------------
@@ -390,7 +355,7 @@ class CoreWriterTest {
         Future<Long> broken = submittingCommand(ctx -> {
             ctx.record(event(2), 2);
             throw new IllegalStateException("failed after the apply");
-        }, false, "broken", 2);
+        }, "broken", 2);
         world.commitGate.countDown();
 
         first.get(10, TimeUnit.SECONDS);
@@ -402,14 +367,5 @@ class CoreWriterTest {
         world.published.forEach(p -> published.addAll(p.events()));
         assertThat(published).as("the engine held an uncommitted event: the rebuild publishes the second batch, not the writer")
                 .containsExactly(event(0));
-    }
-
-    @Test
-    void aCommandThatDoesItsOwnTransactionsIsFollowedByAFullPublication() throws Exception {
-        Long answer = writer.submit(ctx -> 7L, true, true, "solo", 1);
-
-        assertThat(answer).isEqualTo(7L);
-        assertThat(world.soloPublications.get()).isEqualTo(1);
-        assertThat(world.published).isEmpty();
     }
 }

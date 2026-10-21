@@ -54,6 +54,7 @@ class GameServiceNotReadyTest {
         service.config = config;
         service.marketRegistry = mock(MarketRegistry.class);
         service.seeder = new SeriesSeeder();
+        service.derivedRows = new DerivedRows();
         service.seeder.calendar = new RoundCalendar(); // init() has not run: asking it for a window throws
         // roundResults, eventStore, cancellations ... stay null: touching any of them fails the test
     }

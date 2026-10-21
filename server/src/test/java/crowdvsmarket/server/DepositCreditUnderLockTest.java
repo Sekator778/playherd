@@ -119,24 +119,25 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
         }
 
         assertThat(rebuild.isReady()).isFalse();
-        assertThat(reservations("coin-queued")).as("the call that was refused reserved nothing").isZero();
-        assertThat(depositEvents("coin-queued")).isZero();
+        // Р-107: the coin is reserved before the command (the writer's turn touches no database). A call that reserved and was then refused
+        // either took its reservation back (its event was not in the journal) or, when the failing recovery appended the event from the
+        // reservation first, left the coin to be credited - once - by the rebuild that succeeds
+        long reserved = reservations("coin-queued");
+        assertThat(reserved).isIn(0L, 1L);
+        assertThat(depositEvents("coin-queued")).as("an event only with its reservation").isEqualTo(reserved);
         assertThat(count("SELECT COUNT(*) AS n FROM game_events WHERE event_type = 'BetPlaced'"))
                 .as("and the bet that was refused was not written").isEqualTo(betEventsBefore);
 
         // the engine recovers; the deposit poller offers the same coin again on its next pass
         Mockito.reset(eventStoreSpy);
         rebuild.rebuild();
-        boolean credited = gameService.creditOnChainDeposit(player, 1, PlayAmount.ofWholePlay(500), "coin-queued", 7L,
-                System.currentTimeMillis());
+        gameService.creditOnChainDeposit(player, 1, PlayAmount.ofWholePlay(500), "coin-queued", 7L, System.currentTimeMillis());
 
-        assertThat(credited).as("the retry credits the coin: the refused call left it unreserved").isTrue();
-        assertThat(gameService.account(player).balance()).isEqualTo("10500.000");
+        assertThat(gameService.account(player).balance()).as("credited, once, whichever way the race went").isEqualTo("10500.000");
         assertThat(reservations("coin-queued")).isEqualTo(1);
         assertThat(depositEvents("coin-queued")).isEqualTo(1);
         assertThat(gameService.creditOnChainDeposit(player, 1, PlayAmount.ofWholePlay(500), "coin-queued", 7L,
                 System.currentTimeMillis())).as("and only once").isFalse();
-        assertThat(gameService.account(player).balance()).isEqualTo("10500.000");
     }
 
     /**
@@ -148,11 +149,15 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
     void aDepositWhoseEventCannotBeWrittenKeepsItsReservationAndTheRebuildAppendsTheEvent() throws Exception {
         String player = signUp("noevent");
         org.mockito.Mockito.doAnswer(inv -> {
-            throw new IllegalStateException("disk flapping while writing the event"); // a new exception each time: the recovery's own attempt fails too
-        }).when(eventStoreSpy).append(any(), any(GameEvent.DepositConfirmedOnChain.class), anyLong());
+            java.util.List<crowdvsmarket.server.events.EventStore.Pending> batch = inv.getArgument(0);
+            if (batch.stream().anyMatch(p -> p.event() instanceof GameEvent.DepositConfirmedOnChain)) {
+                throw new IllegalStateException("disk flapping while writing the event"); // a new exception each time: the recovery's own attempt fails too
+            }
+            return inv.callRealMethod();
+        }).when(eventStoreSpy).appendAll(any());
 
         assertThatThrownBy(() -> gameService.creditOnChainDeposit(player, 2, PlayAmount.ofWholePlay(250),
-                "coin-noevent", 9L, System.currentTimeMillis())).hasMessageContaining("disk flapping");
+                "coin-noevent", 9L, System.currentTimeMillis())).hasRootCauseMessage("disk flapping while writing the event");
 
         assertThat(reservations("coin-noevent")).as("the reservation was committed first").isEqualTo(1);
         assertThat(depositEvents("coin-noevent")).as("and the event is not in the journal").isZero();

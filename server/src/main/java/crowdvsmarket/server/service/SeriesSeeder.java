@@ -7,7 +7,6 @@ import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.domain.EngineHub;
 import crowdvsmarket.server.domain.RoundCalendar;
 import crowdvsmarket.server.markets.Market;
-import crowdvsmarket.server.persistence.RoundResultRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.ArrayList;
@@ -44,19 +43,24 @@ public class SeriesSeeder {
     RoundCalendar calendar;
     @Inject
     GameConfig config;
-    @Inject
-    RoundResultRepository roundResults;
 
     /**
      * The window {@code market}'s {@code interval} series starts at as of {@code nowMs}, given the bets
-     * {@code hub} holds — see the class javadoc.
+     * {@code hub} holds — see the class javadoc. Reads nothing but the engine's state (the marker of the closed rounds, replayed from
+     * the journal), so it may run in the turn of a command of the core writer.
      */
     public RoundWindow seedFor(EngineHub hub, Market market, Interval interval, long nowMs) {
+        return seedFor(hub, market, interval, nowMs, Optional.empty());
+    }
+
+    /**
+     * {@link #seedFor(EngineHub, Market, Interval, long)} for a rebuild, which may read the database: {@code tableLatestEnd} is the end of
+     * the newest {@code round_results} row of the series, a lower bound for a journal that predates the engine's marker (the rows are
+     * projections of the same events, so never later than the marker once the journal has them).
+     */
+    public RoundWindow seedFor(EngineHub hub, Market market, Interval interval, long nowMs, Optional<Long> tableLatestEnd) {
         RoundWindow base = calendar.windowContaining(market.id(), interval, nowMs);
-        // the engine's own record of the closed rounds (replayed from the journal); the table is only a lower bound
-        // for a journal that predates it - its rows are projections of the same events, so never later than the marker
-        Optional<Long> latestEnd = latestOf(hub.closedRounds().latestEnd(market.id(), interval),
-                roundResults.latestWindowEnd(market.id(), interval));
+        Optional<Long> latestEnd = latestOf(hub.closedRounds().latestEnd(market.id(), interval), tableLatestEnd);
         if (latestEnd.isPresent() && latestEnd.get() < base.startMs()) {
             long stepMs = config.roundDurations().forInterval(interval);
             base = new RoundWindow(market.id(), interval, latestEnd.get(), latestEnd.get() + stepMs);

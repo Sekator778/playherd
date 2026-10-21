@@ -128,6 +128,7 @@ public class RoundResultRepository {
                     cancelled_at_ms, cancellation_reason, refunded_bet_count, results_hash, canonical_json,
                     created_at_ms, venue)
                 VALUES (?, ?, ?, ?, ?, 'CANCELLED', ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (round_id) DO NOTHING
                 """,
                 roundId, marketId, interval.name(), windowStart, windowEnd, cancelledAtMs, reason, refundedBetCount,
                 resultsHash, canonicalJson, cancelledAtMs, venue);
