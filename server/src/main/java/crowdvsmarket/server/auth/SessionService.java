@@ -2,10 +2,13 @@ package crowdvsmarket.server.auth;
 
 import crowdvsmarket.server.config.GameConfig;
 import crowdvsmarket.server.jfr.HerdSession;
+import crowdvsmarket.server.persistence.AuthChallengeRepository;
 import crowdvsmarket.server.persistence.SessionRepository;
 import jakarta.enterprise.context.ApplicationScoped;
+import io.quarkus.scheduler.Scheduled;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.Optional;
@@ -19,11 +22,19 @@ public class SessionService {
     GameConfig config;
     @Inject
     SessionRepository repo;
+    @Inject
+    AuthChallengeRepository challenges;
+
+    private static final Logger LOG = Logger.getLogger(SessionService.class);
 
     @ConfigProperty(name = "herd.session.cache-ttl-seconds", defaultValue = "30")
     long cacheTtlSeconds;
     @ConfigProperty(name = "herd.session.cache-max-entries", defaultValue = "20000")
     int cacheMaxEntries;
+
+    /** Security review M2: sessions a player may hold at once; signing in past it ends the oldest. */
+    @ConfigProperty(name = "herd.session.max-per-player", defaultValue = "20")
+    int maxPerPlayer;
 
     private final SecureRandom random = new SecureRandom();
     private volatile SessionCache cache;
@@ -51,7 +62,35 @@ public class SessionService {
         random.nextBytes(bytes);
         String sessionId = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         repo.insert(sessionId, playerId, nowMs, nowMs + config.sessionTtlMs());
+        for (String old : repo.idsBeyondNewest(playerId, maxPerPlayer)) {
+            repo.delete(old);
+            cache().invalidate(old);
+        }
         return sessionId;
+    }
+
+    public int maxPerPlayer() {
+        return maxPerPlayer;
+    }
+
+    /** Hourly: removes the sign-in challenges and the sessions that have expired (nothing else ever did; security review M2). */
+    @Scheduled(every = "1h", delayed = "5m", concurrentExecution = Scheduled.ConcurrentExecution.SKIP,
+            identity = "herd-auth-purge")
+    void purgeExpired() {
+        try {
+            purgeExpired(System.currentTimeMillis());
+        } catch (RuntimeException e) {
+            LOG.warn("purge of expired sessions and challenges failed", e);
+        }
+    }
+
+    /** Returns the number of rows deleted (challenges + sessions). */
+    int purgeExpired(long nowMs) {
+        int n = challenges.deleteExpired(nowMs) + repo.deleteExpired(nowMs);
+        if (n > 0) {
+            LOG.infof("purged %d expired sign-in challenges and sessions", n);
+        }
+        return n;
     }
 
     /** {@code Optional.empty()} for a missing/expired session — callers treat that as signed-out,

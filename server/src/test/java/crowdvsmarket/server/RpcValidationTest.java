@@ -365,4 +365,43 @@ class RpcValidationTest {
         Response resp = rpc(session, "requestWithdrawal", EXPONENT_BOMB);
         assertRefusedFast(resp, t0);
     }
+
+    @Test
+    void aMissingOrUnknownIntervalIsABadRequestNotAnInternalError() {
+        for (String raw : List.of("{\"args\":[null]}", "{\"args\":[]}", "{\"args\":[\"NOPE\"]}", "{\"args\":[{\"a\":1}]}")) {
+            Response resp = rpcRaw(null, "rounds", raw);
+            assertThat(resp.statusCode()).as(raw + " -> " + resp.asString()).isEqualTo(400);
+            assertThat(resp.jsonPath().getString("error.code")).isEqualTo("BAD_REQUEST");
+            assertThat(resp.asString()).doesNotContain("crowdvsmarket").doesNotContain("Interval");
+        }
+    }
+
+    @Test
+    void anUnknownEnumOrANullIntervalInARequestObjectIsABadRequest() {
+        Response unknown = rpc(null, "previewLiquidation", Map.of("interval", "NOPE", "direction", "UP", "leverage", 2));
+        assertThat(unknown.statusCode()).as(unknown.asString()).isEqualTo(400);
+        assertThat(unknown.asString()).doesNotContain("crowdvsmarket");
+
+        java.util.Map<String, Object> nulls = new java.util.HashMap<>();
+        nulls.put("interval", null);
+        nulls.put("direction", null);
+        Response nullInterval = rpc(null, "previewLiquidation", nulls);
+        assertThat(nullInterval.statusCode()).as(nullInterval.asString()).isEqualTo(400);
+    }
+
+    @Test
+    void aBodyOverTheLimitIsRefusedBeforeItIsParsed() {
+        Response resp = given().contentType(ContentType.JSON)
+                .body("{\"args\":[\"" + "x".repeat(70 * 1024) + "\"]}").post("/api/rpc/rounds");
+        assertThat(resp.statusCode()).isEqualTo(413);
+    }
+
+    @Test
+    void aBodyAsLargeAsTheLargestLegitimateCallIsAccepted() {
+        // submitFeedback's text is at most 2000 characters; acknowledgeResults lists round ids of 36 characters
+        Response ack = rpc(null, "acknowledgeResults", java.util.Collections.nCopies(500, "r".repeat(36)));
+        assertThat(ack.statusCode()).as("not signed in, but not too large: " + ack.asString()).isEqualTo(401);
+        Response feedback = rpc(null, "submitFeedback", Map.of("message", "m".repeat(2000), "page", "/"));
+        assertThat(feedback.statusCode()).as(feedback.asString()).isNotEqualTo(413);
+    }
 }

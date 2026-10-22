@@ -21,6 +21,20 @@ public class ApiExceptionMapper implements ExceptionMapper<Throwable> {
     private record ErrorPayload(String code, String message) {
     }
 
+    /** Java internals in a message: a dotted class name ({@code crowdvsmarket.server.dto.Enums$Interval}), a nested-class
+     *  {@code $}, "No enum constant ...", an exception class. */
+    private static final java.util.regex.Pattern INTERNALS =
+            java.util.regex.Pattern.compile("(\\b[A-Za-z_][A-Za-z0-9_]*\\.){2,}[A-Za-z$]|\\$|No enum constant|Exception|java\\.");
+
+    /** The message of an {@link IllegalArgumentException} is user-facing where a handler wrote it for a client, but is
+     *  Java's own where it comes from {@code Enum.valueOf}, a parser or a library (security review L3): that one never leaves. */
+    static String clientSafeMessage(String message) {
+        if (message == null || message.isBlank() || message.length() > 300 || INTERNALS.matcher(message).find()) {
+            return "invalid request";
+        }
+        return message;
+    }
+
     @Override
     public Response toResponse(Throwable e) {
         if (e instanceof ApiException api) {
@@ -36,7 +50,7 @@ public class ApiExceptionMapper implements ExceptionMapper<Throwable> {
         }
         if (e instanceof IllegalArgumentException) {
             return Response.status(400).type(MediaType.APPLICATION_JSON)
-                    .entity(new ErrorBody(new ErrorPayload("BAD_REQUEST", e.getMessage())))
+                    .entity(new ErrorBody(new ErrorPayload("BAD_REQUEST", clientSafeMessage(e.getMessage()))))
                     .build();
         }
         // Bug fix (wave-1 finding): a malformed/mistyped JSON request body reaching Jackson

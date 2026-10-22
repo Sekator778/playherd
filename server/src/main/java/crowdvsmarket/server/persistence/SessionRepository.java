@@ -2,6 +2,7 @@ package crowdvsmarket.server.persistence;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.util.List;
 import java.util.Optional;
 
 /** {@code herd_session} cookie backing store (Р-4 §4.g: "выдаём серверную сессию... httpOnly-cookie
@@ -30,5 +31,17 @@ public class SessionRepository {
 
     public void delete(String sessionId) {
         db.tx(c -> db.update(c, "DELETE FROM sessions WHERE session_id = ?", sessionId));
+    }
+
+    /** The ids of the sessions of {@code playerId} beyond its newest {@code keep}, oldest last (they are to go). */
+    public List<String> idsBeyondNewest(String playerId, int keep) {
+        return db.read(c -> db.queryList(c,
+                "SELECT session_id FROM sessions WHERE player_id = ? ORDER BY created_at_ms DESC, session_id OFFSET ?",
+                rs -> rs.getString("session_id"), playerId, keep));
+    }
+
+    /** Deletes the sessions that ran out before {@code nowMs}; returns how many. */
+    public int deleteExpired(long nowMs) {
+        return db.tx(c -> db.update(c, "DELETE FROM sessions WHERE expires_at_ms < ?", nowMs));
     }
 }

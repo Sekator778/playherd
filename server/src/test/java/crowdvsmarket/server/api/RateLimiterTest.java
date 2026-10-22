@@ -79,4 +79,44 @@ class RateLimiterTest {
         }
         assertThat(limiter.tryAcquire("a", 5, perSecond)).isFalse();
     }
+
+    @Test
+    void aBucketIdleForLongerThanItsRefillIsForgottenAndOneThatIsNotStays() throws InterruptedException {
+        RateLimiter limiter = limiter(30, 0.5);
+        limiter.tryAcquire("fast", 1, 1000.0); // refills to full in a millisecond
+        limiter.tryAcquire("slow", 1, 0.001); // 1000 seconds
+        Thread.sleep(30);
+
+        limiter.sweep();
+
+        assertThat(limiter.size()).isEqualTo(1);
+        assertThat(limiter.tryAcquire("slow", 1, 0.001)).as("the slow bucket kept its spent token").isFalse();
+    }
+
+    @Test
+    void theMapNeverGrowsPastItsCapAndANewKeyPastItSharesOneBucket() {
+        RateLimiter limiter = limiter(30, 0.5);
+        limiter.setMaxBuckets(3);
+
+        for (int i = 0; i < 100; i++) {
+            limiter.tryAcquire("k" + i, 2, 0.0);
+        }
+
+        assertThat(limiter.size()).isLessThanOrEqualTo(4); // the cap, plus the shared overflow bucket
+        assertThat(limiter.tryAcquire("another", 2, 0.0)).as("the overflow bucket is spent").isFalse();
+        assertThat(limiter.tryAcquire("k0", 2, 0.0)).as("a key that was in before the cap still has its own").isTrue();
+    }
+
+    @Test
+    void anIpv6AddressIsKeyedByItsSlash64AndAnIpv4OneByItself() {
+        assertThat(RateLimiter.addressKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd"))
+                .isEqualTo(RateLimiter.addressKey("2001:db8:1:2:1::9"))
+                .isEqualTo("2001:0db8:0001:0002::/64");
+        assertThat(RateLimiter.addressKey("2001:db8:1:3::1")).isNotEqualTo(RateLimiter.addressKey("2001:db8:1:2::1"));
+        assertThat(RateLimiter.addressKey("fe80::1%eth0")).isEqualTo("fe80:0000:0000:0000::/64");
+        assertThat(RateLimiter.addressKey("::ffff:1.2.3.4")).isEqualTo("1.2.3.4");
+        assertThat(RateLimiter.addressKey("1.2.3.4")).isEqualTo("1.2.3.4");
+        assertThat(RateLimiter.addressKey("unknown")).isEqualTo("unknown");
+        assertThat(RateLimiter.addressKey(null)).isNull();
+    }
 }

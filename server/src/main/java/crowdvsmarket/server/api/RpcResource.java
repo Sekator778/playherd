@@ -21,6 +21,7 @@ import crowdvsmarket.server.service.MarketViewService;
 import crowdvsmarket.server.service.PriceSeriesService;
 import crowdvsmarket.server.service.ServerInfoService;
 import io.vertx.core.http.HttpServerRequest;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.CookieParam;
 import jakarta.ws.rs.HeaderParam;
@@ -87,6 +88,14 @@ public class RpcResource {
      *  shared budget. */
     private static final String FEEDBACK_METHOD = "submitFeedback";
 
+    /** Security review 2026-10-22 (H4/F2): the calls that write to the journal for free, and that a person makes a few times in a
+     *  session at most, have a per-address budget of their own (herd.ratelimit.manage / nickname / ack in application.properties):
+     *  the bot and key management ones, the nickname, and the "while you were away" acknowledgement (one call per settled round
+     *  the player had a bet in, so the roomiest of the three). */
+    private static final Set<String> MANAGE_METHODS = Set.of("createBot", "regenerateBotKey", "revokeBotKey");
+    private static final String NICKNAME_METHOD = "setNickname";
+    private static final String ACK_METHOD = "acknowledgeResults";
+
     @Inject
     ObjectMapper mapper;
     @Inject
@@ -109,6 +118,21 @@ public class RpcResource {
     RateLimiter rateLimiter;
     @Inject
     GameConfig config;
+
+    @ConfigProperty(name = "herd.ratelimit.manage.capacity", defaultValue = "5")
+    int manageCapacity;
+    @ConfigProperty(name = "herd.ratelimit.manage.refill-per-minute", defaultValue = "3")
+    double manageRefillPerMinute;
+    @ConfigProperty(name = "herd.ratelimit.nickname.capacity", defaultValue = "10")
+    int nicknameCapacity;
+    @ConfigProperty(name = "herd.ratelimit.nickname.refill-per-minute", defaultValue = "10")
+    double nicknameRefillPerMinute;
+    @ConfigProperty(name = "herd.ratelimit.ack.capacity", defaultValue = "60")
+    int ackCapacity;
+    @ConfigProperty(name = "herd.ratelimit.ack.refill-per-second", defaultValue = "1")
+    double ackRefillPerSecond;
+    @ConfigProperty(name = "herd.feedback.rate-limit.per-ip-per-day", defaultValue = "10")
+    int feedbackPerIpPerDay;
 
     @POST
     @Path("/{method}")
@@ -150,11 +174,28 @@ public class RpcResource {
             // key's own, not the address's, so a developer's bots behind one address do not share the visitors' buckets.
             keyPlayerId = authenticateKey(keyToken, method, httpRequest, now);
         } else {
-            if (RATE_LIMITED_METHODS.contains(method) && !rateLimiter.tryAcquire(clientIp(httpRequest) + ":" + method)) {
+            if (RATE_LIMITED_METHODS.contains(method) && !rateLimiter.tryAcquire(limiterIp(httpRequest) + ":" + method)) {
                 throw ApiException.rateLimited();
             }
-            if (FEEDBACK_METHOD.equals(method) && !rateLimiter.tryAcquire(clientIp(httpRequest) + ":" + method,
-                    config.feedbackRateLimitCapacity(), config.feedbackRateLimitRefillPerHour() / 3600.0)) {
+            if (FEEDBACK_METHOD.equals(method)) {
+                // the per-day cap of one address first: one source cannot use up the global one (FeedbackService) for everyone
+                if (!rateLimiter.tryAcquire(limiterIp(httpRequest) + ":" + method + ":day", feedbackPerIpPerDay,
+                        feedbackPerIpPerDay / 86400.0)
+                        || !rateLimiter.tryAcquire(limiterIp(httpRequest) + ":" + method,
+                        config.feedbackRateLimitCapacity(), config.feedbackRateLimitRefillPerHour() / 3600.0)) {
+                    throw ApiException.rateLimited();
+                }
+            }
+            if (MANAGE_METHODS.contains(method) && !rateLimiter.tryAcquire(limiterIp(httpRequest) + ":manage",
+                    manageCapacity, manageRefillPerMinute / 60.0)) {
+                throw ApiException.rateLimited();
+            }
+            if (NICKNAME_METHOD.equals(method) && !rateLimiter.tryAcquire(limiterIp(httpRequest) + ":" + method,
+                    nicknameCapacity, nicknameRefillPerMinute / 60.0)) {
+                throw ApiException.rateLimited();
+            }
+            if (ACK_METHOD.equals(method) && !rateLimiter.tryAcquire(limiterIp(httpRequest) + ":" + method,
+                    ackCapacity, ackRefillPerSecond)) {
                 throw ApiException.rateLimited();
             }
         }
@@ -202,7 +243,7 @@ public class RpcResource {
             }
             case "crowdOverview" -> result = marketView.crowdOverview();
             // `marketId` is the optional second argument (omitted → BTC, docs/research/markets_architecture.md §8).
-            case "rounds" -> result = gameService.roundsPair(Enums.Interval.valueOf(str(args, 0)), str(args, 1), playerId);
+            case "rounds" -> result = gameService.roundsPair(interval(args, 0), str(args, 1), playerId);
             case "round" -> result = gameService.round(str(args, 0), playerId);
             // Р-62: public, no session required — same visibility as the round itself during BETTING.
             case "betFeed" -> result = gameService.betFeed(str(args, 0), longOrNull(args, 1));
@@ -351,7 +392,7 @@ public class RpcResource {
     private String authenticateKey(String token, String method, HttpServerRequest httpRequest, long now) {
         PlayerDirectory.Row bot = gameService.apiBotForKey(token).orElse(null);
         if (bot == null) {
-            if (!rateLimiter.tryAcquire(clientIp(httpRequest) + ":apiKey")) {
+            if (!rateLimiter.tryAcquire(limiterIp(httpRequest) + ":apiKey")) {
                 throw ApiException.rateLimited();
             }
             throw ApiException.apiKeyInvalid();
@@ -382,6 +423,11 @@ public class RpcResource {
             return "unknown";
         }
         return request.remoteAddress().host();
+    }
+
+    /** The address a rate-limit bucket is keyed by: {@link #clientIp} with an IPv6 address reduced to its /64 ({@link RateLimiter#addressKey}). */
+    private static String limiterIp(HttpServerRequest request) {
+        return RateLimiter.addressKey(clientIp(request));
     }
 
     /** Task item 3 (security minor): {@code Secure} follows {@code herd.cookie.secure}
@@ -421,6 +467,20 @@ public class RpcResource {
     private JsonNode at(JsonNode args, int i) {
         JsonNode n = i < args.size() ? args.get(i) : null;
         return n == null ? NullNode.getInstance() : n;
+    }
+
+    /** A required {@link Enums.Interval} arg: missing, {@code null} or an unknown name is a client error (it used to be a 500 with
+     *  a stack trace in the log for every anonymous request). */
+    private Enums.Interval interval(JsonNode args, int i) {
+        String name = str(args, i);
+        if (name == null) {
+            throw ApiException.badRequest("missing interval");
+        }
+        try {
+            return Enums.Interval.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            throw ApiException.badRequest("invalid interval");
+        }
     }
 
     private String str(JsonNode args, int i) {

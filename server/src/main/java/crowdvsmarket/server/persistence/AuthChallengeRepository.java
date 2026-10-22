@@ -43,4 +43,9 @@ public class AuthChallengeRepository {
         int updated = db.update(c, "UPDATE auth_challenges SET used = TRUE WHERE nonce = ? AND used = FALSE", nonce);
         return updated == 1;
     }
+
+    /** Deletes the challenges that ran out before {@code nowMs} (used or not: a used one is of no further use either); returns how many. */
+    public int deleteExpired(long nowMs) {
+        return db.tx(c -> db.update(c, "DELETE FROM auth_challenges WHERE expires_at_ms < ?", nowMs));
+    }
 }

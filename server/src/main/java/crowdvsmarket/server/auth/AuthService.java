@@ -59,6 +59,20 @@ public class AuthService {
         return new Auth.AuthChallengeDto(nonce, message, expiresAt);
     }
 
+    /** An address as it may enter the log (security review L5: the client picks the text, a line break in it would forge log
+     *  lines): a bech32 address (xch1/txch1 + the bech32 charset, at most 90 characters) as it is, anything else cut to 20
+     *  characters with everything outside printable ASCII letters, digits and a few signs replaced. */
+    static String loggable(String address) {
+        if (address == null) {
+            return "null";
+        }
+        if (address.length() <= 90 && address.matches("(t?xch)1[023456789acdefghjklmnpqrstuvwxyz]+")) {
+            return address;
+        }
+        String cut = address.length() > 20 ? address.substring(0, 20) : address;
+        return "(malformed, " + address.length() + " chars) " + cut.replaceAll("[^A-Za-z0-9._-]", "?");
+    }
+
     public record VerifyResult(Auth.AuthSessionDto session, String sessionId) {
     }
 
@@ -96,7 +110,7 @@ public class AuthService {
             // client-facing error.message — never surfaced to a client anywhere else in this
             // codebase (see e.g. RpcResource#argsArray/#obj's own comments on the same class of
             // leak). Logged here instead; the client gets a generic, honest "unavailable" message.
-            LOG.warnf(e, "chainsvc auth verification unavailable for address %s", req.address());
+            LOG.warnf(e, "chainsvc auth verification unavailable for address %s", loggable(req.address()));
             throw ApiException.unauthorized("sign-in temporarily unavailable — please try again shortly");
         }
         if (!result.valid()) {
