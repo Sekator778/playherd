@@ -2,9 +2,9 @@ package crowdvsmarket.server.push;
 
 import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.round.RoundWindow;
-import crowdvsmarket.server.domain.RoundProgress;
 import crowdvsmarket.server.markets.Market;
 import crowdvsmarket.server.service.GameService;
+import crowdvsmarket.server.service.ReadViews;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -23,8 +23,10 @@ import org.jboss.logging.Logger;
  * The part of the "changed" notices that no event announces: a market's price moved, or its round windows moved on with the clock
  * (a betting round starts running, the running one ends). Four times a second (own thread) it compares a small signature of every running
  * market - the latest quote and the state of the round cursors against the clock - with the last one and publishes
- * {@code market:<id>} (and {@code markets}) when it differs. It reads memory only (the quote ring, the round cursors), takes no
- * lock, and does nothing at all while nobody listens to a market topic.
+ * {@code market:<id>} (and {@code markets}) when it differs. It reads memory only (the quote ring, the round cursors of the published
+ * views), takes no lock, and does nothing at all while nobody listens to a market topic. The cursors come from the views, not from
+ * {@code RoundProgress}: the settlement moves the live cursor on the logic thread before its batch is durable, and a notice sent then
+ * would make the client read views that do not show the move yet - and the next scan, finding the same signature, would not send another.
  *
  * <p>Bets, settlements and cancellations are published where they are committed ({@code GameService}).
  */
@@ -38,8 +40,6 @@ public class PushTicker {
     PushHub hub;
     @Inject
     GameService game;
-    @Inject
-    RoundProgress progress;
 
     @ConfigProperty(name = "herd.push.price-interval-ms", defaultValue = "1000")
     long priceIntervalMs;
@@ -82,9 +82,10 @@ public class PushTicker {
             lastPrice.clear();
             return;
         }
+        ReadViews.Snapshot views = game.snapshot(); // 503 while the engine is not ready: the tick is skipped
         boolean any = false;
         for (Market market : game.runningMarkets()) {
-            String windows = windows(market, nowMs);
+            String windows = windows(views, market, nowMs);
             String price = price(market, nowMs);
             // a round moving on is announced at once; a price is announced at most every priceIntervalMs (a quote can change many
             // times a second, and every notice makes each client read again)
@@ -111,10 +112,10 @@ public class PushTicker {
                 .orElse("");
     }
 
-    private String windows(Market market, long nowMs) {
+    private String windows(ReadViews.Snapshot views, Market market, long nowMs) {
         StringBuilder sb = new StringBuilder();
         for (Interval interval : Interval.values()) {
-            Optional<RoundWindow> running = progress.findNext(market.id(), interval);
+            Optional<RoundWindow> running = views.cursor(market.id(), interval);
             sb.append('|');
             running.ifPresent(w -> sb.append(w.startMs()).append(nowMs >= w.endMs() ? "e" : ""));
         }
