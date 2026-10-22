@@ -354,6 +354,8 @@ export function Layout() {
           {" · "}
           <NavLink to="/status">{t("layout.status")}</NavLink>
           {" · "}
+          <NavLink to="/changelog">{t("layout.whatsNew")}</NavLink>
+          {" · "}
           <NavLink to="/developers">{t("layout.developers")}</NavLink>
           {" · "}
           <button type="button" className="footer-link" onClick={openFeedbackForm}>

@@ -11,6 +11,7 @@ import { FeesPage } from "./pages/FeesPage";
 import { HowItWorksPage } from "./pages/HowItWorksPage";
 import { StatusPage } from "./pages/StatusPage";
 import { DevelopersPage } from "./pages/DevelopersPage";
+import { ChangelogPage } from "./pages/ChangelogPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { LabPage } from "./pages/LabPage";
 import { LabStatesPage } from "./pages/LabStatesPage";
@@ -60,6 +61,8 @@ export default function App() {
         <Route path="/status" element={<StatusPage />} />
         {/* Р-106: the API for bots of outside developers - how to get a key, every call, a minimal bot. */}
         <Route path="/developers" element={<DevelopersPage />} />
+        {/* Public "What's new": player-visible changes, newest first (pages/changelog/entries.ts). */}
+        <Route path="/changelog" element={<ChangelogPage />} />
         {/* Hidden design lab (implementation-plan.md §5) — intentionally not in any nav; reachable
          *  only by knowing the URL. */}
         <Route path="/lab" element={<LabPage />} />
