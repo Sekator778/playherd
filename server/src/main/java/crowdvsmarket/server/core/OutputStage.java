@@ -27,6 +27,8 @@ final class OutputStage implements Runnable {
     private final Semaphore room;
     private final BlockingQueue<WriterBatch> in = new LinkedBlockingQueue<>();
     private volatile boolean stopping;
+    /** For tests: thrown once the next batch is in hand (a crash of the thread). */
+    volatile Error crash;
 
     OutputStage(CoreWriter.Host host, WriteContext ctx, Semaphore room) {
         this.host = host;
@@ -59,6 +61,10 @@ final class OutputStage implements Runnable {
                     return;
                 }
                 continue;
+            }
+            Error c = crash;
+            if (c != null) {
+                throw c;
             }
             process(batch);
         }

@@ -34,6 +34,8 @@ final class JournalStage implements Runnable {
     private final OutputStage output;
     private volatile Throwable failure;
     private volatile boolean stopping;
+    /** For tests: thrown once the next group is in hand (a crash of the thread). */
+    volatile Error crash;
 
     // what the admin status and the benches read
     final AtomicLong syncs = new AtomicLong();
@@ -89,6 +91,10 @@ final class JournalStage implements Runnable {
                     return;
                 }
                 continue;
+            }
+            Error c = crash;
+            if (c != null) {
+                throw c;
             }
             try {
                 write(group);

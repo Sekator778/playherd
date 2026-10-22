@@ -13,6 +13,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
@@ -49,6 +50,12 @@ import org.jboss.logging.Logger;
  * same effect for itself: what the commands before it in the batch had accepted is committed (the logic thread waits for the pipeline to
  * drain, then rebuilds), the command gets its own exception, and the commands after it run in the next batch.
  *
+ * <p><b>A thread that dies.</b> Each stage answers for the failures of its own work, so a thread of the writer that lets an exception out
+ * (an {@link Error} where nothing expects one) is a writer that can no longer move: the batches behind it would wait forever and so would
+ * their callers. The writer then stops at once - every command waiting is answered 503, new ones are refused - and tells the host
+ * ({@link Host#stageDied}), which stops the server so that it starts again from the snapshot and the journal (LMAX: the state in memory is
+ * only a cache of the journal).
+ *
  * <p><b>The gate.</b> {@link Host#gate()} is held by the logic thread for the length of its turn, from the first command to the hand-over of
  * the batch. Whoever replaces the engine's state (a rebuild), takes a snapshot of it or takes what the engine has produced (the ledger rows)
  * enters through {@link #enterGate()}: it takes the gate (so no batch is half way in memory) and waits until the pipeline is drained (so the
@@ -83,6 +90,10 @@ public final class CoreWriter implements AutoCloseable {
 
         /** Applies the event to the live engine. */
         Object apply(GameEvent event);
+
+        /** A thread of the writer has died (see the class comment): the writer has stopped and answered whoever waited with 503. The host
+         *  stops the server so that it starts again from the journal. Called once, on a thread of its own. */
+        void stageDied(String thread, Throwable cause);
 
         /** The engine may be ahead of the journal: rebuild it from the journal. Called holding the gate and the engine write lock, with the
          *  pipeline drained; never throws (a rebuild that fails leaves the engine not ready). */
@@ -128,6 +139,15 @@ public final class CoreWriter implements AutoCloseable {
     /** The batches handed over and not yet cleared, oldest first. The logic thread's; {@link #close} reads it after that thread has ended. */
     private final ArrayDeque<WriterBatch> inPipeline = new ArrayDeque<>();
     private volatile boolean running = true;
+    /** What killed a thread of the writer; {@code null} while all three are alive. */
+    private volatile Throwable dead;
+    private final AtomicBoolean stopping = new AtomicBoolean();
+    /** For tests: the logic thread throws this once it has taken the commands of its next batch. */
+    private volatile Error crash;
+    /** The commands the logic thread has taken from the queue for the batch it is building, and the ones it carries to the next batch:
+     *  the logic thread's, read by {@link #close} once it has ended (or given up on it) so that none of them is left unanswered. */
+    private volatile List<WriterSlot<?>> inHand = List.of();
+    private final List<WriterSlot<?>> carry = new ArrayList<>();
 
     private final AtomicLong batches = new AtomicLong();
     private final AtomicLong backPressureNanos = new AtomicLong();
@@ -149,9 +169,9 @@ public final class CoreWriter implements AutoCloseable {
         this.room = new Semaphore(this.pipelineDepth, true);
         this.output = new OutputStage(host, ctx, room);
         this.journal = new JournalStage(eventStore, output, queue);
-        this.journalThread = daemon(journal, JournalStage.THREAD);
-        this.outputThread = daemon(output, OutputStage.THREAD);
-        this.thread = daemon(this::loop, IoGuard.WRITER_THREAD);
+        this.journalThread = daemon(guarded(journal, JournalStage.THREAD), JournalStage.THREAD);
+        this.outputThread = daemon(guarded(output, OutputStage.THREAD), OutputStage.THREAD);
+        this.thread = daemon(guarded(this::loop, IoGuard.WRITER_THREAD), IoGuard.WRITER_THREAD);
         this.journalThread.start();
         this.outputThread.start();
         this.thread.start();
@@ -161,6 +181,62 @@ public final class CoreWriter implements AutoCloseable {
         Thread t = new Thread(body, name);
         t.setDaemon(true);
         return t;
+    }
+
+    /** The thread's body, with whatever escapes it reported as the death of the writer. */
+    private Runnable guarded(Runnable body, String name) {
+        return () -> {
+            try {
+                body.run();
+            } catch (Throwable e) {
+                died(name, e);
+            }
+        };
+    }
+
+    /**
+     * A thread of the writer let an exception out and is gone: nothing behind it moves any more. Stops the writer - new commands are
+     * refused, every command waiting is answered 503 - and tells the host, which stops the server. Once, whichever thread dies first.
+     */
+    private void died(String name, Throwable e) {
+        if (!running && dead == null) {
+            LOG.errorf(e, "the %s thread of the core writer ended with an exception while the writer was closing", name);
+            return;
+        }
+        if (dead == null) {
+            dead = e;
+        }
+        running = false;
+        if (!stopping.compareAndSet(false, true)) {
+            return;
+        }
+        LOG.errorf(e, "the %s thread of the core writer died - the writer stops, the commands waiting are answered 503 and the server is "
+                + "stopped so that it starts again from the snapshot and the journal", name);
+        Thread stopper = new Thread(() -> {
+            close();
+            try {
+                host.stageDied(name, e);
+            } catch (Throwable t) {
+                LOG.error("the host could not be told that the core writer died", t);
+            }
+        }, "herd-core-stop");
+        stopper.setDaemon(true);
+        stopper.start();
+    }
+
+    /** Whether a thread of the writer has died: the writer then answers nothing but 503. */
+    public boolean dead() {
+        return dead != null;
+    }
+
+    /** For tests: the named thread of the writer throws {@code e} as soon as it has work in hand (a crash). */
+    void crashForTests(String thread, Error e) {
+        switch (thread) {
+            case JournalStage.THREAD -> journal.crash = e;
+            case OutputStage.THREAD -> output.crash = e;
+            case IoGuard.WRITER_THREAD -> crash = e;
+            default -> throw new IllegalArgumentException(thread);
+        }
     }
 
     /** Whether the calling thread is the logic thread (a command that calls another command runs it in place). */
@@ -252,10 +328,19 @@ public final class CoreWriter implements AutoCloseable {
         ReentrantLock gate = host.gate();
         while (true) {
             gate.lock();
+            if (dead != null && !onPipelineThread()) {
+                // the engine may hold batches that never reached the journal and never will: nobody may read it (a snapshot of it would
+                // carry them into the next start)
+                gate.unlock();
+                throw ApiException.engineNotReady();
+            }
             if (!running || onPipelineThread() || gate.getHoldCount() > 1) {
                 return;
             }
-            drain();
+            if (!drain()) {
+                gate.unlock();
+                throw ApiException.engineNotReady(); // a thread of the writer died: the pipeline never drains, the server is stopping
+            }
             if (journal.failure() == null) {
                 return;
             }
@@ -264,11 +349,29 @@ public final class CoreWriter implements AutoCloseable {
         }
     }
 
-    /** Waits until no batch is in the pipeline. The caller keeps the logic thread from handing over more (it holds the gate, or is the
-     *  logic thread between two hand-overs). */
-    private void drain() {
-        room.acquireUninterruptibly(pipelineDepth);
-        room.release(pipelineDepth);
+    /** Waits until no batch is in the pipeline; {@code false} when a thread of the writer died meanwhile (the pipeline then never drains).
+     *  The caller keeps the logic thread from handing over more (it holds the gate, or is the logic thread between two hand-overs). */
+    private boolean drain() {
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    if (room.tryAcquire(pipelineDepth, 100, TimeUnit.MILLISECONDS)) {
+                        room.release(pipelineDepth);
+                        return true;
+                    }
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+                if (dead != null) {
+                    return false;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -283,13 +386,22 @@ public final class CoreWriter implements AutoCloseable {
         join(journalThread, 3_000L);
         output.stop();
         join(outputThread, 3_000L);
-        for (WriterBatch b : inPipeline) {
-            for (WriterSlot<?> s : b.accepted) {
-                s.fail(ApiException.engineNotReady());
+        List<WriterSlot<?>> left = new ArrayList<>();
+        try {
+            for (WriterBatch b : inPipeline) {
+                left.addAll(b.accepted);
+                if (b.tainted != null) {
+                    left.add(b.tainted);
+                }
             }
-            if (b.tainted != null) {
-                b.tainted.fail(ApiException.engineNotReady());
-            }
+            left.addAll(inHand);
+            left.addAll(carry);
+        } catch (RuntimeException e) {
+            // the logic thread did not end in time and is still changing them: answer what could be read, the rest times out on its own
+            LOG.error("the commands held by the core writer's logic thread could not all be read while closing", e);
+        }
+        for (WriterSlot<?> s : left) {
+            s.fail(ApiException.engineNotReady()); // no effect on a command already answered
         }
         List<WriterSlot<?>> rest = new ArrayList<>();
         queue.drainTo(rest);
@@ -313,7 +425,6 @@ public final class CoreWriter implements AutoCloseable {
     // ---------------------------------------------------------------------------------------
 
     private void loop() {
-        List<WriterSlot<?>> carry = new ArrayList<>();
         while (running) {
             if (journal.failure() != null) {
                 host.gate().lock();
@@ -324,6 +435,7 @@ public final class CoreWriter implements AutoCloseable {
                 }
             }
             List<WriterSlot<?>> batch = new ArrayList<>(carry);
+            inHand = batch;
             carry.clear();
             try {
                 if (batch.isEmpty()) {
@@ -340,6 +452,10 @@ public final class CoreWriter implements AutoCloseable {
                 }
                 continue;
             }
+            Error c = crash;
+            if (c != null) {
+                throw c;
+            }
             try {
                 cycle(batch, carry);
             } catch (Throwable e) {
@@ -351,6 +467,10 @@ public final class CoreWriter implements AutoCloseable {
                 }
                 carry.clear();
             }
+            inHand = List.of(); // answered, in the pipeline (inPipeline) or carried
+        }
+        for (WriterSlot<?> s : inHand) {
+            s.fail(ApiException.engineNotReady());
         }
         for (WriterSlot<?> s : carry) {
             s.fail(ApiException.engineNotReady());
@@ -412,6 +532,12 @@ public final class CoreWriter implements AutoCloseable {
         try {
             if (journal.failure() != null) {
                 handleFailure(); // the batch about to be applied would sit on a state that is doomed
+            }
+            if (dead != null) {
+                for (WriterSlot<?> s : stretch) {
+                    s.fail(ApiException.engineNotReady());
+                }
+                return stretch.size();
             }
             trim();
             List<WriterSlot<?>> accepted = new ArrayList<>(stretch.size());
@@ -551,7 +677,9 @@ public final class CoreWriter implements AutoCloseable {
      * failing one are then durable, as are the batches before), rebuilds the engine from the journal, and answers. Holding the gate.
      */
     private void finishTainted(WriterBatch batch) {
-        drain();
+        if (!drain()) {
+            return; // a thread of the writer died: closing answers the batch
+        }
         if (batch.poisoned || journal.failure() != null) {
             handleFailure(); // the journal failed on the way: this batch is among those that are dropped
             return;
@@ -582,7 +710,9 @@ public final class CoreWriter implements AutoCloseable {
      * the batches that did not make it with 503. Holding the gate, on the logic thread.
      */
     private void handleFailure() {
-        drain();
+        if (!drain()) {
+            return; // a thread of the writer died: closing answers the batches
+        }
         Throwable failure = journal.failure();
         if (failure == null) {
             return;

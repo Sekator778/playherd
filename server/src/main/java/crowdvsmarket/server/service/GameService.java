@@ -551,6 +551,12 @@ public class GameService implements MarketListener {
                         }
 
                         @Override
+                        public void stageDied(String thread, Throwable cause) {
+                            // the container restarts (restart: unless-stopped) and the engine is rebuilt from the snapshot and the journal
+                            io.quarkus.runtime.Quarkus.asyncExit(1);
+                        }
+
+                        @Override
                         public Object prepareViews(List<GameEvent> events) {
                             return prepareViewsOf(events);
                         }

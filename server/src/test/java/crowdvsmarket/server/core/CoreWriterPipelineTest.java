@@ -308,4 +308,88 @@ class CoreWriterPipelineTest {
             shallow.close();
         }
     }
+
+    // ---------------------------------------------------------------------------------------
+    // A thread of the writer that dies
+    // ---------------------------------------------------------------------------------------
+
+    private static void assertAnswered503(Future<Long> f) {
+        assertThatThrownBy(() -> f.get(10, TimeUnit.SECONDS)).hasCauseInstanceOf(ApiException.class).satisfies(e -> {
+            ApiException api = (ApiException) e.getCause();
+            assertThat(api.code()).isEqualTo(Enums.ApiErrorCode.ENGINE_NOT_READY);
+            assertThat(api.httpStatus()).isEqualTo(503);
+        });
+    }
+
+    /** After the death: the host was told once, about that thread; new commands and the gate are refused at once and nothing is left held. */
+    private void assertStopped(String thread) throws Exception {
+        assertThat(world.diedSignal.await(10, TimeUnit.SECONDS)).as("the host is told").isTrue();
+        assertThat(world.died).containsExactly(thread);
+        assertThat(writer.dead()).isTrue();
+        assertThatThrownBy(() -> writer.submit(ctx -> 7L, true, "t7", 7)).isInstanceOfSatisfying(ApiException.class,
+                api -> assertThat(api.code()).isEqualTo(Enums.ApiErrorCode.ENGINE_NOT_READY));
+        assertThatThrownBy(writer::enterGate).as("nobody may read an engine that can hold batches the journal never got")
+                .isInstanceOfSatisfying(ApiException.class, api -> assertThat(api.code()).isEqualTo(Enums.ApiErrorCode.ENGINE_NOT_READY));
+        assertThat(world.gate.isLocked()).as("the gate is not left held").isFalse();
+        assertThat(writer.inFlight()).as("no caller is left waiting").isZero();
+    }
+
+    @Test
+    void aJournalThreadThatDiesStopsTheWriterAnswers503AndTellsTheHost() throws Exception {
+        List<Long> pushed = Collections.synchronizedList(new ArrayList<>());
+        writer.crashForTests(JournalStage.THREAD, new StackOverflowError("injected crash of the journal thread"));
+        Future<Long> f = submitting(1, pushed, new ArrayList<>());
+
+        assertAnswered503(f);
+        assertStopped(JournalStage.THREAD);
+        assertThat(world.journal()).isEmpty();
+        assertThat(pushed).as("no push notice for what was not durable").isEmpty();
+        assertThat(world.published).as("no view for what was not durable").isEmpty();
+    }
+
+    @Test
+    void aJournalThreadThatDiesWithBatchesQueuedAnswersTheDurableOneAndGives503ToTheRest() throws Exception {
+        world.commitGate = new CountDownLatch(1);
+        List<Long> pushed = Collections.synchronizedList(new ArrayList<>());
+        List<Future<Long>> futures = new ArrayList<>();
+        futures.add(submitting(1, pushed, new ArrayList<>()));
+        await().atMost(Duration.ofSeconds(10)).until(() -> world.transactions.get() == 1);
+        futures.add(submitting(2, pushed, new ArrayList<>()));
+        futures.add(submitting(3, pushed, new ArrayList<>()));
+        await().atMost(Duration.ofSeconds(10)).until(() -> world.applied.size() == 3);
+
+        writer.crashForTests(JournalStage.THREAD, new StackOverflowError("injected crash of the journal thread"));
+        world.commitGate.countDown(); // the first sync completes; the thread dies when it takes the next group
+
+        assertThat(futures.get(0).get(10, TimeUnit.SECONDS)).isEqualTo(1L);
+        assertAnswered503(futures.get(1));
+        assertAnswered503(futures.get(2));
+        assertStopped(JournalStage.THREAD);
+        assertThat(world.journal()).containsExactly(event(1));
+        assertThat(pushed).containsExactly(1L);
+    }
+
+    @Test
+    void anOutputThreadThatDiesStopsTheWriterAndItsCallerIsAnswered503ThoughTheBatchIsInTheJournal() throws Exception {
+        List<Long> pushed = Collections.synchronizedList(new ArrayList<>());
+        writer.crashForTests(OutputStage.THREAD, new StackOverflowError("injected crash of the output thread"));
+        Future<Long> f = submitting(1, pushed, new ArrayList<>());
+
+        assertAnswered503(f);
+        assertStopped(OutputStage.THREAD);
+        assertThat(world.journal()).as("the batch was synced before the output thread took it").containsExactly(event(1));
+        assertThat(pushed).isEmpty();
+        assertThat(world.published).isEmpty();
+    }
+
+    @Test
+    void aLogicThreadThatDiesWithCommandsInHandAnswersThem503() throws Exception {
+        writer.crashForTests(IoGuard.WRITER_THREAD, new StackOverflowError("injected crash of the logic thread"));
+        Future<Long> f = submitting(1, new ArrayList<>(), new ArrayList<>());
+
+        assertAnswered503(f);
+        assertStopped(IoGuard.WRITER_THREAD);
+        assertThat(world.applied).isEmpty();
+        assertThat(world.journal()).isEmpty();
+    }
 }

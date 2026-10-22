@@ -128,6 +128,16 @@ class CoreWriterTest {
             published.add(new Published(((Prepared) preparedViews).events(), version, journal().size(), Thread.currentThread().getName()));
         }
 
+        /** The threads whose death the writer reported, in order. */
+        final List<String> died = Collections.synchronizedList(new ArrayList<>());
+        final CountDownLatch diedSignal = new CountDownLatch(1);
+
+        @Override
+        public void stageDied(String thread, Throwable cause) {
+            died.add(thread);
+            diedSignal.countDown();
+        }
+
         @Override
         public void recover(Throwable cause, String key, long nowMs) {
             recoveries.incrementAndGet();
