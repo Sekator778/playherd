@@ -1501,12 +1501,7 @@ public class GameService implements MarketListener {
                 if (players.byId(playerId).isEmpty()) {
                     throw ApiException.notFound("unknown player " + playerId);
                 }
-                BigDecimal stakeDecimal;
-                try {
-                    stakeDecimal = new BigDecimal(req.stake());
-                } catch (NumberFormatException e) {
-                    throw ApiException.badRequest("invalid stake: " + req.stake());
-                }
+                BigDecimal stakeDecimal = clientDecimal(req.stake(), "stake");
                 PlayAmount stake;
                 try {
                     stake = PlayAmount.fromMoney(stakeDecimal);
@@ -1623,7 +1618,7 @@ public class GameService implements MarketListener {
                 && (seen.fixed() || req.leverage() == seen.leverage());
         if (same) {
             try {
-                same = PlayAmount.fromMoney(new BigDecimal(req.stake())).mojos() == seen.stakeMojos();
+                same = PlayAmount.fromMoney(clientDecimal(req.stake(), "stake")).mojos() == seen.stakeMojos();
             } catch (RuntimeException e) {
                 same = false;
             }
@@ -2447,15 +2442,36 @@ public class GameService implements MarketListener {
         return referencePrice(defaultMarket().id());
     }
 
+    /** A number a client sent as text: plain decimal notation, at most 40 characters. */
+    private static final java.util.regex.Pattern CLIENT_DECIMAL = java.util.regex.Pattern.compile("-?\\d{1,20}(\\.\\d{1,18})?");
+
+    /**
+     * Parses a number a client sent (a stake, an amount, a reference price). Only plain decimal notation is taken: {@code new BigDecimal}
+     * also takes an exponent ("1e100000000"), and the first {@code setScale} of such a value computes a power of ten with that many
+     * digits - minutes of CPU and hundreds of MB on the thread that asked, which for a bet is the core writer's one logic thread
+     * (security review 2026-10-22). Refused here, before anything is computed; the checks after it (sign, precision) are unchanged.
+     */
+    static BigDecimal clientDecimal(String text, String field) {
+        if (text == null || text.length() > 40 || !CLIENT_DECIMAL.matcher(text).matches()) {
+            throw ApiException.badRequest("invalid " + field + ": " + shortened(text));
+        }
+        return new BigDecimal(text);
+    }
+
+    /** A client's text for an error message: at most 40 characters of it. */
+    private static String shortened(String text) {
+        return text == null || text.length() <= 40 ? String.valueOf(text) : text.substring(0, 40) + "...";
+    }
+
     public Betting.LiquidationPreviewDto previewLiquidation(Betting.LiquidationPreviewRequest req) {
         Market market = requireMarket(req.marketId());
         MarketSpec spec = market.spec();
         Interval interval = req.interval() == null ? null : Interval.valueOf(req.interval().name());
         BigDecimal stakeMoney;
         try {
-            stakeMoney = PlayAmount.fromMoney(new BigDecimal(req.stake())).toMoney();
+            stakeMoney = PlayAmount.fromMoney(clientDecimal(req.stake(), "stake")).toMoney();
         } catch (Exception e) {
-            throw ApiException.badRequest("invalid stake: " + req.stake());
+            throw ApiException.badRequest("invalid stake: " + shortened(req.stake()));
         }
         Leverage leverage;
         try {
@@ -2470,11 +2486,7 @@ public class GameService implements MarketListener {
         }
         BigDecimal rawEntry;
         if (req.referencePrice() != null) {
-            try {
-                rawEntry = new BigDecimal(req.referencePrice());
-            } catch (NumberFormatException e) {
-                throw ApiException.badRequest("invalid referencePrice: " + req.referencePrice());
-            }
+            rawEntry = clientDecimal(req.referencePrice(), "referencePrice");
         } else {
             rawEntry = currentPrice(market).raw();
         }
@@ -2620,9 +2632,9 @@ public class GameService implements MarketListener {
         }
         PlayAmount amt;
         try {
-            amt = PlayAmount.fromMoney(new BigDecimal(amount));
+            amt = PlayAmount.fromMoney(clientDecimal(amount, "amount"));
         } catch (Exception e) {
-            throw ApiException.badRequest("invalid amount: " + amount);
+            throw ApiException.badRequest("invalid amount: " + shortened(amount));
         }
         // Wave-2 CRITICAL security fix: requestWithdrawal("-5000.000") used to mint PLAY — a
         // negative amount is a debit that LedgerBook.requestWithdrawal's debit(amount) negates

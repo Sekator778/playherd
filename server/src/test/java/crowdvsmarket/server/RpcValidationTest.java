@@ -316,4 +316,53 @@ class RpcValidationTest {
         assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(422);
         assertThat(resp.jsonPath().getString("error.code")).isEqualTo("STAKE_BELOW_MINIMUM");
     }
+
+    // --- security review 2026-10-22: a number in exponent form ("1e100000000") made the first setScale compute a power of ten with
+    // that many digits - about a minute of CPU on the thread that asked (for a bet: the core writer's logic thread). Plain decimal
+    // notation only, at most 40 characters, refused before anything is computed ---
+
+    private static final String EXPONENT_BOMB = "1e100000000";
+
+    private static void assertRefusedFast(Response resp, long startedNanos) {
+        long tookMs = (System.nanoTime() - startedNanos) / 1_000_000;
+        assertThat(resp.statusCode()).as(resp.asString()).isEqualTo(400);
+        assertThat(resp.jsonPath().getString("error.code")).isEqualTo("BAD_REQUEST");
+        assertThat(tookMs).as("refused before any arithmetic").isLessThan(5_000);
+    }
+
+    @Test
+    void previewLiquidationRefusesAStakeInExponentFormAtOnce() {
+        long t0 = System.nanoTime();
+        Response resp = rpc(null, "previewLiquidation", Map.of("direction", "UP", "leverage", 2, "stake", EXPONENT_BOMB));
+        assertRefusedFast(resp, t0);
+    }
+
+    @Test
+    void previewLiquidationRefusesAReferencePriceInExponentFormAtOnce() {
+        long t0 = System.nanoTime();
+        Response resp = rpc(null, "previewLiquidation", Map.of("direction", "UP", "leverage", 2, "stake", "100.000",
+                "referencePrice", EXPONENT_BOMB));
+        assertRefusedFast(resp, t0);
+    }
+
+    @Test
+    void placeBetRefusesAStakeInExponentFormOrTooLongAtOnce() {
+        String session = signIn("txch1bet-exponent-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        String bettingRoundId = rpc(session, "rounds", "HOURLY").jsonPath().getString("betting.roundId");
+        for (String stake : List.of(EXPONENT_BOMB, "1E+100000000", "100" + "0".repeat(60))) {
+            long t0 = System.nanoTime();
+            Response resp = rpc(session, "placeBet", Map.of("roundId", bettingRoundId, "direction", "UP", "leverage", 2,
+                    "stake", stake));
+            assertRefusedFast(resp, t0);
+            assertThat(resp.asString()).as("the client's text is not echoed in full").hasSizeLessThan(400);
+        }
+    }
+
+    @Test
+    void requestWithdrawalRefusesAnAmountInExponentFormAtOnce() {
+        String session = signIn("txch1wd-exponent-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        long t0 = System.nanoTime();
+        Response resp = rpc(session, "requestWithdrawal", EXPONENT_BOMB);
+        assertRefusedFast(resp, t0);
+    }
 }
