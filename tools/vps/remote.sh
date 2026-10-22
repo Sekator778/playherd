@@ -228,7 +228,7 @@ fix_c2_owner() {
   [[ -d "${C2_DIR}" ]] || return 0
   [[ -n "$(find "${C2_DIR}" ! -user "${uid}" -print -quit 2>/dev/null || true)" ]] || return 0
   log "${C2_DIR} holds files of another owner (written by chainsvc as root): chown to ${uid}:${gid}"
-  docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN -v "${C2_DIR}:/data" --entrypoint chown postgres:16-alpine -R "${uid}:${gid}" /data \
+  docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --cap-add DAC_READ_SEARCH -v "${C2_DIR}:/data" --entrypoint chown postgres:16-alpine -R "${uid}:${gid}" /data \
     || die "could not hand ${C2_DIR} to ${uid}:${gid}: chainsvc (non-root) would not read the operator key"
 }
 
