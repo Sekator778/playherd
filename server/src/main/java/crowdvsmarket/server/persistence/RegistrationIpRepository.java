@@ -31,8 +31,40 @@ public class RegistrationIpRepository {
     private final SecureRandom random = new SecureRandom();
     private volatile String salt;
 
-    /** The salted hash of {@code ip}, hex. */
+    /**
+     * What the limit counts an address as: an IPv6 address is its /64 prefix (a subscriber holds a whole /64 and rotates the rest of the
+     * address freely, so the exact address would give an unlimited number of places), an IPv4 address and anything that is not a literal
+     * address is itself. Never resolves a name.
+     */
+    static String limitKey(String ip) {
+        if (ip == null || ip.indexOf(':') < 0) {
+            return ip;
+        }
+        String literal = ip.strip();
+        int zone = literal.indexOf('%');
+        if (zone >= 0) {
+            literal = literal.substring(0, zone);
+        }
+        if (literal.startsWith("[") && literal.endsWith("]")) {
+            literal = literal.substring(1, literal.length() - 1);
+        }
+        if (!literal.matches("[0-9a-fA-F:.]+")) {
+            return ip;
+        }
+        try {
+            java.net.InetAddress address = java.net.InetAddress.getByName(literal);
+            if (!(address instanceof java.net.Inet6Address)) {
+                return address.getHostAddress(); // an IPv4-mapped address is the IPv4 address it carries
+            }
+            return "v6/64:" + HexFormat.of().formatHex(address.getAddress(), 0, 8);
+        } catch (java.net.UnknownHostException | RuntimeException e) {
+            return ip;
+        }
+    }
+
+    /** The salted hash of {@code ip} (an IPv6 address by its /64 prefix, see {@link #limitKey}), hex. */
     public String hash(String ip) {
+        ip = limitKey(ip);
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(salt().getBytes(StandardCharsets.UTF_8));
@@ -63,6 +95,14 @@ public class RegistrationIpRepository {
             db.update(c, "DELETE FROM registration_ips WHERE at_ms <= ?", nowMs - WINDOW_MS);
             Integer count = db.queryOne(c, "SELECT COUNT(*) AS n FROM registration_ips WHERE ip_hash = ? AND at_ms > ?",
                     rs -> rs.getInt("n"), ipHash, nowMs - WINDOW_MS);
+            return count == null ? 0 : count;
+        });
+    }
+
+    /** How many players registered, from any address, since {@code sinceMs} (the start of the UTC day): the daily cap of all new players. */
+    public int countSince(long sinceMs) {
+        return db.tx(c -> {
+            Integer count = db.queryOne(c, "SELECT COUNT(*) AS n FROM registration_ips WHERE at_ms >= ?", rs -> rs.getInt("n"), sinceMs);
             return count == null ? 0 : count;
         });
     }

@@ -487,9 +487,12 @@ public class GameService implements MarketListener {
      *  0: it takes what is queued and goes - the commands that arrive while a batch commits are the next batch. */
     @ConfigProperty(name = "herd.writer.max-wait-ms", defaultValue = "0")
     long writerMaxWaitMs;
-    /** The commands that may wait for the writer; a caller that finds the queue full waits for room. */
+    /** The commands that may wait for the writer; a caller that finds the queue full waits for room for
+     *  {@code herd.writer.submit-timeout-ms}, then is answered 503. */
     @ConfigProperty(name = "herd.writer.queue-capacity", defaultValue = "10000")
     int writerQueueCapacity;
+    @ConfigProperty(name = "herd.writer.submit-timeout-ms", defaultValue = "300")
+    long writerSubmitTimeoutMs;
 
     /** How many batches the core writer's logic thread may have applied and not yet seen through the journal and the output stage
      *  ({@link CoreWriter}); when that many are in the pipeline it waits (back-pressure). */
@@ -568,7 +571,8 @@ public class GameService implements MarketListener {
 
                     }, eventStore, writerMaxBatch <= 0 ? 256 : writerMaxBatch, writerMaxWaitMs,
                             writerQueueCapacity <= 0 ? 10_000 : writerQueueCapacity,
-                            writerPipelineDepth <= 0 ? CoreWriter.DEFAULT_PIPELINE_DEPTH : writerPipelineDepth);
+                            writerPipelineDepth <= 0 ? CoreWriter.DEFAULT_PIPELINE_DEPTH : writerPipelineDepth,
+                            writerSubmitTimeoutMs <= 0 ? CoreWriter.DEFAULT_OFFER_TIMEOUT_MS : writerSubmitTimeoutMs);
                     writer = w;
                 }
             }
@@ -803,6 +807,9 @@ public class GameService implements MarketListener {
     }
 
     private static Interval toEngine(Enums.Interval interval) {
+        if (interval == null) {
+            throw ApiException.badRequest("interval is required");
+        }
         return Interval.valueOf(interval.name());
     }
 
@@ -816,6 +823,9 @@ public class GameService implements MarketListener {
     }
 
     private static crowdvsmarket.engine.round.Direction toEngine(Enums.Direction d) {
+        if (d == null) {
+            throw ApiException.badRequest("direction is required");
+        }
         return crowdvsmarket.engine.round.Direction.valueOf(d.name());
     }
 
@@ -971,10 +981,15 @@ public class GameService implements MarketListener {
         if (clientIp != null && !clientIp.isBlank() && !"unknown".equals(clientIp)) {
             ipHash = registrationIps.hash(clientIp);
         }
+        // every registration leaves a row, so that the daily cap counts those with no readable address too; they share one hash and
+        // are not limited per address
+        String recordHash = ipHash != null ? ipHash : registrationIps.hash("unknown");
         String playerId = UUID.randomUUID().toString();
         String referrerId = referralCode == null ? null : invites.playerIdForCode(referralCode).orElse(null);
         int perDay = config.registrationMaxPerIpPerDay();
         String hash = ipHash;
+        int perDayAll = config.registrationMaxPerDay();
+        long dayStartMs = nowMs - Math.floorMod(nowMs, 86_400_000L);
         // the count of the address and the place spent on it are one step: simultaneous sign-ups from one address cannot all pass the last place
         synchronized (registrationLimitMonitor) {
             if (hash != null && registrationIps.countInWindow(hash, nowMs) >= perDay) {
@@ -982,15 +997,17 @@ public class GameService implements MarketListener {
                         + " new player" + (perDay == 1 ? "" : "s") + " in the last 24 hours - no more new players can sign "
                         + "up from it until then (a player who already signed up can still sign in)");
             }
+            if (registrationIps.countSince(dayStartMs) >= perDayAll) {
+                throw ApiException.registrationLimit("the limit of " + perDayAll + " new players per day is reached - no more new "
+                        + "players can sign up until 00:00 UTC (a player who already signed up can still sign in)");
+            }
             int playerIndex = serverMeta.reserveNextPlayerIndex();
             db.tx(c -> {
                 invites.recordAtRegistration(c, playerId, referrerId, source);
-                if (hash != null) {
-                    registrationIps.record(c, hash, nowMs);
-                }
+                registrationIps.record(c, recordHash, nowMs);
                 return null;
             });
-            return new NewPlayerPrep(playerId, hash, playerIndex, referrerId);
+            return new NewPlayerPrep(playerId, recordHash, playerIndex, referrerId);
         }
     }
 
@@ -1234,7 +1251,10 @@ public class GameService implements MarketListener {
                     "nickname must be 3-24 characters: letters, digits, space, '_', '.', '-' only");
         }
         return write(ctx -> {
-            players.byId(playerId).orElseThrow(() -> ApiException.notFound("unknown player " + playerId));
+            PlayerDirectory.Row row = players.byId(playerId).orElseThrow(() -> ApiException.notFound("unknown player " + playerId));
+            if (trimmed.equals(row.nickname())) {
+                return summary(playerId); // nothing changes: no event, no journal write
+            }
             GameEvent.NicknameChanged event = new GameEvent.NicknameChanged(playerId, trimmed, System.currentTimeMillis());
             ctx.touch();
             players.cacheNickname(playerId, trimmed);
@@ -1442,6 +1462,7 @@ public class GameService implements MarketListener {
 
     public Rounds.BetDto placeBet(String playerId, Betting.PlaceBetRequest req, long nowMs) {
         RoundWindow.RoundRef ref = parseRoundId(req.roundId());
+        toEngine(req.direction()); // 400 for a missing direction, without waiting for the writer
         marketRegistry.require(ref.market()); // MARKET_NOT_FOUND without waiting for the writer
         final String requestId = req.clientRequestId();
         if (requestId != null && !Betting.PlaceBetRequest.validRequestId(requestId)) {
@@ -2464,6 +2485,9 @@ public class GameService implements MarketListener {
     }
 
     public Betting.LiquidationPreviewDto previewLiquidation(Betting.LiquidationPreviewRequest req) {
+        if (req.direction() == null) {
+            throw ApiException.badRequest("direction is required");
+        }
         Market market = requireMarket(req.marketId());
         MarketSpec spec = market.spec();
         Interval interval = req.interval() == null ? null : Interval.valueOf(req.interval().name());
@@ -3198,9 +3222,16 @@ public class GameService implements MarketListener {
         return roundResults.unseenResults(playerId, UNSEEN_RESULTS_LIMIT);
     }
 
+    /** The most round ids one {@link #ackResults} call takes: the web client sends what {@link #myUnseenResults} listed (at most
+     *  {@link #UNSEEN_RESULTS_LIMIT}) or one id. */
+    static final int MAX_ACK_ROUND_IDS = 200;
+
     /** Idempotent (see {@code RoundResultRepository.ackResults}'s javadoc) — a client can safely
      *  re-ack ids it already acked, or ids from a stale local cache. */
     public void ackResults(String playerId, List<String> roundIds, long nowMs) {
+        if (roundIds != null && roundIds.size() > MAX_ACK_ROUND_IDS) {
+            throw ApiException.badRequest("at most " + MAX_ACK_ROUND_IDS + " round ids per call");
+        }
         roundResults.ackResults(playerId, roundIds == null ? List.of() : roundIds, nowMs);
     }
 

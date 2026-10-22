@@ -1,6 +1,7 @@
 package crowdvsmarket.server.core;
 
 import crowdvsmarket.server.dto.ApiException;
+import crowdvsmarket.server.dto.Enums;
 import crowdvsmarket.server.events.EventStore;
 import crowdvsmarket.server.events.GameEvent;
 import crowdvsmarket.server.jfr.HerdWriterBatch;
@@ -75,6 +76,9 @@ public final class CoreWriter implements AutoCloseable {
     /** How many batches may be applied and not yet through the output stage, when the caller does not say. */
     public static final int DEFAULT_PIPELINE_DEPTH = 8;
 
+    /** How long a caller waits for room in a full queue, when the caller does not say (milliseconds): then it is answered 503. */
+    public static final long DEFAULT_OFFER_TIMEOUT_MS = 300;
+
     /** What the writer needs of the game. */
     public interface Host {
         /** Held by the logic thread for its turn, see the class comment. Reentrant. */
@@ -126,6 +130,7 @@ public final class CoreWriter implements AutoCloseable {
     private final Host host;
     private final int maxBatch;
     private final long maxWaitMs;
+    private final long offerTimeoutMs;
     private final BlockingQueue<WriterSlot<?>> queue;
     private final WriteContext ctx;
     private final int pipelineDepth;
@@ -160,7 +165,13 @@ public final class CoreWriter implements AutoCloseable {
     }
 
     public CoreWriter(Host host, EventStore eventStore, int maxBatch, long maxWaitMs, int queueCapacity, int pipelineDepth) {
+        this(host, eventStore, maxBatch, maxWaitMs, queueCapacity, pipelineDepth, DEFAULT_OFFER_TIMEOUT_MS);
+    }
+
+    public CoreWriter(Host host, EventStore eventStore, int maxBatch, long maxWaitMs, int queueCapacity, int pipelineDepth,
+                      long offerTimeoutMs) {
         this.host = host;
+        this.offerTimeoutMs = Math.max(0, offerTimeoutMs);
         this.maxBatch = Math.max(1, maxBatch);
         this.maxWaitMs = Math.max(0, maxWaitMs);
         this.queue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
@@ -269,7 +280,12 @@ public final class CoreWriter implements AutoCloseable {
         WriterSlot<T> slot = new WriterSlot<>(command, needsReady, key, nowMs, inFlight);
         inFlight.incrementAndGet();
         try {
-            queue.put(slot);
+            if (!queue.offer(slot, offerTimeoutMs, TimeUnit.MILLISECONDS)) {
+                // a full queue must not park every writing request of the server: the caller is told to retry
+                inFlight.decrementAndGet();
+                throw new ApiException(Enums.ApiErrorCode.ENGINE_NOT_READY, 503,
+                        "the server is busy - nothing was changed, please try again in a moment");
+            }
         } catch (InterruptedException e) {
             inFlight.decrementAndGet();
             Thread.currentThread().interrupt();

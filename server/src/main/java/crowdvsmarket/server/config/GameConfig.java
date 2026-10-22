@@ -49,6 +49,10 @@ public class GameConfig {
     @ConfigProperty(name = "herd.registration.max-per-ip-per-day", defaultValue = "3")
     int registrationMaxPerIpPerDay;
 
+    /** Security review H4: how many new players all addresses together may register per UTC day (the first week brought about eleven). */
+    @ConfigProperty(name = "herd.registration.max-per-day", defaultValue = "200")
+    int registrationMaxPerDay;
+
     /** Plan B4: a bot whose balance is below this many PLAY retires. */
     @ConfigProperty(name = "herd.bots.retire-below-play", defaultValue = "100")
     long botsRetireBelowPlay;
@@ -216,6 +220,10 @@ public class GameConfig {
 
     public int registrationMaxPerIpPerDay() {
         return registrationMaxPerIpPerDay;
+    }
+
+    public int registrationMaxPerDay() {
+        return registrationMaxPerDay;
     }
 
     public long botsRetireBelowPlay() {
