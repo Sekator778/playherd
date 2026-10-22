@@ -218,6 +218,20 @@ cmd_build() {
   build_images
 }
 
+# chainsvc runs as the deploy user (HERD_UID/HERD_GID in .env, docker-compose.yml; security review 2026-10-22, H5). Files it
+# wrote while it still ran as root (the oracle state is rewritten by rename) belong to root and the deploy user could not
+# read them: hand them to the deploy user before the stand starts. Nothing is touched when every file is already ours.
+fix_c2_owner() {
+  local uid gid
+  uid="$(id -u)"
+  gid="$(id -g)"
+  [[ -d "${C2_DIR}" ]] || return 0
+  [[ -n "$(find "${C2_DIR}" ! -user "${uid}" -print -quit 2>/dev/null || true)" ]] || return 0
+  log "${C2_DIR} holds files of another owner (written by chainsvc as root): chown to ${uid}:${gid}"
+  docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN -v "${C2_DIR}:/data" --entrypoint chown postgres:16-alpine -R "${uid}:${gid}" /data \
+    || die "could not hand ${C2_DIR} to ${uid}:${gid}: chainsvc (non-root) would not read the operator key"
+}
+
 cmd_up() {
   require_app
   # The chain service's data: without them Docker would create an empty root-owned directory for the bind mount, and
@@ -225,6 +239,7 @@ cmd_up() {
   # operator's machine by tools/vps/secrets.sh, after the stand there was stopped.
   [[ -s "${C2_DIR}/${OPERATOR_NAME}.json" && -s "${C2_DIR}/${OPERATOR_NAME}.oracle.json" ]] \
     || die "no operator key/state in ${C2_DIR}: run tools/vps/secrets.sh --data-only (after stopping the stand on the operator's machine)"
+  fix_c2_owner
   if [[ -x "${APP_DIR}/tools/vps/backup.sh" ]]; then
     "${APP_DIR}/tools/vps/backup.sh" pre-deploy || log "the backup before the deploy failed -- going on"
   fi
@@ -353,6 +368,21 @@ check_chainsvc() {
     ok "chainsvc: reachable from the server container at ${GATEWAY}:8090"
   else
     fail "chainsvc: the server container gets ${code} from http://${GATEWAY}:8090/health (the firewall rule 'server container -> chainsvc' missing? bootstrap.sh adds it: the ufw rule 'herd: server container -> chainsvc', or on Oracle Cloud the herd-chainsvc line in /etc/iptables/rules.v4)"
+  fi
+}
+
+# The operator's key is in chainsvc's data directory: its process must not be root (H5). PID 1 of the container is c2-svc itself.
+check_chainsvc_user() {
+  local cid uid
+  cid="$(compose ps -q chainsvc 2>/dev/null | head -n 1 || true)"
+  uid=""
+  [[ -z "${cid}" ]] || uid="$(docker exec "${cid}" grep '^Uid:' /proc/1/status 2>/dev/null | awk '{print $2}' || true)"
+  if [[ ! "${uid}" =~ ^[0-9]+$ ]]; then
+    fail "chainsvc: could not read the user of its process"
+  elif [[ "${uid}" == 0 ]]; then
+    fail "chainsvc: the process runs as root (uid 0) -- HERD_UID/HERD_GID missing in .env? (tools/vps/secrets.sh --env-only writes them)"
+  else
+    ok "chainsvc: the process runs as uid ${uid}, not root"
   fi
 }
 
@@ -585,6 +615,7 @@ cmd_verify() {
   check_edge
   check_binds
   check_chainsvc
+  check_chainsvc_user
   check_seq_floor
   check_journal
   check_web_through_caddy "${domain}"

@@ -150,6 +150,9 @@ set_kv HERD_COOKIE_SECURE true
 # Bake, which refuses a host-network build unless it is given --allow=network.host (measured here on Compose v5.6.0, 2026-10-11).
 # The bridge of an ordinary Linux host has egress, so the builds of crates, Maven and npm work on `default`.
 set_kv HERD_BUILD_NETWORK default
+# chainsvc (docker-compose.yml) runs as the user who owns ~/.c2 (mode 700, the operator's key inside): this one. Not root (H5).
+set_kv HERD_UID "$(id -u)"
+set_kv HERD_GID "$(id -g)"
 # The memory of the stand, from the RAM of this machine (HERD_ENVINIT_MEM_KB stands in for MemTotal in tests). The heap is a quarter of
 # it (at least 512 MiB), the shared buffers an eighth (at least 128 MiB); both are plain numbers, no spaces, so that .env, compose and
 # --set can all carry them. Nothing but docker-compose.yml reads these two; HERD_VPS_PROFILE is for remote.sh verify.

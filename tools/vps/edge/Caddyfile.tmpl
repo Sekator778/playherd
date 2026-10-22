@@ -17,9 +17,14 @@
 	encode zstd gzip
 
 	header {
-		Strict-Transport-Security "max-age=31536000"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
+		# Nobody may put the site in a frame (a sign-in or bet page in a stranger's page). frame-ancestors ONLY: a full
+		# script/connect CSP is not part of this, it has to be verified against the WalletConnect flow first.
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
 	}
 
@@ -32,7 +37,14 @@
 		header @apk Content-Type "application/vnd.android.package-archive"
 		header @apk Content-Disposition "attachment"
 		header Cache-Control "no-cache"
-		file_server browse
+		file_server
+	}
+
+	# The operator API is not for the internet (security review 2026-10-22, M1). The operator uses it on the VPS itself,
+	# at 127.0.0.1:@@WEB_PORT@@ (nginx), which does not pass through here (tools/herd-operator.sh over an ssh tunnel;
+	# the deploy check of the journal asks the server container directly).
+	handle /api/admin/* {
+		respond 404
 	}
 
 	# /api/ws is a WebSocket (the push notices): reverse_proxy passes the Upgrade through by itself. A reload of this

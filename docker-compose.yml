@@ -63,6 +63,13 @@ services:
       POSTGRES_DB: herd
     volumes:
       - herd_pg_live:/var/lib/postgresql/data
+    # Hardening (security review 2026-10-22, M4). The image starts as root, chowns the data directory and drops to the
+    # postgres user: exactly these five capabilities are what that takes (verified with `docker run` on postgres:16-alpine).
+    # No memory limit on purpose: shared_buffers is sized from the host's RAM (tools/vps/env-init.sh).
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    pids_limit: 1024
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U herd -d herd"]
       interval: 5s
@@ -122,6 +129,17 @@ services:
       C2_MAX_FEE_MOJOS: ${C2_MAX_FEE_MOJOS:-1000000000}
     volumes:
       - ${C2_DATA_HOST_DIR:-${HOME}/.c2/testnet11}:/data
+    # H5 (security review 2026-10-22): the operator's key is in /data, so this service must not be root. The VPS writes
+    # HERD_UID/HERD_GID into .env (tools/vps/env-init.sh) = the deploy user, who owns ~/.c2 (mode 700, files 600:
+    # tools/vps/data-install.sh), so the process can read the key and write the state beside it (atomic rename in /data).
+    # Not set (the Mac stand, whose .env is made by tools/stand.sh): 0:0 as before, which is why DAC_OVERRIDE is the one
+    # capability kept - a root without it could not read a 0600 file of another owner; it does nothing for a non-root user.
+    user: "${HERD_UID:-0}:${HERD_GID:-0}"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE]
+    pids_limit: 1024
+    mem_limit: ${HERD_CHAINSVC_MEM_LIMIT:-1g}
     healthcheck:
       # debian:bookworm-slim (chain/c2-svc/Dockerfile's runtime stage) has no curl/wget — speak
       # HTTP over bash's /dev/tcp and require a 200 from /health, which turns 503 when the
@@ -257,6 +275,11 @@ services:
       HERD_BOTS_RESPAWN_DELAY_MS: "${HERD_BOTS_RESPAWN_DELAY_MS:-3600000}"
     volumes:
       - herd_journal_live:/var/lib/herd/journal
+    # Hardening (M4). The image runs as the unprivileged user `herd` and needs no capability. NO memory limit: Chronicle
+    # Queue maps the journal files, and their page cache would be charged to the cgroup. pids_limit counts threads.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    pids_limit: 4096
     depends_on:
       db:
         condition: service_healthy
@@ -290,6 +313,13 @@ services:
         VITE_WALLETCONNECT_PROJECT_ID: ${VITE_WALLETCONNECT_PROJECT_ID:-}
     ports:
       - "${HERD_WEB_PORT:-8480}:80"
+    # Hardening (M4). nginx starts as root, binds :80, chowns its temp directories and drops to the nginx user: that takes
+    # these five capabilities (verified with `docker run` on nginx:1.27-alpine). 256m: the SPA is static files, the proxy buffers little.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, NET_BIND_SERVICE, SETGID, SETUID]
+    pids_limit: 512
+    mem_limit: ${HERD_WEB_MEM_LIMIT:-256m}
     depends_on:
       server:
         condition: service_healthy

@@ -301,10 +301,24 @@ external_checks() {
     c_fail "http://${domain}/ does not redirect to https (got: $(printf '%s' "${hdrs}" | head -n 1 | tr -d '\r'))"
   fi
   hdrs="$(curl -sSI ${CURL_K[@]+"${CURL_K[@]}"} -m 20 "https://${domain}/" 2>/dev/null || true)"
-  if printf '%s' "${hdrs}" | grep -qi '^strict-transport-security: max-age='; then
-    c_ok "HSTS header present"
+  if printf '%s' "${hdrs}" | grep -qi '^strict-transport-security: max-age=.*includeSubDomains'; then
+    c_ok "HSTS header present (includeSubDomains)"
   else
-    c_fail "no Strict-Transport-Security header on https://${domain}/"
+    c_fail "no Strict-Transport-Security header with includeSubDomains on https://${domain}/"
+  fi
+  if printf '%s' "${hdrs}" | grep -qi '^x-frame-options: DENY' && printf '%s' "${hdrs}" | grep -qi "^content-security-policy: frame-ancestors 'none'" &&
+    printf '%s' "${hdrs}" | grep -qi '^permissions-policy: camera=()'; then
+    c_ok "X-Frame-Options, Content-Security-Policy (frame-ancestors) and Permissions-Policy present"
+  else
+    c_fail "https://${domain}/ lacks X-Frame-Options DENY, Content-Security-Policy frame-ancestors 'none' or Permissions-Policy (edge/Caddyfile.tmpl)"
+  fi
+
+  # The operator API is closed at the edge: it is reached on the VPS itself (127.0.0.1:${WEB_PORT}), never through Caddy.
+  code="$(curl_code "https://${domain}/api/admin/status")"
+  if [[ "${code}" == 404 ]]; then
+    c_ok "https://${domain}/api/admin/status -> 404 (the operator API is not public)"
+  else
+    c_fail "https://${domain}/api/admin/status -> ${code}, not 404: the operator API is reachable from the internet"
   fi
 
   # Docker publishes ports past ufw. Nothing but 22/80/443 may answer from outside.
@@ -352,8 +366,8 @@ external_checks() {
 
   code="$(curl_code "https://${domain}/download/")"
   case "${code}" in
-    200) c_ok "https://${domain}/download/ lists the files" ;;
-    404) c_ok "https://${domain}/download/ -> 404 (nothing uploaded yet: deploy.sh apk FILE)" ;;
+    200) c_fail "https://${domain}/download/ -> 200: the directory is listed (file_server must not have browse)" ;;
+    404) c_ok "https://${domain}/download/ -> 404 (no listing; files are reached by their own link)" ;;
     *) c_warn "https://${domain}/download/ -> ${code}" ;;
   esac
 }
@@ -362,7 +376,7 @@ do_checks() {
   CHECK_FAILS=0
   if ((DRY_RUN)); then
     remote "${REMOTE_TOOL} verify ${VPS_DOMAIN}${VERIFY_FLAG}"
-    log "dry run: then the checks from here (https, serverInfo, the WebSocket upgrade of /api/ws, redirect, HSTS, closed ports, a forged rate-limit header, /download/)"
+    log "dry run: then the checks from here (https, serverInfo, the WebSocket upgrade of /api/ws, redirect, HSTS and the other headers, /api/admin 404, closed ports, a forged rate-limit header, /download/)"
     return 0
   fi
   external_checks

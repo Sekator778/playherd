@@ -214,6 +214,7 @@ case "$1" in
     case "$*" in
       *"port web 80"*) [[ -z "${FAKE_COMPOSE_PORT_WEB:-}" ]] || echo "${FAKE_COMPOSE_PORT_WEB}" ;;
       *"ps -q server"*) echo "serverc0001" ;;
+      *"ps -q chainsvc"*) echo "chainsvcc0001" ;;
       *"ps -q") [[ "${FAKE_COMPOSE_NO_CONTAINERS:-0}" == 1 ]] || printf 'dbc0001\nchainsvcc0001\nserverc0001\nwebc0001\n' ;;
     esac
     ;;
@@ -259,9 +260,19 @@ test_static() {
   ok "docker-compose.yml: exactly chainsvc, server and web have a build section (remote.sh builds them one at a time)" "$?"
   file_has "${compose}" 'C2_BIND_ADDR: "127.0.0.1,172.28.77.1"'
   ok "docker-compose.yml: chainsvc listens on 127.0.0.1 and the gateway only" "$?"
-  file_has "${compose}" '${HOME}/.c2/testnet11:/data'
+  file_has "${compose}" '${HOME}/.c2/testnet11}:/data'
   ok "docker-compose.yml: chainsvc data is \${HOME}/.c2/testnet11 (REMOTE_C2_DIR)" "$?"
   file_has "${compose}" 'C2_OPERATOR_NAME: operator'
+  [[ "$(grep -c 'no-new-privileges:true' "${compose}")" == 4 && "$(grep -c '^    pids_limit:' "${compose}")" == 4 && "$(grep -c '^    cap_drop: \[ALL\]' "${compose}")" == 4 ]]
+  ok "docker-compose.yml: every service has no-new-privileges, cap_drop ALL and a pids_limit" "$?"
+  awk '/^  [a-z]+:$/ {svc = $1} /^    mem_limit:/ {print svc}' "${compose}" | tr '\n' ' ' | grep -qx 'chainsvc: web: '
+  ok "docker-compose.yml: memory limits on chainsvc and web only (not server: Chronicle Queue's page cache; not db)" "$?"
+  file_has "${compose}" 'user: "${HERD_UID:-0}:${HERD_GID:-0}"'
+  ok "docker-compose.yml: chainsvc runs as HERD_UID:HERD_GID (env-init.sh writes them)" "$?"
+  file_has "${HERE}/env-init.sh" 'set_kv HERD_UID "$(id -u)"'
+  ok "env-init.sh: HERD_UID is written" "$?"
+  file_has "${nginx}" 'limit_req zone=herd_api_req burst=60 nodelay;' && file_has "${nginx}" 'client_max_body_size 64k;' && file_has "${nginx}" 'limit_req_status 429;'
+  ok "web/nginx.conf: /api/ has limit_req, limit_conn and a 64k body limit" "$?"
   ok "docker-compose.yml: operator profile name is operator" "$?"
   file_has "${compose}" 'HERD_ORACLE_REQUIRE_SEQ_FLOOR: ${HERD_ORACLE_REQUIRE_SEQ_FLOOR:-true}'
   ok "docker-compose.yml: the oracle seq floor is required by default (README says so)" "$?"
@@ -392,7 +403,12 @@ test_common() {
     chk "Caddyfile: reverse proxy to the web on the loopback port" grep -qF 'reverse_proxy 127.0.0.1:8480 {' <<<"${out}"
     chk "Caddyfile: the visitor's address in CF-Connecting-IP" grep -qF 'header_up CF-Connecting-IP {remote_host}' <<<"${out}"
     chk "Caddyfile: sockets live on over a reload" grep -qF 'stream_close_delay 5m' <<<"${out}"
-    chk "Caddyfile: HSTS" grep -qF 'Strict-Transport-Security "max-age=31536000"' <<<"${out}"
+    chk "Caddyfile: HSTS with includeSubDomains" grep -qF 'Strict-Transport-Security "max-age=31536000; includeSubDomains"' <<<"${out}"
+    chk "Caddyfile: X-Frame-Options DENY" grep -qF 'X-Frame-Options "DENY"' <<<"${out}"
+    chk "Caddyfile: CSP is frame-ancestors only" grep -qF "Content-Security-Policy \"frame-ancestors 'none'\"" <<<"${out}"
+    chk "Caddyfile: Permissions-Policy" grep -qF 'Permissions-Policy "camera=(), microphone=(), geolocation=()"' <<<"${out}"
+    chk "Caddyfile: /api/admin/* is answered 404 at the edge" grep -qF 'handle /api/admin/* {' <<<"${out}"
+    nchk "Caddyfile: the download directory is not browsable" grep -qE 'file_server +browse' <<<"${out}"
     chk "Caddyfile: /download/ is served from /srv/download" grep -qF 'handle_path /download/*' <<<"${out}"
     chk "Caddyfile: the APK gets the Android package type" grep -qF 'application/vnd.android.package-archive' <<<"${out}"
     nchk "Caddyfile: no placeholder is left" grep -q '@@' <<<"${out}"
@@ -1215,7 +1231,7 @@ case "${url}" in
     ;;
   https://herd.example.org/)
     if ((head)); then
-      printf 'HTTP/2 200 \r\nstrict-transport-security: max-age=31536000\r\ncontent-type: text/html\r\n\r\n'
+      printf "HTTP/2 200 \r\nstrict-transport-security: max-age=31536000; includeSubDomains\r\nx-frame-options: DENY\r\ncontent-security-policy: frame-ancestors 'none'\r\npermissions-policy: camera=(), microphone=(), geolocation=()\r\ncontent-type: text/html\r\n\r\n"
       exit 0
     fi
     ;;
@@ -1230,6 +1246,7 @@ case "${url}" in
     ;;
   https://herd.example.org/api/ws) code=101 ;;
   https://herd.example.org/download/) code=404 ;;
+  https://herd.example.org/api/admin/status) code=404 ;;
   https://herd.example.org/download/herd.apk)
     if [[ -f "${FAKE_VPS_HOME}/edge/download/herd.apk" ]]; then
       [[ -z "${out}" ]] || cp "${FAKE_VPS_HOME}/edge/download/herd.apk" "${out}"
@@ -1345,6 +1362,7 @@ case "$1" in
   exec)
     case "$*" in
       *curl*admin/status*) printf '{"journal":{"projector":{"running":true,"lag":2,"failures":0}}}' ;;
+      *grep*Uid:*) printf 'Uid:\t%s\t%s\t%s\t%s\n' "${FAKE_CHAINSVC_UID:-1000}" 1000 1000 1000 ;;
     esac
     exit 0
     ;;
@@ -1382,6 +1400,7 @@ case "$1" in
           "ps -q") printf 'db0001\nchainsvc0001\nserver0001\nweb0001\n' ;;
           *"-q server"*) echo server0001 ;;
           *"-q web"*) echo web0001 ;;
+          *"-q chainsvc"*) echo chainsvc0001 ;;
           *.State*) printf 'db running healthy\nchainsvc running healthy\nserver running healthy\nweb running healthy\n' ;;
           *) printf 'db healthy\nchainsvc healthy\nserver healthy\nweb healthy\n' ;;
         esac
@@ -2149,6 +2168,12 @@ test_caddy() {
     ok "adapted config: the /download/* route comes before the catch-all route" "$?"
     jq -e '[.. | objects | select(.handler?=="headers") | .response.set["Strict-Transport-Security"]? // empty] | length > 0' "${d}/plain.json" >/dev/null
     ok "adapted config: HSTS is set on responses" "$?"
+    jq -e '[.. | objects | select(.handler?=="headers") | .response.set["X-Frame-Options"]? // empty] | length > 0' "${d}/plain.json" >/dev/null
+    ok "adapted config: X-Frame-Options is set on responses" "$?"
+    jq -e '.apps.http.servers | to_entries[0].value.routes[0].handle[] | select(.handler=="subroute") | .routes
+      | (to_entries | map(select((.value.match // [{}])[0].path[0]? == "/api/admin/*")) | .[0].key) as $ad
+      | ($ad != null) and ($ad < (length - 1)) and (.[-1].match == null)' "${d}/plain.json" >/dev/null
+    ok "adapted config: the /api/admin/* route comes before the catch-all route" "$?"
     [[ "$(jq -r '[.. | objects | select(.handler?=="reverse_proxy") | .stream_close_delay] | first' "${d}/plain.json")" == 300000000000 ]]
     ok "adapted config: the proxy keeps open streams (WebSockets) for 5 minutes over a reload" "$?"
     jq -e '[.. | objects | select(.handler?=="static_response") | select(.headers.Location[0]=="/download/") | .status_code] | first == 301' "${d}/plain.json" >/dev/null
@@ -2378,7 +2403,18 @@ curl -s -o /dev/null -D - -H 'Accept-Encoding: gzip' ${P}/big | grep -qi '^conte
 hdrs="$(curl -sI ${P}/download)"
 head -n 1 <<<"${hdrs}" | grep -q ' 301 ' && grep -qi '^location: /download/' <<<"${hdrs}" && pass "/download redirects to /download/" || fail "redirect: ${hdrs}"
 body="$(curl -s ${P}/download/)"
-grep -q 'herd.apk' <<<"${body}" && pass "/download/ lists the files" || fail "listing: ${body:0:200}"
+grep -q 'herd.apk' <<<"${body}" && fail "/download/ lists the files: ${body:0:200}" || pass "/download/ shows no listing"
+hdrs="$(curl -sI ${P}/x)"
+grep -qi '^strict-transport-security: .*includesubdomains' <<<"${hdrs}" && pass "HSTS includeSubDomains" || fail "HSTS includeSubDomains: ${hdrs}"
+grep -qi '^x-frame-options: DENY' <<<"${hdrs}" && pass "X-Frame-Options DENY" || fail "X-Frame-Options"
+grep -qi "^content-security-policy: frame-ancestors 'none'" <<<"${hdrs}" && pass "Content-Security-Policy frame-ancestors" || fail "CSP"
+grep -qi '^permissions-policy: camera=()' <<<"${hdrs}" && pass "Permissions-Policy" || fail "Permissions-Policy"
+for u in /api/admin/status /api/admin/feedback /api/admin/rounds/1/cancel; do
+  body="$(curl -s -o /dev/null -w '%{http_code}' ${P}${u})"
+  [[ "${body}" == 404 ]] && pass "${u} is 404 at the edge" || fail "${u} gives ${body}"
+done
+body="$(curl -s ${P}/api/admin/status)"
+grep -q '"path"' <<<"${body}" && fail "/api/admin/status reached the upstream: ${body}" || pass "/api/admin/status does not reach the upstream"
 hdrs="$(curl -sI ${P}/download/herd.apk)"
 head -n 1 <<<"${hdrs}" | grep -q ' 200 ' && pass "/download/herd.apk -> 200" || fail "apk status: ${hdrs}"
 grep -qi '^content-type: application/vnd.android.package-archive' <<<"${hdrs}" && pass "the APK is served as an Android package" || fail "apk content type: $(grep -i '^content-type' <<<"${hdrs}")"

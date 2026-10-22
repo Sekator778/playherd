@@ -53,3 +53,6 @@ deploy/backups/
 # Python
 __pycache__/
 *.pyc
+
+# Logs
+*.log
