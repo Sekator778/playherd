@@ -7,6 +7,7 @@ import {
   axisValues,
   dataSpanMs,
   defaultRange,
+  describeMoneyMove,
   describeMove,
   moveSinceOpen,
   placeOnScale,
@@ -166,7 +167,8 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
   const axis = axisValues(domain).filter((value) => Math.abs(y(value) - bubbleY) > 15);
   const showSeconds = x1 - x0 <= 20 * 60_000;
   const move = open ? describeMove(moveSinceOpen(open.price, last.price, odds)) : null;
-  const moveText = move ? move.text : null;
+  const money = open && !odds && move && move.tone !== "flat" ? describeMoneyMove(open.price, last.price, price) : null;
+  const moveText = move ? (money ? `${money} (${move.text})` : move.text) : null;
   const moveTone = move ? move.tone : "flat";
 
   const summary =

@@ -5,6 +5,7 @@ import {
   buildChartLines,
   dataSpanMs,
   defaultRange,
+  describeMoneyMove,
   describeMove,
   moveSinceOpen,
   placeOnScale,
@@ -235,5 +236,20 @@ describe("buildChartLines", () => {
   it("a position with no round open price still draws its own levels", () => {
     const lines = buildChartLines({ own });
     expect(lines.map((l) => l.id)).toEqual(["own-entry", "own-liq"]);
+  });
+});
+
+describe("describeMoneyMove — the distance from the round open in money", () => {
+  const usd = (v: number) => `$${v.toFixed(2)}`;
+  it("signs the difference and formats it with the room's formatter", () => {
+    expect(describeMoneyMove(100, 105.8, usd)).toBe("+$5.80");
+    expect(describeMoneyMove(100, 94.2, usd)).toBe("-$5.80");
+  });
+  it("a difference that prints as zero has no sign", () => {
+    expect(describeMoneyMove(100, 100, usd)).toBeNull();
+    expect(describeMoneyMove(100, 100.004, usd)).toBeNull();
+  });
+  it("a non-finite price gives nothing", () => {
+    expect(describeMoneyMove(100, Number.NaN, usd)).toBeNull();
   });
 });

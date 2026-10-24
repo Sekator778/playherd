@@ -177,6 +177,19 @@ export function describeMove(move: { value: number; unit: "pct" | "pts" }): { te
   return { text: `${shown > 0 ? "+" : ""}${shown.toFixed(digits)}${unit}`, tone: shown > 0 ? "up" : "down" };
 }
 
+/**
+ * The distance from the round's open in money (a price market only; odds already read in points): `+$5.80` /
+ * `-$5.80`, the amount formatted by the room's own price formatter (`format`, given the absolute difference).
+ * `null` when the difference prints as zero — no sign, no claim of a direction, same as {@link describeMove}.
+ */
+export function describeMoneyMove(open: number, now: number, format: (value: number) => string): string | null {
+  const diff = now - open;
+  if (!Number.isFinite(diff)) return null;
+  const shown = format(Math.abs(diff));
+  if (shown === format(0)) return null;
+  return `${diff > 0 ? "+" : "-"}${shown}`;
+}
+
 // ---------------------------------------------------------------------------
 // The horizontal lines: round open, the player's entry/liquidation, the herd's
 // ---------------------------------------------------------------------------

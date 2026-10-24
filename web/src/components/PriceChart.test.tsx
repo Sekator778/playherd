@@ -129,10 +129,10 @@ describe("PriceChart — the betting lines", () => {
 
   it("shows the move since the round opened, signed and arrowed — up or down", () => {
     const up = chart({ lines: buildChartLines({ openPrice: "50.00" }) });
-    expect(up.container.querySelector(".pchart__move--up")).toHaveTextContent(/▲ \+\d+\.\d+% vs round open/);
+    expect(up.container.querySelector(".pchart__move--up")).toHaveTextContent(/▲ \+\$[\d,.]+ \(\+\d+\.\d+%\) vs round open/);
     up.unmount();
     const down = chart({ lines: buildChartLines({ openPrice: "200.00" }) });
-    expect(down.container.querySelector(".pchart__move--down")).toHaveTextContent(/▼ -\d+\.\d+% vs round open/);
+    expect(down.container.querySelector(".pchart__move--down")).toHaveTextContent(/▼ -\$[\d,.]+ \(-\d+\.\d+%\) vs round open/);
   });
 
   it("for odds the move is in points, not percent", () => {
