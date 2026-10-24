@@ -628,6 +628,14 @@ export const zh: Dict = {
     subBest: " · 下一场胜利会开始新的连胜",
     subNone: " · 赢一场就开始连胜",
   },
+  lastResults: {
+    aria: "最近 {count} 场：赢 {won}，输 {lost}，持平 {flat}",
+    title: "最近结果",
+    won: "赢",
+    lost: "输",
+    flat: "持平（退回本金）",
+    hint: "最新的在右侧",
+  },
   share: {
     button: "分享",
     aria: "分享这个结果",

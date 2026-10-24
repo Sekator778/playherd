@@ -14,6 +14,8 @@ import { BotBadge, CopyButton, ErrorState, Skeleton } from "../components/Common
 import { ResultTile } from "../components/ResultTile";
 import { ShareResultButton } from "../components/ShareResultButton";
 import { StreakBadge } from "../components/StreakBadge";
+import { LastResults } from "../components/LastResults";
+import { lastResults } from "../api/lastResults";
 import { PlayDaysLine } from "../components/PlayDaysLine";
 import { formatDateTime, formatDuration, formatPercent, formatPlayAmount } from "../format";
 import { useT, type TFn } from "../i18n";
@@ -159,6 +161,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
       </h1>
 
       {profile.streak && <StreakBadge current={profile.streak.current} best={profile.streak.best} />}
+      <LastResults results={lastResults(profile.history)} />
       {profile.playDays && <PlayDaysLine current={profile.playDays.current} best={profile.playDays.best} />}
 
       {profile.seasonRecord && (

@@ -1,0 +1,50 @@
+/* Last results row (profile): letter + shape + colour, so the signal is never colour alone. */
+.last-results {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+}
+.last-results__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.last-results__row {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.last-results__mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  font-size: 13px;
+  font-weight: 900;
+  border: 2px solid currentColor;
+}
+.last-results__mark--won {
+  color: var(--up);
+  border-radius: 50%;
+}
+.last-results__mark--lost {
+  color: var(--down);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--down) 18%, transparent);
+}
+.last-results__mark--flat {
+  color: var(--text-muted);
+  border-radius: 8px;
+  border-style: dashed;
+}
+.last-results__hint {
+  font-size: 12px;
+  margin-left: auto;
+}

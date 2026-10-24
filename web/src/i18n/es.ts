@@ -628,6 +628,14 @@ export const es: Dict = {
     subBest: " · la próxima victoria empieza una nueva",
     subNone: " · una victoria la empieza",
   },
+  lastResults: {
+    aria: "Última ronda: {won} ganadas, {lost} perdidas, {flat} sin cambio|Últimas {count} rondas: {won} ganadas, {lost} perdidas, {flat} sin cambio",
+    title: "Últimos resultados",
+    won: "ganada",
+    lost: "perdida",
+    flat: "sin cambio (apuesta devuelta)",
+    hint: "la más reciente a la derecha",
+  },
   share: {
     button: "Compartir",
     aria: "Compartir este resultado",

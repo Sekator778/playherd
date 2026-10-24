@@ -631,6 +631,14 @@ export const en = {
     subBest: " · the next win starts a new one",
     subNone: " · a win starts one",
   },
+  lastResults: {
+    aria: "Last {count} round: {won} won, {lost} lost, {flat} flat|Last {count} rounds: {won} won, {lost} lost, {flat} flat",
+    title: "Last results",
+    won: "won",
+    lost: "lost",
+    flat: "flat (stake back)",
+    hint: "newest on the right",
+  },
   share: {
     button: "Share",
     aria: "Share this result",

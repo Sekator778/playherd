@@ -22,6 +22,7 @@ import { PriceChart } from "../components/PriceChart";
 import { buildChartLines } from "../components/priceChartModel";
 import { CrowdPositionCard } from "../components/RoundParts";
 import { StreakBadge } from "../components/StreakBadge";
+import { LastResults } from "../components/LastResults";
 import { OwnBetWaiting, WaitingForOpenCard } from "../components/WaitingForOpen";
 import { liquidationInfoOf, liquidationMomentEvent, quietSummaryOf, refundedNoteEvent } from "../fx/liquidationMoment";
 import { publish } from "../fx/resultEventBus";
@@ -489,6 +490,8 @@ export function LabStatesPage() {
           <StreakBadge current={1} best={1} />
           <StreakBadge current={0} best={4} />
           <StreakBadge current={0} best={0} />
+          <LastResults results={["won", "lost", "flat", "won", "won"]} />
+          <LastResults results={["lost", "lost"]} />
         </div>
       </section>
     </div>
