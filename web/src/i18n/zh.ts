@@ -759,6 +759,10 @@ export const zh: Dict = {
     zone: "时间：{zone}",
     above: "高出 {pct}%",
     below: "低 {pct}%",
+    styleAria: "图表样式",
+    styleLine: "折线",
+    styleCandles: "K线",
+    sumCandles: "每根K线 {seconds} 秒，最高 {high}，最低 {low}",
   },
   lines: {
     openEntry: "回合开始 · 你的入场 {glyph} x{leverage}",

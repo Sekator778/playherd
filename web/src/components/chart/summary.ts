@@ -13,8 +13,10 @@ export function chartSummary(input: {
   to: number;
   lines: readonly ChartLine[];
   format: (value: number) => string;
+  /** What the chosen look adds about itself (`describeSeries`), appended as it is. */
+  look?: string;
 }): string {
-  const { t, symbol, range, from, to, lines, format } = input;
+  const { t, symbol, range, from, to, lines, format, look } = input;
   const open = lines.find((l) => l.id === "open");
   return (
     t("pchart.summary", {
@@ -23,6 +25,7 @@ export function chartSummary(input: {
       from: format(from),
       to: format(to),
     }) +
+    (look ? `; ${look}` : "") +
     (open ? `; ${t("pchart.sumOpen", { price: format(open.price) })}` : "") +
     lines
       .filter((l) => l.tone === "liq")

@@ -759,6 +759,10 @@ export const hi: Dict = {
     zone: "समय: {zone}",
     above: "{pct}% ऊपर",
     below: "{pct}% नीचे",
+    styleAria: "चार्ट शैली",
+    styleLine: "रेखा",
+    styleCandles: "कैंडल",
+    sumCandles: "{seconds} सेकंड की कैंडल, उच्चतम {high}, न्यूनतम {low}",
   },
   lines: {
     openEntry: "राउंड शुरू · आपकी एंट्री {glyph} x{leverage}",

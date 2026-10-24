@@ -1,8 +1,9 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_DISPLAY_TIME_ZONE, setDisplayTimeZone } from "../format";
 import { PriceChart, type PriceChartProps } from "./PriceChart";
+import { CHART_STYLE_KEY } from "./chart/useChartStyle";
 import { buildChartLines } from "./priceChartModel";
 import { NOW, ticksOf } from "./testFixtures";
 
@@ -13,8 +14,14 @@ function chart(over: Partial<PriceChartProps> = {}) {
   return render(<PriceChart market={BTC} ticks={ticksOf(300, NOW, 100)} lines={[]} loading={false} error={false} {...over} />);
 }
 
+// A price market opens on candles; these suites are about the line and the lines over it, so they start on the line.
+beforeEach(() => {
+  window.localStorage.setItem(CHART_STYLE_KEY, "line");
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  window.localStorage.clear();
 });
 
 describe("PriceChart — what it draws", () => {
@@ -64,7 +71,7 @@ describe("PriceChart — the ranges the data allows", () => {
 
   it("under a minute: no chips at all, just 'Live'", () => {
     chart({ ticks: ticksOf(10, NOW) });
-    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^(1M|5M|15M)$/ })).not.toBeInTheDocument();
     expect(screen.getByText("Live")).toBeInTheDocument();
   });
 

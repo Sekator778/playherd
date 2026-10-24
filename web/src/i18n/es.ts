@@ -759,6 +759,10 @@ export const es: Dict = {
     zone: "Horas en {zone}",
     above: "{pct}% por encima",
     below: "{pct}% por debajo",
+    styleAria: "Estilo del gráfico",
+    styleLine: "Línea",
+    styleCandles: "Velas",
+    sumCandles: "velas de {seconds} s, máximo {high}, mínimo {low}",
   },
   lines: {
     openEntry: "INICIO DE RONDA · TU ENTRADA {glyph} x{leverage}",

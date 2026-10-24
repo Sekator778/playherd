@@ -762,6 +762,10 @@ export const en = {
     zone: "Times in {zone}",
     above: "{pct}% above",
     below: "{pct}% below",
+    styleAria: "Chart style",
+    styleLine: "Line",
+    styleCandles: "Candles",
+    sumCandles: "candles of {seconds} s, high {high}, low {low}",
   },
   lines: {
     openEntry: "ROUND START · YOUR ENTRY {glyph} x{leverage}",

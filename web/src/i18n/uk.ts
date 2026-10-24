@@ -759,6 +759,10 @@ export const uk: Dict = {
     zone: "Час: {zone}",
     above: "на {pct}% вище",
     below: "на {pct}% нижче",
+    styleAria: "Вигляд графіка",
+    styleLine: "Лінія",
+    styleCandles: "Свічки",
+    sumCandles: "свічки по {seconds} с, максимум {high}, мінімум {low}",
   },
   lines: {
     openEntry: "СТАРТ РАУНДУ · ТВІЙ ВХІД {glyph} x{leverage}",

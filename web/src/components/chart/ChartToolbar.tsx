@@ -1,7 +1,8 @@
 import { useT } from "../../i18n";
-import { RANGE_LABEL } from "./labels";
+import { RANGE_LABEL, STYLE_LABEL } from "./labels";
 import { describeMoneyMove, describeMove, moveSinceOpen } from "./move";
 import { CHART_RANGES, type RangeId } from "./series";
+import type { ChartStyle } from "./styles";
 
 export interface ChartMove {
   /** The round's open price; no open price, no move text. */
@@ -17,11 +18,18 @@ export function ChartToolbar({
   available,
   range,
   onRange,
+  styles,
+  style,
+  onStyle,
   move,
 }: {
   available: readonly RangeId[];
   range: RangeId | null;
   onRange: (id: RangeId) => void;
+  /** The looks this market allows; the switch is shown only when there is a choice (more than one). */
+  styles: readonly ChartStyle[];
+  style: ChartStyle;
+  onStyle: (style: ChartStyle) => void;
   move: ChartMove;
 }) {
   const t = useT();
@@ -31,20 +39,38 @@ export function ChartToolbar({
   const moveTone = described ? described.tone : "flat";
   return (
     <div className="pchart__bar">
-      <div className="chip-row pchart__chips" role="tablist" aria-label={t("chart.rangeAria")}>
-        {CHART_RANGES.filter((r) => available.includes(r.id)).map((r) => (
-          <button
-            key={r.id}
-            type="button"
-            role="tab"
-            aria-selected={range === r.id}
-            className="chip chip--small"
-            onClick={() => onRange(r.id)}
-          >
-            {t(RANGE_LABEL[r.id])}
-          </button>
-        ))}
-        {available.length === 0 && <span className="pchart__live faint">{t("pchart.live")}</span>}
+      <div className="pchart__controls">
+        <div className="chip-row pchart__chips" role="tablist" aria-label={t("chart.rangeAria")}>
+          {CHART_RANGES.filter((r) => available.includes(r.id)).map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              role="tab"
+              aria-selected={range === r.id}
+              className="chip chip--small"
+              onClick={() => onRange(r.id)}
+            >
+              {t(RANGE_LABEL[r.id])}
+            </button>
+          ))}
+          {available.length === 0 && <span className="pchart__live faint">{t("pchart.live")}</span>}
+        </div>
+        {styles.length > 1 && (
+          <div className="chip-row pchart__chips pchart__styles" role="tablist" aria-label={t("pchart.styleAria")}>
+            {styles.map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="tab"
+                aria-selected={style === s}
+                className="chip chip--small"
+                onClick={() => onStyle(s)}
+              >
+                {t(STYLE_LABEL[s])}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {moveText && (
         <p className={`pchart__move pchart__move--${moveTone} mono`}>

@@ -9,10 +9,11 @@ import { GridAxes } from "./chart/overlays/GridAxes";
 import { LastPrice } from "./chart/overlays/LastPrice";
 import { ReferenceLines } from "./chart/overlays/ReferenceLines";
 import { RoundStartMarker } from "./chart/overlays/RoundStartMarker";
-import { SeriesLayer, buildSeries } from "./chart/renderers";
+import { SeriesLayer, buildSeries, describeSeries } from "./chart/renderers";
 import { availableRanges, dataSpanMs, defaultRange, seriesExtent, sliceRange, toPoints, type RangeId } from "./chart/series";
-import { defaultStyle } from "./chart/styles";
+import { allowedStyles } from "./chart/styles";
 import { chartSummary } from "./chart/summary";
+import { useChartStyle } from "./chart/useChartStyle";
 import { useWidth } from "./chart/useWidth";
 import { Skeleton } from "./Common";
 import type { BackupPrice } from "./marketModel";
@@ -60,7 +61,7 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
   const height = chartHeight(width);
   const odds = market.kind === "ODDS";
   const price = (value: number) => formatPrice(value, market);
-  const style = defaultStyle(market.kind);
+  const [style, setStyle] = useChartStyle(market.kind);
 
   const all = useMemo(() => {
     const points = toPoints(ticks);
@@ -105,7 +106,15 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
 
   return (
     <figure className="pchart">
-      <ChartToolbar available={available} range={range} onRange={setPicked} move={{ open: open ? open.price : null, last: last.price, odds, format: price }} />
+      <ChartToolbar
+        available={available}
+        range={range}
+        onRange={setPicked}
+        styles={allowedStyles(market.kind)}
+        style={style}
+        onStyle={setStyle}
+        move={{ open: open ? open.price : null, last: last.price, odds, format: price }}
+      />
 
       <div ref={measureRef} className="pchart__plot">
         <svg
@@ -113,7 +122,16 @@ export function PriceChart({ market, ticks, current, lines, roundStartMs, loadin
           width={width}
           height={height}
           role="img"
-          aria-label={chartSummary({ t, symbol: market.symbol, range, from: first.price, to: last.price, lines, format: price })}
+          aria-label={chartSummary({
+            t,
+            symbol: market.symbol,
+            range,
+            from: first.price,
+            to: last.price,
+            lines,
+            format: price,
+            look: describeSeries(series, t, price),
+          })}
         >
           <GridAxes frame={frame} lastPrice={last.price} formatPrice={price} />
           <RoundStartMarker frame={frame} roundStartMs={roundStartMs} />

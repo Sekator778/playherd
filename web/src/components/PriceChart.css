@@ -33,6 +33,12 @@
   gap: 6px 10px;
   min-height: 32px;
 }
+.pchart__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px; /* the range chips and the look switch are two groups; the gap tells them apart */
+}
 .pchart__chips {
   flex: 0 0 auto; /* the chips keep their full size — they used to be squeezed until the last one was clipped */
 }
@@ -100,6 +106,34 @@
   stroke: var(--pchart-down);
 }
 .pchart__line--flat {
+  stroke: var(--pchart-flat);
+}
+
+/* Candles: wick high→low, body open→close. Up and down use the same two colours as the line and the bubble; a
+   candle that closed where it opened is a thin neutral line. The direction is also in the header's arrow and sign. */
+.pchart__wick {
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+.pchart__body--flat {
+  stroke-width: 2;
+}
+.pchart__candle--up .pchart__wick,
+.pchart__candle--up .pchart__body {
+  stroke: var(--pchart-up);
+}
+.pchart__candle--up rect.pchart__body {
+  fill: var(--pchart-up);
+}
+.pchart__candle--down .pchart__wick,
+.pchart__candle--down .pchart__body {
+  stroke: var(--pchart-down);
+}
+.pchart__candle--down rect.pchart__body {
+  fill: var(--pchart-down);
+}
+.pchart__candle--flat .pchart__wick,
+.pchart__candle--flat .pchart__body {
   stroke: var(--pchart-flat);
 }
 

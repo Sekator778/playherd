@@ -759,6 +759,10 @@ export const ru: Dict = {
     zone: "Время: {zone}",
     above: "на {pct}% выше",
     below: "на {pct}% ниже",
+    styleAria: "Вид графика",
+    styleLine: "Линия",
+    styleCandles: "Свечи",
+    sumCandles: "свечи по {seconds} с, максимум {high}, минимум {low}",
   },
   lines: {
     openEntry: "СТАРТ РАУНДА · ТВОЙ ВХОД {glyph} x{leverage}",

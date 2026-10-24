@@ -4,7 +4,7 @@
  * not money math (the numbers that decide a round are `api/liquidation.ts`'s).
  */
 import type { EpochMs, PriceTickDto } from "../../api/contract";
-import type { ChartStyle } from "./styles";
+import { bucketMsFor, type ChartStyle } from "./styles";
 
 export interface Point {
   atMs: EpochMs;
@@ -113,4 +113,68 @@ export function extentOf(points: readonly Point[]): Extent {
 export function buildLineSeries(all: readonly Point[], range: RangeId | null): Series<Point[]> {
   const points = sliceRange(all, range);
   return { style: "line", extent: extentOf(points), data: points };
+}
+
+// ---------------------------------------------------------------------------
+// Candles
+// ---------------------------------------------------------------------------
+
+/** The price over one slot of time: where it started, how high and low it went, where it is (or ended). */
+export interface Candle {
+  /** The slot, `[startMs, endMs)`, aligned to a multiple of the bucket size since the epoch. */
+  startMs: EpochMs;
+  endMs: EpochMs;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+/**
+ * Ticks (oldest first) → candles of `bucketMs`, each slot aligned to an epoch multiple of it so a candle's edges
+ * do not move as new ticks arrive. Open is the slot's first tick, close its last. A slot without a tick has no
+ * candle: nothing is drawn for a stretch the feed was silent, and no price is carried across it. The newest
+ * candle is the one still forming; it is recomputed from the ticks on every call, so each new tick updates it.
+ */
+export function toCandles(points: readonly Point[], bucketMs: number): Candle[] {
+  const candles: Candle[] = [];
+  if (!(bucketMs > 0)) return candles;
+  let current: Candle | null = null;
+  for (const p of points) {
+    const startMs = Math.floor(p.atMs / bucketMs) * bucketMs;
+    if (current !== null && current.startMs === startMs) {
+      if (p.price > current.high) current.high = p.price;
+      if (p.price < current.low) current.low = p.price;
+      current.close = p.price;
+    } else {
+      current = { startMs, endMs: startMs + bucketMs, open: p.price, high: p.price, low: p.price, close: p.price };
+      candles.push(current);
+    }
+  }
+  return candles;
+}
+
+/**
+ * The candle look: the real ticks of the last `range` (no interpolated edge price — a candle is made of prices that
+ * were seen) in candles of `bucketMsFor(range)`. The extent runs from the first candle's start to the newest
+ * candle's end, so the forming candle owns its whole slot, and covers every candle's high and low.
+ */
+export function buildCandleSeries(all: readonly Point[], range: RangeId | null): Series<Candle[]> {
+  const newest = all.length > 0 ? all[all.length - 1].atMs : 0;
+  const from = range === null ? -Infinity : newest - rangeMs(range);
+  const candles = toCandles(
+    all.filter((p) => p.atMs >= from),
+    bucketMsFor(range),
+  );
+  if (candles.length === 0) return { style: "candles", extent: extentOf([]), data: candles };
+  return {
+    style: "candles",
+    extent: {
+      fromMs: candles[0].startMs,
+      toMs: candles[candles.length - 1].endMs,
+      low: Math.min(...candles.map((c) => c.low)),
+      high: Math.max(...candles.map((c) => c.high)),
+    },
+    data: candles,
+  };
 }
