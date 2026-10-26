@@ -61,3 +61,9 @@
 		output stdout
 	}
 }
+
+# Other sites on this host (README, section 1, "Other sites"): one file per site in ~/edge/conf/sites/ on the VPS, here
+# /etc/caddy/sites/, put there by that site's own deploy. deploy.sh replaces only the Caddyfile, so the files outlive every
+# deploy of a revision that has this line (a revision without it drops those sites). No file is fine: Caddy only logs
+# "No files matching import glob pattern".
+import /etc/caddy/sites/*.caddy

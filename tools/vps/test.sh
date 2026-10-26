@@ -408,6 +408,7 @@ test_common() {
     chk "Caddyfile: CSP is frame-ancestors only" grep -qF "Content-Security-Policy \"frame-ancestors 'none'\"" <<<"${out}"
     chk "Caddyfile: Permissions-Policy" grep -qF 'Permissions-Policy "camera=(), microphone=(), geolocation=()"' <<<"${out}"
     chk "Caddyfile: /api/admin/* is answered 404 at the edge" grep -qF 'handle /api/admin/* {' <<<"${out}"
+    chk "Caddyfile: other sites on this host are imported from /etc/caddy/sites" grep -qxF 'import /etc/caddy/sites/*.caddy' <<<"${out}"
     nchk "Caddyfile: the download directory is not browsable" grep -qE 'file_server +browse' <<<"${out}"
     chk "Caddyfile: /download/ is served from /srv/download" grep -qF 'handle_path /download/*' <<<"${out}"
     chk "Caddyfile: the APK gets the Android package type" grep -qF 'application/vnd.android.package-archive' <<<"${out}"
