@@ -29,10 +29,10 @@
          maven-metadata.xml, 2026-09-25). Task requirement: "Quarkus (3.x LTS, Java 21)". -->
     <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
     <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
-    <quarkus.platform.version>3.39.4</quarkus.platform.version>
+    <quarkus.platform.version>3.40.1.1</quarkus.platform.version>
 
     <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
-    <surefire-plugin.version>3.6.0</surefire-plugin.version>
+    <surefire-plugin.version>3.6.1</surefire-plugin.version>
     <herd.io-guard>fail</herd.io-guard>
     <!-- Chronicle Queue on Java 17+ (https://chronicle.software/insights/blogs/running-chronicle-on-java-17-and-later-the-required-jvm-arguments-explained,
          read 2026-10-21); the same list is in the Dockerfile. -->

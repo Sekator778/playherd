@@ -4,12 +4,12 @@
 #
 # WHAT THIS DOES (see docs/ops/branching.md for the full rationale):
 #   1. Creates the `develop` branch from `main` if it doesn't exist yet.
-#   2. Optionally sets `develop` as the repo's default branch (new PRs/Dependabot target it).
+#   2. Optionally sets `develop` as the repo's default branch (new PRs target it).
 #   3. Applies repository rulesets: `main` (PR required, ~1 approval, admin bypass on the PR
 #      requirement only, required "ci-ok" check, merge commit (develop → main) or squash (hotfix/*), no force-push/
 #      delete), `develop` (required "ci-ok", no force-push), tag ruleset on `v*` (immutable:
 #      no delete/move).
-#   4. Enables Dependabot security updates + Dependabot alerts.
+#   4. Enables Dependabot alerts (security updates stay off, see §4 below).
 #   5. Creates `staging`/`production` environments (production optionally gated on a required
 #      reviewer).
 #   6. Prints the list of secrets/variables someone (Alex) still needs to add by hand — this
@@ -89,7 +89,7 @@ fi
 
 if [[ "$DRY_RUN" -eq 0 && "$ASSUME_YES" -eq 0 ]]; then
   echo "About to make REAL changes to https://github.com/${REPO} (rulesets, default branch," >&2
-  echo "environments, Dependabot security updates). This does NOT touch main or tags directly." >&2
+  echo "environments, Dependabot alerts). This does NOT touch main or tags directly." >&2
   read -r -p "Continue? [y/N] " reply
   case "$reply" in
     y|Y|yes|YES) ;;
@@ -187,17 +187,13 @@ if [[ "$SET_DEFAULT_BRANCH" -eq 1 ]]; then
     - New PRs default their base to the repo's default branch — with `develop` as default,
       `gh pr create` / the GitHub UI default straight into develop, matching the branch model
       (feature/* -> develop) without anyone having to remember to change the base branch.
-    - Dependabot (dependabot.yml) opens PRs against the default branch — with `develop` default,
-      dependency-bump PRs land on develop (go through the same `ci-ok` gate and a normal
-      develop->main promotion), never straight into main.
     - Downside: the repo's GitHub homepage, `git clone`'s checked-out branch, and anything that
       reads "the default branch" (e.g. some security tab views) will show develop, not main.
       This does NOT affect releases: a git tag on main is a ref in its own right, independent of
       which branch is "default" — `git tag vX.Y.Z main` and GitHub Releases both work exactly
       the same regardless of this setting.
-    Alternative (pass --keep-default-branch): keep `main` as default, and instead set
-    `target-branch: develop` explicitly for every ecosystem in .github/dependabot.yml (already
-    done in this repo's dependabot.yml), and remember to change the PR base by hand each time.
+    Alternative (pass --keep-default-branch): keep `main` as default, and remember to change the
+    PR base by hand each time.
 EOF
     call_api PATCH "" "{\"default_branch\":\"develop\"}"
   fi
@@ -345,16 +341,16 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Dependabot security updates + alerts
+# 4. Dependabot alerts
 # ---------------------------------------------------------------------------
-section "4. Dependabot security updates"
+# Alerts only: they run no Actions. Security updates (/automated-security-fixes) stay off: every PR
+# they open runs the full CI on the limited Actions minutes (docs/ops/branching.md §9, Р-112).
+section "4. Dependabot alerts"
 if [[ "$TOGGLE_DEPENDABOT_SECURITY" -eq 1 ]]; then
   call_api PUT "/vulnerability-alerts" ""
-  call_api PUT "/automated-security-fixes" ""
 else
   echo "  [skipped] --skip-dependabot-toggle"
 fi
-echo "  (this is separate from .github/dependabot.yml's version-update schedule, which needs no API call — it's picked up from the file itself once merged)"
 
 # ---------------------------------------------------------------------------
 # 5. Environments

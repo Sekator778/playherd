@@ -1,7 +1,7 @@
 # Secret-scan config for the "gitleaks" CI job (docs/ops/ci.md). Extends gitleaks' own default
 # ruleset (private keys, cloud provider keys, generic high-entropy secrets, etc.) unchanged, and
-# adds only one narrow allowlist entry for a confirmed false positive — never a blanket path
-# exclusion, so the scan stays meaningful.
+# adds only narrow allowlist entries, one exact string per confirmed false positive — never a blanket
+# path exclusion, so the scan stays meaningful.
 title = "herd gitleaks config"
 
 [extend]
@@ -14,4 +14,18 @@ regexes = [
   # localStorage read/write, matched by the generic-api-key entropy heuristic. Not a key,
   # not derived from a real wallet.
   '''txch1knownaddr''',
+  # tools/vps/deploy.sh, tools/vps/test.sh: Sec-WebSocket-Key of a test handshake, the sample nonce
+  # of RFC 6455 §1.3 (base64 of "the sample nonce").
+  '''dGhlIHNhbXBsZSBub25jZQ==''',
+  # server/src/test/resources/events/journal-v1/projections.txt: `owner=<player id>`, the UUID of the
+  # test player "Alice V1" of that fixture. An identifier, not a credential.
+  '''c083b245-6553-4e42-8a1d-3f4b9c68d888''',
+  # server/src/test/resources/fixtures/hyperliquid/spot_meta_and_asset_ctxs.json: tokenId of USDC,
+  # PURR, HFUN, HPYH and YAP, public on-chain identifiers (same values in the public `spotMeta`
+  # answer of api.hyperliquid.xyz/info, checked 2026-10-31).
+  '''0x6d1e7cde53ba9467b783cb7c530ce054''',
+  '''0xc1fb593aeffbeb02f85e0308e9956a90''',
+  '''0xbaf265ef389da684513d98d68edf4eae''',
+  '''0x18a98375ce42a0f1e40d0d666eb69e15''',
+  '''0x7555ea01e1100621bcbf5f9ce3351a69''',
 ]

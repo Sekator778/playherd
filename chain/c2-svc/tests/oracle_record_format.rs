@@ -164,7 +164,7 @@ fn the_lineage_decoder_rejects_what_is_not_a_record() {
 /// Pins the derive's documented "extras are ignored" behavior: a future format
 /// that appends an eighth element stays readable by v2 decoders (they read the
 /// first seven). Not a feature of v2 itself -- a tripwire for a clvm-derive
-/// upgrade that changes it (Dependabot proposes clvm-traits 0.36 -> 0.50).
+/// upgrade that changes it.
 #[test]
 fn an_eighth_element_is_ignored_by_the_lineage_decoder() -> Result<()> {
     let eight = clvm_bytes(&clvm_list!(

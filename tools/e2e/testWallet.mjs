@@ -1,6 +1,6 @@
 // Node port of web/src/wallet/testWallet.ts — same key derivation, same message wrapping, same
 // signing scheme (Р-45: "та же схема и проверка подписи, что для Sage"), reusing the identical
-// `chia-wallet-sdk-wasm@0.36.0` package the browser test wallet uses (imported straight from
+// `chia-wallet-sdk-wasm` package the browser test wallet uses (imported straight from
 // `web/node_modules` — no separate install, per the task's "no global installs").
 //
 // Verified byte-for-byte against chain/c2-svc/tests/vectors/auth_vectors.json's "positive" case
