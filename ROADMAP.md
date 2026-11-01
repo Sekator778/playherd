@@ -14,13 +14,15 @@
 
 ## Known limits
 
-Stated plainly, each with the next step.
+Herd is an open-source project at an early stage, so these limits stay until real traffic justifies the work. Each one has a known next step.
 
 | Limit | State today | Next step |
 |---|---|---|
 | Power loss | Unproven. The LazyFS harness with a negative control exists but is blocked by `SIGBUS` on the development VM | Run it on a Linux host with `/dev/fuse` |
 | HTTP throughput after the redesign | Not measured. Published figures are in process | Repeat the stepped load test through the full HTTP path |
 | Production disk | Not measured | Benchmark `msync` on the server |
+| Blocking replies | Each request thread waits for its batch to sync | Answer asynchronously from the RPC layer |
+| Engine lock | The logic thread still takes a lock left from before the single writer | Remove it and rely on the gate |
 | Output stage | Bottleneck on macOS at 1024 clients; on the Linux volume the sync was the limit | Measure on the server, then parallelise waking callers if it still shows |
 | Writer-thread death | Tested up to stop and answers, not the restart on the live server | Exercise it on a copy of the live stand |
 | Single server | One VPS, no replica | Replicate the journal to a second server |
@@ -31,6 +33,9 @@ Stated plainly, each with the next step.
 
 ## Next
 
+Ordered by what real traffic is likely to ask for first:
+
 1. Finish the load picture: HTTP path, production disk, power loss.
-2. Replicate the journal to a second server.
-3. Partition the writer by market once disk stops being the ceiling.
+2. Answer asynchronously and remove the engine lock.
+3. Replicate the journal to a second server.
+4. Partition the writer by market once disk stops being the ceiling.

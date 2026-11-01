@@ -62,6 +62,19 @@ The gain is clear at 1024 clients, about 2x. At 64 and 256 clients the spread be
 
 These runs also taught a measurement lesson. An earlier in-process test of the journal against Postgres commits showed 9–10 times more bets/s on macOS, but `msync` there does not reach the medium, so that figure says nothing about a server. On the Linux volume a journal write cost 2.2 ms against 2.6 ms for a Postgres commit: the durable flush is expensive for both.
 
+## Where Herd departs from LMAX
+
+Herd is an open-source project at an early stage. This design removed the measured ceiling and stops there on purpose: with a small user base there is no load to justify more work yet. The remaining distance to LMAX is known, and each step below waits for real traffic to ask for it. Their gains are not measured.
+
+| Herd today | LMAX | Step when load grows |
+|---|---|---|
+| The logic thread takes `engineLock` for each batch, a lock that predates the single writer | No locks in the business logic | Remove the lock and leave the gate as the only way to reach the engine between batches |
+| Each request thread blocks on a future until its batch is synced, so the output stage has to wake every caller | Results leave through an output stage without blocked callers | Answer asynchronously from the RPC layer, then measure over HTTP |
+| Events are journaled after the logic, so a failed sync means rollback and rebuild | Input is journaled before the logic and replay is deterministic | Keep it unless replication needs an input log |
+| One server, no standby | Durability also rests on replicas | Replicate the journal to a hot standby |
+| Blocking queues between stages | Disruptor ring buffers | Swap them when profiling shows the hand-off as the limit |
+| One writer for all markets | One processor per stream, partitioned | Partition by market once the disk stops being the ceiling |
+
 ## What is not proven
 
 - Power loss and kernel crash. A LazyFS harness with a negative control exists in [`tools/journal-powerloss`](../../tools/journal-powerloss/README.md), but it is blocked on the development VM: Chronicle hits `SIGBUS` on the FUSE mount before the first acknowledgement.

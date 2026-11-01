@@ -104,7 +104,7 @@ The last full run passed 9,844 Java tests with 6 skipped, plus the Rust and web 
 
 ## Status
 
-Herd is a working demo with a small test group, built to explore hard engineering problems end to end. The core is ahead of demand on purpose. [ROADMAP.md](ROADMAP.md) lists what is done, what is unproven and what comes next.
+Herd is an open-source project at an early stage: a working demo with a small test group. The core removed a measured ceiling and stops there on purpose, because further speed work should follow real traffic. The case study lists [where it departs from LMAX](docs/architecture/single-writer-pipeline.md#where-herd-departs-from-lmax) and [ROADMAP.md](ROADMAP.md) gives the next steps. Reviews and contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
