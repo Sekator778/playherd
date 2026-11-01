@@ -8,7 +8,7 @@
 //
 // Run with `node --experimental-wasm-modules` (plain `import` of a `.wasm` file is still
 // experimental in Node 22) — see tools/e2e/run.mjs's shebang-adjacent comment and
-// docs/product/local_stand.md.
+// CONTRIBUTING.md.
 
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";

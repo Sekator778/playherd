@@ -115,5 +115,5 @@
 - `docs/research/game_economics_venues.md` (§2 Hyperliquid, §3 Binance), `docs/research/economy_variant_a_rules_2026-10-17.md` (§2.2, §3.1)
 - `docs/product/economy_how_it_works.md` (§2 ставка и ликвидация, §4 защита казны, §5.5 сопоставление)
 - Код: `engine/src/main/java/crowdvsmarket/engine/margin/LiquidationCalculator.java`, `engine/src/main/java/crowdvsmarket/engine/economy/EconomyRules.java` (`maxLeverage`)
-- `docs/product/decisions.md`: Р-7, Р-11, Р-23, Р-69, Р-70, Р-76, Р-92, Р-93, Р-101; `docs/product/game_economy_proposal.md` (§7)
+- `the decision log`: Р-7, Р-11, Р-23, Р-69, Р-70, Р-76, Р-92, Р-93, Р-101; `docs/product/game_economy_proposal.md` (§7)
 - Страницы площадок: `docs/kb/venues/hyperliquid.md`, `gmx-dydx.md`, `cex-futures.md`, `binary-options.md`, `polymarket.md`, `pancakeswap-prediction.md`, `twitch-predictions.md`

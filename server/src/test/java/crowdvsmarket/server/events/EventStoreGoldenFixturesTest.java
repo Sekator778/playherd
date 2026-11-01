@@ -18,7 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Task item 4 (event schema evolution, docs/reviews/2026-09-26-independent-critique.md): a golden
+ * Task item 4 (event schema evolution, an internal security review): a golden
  * JSON fixture for EVERY current {@link GameEvent} type (server/src/test/resources/events/golden/
  * &lt;TypeName&gt;.json), each exercised with a round-trip (fixture JSON → {@link GameEvent}
  * record, compared field-for-field against an independently hand-built expected instance) AND a

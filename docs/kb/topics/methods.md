@@ -108,5 +108,5 @@
 - `docs/research/bench_step1_2026-10-18.md`, `bench_step2_2026-10-18.md`, `bench_step3_2026-10-18.md`, `bench_step4_2026-10-18.md`, `tools/bench/README.md`
 - `docs/research/lmax_roadmap.md` (§1 что такое LMAX; §2 библиотеки; §3 шаги; §6 сверка), `docs/research/journal_chronicle_2026-10-21.md` (шаг 3: журнал на Chronicle Queue)
 - `docs/research/architecture_review_2026-10-16.md`, `docs/research/architecture_review_independent_2026-10-16.md` (§2.5 TigerBeetle, §2.6 сравнение семейств)
-- `docs/product/decisions.md` (Р-91, Р-95, Р-96, Р-99…Р-102)
+- `the decision log` (Р-91, Р-95, Р-96, Р-99…Р-102)
 - `docs/kb/topics/economy-treasury.md`, `docs/kb/venues/play-money-and-tg-games.md`

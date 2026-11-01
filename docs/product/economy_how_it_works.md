@@ -292,7 +292,7 @@
 
 ## 6. Что видит игрок
 
-Лист ставки (`web/src/components/BetSheet.tsx:214`, `:333-338`) показывает строку «Fees X PLAY» (сумма Herd и сети из предпросмотра сервера, `i18n/en.ts:871`); по нажатию раскрывается `FeeBreakdown` (`web/src/components/BetSlip.tsx:346-384`): комиссия Herd и сетевая в PLAY с долей ставки в скобках (`formatFeePercent`, `betSlipModel.ts:104-109`), «Total debit», «Highest leverage for this stake» (ступень §2.4) и строка о возврате комиссий при отмене до старта. Теоретического RTP на экране нет (поиск по `web/src`; в `game_economy_proposal.md` §7 п. 9 он предлагался). Комиссия 15-минутного раунда и новый `k` в тексте не пояснены [вывод: строк с `k` не нашёл]. Разбор того, как другие площадки показывают комиссию игроку: [`docs/research/fee_display_venues_2026-10-18.md`](../research/fee_display_venues_2026-10-18.md).
+Лист ставки (`web/src/components/BetSheet.tsx:214`, `:333-338`) показывает строку «Fees X PLAY» (сумма Herd и сети из предпросмотра сервера, `i18n/en.ts:871`); по нажатию раскрывается `FeeBreakdown` (`web/src/components/BetSlip.tsx:346-384`): комиссия Herd и сетевая в PLAY с долей ставки в скобках (`formatFeePercent`, `betSlipModel.ts:104-109`), «Total debit», «Highest leverage for this stake» (ступень §2.4) и строка о возврате комиссий при отмене до старта. Теоретического RTP на экране нет (поиск по `web/src`; в `game_economy_proposal.md` §7 п. 9 он предлагался). Комиссия 15-минутного раунда и новый `k` в тексте не пояснены [вывод: строк с `k` не нашёл]. Разбор того, как другие площадки показывают комиссию игроку: `docs/research/fee_display_venues_2026-10-18.md`.
 
 ### 6.1. Режим «выиграл или проиграл» (фиксированная выплата, Р-106)
 
@@ -335,7 +335,7 @@
 
 ## 8. Источники
 
-Решения: `docs/product/decisions.md` Р-92, Р-93, Р-100, Р-101, Р-102.
+Решения: `the decision log` Р-92, Р-93, Р-100, Р-101, Р-102.
 
 Математика и исследования:
 - `docs/research/economy_variant_a_rules_2026-10-17.md` — правила 1–3, таблицы `a*`, шансы, тонкие рынки.

@@ -5,7 +5,7 @@
 (`asset` на проводе, пол `seq`, реестр рынков и журнал записей, которые читает верификатор) — §8; разделы §1–§4
 ниже уже описывают v2, §5 — реальный прогон первой версии, как он был. Инструмент: [`tools/verify-oracle/verify_oracle.py`](../../tools/verify-oracle/verify_oracle.py)
 (английские README/докстринг там же — инструмент рассчитан на внешнего аудитора, не только на
-эту команду). Источник решений, которые он проверяет — [`docs/product/decisions.md`](../product/decisions.md):
+эту команду). Источник решений, которые он проверяет — `the decision log`:
 Р-11 (минимальный синглтон-оракул), Р-40 (публикация раз в час на границе часа), Р-41
 (в ту же публикацию входит хеш итогов раунда — «любой может сверить, что их не меняли задним
 числом»), Р-47 (в тестовом режиме оракул публикует по-настоящему на каждой границе раунда).
@@ -46,7 +46,7 @@
 **Не проверяет** (явно, а не по умолчанию):
 
 - Что опубликованная цена сама была честной ценой BTC — доверие ключу оператора и Hyperliquid как
-  источнику это осознанный, задокументированный компромисс (Р-11, `PLAN.md` §2), а не то, что
+  источнику это осознанный, задокументированный компромисс (Р-11, `the project plan` §2), а не то, что
   проверяет этот инструмент.
 - Что выплаты внутри `results.json` посчитаны верно движком — это зона юнит-тестов `engine/`.
 - Подписи `AGG_SIG_ME` каждого спенда — публичная цепь уже отвергла бы любой спенд, не прошедший
@@ -102,7 +102,7 @@ pip install -r requirements.txt
 # только цепь (testnet11 по умолчанию):
 python3 verify_oracle.py c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20
 
-# цепь + сверка с локальным стендом (docs/product/local_stand.md):
+# цепь + сверка с локальным стендом (CONTRIBUTING.md):
 python3 verify_oracle.py c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20 \
     --stand-url http://localhost:8480 --json-out result.json
 
@@ -135,11 +135,11 @@ python3 verify_oracle.py c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec0
   под `Unparsed announcement-shaped conditions`, а не путает с коллизией `seq`. Это ожидаемая
   история эволюции формата, не находка. Раскодировано вручную для протокола: `(priceCents=8 396 500,
   ts=1790353493, seq=1)` — то же самое первое announcement недели 1, что задокументировано в
-  `PLAN.md` §1 («блок 4 735 705, price 8 396 500 ¢, ts 1790353493, seq 1»).
+  `the project plan` §1 («блок 4 735 705, price 8 396 500 ¢, ts 1790353493, seq 1»).
 
 ## 5. Реальный прогон 2026-09-26 — testnet11 + `http://localhost:8480`
 
-Стенд (`docker compose -p herd`, `docs/product/local_stand.md`) на момент прогона: `herd-server-1`/
+Стенд (`docker compose -p herd`, `CONTRIBUTING.md`) на момент прогона: `herd-server-1`/
 `herd-chainsvc-1`/`herd-web-1`/`herd-db-1` все healthy, тестовый режим (`replay`, ускорение ×20,
 часовой раунд = 180 с, дневной = 900 с) уже несколько часов непрерывно публиковал оракул в
 testnet11 (Р-47).
@@ -204,9 +204,9 @@ Mismatches:                                                0
 - [`tools/verify-oracle/verify_oracle.py`](../../tools/verify-oracle/verify_oracle.py),
   [`tools/verify-oracle/README.md`](../../tools/verify-oracle/README.md) — сам инструмент
   (докстринг в `.py` — самое полное описание протокола проверки).
-- [`docs/product/local_stand.md`](../product/local_stand.md) §4 — как ещё смотреть оракул на
+- `CONTRIBUTING.md` §4 — как ещё смотреть оракул на
   testnet11 руками (без этого инструмента), включая launcher id и прямые `curl` к `coinset.org`.
-- [`docs/product/decisions.md`](../product/decisions.md) Р-11/Р-40/Р-41/Р-47.
+- `the decision log` Р-11/Р-40/Р-41/Р-47.
 - [`server/src/main/java/crowdvsmarket/server/util/ResultsHasher.java`](../../server/src/main/java/crowdvsmarket/server/util/ResultsHasher.java) —
   каноническая форма `results.json` и `resultsHash`.
 - [`server/src/main/java/crowdvsmarket/server/persistence/OracleRecordRepository.java`](../../server/src/main/java/crowdvsmarket/server/persistence/OracleRecordRepository.java) —
@@ -324,7 +324,7 @@ VERDICT: OK (exit 0) — gaps and unmapped seqs are listed above but only fail w
 Это та же цепь, что в §5 (там 71 поколение и 98 `seq`, сейчас 808 и 1145): все 1145 announcement — 6-элементные
 (записей с `asset` > 0 на цепи ещё нет), 0 конфликтов, 0 пропусков, 3-элементное сообщение недели 1 — в
 «неразобранных», как и в §4. Совпадает со сверкой, записанной в
-`docs/reviews/2026-10-01-goals-vs-state.md:121` (808 поколений, `seq` 1…1145, 0 конфликтов, 0 пропусков).
+`an internal status review:121` (808 поколений, `seq` 1…1145, 0 конфликтов, 0 пропусков).
 
 ### 7.6 Не проверено
 

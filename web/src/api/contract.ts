@@ -8,7 +8,7 @@
  *
  * Naming follows the Java classes/fields 1:1 wherever a direct counterpart exists; every type
  * below carries a comment pointing at the Java class or the product decision (Р-N,
- * `docs/product/decisions.md`) that fixes its shape. Shapes that exist only because the UI
+ * `the decision log`) that fixes its shape. Shapes that exist only because the UI
  * needs them (pagination, HTTP error codes, the BTC/anti-crowd comparison series, the
  * challenge/verify sign-in flow) are marked "предложение" and cite the research file they come
  * from, per this project's rule that non-sourced technical choices must be flagged.
@@ -17,7 +17,7 @@
  * absent values as `null`; treat the two alike. Decimal strings are parsed as numbers, never
  * compared as text.
  *
- * Sources: docs/product/decisions.md (Р-1…Р-57), docs/research/round_engine_design.md,
+ * Sources: the decision log (Р-1…Р-57), docs/research/round_engine_design.md,
  * docs/research/week1_wallet_auth.md (§4 for the challenge/verify flow, "Реализация" section for
  * the real WalletConnect/Sage wiring — Р-55), docs/product/ux_walkthrough.md.
  */

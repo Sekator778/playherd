@@ -295,7 +295,7 @@ case "$cmd" in
     api POST "/api/admin/withdrawals/${request_id}/reverse" "{\"reason\":\"${escaped_reason}\"}"
     ;;
   reverse-deposit)
-    # Task item 1 (BLOCKER security fix, docs/reviews/2026-09-26-independent-critique.md):
+    # Task item 1 (BLOCKER security fix, an internal security review):
     # reverses a deposit request's already-recorded (fraudulent) balance/season effect — e.g. the
     # self-reported deposits d-2/d-4/d-7/d-10, auto-confirmed with zero on-chain verification
     # before requestDeposit started rejecting new deposits outright — without altering or deleting

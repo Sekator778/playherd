@@ -2,7 +2,7 @@ package crowdvsmarket.engine.market;
 
 /**
  * Round/candle timeframe. Matches {@code timeframe: daily|hourly} in the {@code Round} data
- * format (PLAN.md section 3) and the two candle intervals fetched into
+ * format (the project plan section 3) and the two candle intervals fetched into
  * {@code engine/src/test/resources/fixtures/} (PROVENANCE.md): {@code 1d}/{@code 1h}.
  */
 public enum Interval {

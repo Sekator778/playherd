@@ -25,7 +25,7 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 import org.jboss.logging.Logger;
 
 /**
- * Task item 7 (PLAN.md §3, README's "адаптер на реальную биржу (Hyperliquid) есть в коде" claim):
+ * Task item 7 (the project plan §3, README's "адаптер на реальную биржу (Hyperliquid) есть в коде" claim):
  * a real {@link ExecutionAdapter} for Hyperliquid — request building against the real, sourced
  * wire shapes ({@link HyperliquidExchangeRequests}, fetched from Hyperliquid's own public API docs
  * 2026-09-26) — but {@link #openPosition}/{@link #closePosition} DISABLED by default and refusing

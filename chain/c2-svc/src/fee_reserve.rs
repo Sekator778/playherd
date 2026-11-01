@@ -1,5 +1,5 @@
 //! The fee-coin reserve (`docs/research/chain_service.md` §16, open item "запас
-//! комиссионных монет", `docs/HANDOFF.md` §6): keep the operator wallet holding
+//! комиссионных монет", `the internal notes` §6): keep the operator wallet holding
 //! at least `C2_FEE_COINS_MIN` (default 4) free standard coins of at least
 //! `C2_FEE_COIN_MOJOS` (default 200,000,000 = 0.0002 TXCH) each, so the oracle
 //! publisher and the PLAY withdrawal publisher -- every in-flight bundle

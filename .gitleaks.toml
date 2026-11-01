@@ -1,4 +1,4 @@
-# Secret-scan config for the "gitleaks" CI job (docs/ops/ci.md). Extends gitleaks' own default
+# Secret-scan config for the "gitleaks" CI job (CONTRIBUTING.md). Extends gitleaks' own default
 # ruleset (private keys, cloud provider keys, generic high-entropy secrets, etc.) unchanged, and
 # adds only narrow allowlist entries, one exact string per confirmed false positive — never a blanket
 # path exclusion, so the scan stays meaningful.

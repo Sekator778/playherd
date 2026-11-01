@@ -887,7 +887,7 @@ export const zh: Dict = {
     verifyTitle: "自己验证",
     verify1: "打开任意已结算的回合，点击“验证 results.json”：其全部下注与派彩的完整清单，位于",
     verify2: "该回合的链上记录包含该文件的 SHA-256、收盘价和上面的资产编号。",
-    verify3: "运行验证器。它只读取公开的 Chia API，不需要我们的任何密钥；它是项目仓库中的一个脚本（{path}，自带 README）。仓库目前是私有的，所以下面的命令要等仓库公开后才能用。",
+    verify3: "运行验证器。它只读取公开的 Chia API，不需要我们的任何密钥；它是项目仓库中的一个脚本（{path}，自带 README）。",
     commandAria: "验证器命令",
     copyCommand: "复制命令",
     healthy: "正常的运行会以“CONFLICTS: 0”、“Gaps in the seq sequence: 0”和“Mismatches: 0”结束。",

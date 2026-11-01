@@ -14,7 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Task item 1 (BLOCKER security fix, docs/reviews/2026-09-26-independent-critique.md): {@code
+ * Task item 1 (BLOCKER security fix, an internal security review): {@code
  * requestDeposit} used to credit any self-reported amount with zero on-chain verification (live-
  * reproduced: 5,000,000 fake PLAY minted in ten seconds), and {@code requestWithdrawal}
  * auto-confirmed with no chain call, falsely claiming a CAT left the game. This class runs with NO

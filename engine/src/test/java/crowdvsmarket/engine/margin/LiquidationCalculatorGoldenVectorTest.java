@@ -12,7 +12,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * The 20 golden vectors from docs/research/hl_liquidation_math.md section 3 (long/short x
  * leverage {2,3,10,25,40} x entry price {83451.00, 50000.00}, size 0.10000 BTC), reproduced
  * verbatim from the spec's table, including {@code payout_on_liquidation} (product decision Р-7,
- * {@code docs/product/decisions.md}: 0 for every vector) and, at the spec's stated
+ * {@code the decision log}: 0 for every vector) and, at the spec's stated
  * {@code close_price} per entry-price group, {@code unrealized_pnl}/{@code payout_at_round_close}.
  */
 class LiquidationCalculatorGoldenVectorTest {
@@ -106,7 +106,7 @@ class LiquidationCalculatorGoldenVectorTest {
         assertThat(actual).isEqualByComparingTo(v.maintenanceMargin());
     }
 
-    /** Product decision Р-7 (docs/product/decisions.md): payout_on_liquidation is always 0. */
+    /** Product decision Р-7 (the decision log): payout_on_liquidation is always 0. */
     @ParameterizedTest
     @MethodSource("goldenVectors")
     void payoutOnLiquidationMatchesGoldenVector(GoldenVector v) {

@@ -2632,7 +2632,7 @@ EOF
 # gets it, and this one is on a bridge network of its own. The server one gets Oracle's rules file (loaded by the real
 # netfilter-persistent), then the firewall step of bootstrap.sh runs in it; the client probes. The stand's address pair is a made-up
 # one (a /24 of the 10.98 range, .1 the gateway): the real 172.28.77.1 is the address of the stand's network on the Docker VM, and
-# answers ARP there. (The addresses are put together from parts: tools/public-snapshot.sh flags private-range addresses written out.)
+# answers ARP there. (The addresses are put together from parts: the publication gate flags private-range addresses written out.)
 test_firewall() {
   section "Oracle Cloud firewall, real iptables-nft: Oracle's rules file, the kit's firewall step, probes from a second container"
   local octet net s c sip cip stand_net stand_gw stand_src work="${SANDBOX}/fw" out rc before after pkts

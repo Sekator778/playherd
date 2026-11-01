@@ -2,7 +2,7 @@
 # Cargo (chain/), npm (web/). Mirrors the CI gates in .github/workflows/ci.yml so a green
 # `make check` locally means the same checks CI runs. `make` or `make help` lists the targets.
 #
-# Local defaults follow CLAUDE.md «Сборка»: Java 21 from SDKMAN and the open-source Maven
+# Local defaults follow the project notes «Сборка»: Java 21 from SDKMAN and the open-source Maven
 # settings profile. Both are overridable (`make test-java JDK21=… MVN_SETTINGS=`), and both
 # fall back to the plain toolchain when the path does not exist (CI runners, other machines).
 
@@ -11,7 +11,7 @@ SHELL := bash
 .DEFAULT_GOAL := help
 
 # JAVA_HOME is set explicitly for Maven only: the shell's own JAVA_HOME here is SDKMAN's default
-# Java 8, which must stay as is (CLAUDE.md «Сборка»).
+# Java 8, which must stay as is (the project notes «Сборка»).
 JDK21 ?= $(HOME)/.sdkman/candidates/java/21.0.11-oracle
 MVN_JAVA := $(if $(wildcard $(JDK21)),JAVA_HOME=$(JDK21),)
 
@@ -41,15 +41,12 @@ PYTHON ?= python3
 ORACLE_VENV ?= tools/verify-oracle/.venv
 ORACLE_STAMP := $(ORACLE_VENV)/.requirements-installed
 
-# Public snapshot (Р-54): see tools/public-snapshot.sh and docs/ops/branching.md §7.
-SNAPSHOT_DIR ?= build/public-snapshot
-SNAPSHOT_ARGS ?= --rev HEAD
 
 .PHONY: help check build test \
         test-java build-java test-chain lint-chain build-chain \
         web-deps test-web build-web apk \
         test-tools stand-up stand-down stand-status stand-logs tunnel tunnel-up tunnel-url tunnel-down e2e e2e-markets verify-oracle \
-        snapshot
+        
 
 help: ## list targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -159,7 +156,5 @@ $(ORACLE_STAMP): tools/verify-oracle/requirements.txt
 verify-oracle: $(ORACLE_STAMP) ## public oracle verifier (testnet11) in its own venv, cross-checked against WEB_URL (WEB_URL= for chain only)
 	$(ORACLE_VENV)/bin/python tools/verify-oracle/verify_oracle.py $(ORACLE_LAUNCHER) $(if $(WEB_URL),--stand-url $(WEB_URL),)
 
-# --- public repository snapshot (Р-54) ---
+# --- public repository  (Р-54) ---
 
-snapshot: ## cleaned copy of the tracked tree in SNAPSHOT_DIR + leak gate (SNAPSHOT_ARGS="--worktree" for uncommitted state)
-	tools/public-snapshot.sh $(SNAPSHOT_ARGS) --out $(SNAPSHOT_DIR)

@@ -193,7 +193,7 @@ export function payoutAtRoundClose(
 
 /**
  * `LiquidationCalculator.payoutOnLiquidation`: always `0.00` — product decision Р-7
- * (`docs/product/decisions.md`): on liquidation the player loses the entire stake. The
+ * (`the decision log`): on liquidation the player loses the entire stake. The
  * liquidation *price* itself is unaffected and still follows Hyperliquid's formula exactly.
  */
 export function payoutOnLiquidation(): Decimal {

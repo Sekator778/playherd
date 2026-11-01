@@ -1,6 +1,6 @@
 # chain/ — Chia Rust SDK: simulator spike, testnet11 CLI, chain service
 
-Week 1 (`PLAN.md` §5) Chia Rust SDK (`chia-wallet-sdk` family) work: an
+Week 1 (`the project plan` §5) Chia Rust SDK (`chia-wallet-sdk` family) work: an
 offline compile/design spike against `chia-sdk-test::Simulator`
 (`sim-spike/`), and a real testnet11 CLI built on the same proven patterns
 (`c2-cli/`, binary `c2`). Week 2 adds `c2-svc/`, the HTTP chain service
@@ -166,7 +166,7 @@ see `docs/research/chain_service.md` §1. Write-ups:
     the stamp of the file -- length, modification time, inode -- decides), not on every tick, `POST`
     and `GET`; what this process writes it keeps. The default of a day was decided on 2026-10-06
     (`docs/research/chain_service.md` §19; `src/config.rs`, `oracle_retain_confirmed`); a day of entries is about 4 MB on the stand (10 000
-    records a day, `docs/HANDOFF.md` §6.1 item 1).
+    records a day, `the internal notes` §6.1 item 1).
   - What the retention costs, said plainly -- two trade-offs that were accepted, not overlooked:
     - **A different record under a pruned `seq` is not caught.** A dropped entry keeps no content, so
       `GET /v1/oracle/records/{seq}` answers `confirmed` with `height`, `coinId`, `resultsHash`,

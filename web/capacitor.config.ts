@@ -1,6 +1,6 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
-// Android WebView build (Р-48 — see docs/product/local_stand.md "Android emulators").
+// Android WebView build (Р-48 — see CONTRIBUTING.md "Android emulators").
 //
 // This config points the WebView straight at a running server instead of bundling `dist/`.
 // `server.url` comes from the HERD_APP_URL environment variable at build time — `make apk
@@ -23,7 +23,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 // swapping the cookie-based session for token auth (the cookie is only ever valid for the origin
 // that set it — file://.../capacitor:// asset origin can't hold it; the client has no API base URL
 // yet, `src/api/realApi.ts`). Left open per Р-48; a tester APK only needs HERD_APP_URL
-// (docs/reviews/2026-10-01-goals-vs-state.md §3.5).
+// (an internal status review §3.5).
 // When that build happens: build with `npm run build:capacitor`, not plain `npm run build` —
 // `vite.config.ts`'s `base` is absolute ("/") by default (polish item 4, 2026-09-26), which
 // breaks asset loading from a `file://`/`capacitor://` bundle; `CAPACITOR_BUILD=1` switches it

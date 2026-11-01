@@ -3,7 +3,7 @@ package crowdvsmarket.server.execution;
 import java.util.List;
 
 /**
- * Task item 7 (PLAN.md §3, README's Hyperliquid-adapter claim): the real wire shape of
+ * Task item 7 (the project plan §3, README's Hyperliquid-adapter claim): the real wire shape of
  * Hyperliquid's {@code POST /exchange} "place order" ({@code type: "order"}) action, per the
  * public API docs, fetched 2026-09-26:
  * https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint — field

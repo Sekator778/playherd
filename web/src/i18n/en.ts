@@ -890,7 +890,7 @@ export const en = {
     verifyTitle: "Check it yourself",
     verify1: "Open any settled round and follow “verify results.json”: the full list of its bets and payouts, at",
     verify2: "The chain record of that round holds the SHA-256 of that file, the closing price and the asset number above.",
-    verify3: "Run the verifier. It reads only the public Chia API and needs none of our keys; it is a script in the project repository ({path}, with its own README). The repository is private for now, so the command below works once it is opened.",
+    verify3: "Run the verifier. It reads only the public Chia API and needs none of our keys; it is a script in the project repository ({path}, with its own README).",
     commandAria: "Verifier command",
     copyCommand: "Copy command",
     healthy: "A healthy run ends with “CONFLICTS: 0”, “Gaps in the seq sequence: 0” and “Mismatches: 0”.",

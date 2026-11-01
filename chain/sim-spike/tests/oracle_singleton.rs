@@ -1,4 +1,4 @@
-//! (c) Managed-resolver oracle pattern (day-1 spike for PLAN.md §3's
+//! (c) Managed-resolver oracle pattern (day-1 spike for the project plan §3's
 //! "managed-resolver-singleton" / the `RewardDistributorType::Managed`
 //! pattern from CHIP-51, minimal form: no action layer yet, just a plain
 //! singleton whose inner puzzle is a standard p2 controlled by one

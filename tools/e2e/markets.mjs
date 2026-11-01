@@ -121,7 +121,7 @@ export const FAMILIES = [
       problem.kind === "closed" ||
       ((problem.kind === "no_price" || problem.kind === "stale") && underlyingClosedAt(market.category, serverTimeMs)),
     matches: (m) => m.kind === "PERP" && m.id.startsWith("xyz_"),
-    // Which of them trade outside US hours is not measured (docs/HANDOFF.md §6.2): the first one with a live price is taken.
+    // Which of them trade outside US hours is not measured (the internal notes §6.2): the first one with a live price is taken.
     preferred: ["xyz_SP500", "xyz_NVDA", "xyz_GOLD", "xyz_TSLA", "xyz_XYZ100", "xyz_BRENTOIL"],
   },
   {

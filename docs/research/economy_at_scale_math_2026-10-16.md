@@ -1,6 +1,6 @@
 # Экономика Herd при масштабе в миллионы игроков: потолки ёмкости, риск казны, RTP
 
-Дата: 2026-10-16. Автор: математик проекта (Р-91). Статус: расчёт для решения Алекса, кода по нему нет. Предмет: [`architecture_review_independent_2026-10-16.md`](architecture_review_independent_2026-10-16.md) §6.2, [`game_economy_math.md`](game_economy_math.md), [`treasury_solvency.md`](treasury_solvency.md), [`../product/game_economy_proposal.md`](../product/game_economy_proposal.md) §6–7.
+Дата: 2026-10-16. Автор: математик проекта (Р-91). Статус: расчёт для решения Алекса, кода по нему нет. Предмет: [`architecture_review_independent_2026-10-16.md`](architecture_review_independent_2026-10-16.md) §6.2, `game_economy_math.md`, `treasury_solvency.md`, `../product/game_economy_proposal.md` §6–7.
 
 Скрипты и выводы: `<tmp>` (`common.py`, `s1_stats_capacity.py` … `s6_round.py`, `out_s*.txt`; Python 3.14 + numpy в venv). Данные: свечи Coinbase BTC, ETH, SOL (1 мин, 14 суток) и Hyperliquid xyz NVDA, GOLD (1 мин, 3,5 суток) из `.local/bots-candles/`.
 

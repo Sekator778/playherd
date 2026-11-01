@@ -145,7 +145,7 @@ step_env() {
   log "== .env on the VPS"
   local kv name s args
   if [[ -z "${WC_ID}" && "${NO_WC}" != 1 ]]; then
-    die "no Reown project id for Sage sign-in: pass --walletconnect-id <32 hex> (or VITE_WALLETCONNECT_PROJECT_ID), or --no-walletconnect-id to go without. It is the id of decision Р-58 in docs/product/decisions.md; it is public."
+    die "no Reown project id for Sage sign-in: pass --walletconnect-id <32 hex> (or VITE_WALLETCONNECT_PROJECT_ID), or --no-walletconnect-id to go without. It is the id of decision Р-58 in the decision log; it is public."
   fi
   if [[ -n "${WC_ID}" ]]; then
     valid_wc_id "${WC_ID}" || die "that is not a Reown project id (32 lowercase hex digits)"

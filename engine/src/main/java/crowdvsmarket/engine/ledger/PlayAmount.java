@@ -5,7 +5,7 @@ import java.math.RoundingMode;
 
 /**
  * An exact integer amount of PLAY, the game's off-chain currency (Р-2,
- * docs/product/decisions.md), stored the way a CAT2 balance is stored on-chain: as an integer
+ * the decision log), stored the way a CAT2 balance is stored on-chain: as an integer
  * count of the smallest unit ("mojos"), never as a floating-point number.
  *
  * <p><b>Unit scale (предложение — see docs/research/round_engine_design.md "Units"):</b> 1 PLAY =

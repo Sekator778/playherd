@@ -70,7 +70,7 @@ class FullSweepReplayTest {
         return equity.max(ZERO_2DP);
     }
 
-    /** {@code payout_on_liquidation = 0} — product decision Р-7 (docs/product/decisions.md). */
+    /** {@code payout_on_liquidation = 0} — product decision Р-7 (the decision log). */
     private static BigDecimal independentPayoutOnLiquidation(BigDecimal size, BigDecimal entryPrice) {
         return ZERO_2DP;
     }

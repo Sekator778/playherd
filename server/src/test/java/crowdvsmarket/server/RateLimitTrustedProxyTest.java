@@ -15,7 +15,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Task item 2 (BLOCKER security fix, docs/reviews/2026-09-26-independent-critique.md): behind
+ * Task item 2 (BLOCKER security fix, an internal security review): behind
  * nginx, {@code RpcResource#clientIp} used to read the raw TCP peer address, which is always
  * nginx's own container address — every real player on the stand shared ONE rate-limit bucket per
  * method. Fixed via Quarkus's own {@code quarkus.http.proxy.*} forwarded-header support

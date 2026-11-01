@@ -297,7 +297,7 @@ Content-Type: application/json
 ## 2. Модель для нашего движка (предложение)
 
 Каждое решение ниже — **предложение** с однострочным обоснованием, подлежит пересмотру в неделю 1
-по правилу `PLAN.md`.
+по правилу `the project plan`.
 
 ### 2.1 Скоуп
 
@@ -305,7 +305,7 @@ Content-Type: application/json
 позиции < 150M USDC).
 **Обоснование**: MVP — toy-money демо на малых размерах позиций (см. §2.7 «стандартный размер»),
 tier1 недостижим ни при каком реалистичном сценарии демо; cross margin требует моделировать
-портфель из нескольких позиций одновременно, что не входит в MVP (`PLAN.md` §2 — один раунд
+портфель из нескольких позиций одновременно, что не входит в MVP (`the project plan` §2 — один раунд
 «BTC вверх/вниз» на позицию).
 
 ### 2.2 Формулы (BTC, tier0: `l = 0.0125`, `maintenance_deduction = 0`)
@@ -340,7 +340,7 @@ maintenance margin) — то есть оба прочтения формулы H
 (проверено алгебраически и численно в скрипте §3). Значит наша формула не приближение, а точная
 реализация формулы HL при отсутствии пересечения тиров.
 
-**`payout_on_liquidation = 0`** — продуктовое решение **Р-7** (`docs/product/decisions.md`, Р-7,
+**`payout_on_liquidation = 0`** — продуктовое решение **Р-7** (`the decision log`, Р-7,
 2026-09-25, Алекс): при ликвидации игрок теряет всю ставку (всю изолированную маржу), повторно
 токены не выдаются. Это решение задаёт именно *payout*, не *цену* ликвидации — `liquidation_price`
 остаётся точной реализацией формулы Hyperliquid (вывод выше) без изменений. Оно осознанно
@@ -448,7 +448,7 @@ This mirrors, field for field, what the Java engine is expected to implement:
     rounded to 2dp HALF_UP
   - unrealized_pnl(P) = side * size * (P - entry_price), rounded 2dp HALF_UP
   - payout_at_round_close(P) = max(0, isolated_margin + unrealized_pnl(P)), rounded 2dp
-  - payout_on_liquidation = 0 (product decision Р-7, docs/product/decisions.md: the player loses
+  - payout_on_liquidation = 0 (product decision Р-7, the decision log: the player loses
     the entire stake on liquidation), see doc section 2.2
   - long liquidated in a candle iff candle.low <= liq_price_long
   - short liquidated in a candle iff candle.high >= liq_price_short
@@ -499,7 +499,7 @@ def maintenance_margin_required(size: Decimal, entry_price: Decimal) -> Decimal:
 
 
 def payout_on_liquidation(size: Decimal, entry_price: Decimal) -> Decimal:
-    """Product decision Р-7 (docs/product/decisions.md, Р-7, 2026-09-25, Алекс): on
+    """Product decision Р-7 (the decision log, Р-7, 2026-09-25, Алекс): on
     liquidation the player loses the entire stake (the whole isolated margin) —
     payout is always 0, regardless of size/entry_price. This diverges from what HL
     itself does at a clean order-book liquidation (any remaining collateral stays

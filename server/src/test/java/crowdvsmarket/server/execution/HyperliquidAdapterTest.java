@@ -14,7 +14,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Task item 7 (PLAN.md §3, README's Hyperliquid-adapter claim): {@link HyperliquidAdapter} is
+ * Task item 7 (the project plan §3, README's Hyperliquid-adapter claim): {@link HyperliquidAdapter} is
  * DISABLED by default — this class runs with NO {@code @TestProfile} override, so it exercises
  * the application's real default config (application.properties:
  * {@code herd.execution.hyperliquid.enabled=false}). See {@link HyperliquidAdapterEnabledTest} for

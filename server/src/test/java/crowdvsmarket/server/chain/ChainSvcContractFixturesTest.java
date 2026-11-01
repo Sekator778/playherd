@@ -24,7 +24,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /**
- * Task item 5 (contract test Java<->Rust, docs/reviews/2026-09-26-independent-critique.md): the
+ * Task item 5 (contract test Java<->Rust, an internal security review): the
  * server<->chainsvc boundary is also tested in {@link ChainSvcClientImplTest} and
  * {@code OraclePublisherServiceTest}, but those mock {@link ChainSvcClient}/{@link ChainSvcRestClient}
  * directly rather than exercising the real HTTP/JSON contract against chain/c2-svc's actual

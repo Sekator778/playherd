@@ -5,7 +5,7 @@
  * no-opening-price state exists (`MOCK_NEW_LISTING_ID`). Static data only; the price paths
  * are `mockPrices.ts`, the round/crowd builders `mockRounds.ts`/`mockCrowdHistory.ts`.
  *
- * The sources are the ones the server names (Р-74, Р-76, `docs/product/decisions.md`): crypto is priced by the
+ * The sources are the ones the server names (Р-74, Р-76, `the decision log`): crypto is priced by the
  * exchange of the asset itself with a backup exchange behind it — BTC, ETH, SOL, XRP and DOGE on Coinbase with Kraken
  * behind them, HYPE on Hyperliquid's spot market with Coinbase behind it — stocks, indices and commodities by
  * Hyperliquid, `ODDS` by Polymarket. The mock never switches to a backup (no `MarketPriceDto.venue`, every round on its

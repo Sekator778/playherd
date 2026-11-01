@@ -317,7 +317,7 @@ function Room({ market }: { market: MarketDto }) {
   const series = usePriceSeries(marketId);
   const { positions: myPositions } = useMyPositions();
 
-  // Fix (player review item 3, `docs/product/decisions.md` Р-59/Р-62): the round a player bet on
+  // Fix (player review item 3, `the decision log` Р-59/Р-62): the round a player bet on
   // doesn't vanish when its betting window closes — per Р-19's conveyor ("всегда один идущий и
   // один открытый для ставок раунд"), `RoundsPairDto.betting` simply rolls over to the NEXT round
   // the instant the one the player bet on starts running. The arena, bound to `betting` so it can

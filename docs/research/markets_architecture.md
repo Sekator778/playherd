@@ -1,6 +1,6 @@
 # Рынки, категории и живые цены — архитектура и фиксированные интерфейсы
 
-Дата: 2026-10-01. Основание: Р-68…Р-71 (`docs/product/decisions.md`). Заменяет как рабочий план `docs/research/multi_pair_architecture.md` (тот остаётся источником обоснований; семь его вопросов §11 закрыты ниже техническими решениями Т-N). Факты об источниках данных — `docs/research/hl_multi_asset_live.md` и `docs/research/polymarket_data_api.md` (оба 2026-10-01, живые запросы). Референс навигации — `docs/product/design/polymarket-mobile-reference.md`.
+Дата: 2026-10-01. Основание: Р-68…Р-71 (`the decision log`). Заменяет как рабочий план `docs/research/multi_pair_architecture.md` (тот остаётся источником обоснований; семь его вопросов §11 закрыты ниже техническими решениями Т-N). Факты об источниках данных — `docs/research/hl_multi_asset_live.md` и `docs/research/polymarket_data_api.md` (оба 2026-10-01, живые запросы). Референс навигации — `docs/product/design/polymarket-mobile-reference.md`.
 
 Все пункты Т-N — технические решения сессия («предложение»): Алекс может пересмотреть любой, код построен так, чтобы выбор менялся конфигом или одной реализацией интерфейса.
 

@@ -2,7 +2,7 @@
  * The demo's simulated clock, the mock's round-window math, and the ONE place a round id is built
  * or taken apart.
  *
- * `docs/product/decisions.md` Р-35: "фронт разрабатывается параллельно с бэкендом, сначала на
+ * `the decision log` Р-35: "фронт разрабатывается параллельно с бэкендом, сначала на
  * тестовых данных". Round windows here mirror `RoundClock`/`RoundWindow`
  * (`engine/src/main/java/crowdvsmarket/engine/round/`) — UTC-aligned, no calendar/DST
  * (`round_engine_design.md` §4.3) — hourly rounds on the hour, daily rounds at 00:00 UTC.
@@ -25,7 +25,7 @@ export const DAY_MS = 86_400_000;
  *  RUNNING → SETTLED cycle (60 simulated minutes) plays out in about 60 real seconds. */
 export const SIM_SPEED = 60;
 
-/** Fixed demo anchor ("today", `CLAUDE.md` task date), offset into an hour so the first render
+/** Fixed demo anchor ("today", `the project notes` task date), offset into an hour so the first render
  *  already shows an hourly round partway through RUNNING rather than always starting at :00. */
 export const SIM_BASE_MS: EpochMs = Date.UTC(2026, 8, 25, 14, 23, 0);
 

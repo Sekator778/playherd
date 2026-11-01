@@ -2,7 +2,7 @@ import type { TKey } from "../../i18n";
 
 /**
  * "What's new in Herd" (`/changelog`): what a player or a bot developer can see or feel, newest first. `date` is the day the change went
- * live on playherd.app (UTC), taken from `docs/product/feedback/wave1-log.md` (rows of the stand), `ROADMAP.md` and `docs/HANDOFF.md` §0.
+ * live on playherd.app (UTC), taken from `docs/product/feedback/wave1-log.md` (rows of the stand), `ROADMAP.md` and `the internal notes` §0.
  * Every item is an i18n key `changelog.item.*`. A new update = a new entry at the top.
  */
 export interface ChangelogEntry {

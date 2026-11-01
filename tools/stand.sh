@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local test stand control (Р-44/Р-45/Р-46/Р-48): up|down|logs|status|reset for the
 # docker-compose.yml project "herd" (db, chainsvc, server, web). See
-# docs/product/local_stand.md for what to do with it once it's up.
+# CONTRIBUTING.md for what to do with it once it's up.
 #
 # Never touches any container outside this compose project — see check_no_foreign_herd_containers
 # below, run before every `up`.

@@ -1,6 +1,6 @@
 # Шаг 3: журнал событий на Chronicle Queue
 
-Дата: 2026-10-21. Основание: Р-107 (`docs/product/decisions.md`), `docs/research/lmax_roadmap.md` §3 шаг 3, F4 (`f4_self_contained_journal_2026-10-20.md`), F5 (`f5_snapshots_2026-10-20.md`), F6 (писатель), F8 (представления для чтения). Ветка `feature/journal-chronicle`.
+Дата: 2026-10-21. Основание: Р-107 (`the decision log`), `docs/research/lmax_roadmap.md` §3 шаг 3, F4 (`f4_self_contained_journal_2026-10-20.md`), F5 (`f5_snapshots_2026-10-20.md`), F6 (писатель), F8 (представления для чтения). Ветка `feature/journal-chronicle`.
 
 Правила текста: утверждение — со ссылкой на файл или тест; **[вывод]** — заключение с тем, на чём оно стоит; «неизвестно» — не проверено. Что прочитано в первоисточниках про Chronicle Queue — `docs/kb/topics/methods.md`, раздел «Хранение журнала».
 

@@ -4,7 +4,7 @@
  * "Profile" got you a balance and a deposit form, never the player's own nickname/rounds/
  * accuracy/history that the label promised. This page is what the tab now opens: the player's own
  * profile overview (identical content to `ProfilePage mine`, reused as-is, not duplicated) with
- * Wallet moved inside it as a plain in-page sub-tab (`docs/product/decisions.md` Р-59/Р-61's
+ * Wallet moved inside it as a plain in-page sub-tab (`the decision log` Р-59/Р-61's
  * "не финансовый терминал" — the wallet becomes one section of the player's profile, not the
  * whole tab). `/wallet` itself is untouched and still works as a standalone deep link (header
  * balance pill, profile-menu "Wallet" link, old bookmarks) — this page embeds the exact same

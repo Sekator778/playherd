@@ -138,7 +138,7 @@ public class GameConfig {
     /** Р-53 update: now gates the REAL on-chain deposit path — {@code myDepositAddress()} and
      *  {@code DepositPollerService} — set {@code true} once chainsvc is deployed with the FIXED
      *  INTERFACE's {@code /v1/play/*} endpoints. Does NOT gate {@code requestDeposit} any more:
-     *  that self-report RPC (task item 1, BLOCKER, docs/reviews/2026-09-26-independent-critique.md
+     *  that self-report RPC (task item 1, BLOCKER, an internal security review
      *  — it used to credit any self-reported amount with zero on-chain verification) is now
      *  PERMANENTLY retired regardless of this flag, see {@code GameService#requestDeposit}'s
      *  javadoc for why turning real deposits on must never also reopen that fraud vector. Default
@@ -162,7 +162,7 @@ public class GameConfig {
     @ConfigProperty(name = "herd.cookie.secure", defaultValue = "false")
     boolean cookieSecure;
 
-    /** Task item 7 (PLAN.md §3, README's Hyperliquid-adapter claim): {@code
+    /** Task item 7 (the project plan §3, README's Hyperliquid-adapter claim): {@code
      *  crowdvsmarket.server.execution.HyperliquidAdapter} refuses to build or send a real order
      *  unless this is {@code true} AND a wallet address is configured — default {@code false},
      *  same "opt-in, never touched by the local stand/demo" posture as Р-38's own execution

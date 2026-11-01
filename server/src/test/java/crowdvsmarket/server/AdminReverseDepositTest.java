@@ -27,7 +27,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
 /**
- * Task item 1 (BLOCKER security fix, docs/reviews/2026-09-26-independent-critique.md): the
+ * Task item 1 (BLOCKER security fix, an internal security review): the
  * operator "reverse deposit" correction — reverses a deposit request's already-recorded
  * (fraudulent) balance/season effect (the exact exploit reproduced live: {@code requestDeposit}
  * credited any self-reported amount with zero on-chain verification, e.g. the fake confirmed

@@ -14,9 +14,9 @@ name: CI
 #     develop). Off by default (Р-67: Actions minutes are limited, nothing builds images on every
 #     push): runs on a push to develop only when the repository variable HERD_PUBLISH_DEVELOP is
 #     'true', or on demand through a manual run with publish=true (release tags are release.yml's
-#     job). Setup: docs/ops/ci.md §2 and §7.
+#     job). Setup: CONTRIBUTING.md §2 and §7.
 #
-# Branch model (docs/ops/ci.md): feature branches -> PR into develop; develop -> PR into main;
+# Branch model (CONTRIBUTING.md): feature branches -> PR into develop; develop -> PR into main;
 # a `vX.Y.Z` tag on main is what release.yml turns into a versioned release.
 
 on:
@@ -367,7 +367,7 @@ jobs:
       # Only to run `c2 keygen` for a throwaway CI key below — never touches testnet11 (no
       # `oracle-launch`, no `--push`). No cargo cache in this job: restoring the ~1.4 GB the `chain`
       # job of the same run saves, on a disk already filled by the three images above, killed the
-      # runner with "No space left on device" (docs/ops/ci.md §3).
+      # runner with "No space left on device" (CONTRIBUTING.md §3).
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master @ 2026-09-12
         with:
           toolchain: stable
@@ -484,7 +484,7 @@ jobs:
   # Why `!cancelled() && needs.ci-ok.result == 'success'` and not the implicit success(): the
   # implicit check also looks at ci-ok's own ancestors, and a single one skipped by the path
   # filter made GitHub skip this job too — the images stayed at cc035e2
-  # (docs/reviews/2026-10-01-goals-vs-state.md §3.4 п.1). ci-ok already fails on any real failure,
+  # (an internal status review §3.4 п.1). ci-ok already fails on any real failure,
   # so its result is the only gate needed. Publishing is opt-in (see the header): the variable for
   # pushes to develop, the `publish` input for a manual run on any ref.
   publish-develop:

@@ -1,6 +1,6 @@
 # Week 1, день 1 — компайл-спайк Chia Rust SDK на офлайн-симуляторе
 
-Дата: 2026-09-25. Автор: сессия-агент (задача «chain/ + docs/research/week1_chain_spike.md», `PLAN.md` §5 день 1). Источник задачи: `PLAN.md` §2, §3, §5, §8.1; `docs/research/c2_deep_review.md` §3c («компайл-спайк — первый практический шаг недели 1, ранее не выполнялся»).
+Дата: 2026-09-25. Автор: сессия-агент (задача «chain/ + docs/research/week1_chain_spike.md», `the project plan` §5 день 1). Источник задачи: `the project plan` §2, §3, §5, §8.1; `docs/research/c2_deep_review.md` §3c («компайл-спайк — первый практический шаг недели 1, ранее не выполнялся»).
 
 Код: [`chain/`](../../chain/) (workspace `chain/Cargo.toml`, единственный член `chain/sim-spike`). Все внешние факты в этом файле — со ссылкой на `curl crates.io/api/v1/...` (fetched 2026-09-25) или на прочитанный исходник пакета из `~/.cargo/registry/src` после `cargo build` (тоже 2026-09-25, тот же проход). Сеть использовалась только для скачивания зависимостей с crates.io; ни mainnet, ни testnet11 не затрагивались.
 
@@ -67,7 +67,7 @@ test fund_and_spend_standard_coin ... ok
 
 Файл: [`chain/sim-spike/tests/cat_play.rs`](../../chain/sim-spike/tests/cat_play.rs).
 
-TAIL — `chia_puzzle_types::cat::GenesisByCoinIdTailArgs` (genesis-by-coin-id, единственная эмиссия: TAIL зашивает id конкретной потраченной монеты, повторно её потратить нельзя, значит допечатать CAT тоже нельзя). Драйвер — `Cat::single_issuance(ctx, parent_coin_id, hidden_puzzle_hash, amount, extra_conditions)` из `chia_sdk_driver`, готовый метод, ничего писать не пришлось (ровно как предполагает `PLAN.md` §3: «Ничего нового писать не нужно»). После выпуска — `Cat::spend_all` с двумя `CreateCoin` в условиях p2-спенда (часть себе, часть «Бобу»), т.е. обычный CAT-спенд с двумя выходами.
+TAIL — `chia_puzzle_types::cat::GenesisByCoinIdTailArgs` (genesis-by-coin-id, единственная эмиссия: TAIL зашивает id конкретной потраченной монеты, повторно её потратить нельзя, значит допечатать CAT тоже нельзя). Драйвер — `Cat::single_issuance(ctx, parent_coin_id, hidden_puzzle_hash, amount, extra_conditions)` из `chia_sdk_driver`, готовый метод, ничего писать не пришлось (ровно как предполагает `the project plan` §3: «Ничего нового писать не нужно»). После выпуска — `Cat::spend_all` с двумя `CreateCoin` в условиях p2-спенда (часть себе, часть «Бобу»), т.е. обычный CAT-спенд с двумя выходами.
 
 **Важная деталь, найденная эмпирически**: монета, которая финансирует эмиссию (`sim.bls(N)`), должна иметь номинал **ровно равный** объёму эмиссии `N`, а не любой ненулевой номинал — она не «платит» за CAT, а **становится** eve-CAT-монетой 1:1 (эта монета консьюмится, а её родительский spend создаёт монету того же номинала по CAT-puzzle-hash). Несовпадение номиналов даёт `ErrorCode::MintingCoin` (создание монеты не из подтверждённого источника — консенсус-валидация симулятора та же, что у ноды, эта ошибка не специфична для симулятора). Наступили на эти грабли в тесте (d) при первой попытке (см. §8) — там же и разобрано подробнее.
 
@@ -82,7 +82,7 @@ PLAY genesis coin id (funding coin): c8125927409e2dde08c71fff464c873e97ed10c6ccd
 
 Файл: [`chain/sim-spike/tests/oracle_singleton.rs`](../../chain/sim-spike/tests/oracle_singleton.rs).
 
-Реализация — минимальная форма паттерна `RewardDistributorType::Managed` из `PLAN.md` §3 (без Action Layer, просто синглтон с внутренним p2-паззлом одного «менеджерского» ключа): `chia_sdk_driver::SingletonLayer<StandardLayer>` поверх `chia_sdk_driver::Launcher`. Паттерн композиции подсмотрен в собственном тесте SDK (`chia-sdk-driver-0.36.0/src/layers/p2_singleton_layer.rs::test_p2_singleton_layer`), не выдуман с нуля.
+Реализация — минимальная форма паттерна `RewardDistributorType::Managed` из `the project plan` §3 (без Action Layer, просто синглтон с внутренним p2-паззлом одного «менеджерского» ключа): `chia_sdk_driver::SingletonLayer<StandardLayer>` поверх `chia_sdk_driver::Launcher`. Паттерн композиции подсмотрен в собственном тесте SDK (`chia-sdk-driver-0.36.0/src/layers/p2_singleton_layer.rs::test_p2_singleton_layer`), не выдуман с нуля.
 
 Три спенда подряд; на каждом:
 1. внутренний p2-спенд менеджера создаёт `CREATE_COIN` обратно на тот же inner-puzzle-hash (self-recreate — синглтон-топ-уровня сам оборачивает это в полный puzzle hash следующего синглтона) и `CREATE_PUZZLE_ANNOUNCEMENT`, message которого — сырые CLVM-байты сериализованного списка `(price timestamp sequence)` (`ctx.alloc(&vec![price, timestamp, sequence])` → `ctx.serialize(...)`, т.е. буквально «encodes as CLVM», не JSON и не bincode);
@@ -134,18 +134,18 @@ PLAY genesis coin id (funding coin): c8125927409e2dde08c71fff464c873e97ed10c6ccd
 
 Как просила задача — только отчёт, реализации нет.
 
-- **`RewardDistributorType::Managed`** существует буквально: `chia_sdk_driver::primitives::action_layer::reward_distributor_info::RewardDistributorType` — enum с 4 вариантами: `Managed { manager_singleton_launcher_id: Bytes32 }`, `NftCollection { collection_did_launcher_id }`, `CuratedNft { store_launcher_id, refreshable }`, `Cat { asset_id, hidden_puzzle_hash }`. `Managed` — именно тот паттерн, на который ссылается `PLAN.md` §3: резолвер авторизуется синглтоном-менеджером по его `launcher_id`, а не хардкоженным ключом.
+- **`RewardDistributorType::Managed`** существует буквально: `chia_sdk_driver::primitives::action_layer::reward_distributor_info::RewardDistributorType` — enum с 4 вариантами: `Managed { manager_singleton_launcher_id: Bytes32 }`, `NftCollection { collection_did_launcher_id }`, `CuratedNft { store_launcher_id, refreshable }`, `Cat { asset_id, hidden_puzzle_hash }`. `Managed` — именно тот паттерн, на который ссылается `the project plan` §3: резолвер авторизуется синглтоном-менеджером по его `launcher_id`, а не хардкоженным ключом.
 - **Основной примитив**: `chia_sdk_driver::primitives::action_layer::reward_distributor::RewardDistributor` (850 строк) — конструкторы `from_spend`, `from_parent_spend`, `from_launcher_solution`, `from_eve_coin_spend`, `from_mempool_item`; метод завершения спенда `finish_spend`; генерик `new_action<A>()` для добавления action-спендов.
 - **Запуск**: `chia_sdk_driver::primitives::action_layer::launch_drivers::launch_reward_distributor` (свободная функция, файл `launch_drivers.rs`, 5149 строк — самый большой файл в крейте, там же `launch_catalog_registry`, `launch_xchandles_registry` и вспомогательные `spend_settlement_*`/`spend_security_coin`).
 - **Отдельные action-спенды** (по одному файлу на действие) — `chia_sdk_driver::layers::action_layer::actions::reward_distributor::{stake, unstake, sync, new_epoch, commit_incentives, add_incentives, withdraw_incentives, initiate_payout, add_entry, remove_entry, refresh, action_log}`.
 - **Фича-флаг**: всё это гейтится `action-layer` (и транзитивно `chip-0035`) в `chia-wallet-sdk`/`chia-sdk-driver`/`chia-sdk-types` — без него код не виден. В `chain/sim-spike/Cargo.toml` фича уже включена (нужна была и для этого поиска, и на будущее).
 - Отдельно существует более простой родственный примитив `state_scheduler`/`state_scheduler_info` (`primitives/action_layer/state_scheduler*.rs`) — синглтон, обновляющий состояние по расписанию под управлением одного ключа; концептуально ближе к «просто оракулу», чем полный `RewardDistributor`, но не исследовался глубже (не требовалось задачей).
 
-Вывод для недели 2–3 (`PLAN.md` §4): готового `create_market/resolve/redeem` action-layer приложения нет нигде (подтверждено ещё в `c2_deep_review.md` §3c), но `RewardDistributor`/`launch_reward_distributor` и его action-файлы — прямой референс по объёму и структуре кода, на который можно ориентироваться при написании своего action-layer приложения (тот самый «референс `Yakuhito/slot-machine`» из `PLAN.md` §3, если `chia-wallet-sdk` и есть его переиздание/форк с той же командой — это не проверялось в этом проходе).
+Вывод для недели 2–3 (`the project plan` §4): готового `create_market/resolve/redeem` action-layer приложения нет нигде (подтверждено ещё в `c2_deep_review.md` §3c), но `RewardDistributor`/`launch_reward_distributor` и его action-файлы — прямой референс по объёму и структуре кода, на который можно ориентироваться при написании своего action-layer приложения (тот самый «референс `Yakuhito/slot-machine`» из `the project plan` §3, если `chia-wallet-sdk` и есть его переиздание/форк с той же командой — это не проверялось в этом проходе).
 
 ## 11. Итог по открытому вопросу §8.1 (полная нода vs подключение к пирам)
 
-**Не закрыт этим спайком, и не должен был** — симулятор `chia-sdk-test::Simulator` полностью in-memory, не использует ни полную ноду, ни соединение с пирами вообще (в этом и весь смысл офлайн-тестирования). Вопрос «нужна ли полная нода для спенда кастомного синглтона» относится к **testnet11**-части (день 2–3 по `PLAN.md` §5), не к дню 1. `chia-sdk-client` (пиринг/RPC) запинен в `Cargo.toml` по прямому указанию задачи, но не используется ни в одном тесте — оставлен как задел на день 2–3.
+**Не закрыт этим спайком, и не должен был** — симулятор `chia-sdk-test::Simulator` полностью in-memory, не использует ни полную ноду, ни соединение с пирами вообще (в этом и весь смысл офлайн-тестирования). Вопрос «нужна ли полная нода для спенда кастомного синглтона» относится к **testnet11**-части (день 2–3 по `the project plan` §5), не к дню 1. `chia-sdk-client` (пиринг/RPC) запинен в `Cargo.toml` по прямому указанию задачи, но не используется ни в одном тесте — оставлен как задел на день 2–3.
 
 ## 12. Блокеры / открытые вопросы дальше недели 1, дня 1
 

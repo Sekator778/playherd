@@ -1,7 +1,7 @@
 //! (b) Issue the PLAY CAT with the genesis-by-coin-id (single-issuance) TAIL
 //! that `chia-sdk-driver` provides, then transfer part of it. Prints the
 //! asset id (the TAIL's curried tree hash), which is what identifies the CAT
-//! on-chain (the "PLAY CAT" from PLAN.md).
+//! on-chain (the "PLAY CAT" from the project plan).
 //!
 //! Pattern taken from `chia-sdk-driver-0.36.0/src/primitives/cat.rs`
 //! (`mod tests::test_single_issuance_cat` and `test_cat_spends`).

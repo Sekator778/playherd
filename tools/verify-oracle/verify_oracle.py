@@ -16,7 +16,7 @@ request anywhere. It only reads:
      GET /api/rounds/{id}/results.json (FIXED INTERFACE (2), Р-41) — to fetch, for each round
      the stand claims, the exact bytes it says were hashed into that round's on-chain
      resultsHash. A stand that predates the journal is read through its public JSON-RPC
-     (POST /api/rpc/rounds, /api/rpc/round — docs/product/local_stand.md, FIXED INTERFACE (1))
+     (POST /api/rpc/rounds, /api/rpc/round — CONTRIBUTING.md, FIXED INTERFACE (1))
      instead, for BTC only.
 
 What "verified" means here, precisely:
@@ -33,7 +33,7 @@ What "verified" means here, precisely:
     (priceCents ts seq); a short or long list; an `asset` outside 0..2^32-1; a resultsHash
     that is not 32 bytes) is not a record and is listed under "unparsed", never guessed at.
     See chain/README.md / docs/research/chain_service.md §3.1 and §16 for the format, and
-    docs/product/decisions.md Р-11/Р-40/Р-41/Р-47 for why it exists.
+    the decision log Р-11/Р-40/Р-41/Р-47 for why it exists.
   - Every seq number is checked for: first occurrence (which coin/height actually put it
     on chain), duplicates (the same seq announced again later — chainsvc's durable queue
     can and does re-publish an already-confirmed record after a reconciliation race; if
@@ -65,7 +65,7 @@ What "verified" means here, precisely:
 What this tool does NOT verify (out of scope, said plainly instead of implied): that the
 priceCents the oracle published was itself a correct/honest price on the exchange it names (that
 trust is in the operator key + the price source, Hyperliquid, Coinbase, Kraken or Polymarket,
-Р-11/PLAN.md §2 — a centralized-oracle tradeoff made on purpose and documented, not hidden; the
+Р-11/the project plan §2 — a centralized-oracle tradeoff made on purpose and documented, not hidden; the
 venue only tells you WHICH exchange to compare it against); that the positions/payouts
 inside results.json were computed correctly by the engine's leverage math (a separate
 concern, covered by engine/'s own unit tests, not by this tool); AGG_SIG_ME signatures on

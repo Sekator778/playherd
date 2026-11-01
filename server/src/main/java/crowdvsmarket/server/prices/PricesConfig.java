@@ -288,13 +288,13 @@ public record PricesConfig(
     public static final String DEFAULT_HYPERLIQUID_MAX_HEAL_MS = "1800000";
     /**
      * Two minutes — Alex's choice of 2026-10-03 among the ways to end the stall of a series behind a round whose exchange went
-     * silent (docs/product/decisions.md, open question 8, variant б; recorded as Р-77): long enough for the first retries and
+     * silent (the decision log, open question 8, variant б; recorded as Р-77): long enough for the first retries and
      * one backfill of the candles (a minute apart, {@link #DEFAULT_BACKFILL_COOLDOWN_MS}) to heal a short gap, short enough that
      * a series does not stand for the hour that Р-23 gives a round without a price.
      */
     public static final String DEFAULT_VENUE_RELEASE_AFTER_MS = "120000";
     /**
-     * Five minutes — "about 5 minutes for the candle sources" of the analysis behind Р-79 (docs/product/decisions.md; variant A of
+     * Five minutes — "about 5 minutes for the candle sources" of the analysis behind Р-79 (the decision log; variant A of
      * docs/research/series_blocking.md §3, a proposal and no measurement): longer than the first retries and one backfill of the
      * candles need to heal a short gap (a minute apart, {@link #DEFAULT_BACKFILL_COOLDOWN_MS}), far shorter than the hour of Р-23.
      * The wait of Hyperliquid, Coinbase, Kraken and the synthetic walk.

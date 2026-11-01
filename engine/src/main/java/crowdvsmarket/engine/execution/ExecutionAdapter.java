@@ -11,9 +11,9 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Task item 7 (PLAN.md §3, README's "паблик «счёт толпы» — по умолчанию paper-trading по реальным
+ * Task item 7 (the project plan §3, README's "паблик «счёт толпы» — по умолчанию paper-trading по реальным
  * ценам, адаптер на реальную биржу (Hyperliquid) есть в коде" claim): the pluggable execution seam
- * PLAN.md §3 specifies ("Модуль исполнения — подключаемые адаптеры: paper-trading по реальным
+ * the project plan §3 specifies ("Модуль исполнения — подключаемые адаптеры: paper-trading по реальным
  * ценам (по умолчанию) + адаптер Hyperliquid в коде") — {@code open_position}/{@code
  * get_position}/{@code close_position} in PLAN's own naming, {@link #openPosition}/
  * {@link #getPosition}/{@link #closePosition} here. Same "pure port interface in engine/" pattern
@@ -31,7 +31,7 @@ import java.util.Optional;
  * deterministic replay needs as its source of truth; a live adapter is free to largely ignore that
  * parameter in favor of a real closing order and a real fill price (see
  * {@code HyperliquidAdapter#closePosition}'s own javadoc for exactly how it does that today).
- * <b>предложение</b>: PLAN.md fixes the three method names, not their exact signatures.
+ * <b>предложение</b>: the project plan fixes the three method names, not their exact signatures.
  */
 public interface ExecutionAdapter {
 

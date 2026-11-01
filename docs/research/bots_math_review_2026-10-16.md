@@ -1,6 +1,6 @@
 # Разбор математика (Р-91): боты модуля `bots` против казны
 
-Дата: 2026-10-16. Предмет: модуль `bots/` (ветка `feature/bot-strategies`), первый прогон — [`bots_backtest_2026-10-16.md`](bots_backtest_2026-10-16.md), устройство — [`bots_module_design.md`](bots_module_design.md), экономика — [`../product/game_economy_proposal.md`](../product/game_economy_proposal.md) §7, [`game_economy_math.md`](game_economy_math.md) §4.3, [`treasury_solvency.md`](treasury_solvency.md). Все числа ниже — из прогонов этого разбора или из процитированных файлов; вывод всегда помечен словом «вывод» и тем, на чём он держится.
+Дата: 2026-10-16. Предмет: модуль `bots/` (ветка `feature/bot-strategies`), первый прогон — [`bots_backtest_2026-10-16.md`](bots_backtest_2026-10-16.md), устройство — [`bots_module_design.md`](bots_module_design.md), экономика — `../product/game_economy_proposal.md` §7, `game_economy_math.md` §4.3, `treasury_solvency.md`. Все числа ниже — из прогонов этого разбора или из процитированных файлов; вывод всегда помечен словом «вывод» и тем, на чём он держится.
 
 ## Итог
 

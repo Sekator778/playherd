@@ -115,7 +115,7 @@ public final class LiquidationCalculator {
 
     /**
      * {@code payout_on_liquidation = 0}: on liquidation the player loses the entire stake (the
-     * whole isolated margin) — product decision <b>Р-7</b> ({@code docs/product/decisions.md},
+     * whole isolated margin) — product decision <b>Р-7</b> ({@code the decision log},
      * Р-7, 2026-09-25), which overrides the spec's earlier maintenance-margin-cushion proposal
      * (doc section 2.2). {@code size}/{@code entryPrice} are accepted only to keep the same call
      * shape as the other payout methods; the result does not depend on them. The liquidation

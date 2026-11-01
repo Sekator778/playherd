@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
  * next season: {@code RatingBook.richList} used to take the CURRENT balance for every season, so
  * the next season's starter pack, results, deposits and withdrawals all leaked into last
  * season's growth for exactly the players who had already moved on
- * (docs/reviews/2026-10-01-goals-vs-state.md, section 3.2, point 2).
+ * (an internal status review, section 3.2, point 2).
  *
  * <p>A movement that is booked after the player rolled on but dated in the past season — a late
  * settlement of the round that ended on the last day of the month, an operator reversal of a

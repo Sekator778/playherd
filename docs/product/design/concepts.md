@@ -57,16 +57,16 @@ mockData.ts`), контракт API не менялся, `/round`/`/crowd`/`/rat
 самому выбору стороны); отсутствие графика цены в комнате — §4.
 
 **Экраны:**
-- Lobby: [`a-lobby-desktop-390.jpg`](screens/concepts/a-lobby-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/a-lobby-emulator-5554.jpg)
-- Pair room (ставка открыта): [`a-room-desktop-390.jpg`](screens/concepts/a-room-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/a-room-emulator-5554.jpg)
+- Lobby: `a-lobby-desktop-390.jpg` ·
+  emulator-5554
+- Pair room (ставка открыта): `a-room-desktop-390.jpg` ·
+  emulator-5554
 - Момент итога (WIN T4, честная net-сумма +166.20 PLAY, тот же `ResultCard`):
-  [`a-result-desktop-390.jpg`](screens/concepts/a-result-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/a-result-emulator-5554.jpg)
+  `a-result-desktop-390.jpg` ·
+  emulator-5554
 - Stats/Ratings/Profile (один экран, сегменты сверху):
-  [`a-stats-desktop-390.jpg`](screens/concepts/a-stats-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/a-stats-emulator-5554.jpg)
+  `a-stats-desktop-390.jpg` ·
+  emulator-5554
 
 **Плюсы.** Самая «игровая» на вид сходу — решает жалобу Алекса «выглядит как финансовый терминал»
 буквальнее всех трёх. Раскол ставок на арене виден без чтения чисел (ширина половин = доля толпы).
@@ -92,18 +92,18 @@ mockData.ts`), контракт API не менялся, `/round`/`/crowd`/`/rat
 отличие от Twitch Predictions, обязательный шаг.
 
 **Экраны:**
-- Lobby: [`b-lobby-desktop-390.jpg`](screens/concepts/b-lobby-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/b-lobby-emulator-5554.jpg)
+- Lobby: `b-lobby-desktop-390.jpg` ·
+  emulator-5554
 - Pair room (панель предсказания + лента + реакции):
-  [`b-room-desktop-390.jpg`](screens/concepts/b-room-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/b-room-emulator-5554.jpg)
+  `b-room-desktop-390.jpg` ·
+  emulator-5554
 - Момент итога (LOSS T4, честная net-сумма −114.39 PLAY — тот самый пример из живого репорта
   Алекса, test2's DOWN x10 на 9,968 PLAY):
-  [`b-result-desktop-390.jpg`](screens/concepts/b-result-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/b-result-emulator-5554.jpg)
+  `b-result-desktop-390.jpg` ·
+  emulator-5554
 - Stats («Stream recap» — тот же контент, что и у A, другая подача вкладок):
-  [`b-stats-desktop-390.jpg`](screens/concepts/b-stats-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/b-stats-emulator-5554.jpg)
+  `b-stats-desktop-390.jpg` ·
+  emulator-5554
 
 **Плюсы.** Лучше всех передаёт «толпа играет прямо сейчас» — лента активности и счётчик зрителей
 делают присутствие других игроков осязаемым ещё до раскрытия направлений (Р-22 не нарушен: лента
@@ -129,18 +129,18 @@ Predictions не показывают свечной график вообще»
 
 **Экраны:**
 - Lobby (карточка BTC, точки = ETH/SOL):
-  [`c-lobby-desktop-390.jpg`](screens/concepts/c-lobby-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/c-lobby-emulator-5554.jpg)
+  `c-lobby-desktop-390.jpg` ·
+  emulator-5554
 - Pair room (CALL UP / CALL DOWN):
-  [`c-room-desktop-390.jpg`](screens/concepts/c-room-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/c-room-emulator-5554.jpg)
+  `c-room-desktop-390.jpg` ·
+  emulator-5554
 - Момент итога (LIQUIDATION T4, x38, честный штамп LIQUIDATED — toast без затемнения экрана, как и
   положено по `result-moment.md`):
-  [`c-result-desktop-390.jpg`](screens/concepts/c-result-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/c-result-emulator-5554.jpg)
+  `c-result-desktop-390.jpg` ·
+  emulator-5554
 - «You» (дуэль-карточка без графика, ранг, профиль — пролистываемые карточки):
-  [`c-stats-desktop-390.jpg`](screens/concepts/c-stats-desktop-390.jpg) ·
-  [emulator-5554](screens/concepts/c-stats-emulator-5554.jpg)
+  `c-stats-desktop-390.jpg` ·
+  emulator-5554
 
 **Плюсы.** Меньше всего шансов «выглядеть как терминал» физически — на экране почти нечего принять
 за биржевой инструмент. Самый быстрый путь «зашёл → поставил» из трёх. **Минусы.** Ключевой

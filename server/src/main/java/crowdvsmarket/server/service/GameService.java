@@ -436,7 +436,7 @@ public class GameService implements MarketListener {
     /** A round that cannot be opened (the database down, say) is said once a minute, not every tick. */
     private final crowdvsmarket.server.util.LogThrottle venueLog = new crowdvsmarket.server.util.LogThrottle(60_000L);
     /** Р-53: минимум для настоящего on-chain вывода (предложение — не зафиксировано в
-     *  docs/product/decisions.md; та же цифра, что {@code LedgerBook.MIN_STAKE}, но отдельная по
+     *  the decision log; та же цифра, что {@code LedgerBook.MIN_STAKE}, но отдельная по
      *  смыслу константа: одно — минимальная ставка, другое — минимальный вывод, у них нет причины
      *  всегда совпадать, просто сегодня совпадают). Ниже {@code MIN_WITHDRAWAL} чейновая комиссия
      *  батч-спенда чейнсвика могла бы съесть непропорционально большую долю выведенной суммы. */
@@ -2607,12 +2607,12 @@ public class GameService implements MarketListener {
     // (POST /v1/play/withdrawals, GET /v1/play/withdrawals/{requestId},
     // POST /v1/play/deposit-address, GET /v1/play/deposits — docs/research/server_design.md).
     //
-    // History: task item 1 (BLOCKER security fix, docs/reviews/2026-09-26-independent-critique.md)
+    // History: task item 1 (BLOCKER security fix, an internal security review)
     // found both auto-confirmed immediately with zero on-chain check — requestDeposit credited any
     // self-reported amount (live-reproduced: 5,000,000 fake PLAY minted in ten seconds) and
     // requestWithdrawal falsely claimed a CAT left the game — and disabled both behind
     // herd.deposit.enabled/herd.withdrawal.enabled (GameConfig) until real chain bridging existed.
-    // Р-53 (Alex, 2026-09-26, docs/product/decisions.md) is that real bridging, built against the
+    // Р-53 (Alex, 2026-09-26, the decision log) is that real bridging, built against the
     // FIXED INTERFACE above: requestWithdrawal now escrows + submits to chainsvc for real, and
     // deposits are detected automatically by DepositPollerService once a player sends PLAY to their
     // own myDepositAddress() — see WithdrawalPollerService/DepositPollerService for the two

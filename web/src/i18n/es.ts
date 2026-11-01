@@ -887,7 +887,7 @@ export const es: Dict = {
     verifyTitle: "Compruébalo tú mismo",
     verify1: "Abre cualquier ronda liquidada y sigue «verificar results.json»: la lista completa de sus apuestas y pagos, en",
     verify2: "El registro en la cadena de esa ronda contiene el SHA-256 de ese archivo, el precio de cierre y el número de activo de arriba.",
-    verify3: "Ejecuta el verificador. Solo lee la API pública de Chia y no necesita ninguna de nuestras claves; es un script del repositorio del proyecto ({path}, con su propio README). Por ahora el repositorio es privado, así que el comando de abajo funcionará cuando se abra.",
+    verify3: "Ejecuta el verificador. Solo lee la API pública de Chia y no necesita ninguna de nuestras claves; es un script del repositorio del proyecto ({path}, con su propio README).",
     commandAria: "Comando del verificador",
     copyCommand: "Copiar comando",
     healthy: "Una ejecución sana termina con «CONFLICTS: 0», «Gaps in the seq sequence: 0» y «Mismatches: 0».",

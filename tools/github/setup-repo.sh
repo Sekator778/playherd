@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tools/github/setup-repo.sh — one-time(-ish) idempotent GitHub repo setup for the branching
-# model in docs/ops/branching.md (Herd, decision from Alex 2026-09-26: develop + main + tags).
+# model in CONTRIBUTING.md (Herd, decision from Alex 2026-09-26: develop + main + tags).
 #
-# WHAT THIS DOES (see docs/ops/branching.md for the full rationale):
+# WHAT THIS DOES (see CONTRIBUTING.md for the full rationale):
 #   1. Creates the `develop` branch from `main` if it doesn't exist yet.
 #   2. Optionally sets `develop` as the repo's default branch (new PRs target it).
 #   3. Applies repository rulesets: `main` (PR required, ~1 approval, admin bypass on the PR
@@ -22,7 +22,7 @@
 #   - Never prints or stores secret VALUES — only names it recommends adding.
 #   - Every mutating call is wrapped so a 403 "Upgrade to GitHub Pro or make this repository
 #     public" (confirmed 2026-09-26 on this private Free-plan repo for the rulesets endpoint —
-#     see docs/ops/branching.md §7) is reported clearly and does NOT abort the rest of the
+#     see CONTRIBUTING.md §7) is reported clearly and does NOT abort the rest of the
 #     script — later steps that don't need that plan tier still run.
 #
 # Usage:
@@ -40,7 +40,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Defaults / flags
 # ---------------------------------------------------------------------------
-REPO="Sekator778/herd"
+REPO="Sekator778/playherd"
 DRY_RUN=1
 ASSUME_YES=0
 MIN_APPROVALS=1
@@ -109,7 +109,7 @@ echo
 # call_api METHOD PATH [JSON_BODY]
 # In dry-run mode: prints the call. In apply mode: makes it, and turns a 403 whose body mentions
 # "Upgrade to GitHub Pro" into a clearly-labelled skip instead of a hard failure (Free-plan
-# private-repo limitation — see docs/ops/branching.md §7), so the rest of the script still runs.
+# private-repo limitation — see CONTRIBUTING.md §7), so the rest of the script still runs.
 call_api() {
   local method="$1" path="$2" body="${3:-}"
   if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -138,7 +138,7 @@ call_api() {
     # plan supports the required reviewers protection rule" (environment reviewers).
     if echo "$out" | grep -qiE "Upgrade to GitHub Pro|billing plan supports"; then
       echo "  [skipped — plan limit] ${method} ${path}: private repo on GitHub Free can't use this API." >&2
-      echo "      -> either upgrade the account plan, or wait for the Р-54 public repo; see docs/ops/branching.md §7." >&2
+      echo "      -> either upgrade the account plan, or wait for the Р-54 public repo; see CONTRIBUTING.md §7." >&2
       return 0
     fi
     echo "  [ERROR] ${method} ${path} failed:" >&2
@@ -288,7 +288,7 @@ else
 fi
 
 if [[ "$APPLY_DEVELOP_RULESET" -eq 1 ]]; then
-  # No pull_request rule on purpose (docs/ops/branching.md §6/§7): agents may push straight to
+  # No pull_request rule on purpose (CONTRIBUTING.md §6/§7): agents may push straight to
   # develop. required_status_checks still blocks pushing a commit whose SHA hasn't already
   # recorded a passing "ci-ok" check.
   DEVELOP_RULESET=$(cat <<EOF
@@ -344,7 +344,7 @@ fi
 # 4. Dependabot alerts
 # ---------------------------------------------------------------------------
 # Alerts only: they run no Actions. Security updates (/automated-security-fixes) stay off: every PR
-# they open runs the full CI on the limited Actions minutes (docs/ops/branching.md §9, Р-112).
+# they open runs the full CI on the limited Actions minutes (CONTRIBUTING.md §9, Р-112).
 section "4. Dependabot alerts"
 if [[ "$TOGGLE_DEPENDABOT_SECURITY" -eq 1 ]]; then
   call_api PUT "/vulnerability-alerts" ""
@@ -378,7 +378,7 @@ if [[ "$CREATE_ENVIRONMENTS" -eq 1 ]]; then
   #     -f image_tag=X.Y.Z`.
   # A `workflow_run`-triggered run carries the repo's default branch (develop) and would be rejected
   # by both — deploy.yml's production job therefore no longer listens to one. See deploy.yml's
-  # "production" job comment and docs/ops/deploy.md §0.
+  # "production" job comment and the deployment notes §0.
   call_api POST "/environments/production/deployment-branch-policies" "{\"name\":\"v*\",\"type\":\"tag\"}"
   call_api POST "/environments/production/deployment-branch-policies" "{\"name\":\"main\",\"type\":\"branch\"}"
 else
@@ -390,7 +390,7 @@ fi
 # ---------------------------------------------------------------------------
 section "6. Secrets / variables checklist (add these yourself — this script does not set values)"
 cat <<'EOF'
-  Repository variable (NOT secret — Р-58, docs/product/decisions.md: this projectId is public,
+  Repository variable (NOT secret — Р-58, the decision log: this projectId is public,
   it ships in the web bundle regardless):
     - VITE_WALLETCONNECT_PROJECT_ID = 680e4897ed8a55aa0b10263cc74159dd
 
@@ -400,7 +400,7 @@ cat <<'EOF'
                                        after every green push to develop (the staging deploy pulls
                                        :develop). Leave unset for a one-off publish instead:
                                        gh workflow run ci.yml --ref develop -f publish=true
-                                       (docs/ops/ci.md §2, §7)
+                                       (CONTRIBUTING.md §2, §7)
 
   No secret is needed to push images to GHCR: use the workflow-scoped GITHUB_TOKEN with
   `permissions: { packages: write }` in release.yml.
@@ -420,7 +420,7 @@ cat <<'EOF'
   again on environment "staging" once it has its own deploy target — deploy.yml's staging job
   reads them from there, independently of production's copies.
 
-  Explicitly NOT a CI/CD secret (per this task's constraint and Р-21, docs/product/decisions.md):
+  Explicitly NOT a CI/CD secret (per this task's constraint and Р-21, the decision log):
   the Chia testnet11 operator/oracle key. It stays only on whichever machine runs chainsvc
   (today: Atlas; later: the VPS itself, provisioned directly there) and never touches GitHub
   Actions.
@@ -435,7 +435,7 @@ EOF
 echo
 echo "==> Done (${MODE_LABEL})."
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "    Nothing was changed. Re-run with --apply (and review docs/ops/branching.md §7 first,"
+  echo "    Nothing was changed. Re-run with --apply (and review CONTRIBUTING.md §7 first,"
   echo "    especially the GitHub Free private-repo plan limitation on rulesets/environment"
   echo "    protection) to actually apply this."
 fi

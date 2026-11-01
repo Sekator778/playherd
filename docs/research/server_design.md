@@ -3,8 +3,8 @@
 Дата: 2026-09-25. Реализует FIXED INTERFACE (1)/(2)/(3) из постановки задачи «поднять Quarkus
 backend» поверх домена `engine/` (Р-20) и подключается к отдельному `chainsvc` (порт 8090,
 FIXED INTERFACE 3) для подписи/оракула. Что помечено «предложение» — решение этой сессии,
-не зафиксировано в `docs/product/decisions.md`, подлежит пересмотру. Все Р-N — из
-`docs/product/decisions.md`.
+не зафиксировано в `the decision log`, подлежит пересмотру. Все Р-N — из
+`the decision log`.
 
 ## 1. Модули и сборка
 
@@ -26,7 +26,7 @@ FIXED INTERFACE 3) для подписи/оракула. Что помечено
 alias-имена, вызывают relocation-предупреждение и не тянут `quarkus-test-common` транзитивно
 до конца) — всё это выяснено методом «собери и прочитай ошибку», а не документацией.
 
-Java 21, `mvn -s ~/.m2/settings-oss.xml …` (правило CLAUDE.md).
+Java 21, `mvn -s ~/.m2/settings-oss.xml …` (правило the project notes).
 
 ## 2. Пакеты `server/src/main/java/crowdvsmarket/server/…`
 
@@ -611,12 +611,12 @@ invalid-amount/positive-still-works, `placeBet` с отрицательным st
 
 ## 15. Волна 3 (независимая критика 2026-09-26) — фиксы без решения Алекса
 
-Правит 7 находок `docs/reviews/2026-09-26-independent-critique.md`, ограниченных задачей как «не
+Правит 7 находок `an internal security review`, ограниченных задачей как «не
 требующие решения Алекса» (открытые вопросы — Sage-логин, VPS, чистка git-истории, Р-6-в-полном-
 объёме — не в этой волне). Затронуты `server/`, `engine/` (аддитивно), `chain/c2-svc` (только
 контрактные фикстуры), `docker-compose.yml`, `tools/stand.sh`, `tools/herd-operator.sh`,
 `.github/workflows/`, `README.md` (один абзац, явно разрешено формулировкой задачи item 7).
-`web/`/`docs/product/`/`PLAN.md`/`docs/selection/` не трогали — на них параллельно работали другие
+`web/`/`docs/product/`/`the project plan`/`docs/selection/` не трогали — на них параллельно работали другие
 сессии.
 
 ### 15.1 BLOCKER — `requestDeposit` кредитовал любую самозаявленную сумму без проверки в сети
@@ -774,7 +774,7 @@ invalid-amount/positive-still-works, `placeBet` с отрицательным st
   реальный триггер — репозиторий на самом деле уже имеет `origin` (`git@github.com:Sekator778/
   herd.git`), это устаревшее допущение дня 1.
 
-### 15.7 Execution adapter (PLAN.md §3, заявление README)
+### 15.7 Execution adapter (the project plan §3, заявление README)
 
 - `crowdvsmarket.engine.execution.ExecutionAdapter` (новый пакет, чистый интерфейс без фреймворка
   — тот же паттерн, что уже `engine.ledger.OnChainWalletPort` для withdraw/deposit) —
@@ -853,7 +853,7 @@ invalid-amount/positive-still-works, `placeBet` с отрицательным st
 
 ## 16. Волна 4 (Р-53: настоящий on-chain вывод/ввод PLAY) — 2026-09-26
 
-Реализует Р-53 (Алекс, 2026-09-26, `docs/product/decisions.md`: «сделать до альфы») поверх FIXED
+Реализует Р-53 (Алекс, 2026-09-26, `the decision log`: «сделать до альфы») поверх FIXED
 INTERFACE постановки задачи (`server ⇄ chainsvc`, `/v1/play/*`) — `POST /v1/play/withdrawals`,
 `GET /v1/play/withdrawals/{requestId}`, `POST /v1/play/deposit-address`,
 `GET /v1/play/deposits?sinceHeight=N`. Затронуты только `server/`, `engine/` (аддитивно) — задача
@@ -954,7 +954,7 @@ FIXED INTERFACE прямо называет этот endpoint идемпотен
 `failed` → переиспользованное `WithdrawalFailed` (тот же рефанд, что уже был) + `failureReason` в
 read-model; `queued`/`in_flight` — просто обновление read-model, без события.
 
-**`MIN_WITHDRAWAL` — предложение, не зафиксировано в `docs/product/decisions.md`**: 100 PLAY, та
+**`MIN_WITHDRAWAL` — предложение, не зафиксировано в `the decision log`**: 100 PLAY, та
 же цифра, что `LedgerBook.MIN_STAKE`, выбрана по аналогии (не по отдельному обоснованию комиссии) —
 подлежит пересмотру, если у чейнсвика окажется другая реальная минимальная экономически осмысленная
 сумма вывода.
@@ -1131,7 +1131,7 @@ Ryuk от `mvn verify` убраны Ryuk'ом автоматически): `engi
 
 ## 18. Волна 6 (Р-62: живой расклад толпы, лента ставок, «пока вас не было») — 2026-09-26
 
-Задание по итогам Р-61/Р-62/Р-63 (`docs/product/decisions.md`): концепция «Аркада», раскрытие
+Задание по итогам Р-61/Р-62/Р-63 (`the decision log`): концепция «Аркада», раскрытие
 расклада толпы и ленты ставок вживую во время окна ставок (заменяет Р-22), и отдельно — фикс
 основной сессии «игрок, не заходивший к моменту закрытия раунда, никогда не видит момент итога».
 Assigned paths — `server/`, `engine/` (аддитивно — не тронут, см. §18.4), `web/src/api/contract.ts`
@@ -1373,7 +1373,7 @@ unknown withdrawal request: w-golden-1`, что и в описании зада�
 
 ## 20. Волна 7 (рынки: модель чтения, новые RPC, сквозной тест live) — 2026-10-02
 
-Основание: Р-68…Р-71 (`docs/product/decisions.md`); архитектура и зафиксированные интерфейсы —
+Основание: Р-68…Р-71 (`the decision log`); архитектура и зафиксированные интерфейсы —
 `docs/research/markets_architecture.md` (Т-1…Т-13, §8 «API»); источник правды по именам полей —
 `web/src/api/contract.ts`. Этот срез — «API-поверхность рынков на сервере»: чтение из памяти (новый
 `MarketViewService` и соседи), четыре новых RPC, дополнения `serverInfo` и профиля, мелкие правки и
@@ -1669,7 +1669,7 @@ contract/*.json` несут поля (`asset`, `maxKnownSeq`, `recordFormat`, `f
   `-Dherd.wire.dir=<папка>` направляет тест в другую папку (проверить стража на испорченной копии, перегенерировать
   в сторону и сравнить через `diff`). Перегенерация:
   `mvn -B -s ~/.m2/settings-oss.xml -f pom.xml -pl server -am test -Dtest=WireFixturesTest -Dherd.wire.write=true
-  -Dsurefire.failIfNoSpecifiedTests=false` (Java 21, правила сборки — `CLAUDE.md`); потом смотреть `git diff
+  -Dsurefire.failIfNoSpecifiedTests=false` (Java 21, правила сборки — `the project notes`); потом смотреть `git diff
   web/src/api/wire/`: помимо вашего изменения должны отличаться только id, адреса и время.
 - **Форма** (`testsupport/WireShape`): те же ключи рекурсивно и тот же JSON-тип у каждого ключа; число — это число
   (целое и дробное одно и то же); `null` с любой стороны совпадает со всем (сервер пишет отсутствующее как `null`,
@@ -1721,7 +1721,7 @@ contract/*.json` несут поля (`asset`, `maxKnownSeq`, `recordFormat`, `f
 `.github/workflows/ci.yml`, job `changes`: фильтр `server` теперь включает `web/src/api/contract.ts` и
 `web/src/api/wire/**` — тесты сервера читают оба (§21.2, §21.3), и правка контракта или файлов, не тронувшая
 `server/**`, раньше не запускала их. Фильтр `web` (`web/**`) уже включал `web/src/api/wire/**`; добавлен только
-поясняющий комментарий. (Таблица фильтров в `docs/ops/ci.md` §2 этой правки пока не отражает — вне этого среза.)
+поясняющий комментарий. (Таблица фильтров в `CONTRIBUTING.md` §2 этой правки пока не отражает — вне этого среза.)
 
 ### 21.5 Мёртвое и замок
 
@@ -1794,7 +1794,7 @@ Dev Services Postgres):
 
 ## 22. Feedback (Р-81) — отзыв из приложения — 2026-10-11
 
-Решение — `docs/product/decisions.md` Р-81 (Алекс, 2026-10-11): в приложении закрываемая полоска «оставьте отзыв — что
+Решение — `the decision log` Р-81 (Алекс, 2026-10-11): в приложении закрываемая полоска «оставьте отзыв — что
 понравилось, что нет»; одно поле, без почты и имени. Вместе с текстом сохраняем то, что нужно для статистики по регионам:
 страну (сервер определяет её по IP, сам IP не хранится), часовой пояс и язык браузера, а если человек вошёл — id игрока (по
 нему видно, сколько раундов он сыграл). Это серверная часть; веб — `web/src/components/Feedback*.tsx`, `web/src/api/feedback.ts`.
@@ -1980,7 +1980,7 @@ Apache-2.0; в POM только тестовые зависимости, сво�
 
 ### 22.9 Не сделано и открыто
 
-- **Живой стенд.** С 2026-10-11 работает на VPS (`docs/HANDOFF.md` §2): миграция V10 применена, база DB-IP 2026-10 загружена
+- **Живой стенд.** С 2026-10-11 работает на VPS (`the internal notes` §2): миграция V10 применена, база DB-IP 2026-10 загружена
   из контейнера `server` (`geoip: loaded the DB-IP country database of 2026-10`), тестовый отзыв сохранён со страной `DE`, прочитан
   `tools/herd-operator.sh feedback` и удалён. `tools/stand.sh up` проверяет достижимость бирж, но не `download.db-ip.com` (сбой
   загрузки — только WARN).

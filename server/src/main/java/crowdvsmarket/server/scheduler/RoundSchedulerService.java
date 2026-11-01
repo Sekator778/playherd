@@ -194,7 +194,7 @@ public class RoundSchedulerService {
      * The minutes that a round that cannot be priced is given (Р-79) count from the end of the round or from the start of the server,
      * whichever is later: a start leaves a gap in the prices, which the candles close in the next minutes, and the rounds that were in
      * flight must be given those minutes instead of being let go at their first failed attempt. A restart is a start — and so is the
-     * wake of a host that slept: the JVM and its containers survive the sleep (docs/HANDOFF.md §2), but the feeds reconnect and every
+     * wake of a host that slept: the JVM and its containers survive the sleep (the internal notes §2), but the feeds reconnect and every
      * round that ended meanwhile is overdue, just as after a restart. The process cannot tell a sleep from a stand-still, so the rule is
      * the same for both: the scheduler remembers when its previous scheduled pass <i>ended</i>, and a pass that begins more than {@link
      * #PAUSE_MS} later — or the first one, there being no previous — takes the start from its own instant. Measured from the end of the

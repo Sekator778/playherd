@@ -1,6 +1,6 @@
 # F4: журнал самодостаточен, применение события чистое
 
-Дата: 2026-10-20. Основание: Р-96 (`docs/product/decisions.md`, шаг 2 «фундамент без смены поведения»), `docs/research/architecture_review_independent_2026-10-16.md` §4.1 строка F4, `docs/research/lmax_roadmap.md` §6. Ветка `feature/arch-f4-journal`.
+Дата: 2026-10-20. Основание: Р-96 (`the decision log`, шаг 2 «фундамент без смены поведения»), `docs/research/architecture_review_independent_2026-10-16.md` §4.1 строка F4, `docs/research/lmax_roadmap.md` §6. Ветка `feature/arch-f4-journal`.
 
 Правила текста: утверждение — со ссылкой на файл; **[вывод]** — заключение с тем, на чём оно стоит; «неизвестно» — не проверено.
 

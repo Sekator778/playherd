@@ -320,7 +320,7 @@ async function main() {
           `pendingRecords=${oracle?.pendingRecords}`,
         );
         log("not yet confirmed on-chain within this run's window — this is expected (real testnet11 block time); " +
-          "see docs/product/local_stand.md for how to keep watching chainsvc status after this script exits.");
+          "see CONTRIBUTING.md for how to keep watching chainsvc status after this script exits.");
       }
     } catch (e) {
       fail("serverInfo/oracle status check", e);

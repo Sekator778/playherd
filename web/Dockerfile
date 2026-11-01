@@ -22,7 +22,7 @@ RUN npm ci
 
 # Р-55: build-time WalletConnect projectId (`wallet/walletConnect.ts`'s
 # `getWalletConnectProjectId`) — optional, empty until Alex registers one with Reown Cloud
-# (outbound registrations are only ever made with his own go-ahead, `CLAUDE.md`). Passed in by
+# (outbound registrations are only ever made with his own go-ahead, `the project notes`). Passed in by
 # `docker-compose.yml`'s `web.build.args` and by ci.yml/release.yml from the repository variable of
 # the same name; a bare `docker build` leaves it empty — `--build-arg
 # VITE_WALLETCONNECT_PROJECT_ID=<id>` is the manual route. `ServerInfoDto.walletConnectProjectId` (a

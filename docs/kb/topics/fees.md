@@ -74,5 +74,5 @@
 - `docs/research/player_fair_economics_sources.md` (стр. 115–126, 171–176)
 - `docs/research/economy_variant_a_rules_2026-10-17.md` (§0.1, §2.2, §2.4 сравнение в б.п.)
 - `docs/product/economy_how_it_works.md` (§3 комиссии, §5.5 сопоставление с площадками)
-- `docs/product/decisions.md`: Р-91, Р-92, Р-93, Р-101, Р-102
+- `the decision log`: Р-91, Р-92, Р-93, Р-101, Р-102
 - Страницы площадок: `docs/kb/venues/` (все десять)

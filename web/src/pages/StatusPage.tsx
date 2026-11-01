@@ -2,7 +2,7 @@
  * Status (`/status`) — public, no sign-in. The one page where a player can see what Polymarket's app does not
  * show: where every price comes from and how fresh it is, what the server has anchored on the Chia chain, and
  * every round that was cancelled and why. Plain words and numbers only — nothing here is there to sell the
- * product (`docs/product/decisions.md` Р-43: "публичная страница статуса — последняя публикация оракула, казна
+ * product (`the decision log` Р-43: "публичная страница статуса — последняя публикация оракула, казна
  * PLAY, журнал отмен"; Р-71: the extras that earn trust).
  *
  * Five sections (the supply block, `supply()`, comes after the oracle: issued, treasury coin, held by players, platform reserve,

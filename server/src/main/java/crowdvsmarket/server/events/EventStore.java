@@ -44,7 +44,7 @@ public class EventStore {
      * {@code game_events.event_type} string to the current one, so renaming a {@link GameEvent}
      * record does not strand already-persisted rows — closing the independent critique's exact
      * scenario ("a class-rename would provably kill server startup entirely, not just one event
-     * type", docs/reviews/2026-09-26-independent-critique.md). Empty today — no {@code GameEvent}
+     * type", an internal security review). Empty today — no {@code GameEvent}
      * type has ever actually been renamed — add {@code "OldName", "NewName"} here (keeping the
      * record itself under its new name) the day one is. The resolution mechanism itself (not this
      * currently-empty literal) is exercised directly against a synthetic alias map by

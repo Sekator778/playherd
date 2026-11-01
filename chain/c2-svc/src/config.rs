@@ -4,7 +4,7 @@
 //! mounted read-write)"). No config file, no CLI flags for these -- a
 //! container gets its whole configuration from its environment (12-factor,
 //! **предложение**: consistent with how the rest of this project runs
-//! services in Docker, `docs/product/decisions.md` Р-44).
+//! services in Docker, `the decision log` Р-44).
 
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -97,7 +97,7 @@ pub struct Config {
     /// (`oracle/queue.rs::QueueFile::apply_retention`). `C2_ORACLE_RETAIN_CONFIRMED_SECS`, default
     /// 86 400 (a day), decided by the main session on 2026-10-06: `docs/research/chain_service.md` §19 (§16.9
     /// and §18.2 had left the term open). What a day costs: the queue file holds an entry of about 410 bytes (measured, §18.2)
-    /// for every confirmed record -- some 10 000 a day on the stand (`docs/HANDOFF.md` §6.1 item 1), so
+    /// for every confirmed record -- some 10 000 a day on the stand (`the internal notes` §6.1 item 1), so
     /// about 4 MB -- while the server's own database holds the public journal of the records and the
     /// chain the records themselves. After the retention a seq still answers `confirmed` (no height, coin
     /// or content) and is never accepted again; a record that is not confirmed is never dropped. 0 keeps

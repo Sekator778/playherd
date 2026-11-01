@@ -1,4 +1,4 @@
-//! Task item 5 (contract test Java<->Rust, docs/reviews/2026-09-26-independent-critique.md): the
+//! Task item 5 (contract test Java<->Rust, an internal security review): the
 //! only Java-side tests of the server<->chainsvc boundary used to mock `ChainSvcClient` directly
 //! rather than exercising the real HTTP/JSON contract against `c2-svc`'s actual request/response
 //! shapes — a silent field-name/type drift on either side would not have been caught by any

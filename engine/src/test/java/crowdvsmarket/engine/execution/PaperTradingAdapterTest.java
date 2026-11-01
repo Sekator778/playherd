@@ -13,7 +13,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * Task item 7 (PLAN.md §3, README's Hyperliquid-adapter claim): {@link PaperTradingAdapter} must
+ * Task item 7 (the project plan §3, README's Hyperliquid-adapter claim): {@link PaperTradingAdapter} must
  * be exactly {@link Position#openFromMargin} + {@link PositionSimulator#simulate} — the same two
  * calls {@code CrowdAccount}/{@code ComparisonAccounts} made directly before this task — so wiring
  * them through {@link ExecutionAdapter} is a byte-identical behavior change, not a new one.

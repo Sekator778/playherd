@@ -9,7 +9,7 @@ Vite + React + TypeScript (strict) + react-router. Собран против `sr
 контракта) — все читают через `useApi()`/`ApiContext.tsx`; мок обязан следовать контракту так же, как
 сервер (его поля, `null`-ы и порядок), иначе экраны, построенные на нём, соврут про настоящий сервер.
 
-Источники: `docs/product/decisions.md` (Р-1…Р-71), `docs/product/ux_spec.md`,
+Источники: `the decision log` (Р-1…Р-71), `docs/product/ux_spec.md`,
 `docs/product/design/markets-lobby.md`, `docs/research/markets_architecture.md`,
 `docs/research/hl_liquidation_math.md`, `docs/research/round_engine_design.md`,
 `docs/research/week1_wallet_auth.md`. UI-копирайт — на английском (Р-24), этот файл — на
@@ -270,7 +270,7 @@ UP/DOWN всегда парой иконка+текст, ни одного чи�
 указывает WebView прямо на поднятый Docker-стенд (`server.url: "http://10.0.2.2:8480"` — с эмулятора
 `10.0.2.2` это `localhost` Mac'а; `server.cleartext: true`, иначе Android ≥ API 28 блокирует http),
 поэтому cookie-сессия `/api/rpc` работает без переделок — тот же ориджин, что и в браузере.
-Подробности запуска на нескольких эмуляторах — `docs/product/local_stand.md` §9.
+Подробности запуска на нескольких эмуляторах — `CONTRIBUTING.md` §9.
 
 **Открытый пункт (не сделано здесь, отдельное решение):** сборка для Google Play/App Store не может
 указывать `server.url` на чей-то ноутбук — она вместо этого упакует `dist/` как локальные ассеты

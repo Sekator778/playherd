@@ -1,6 +1,6 @@
 # engine — доменная логика «Толпы против рынка»
 
-Java-модуль (`PLAN.md` §5): чистая доменная логика раундов «вверх/вниз» (`PLAN.md` §2; BTC —
+Java-модуль (`the project plan` §5): чистая доменная логика раундов «вверх/вниз» (`the project plan` §2; BTC —
 рынок по умолчанию, другие пары — `MarketSpec`, см. «Markets») — математика плеча/ликвидации,
 симулятор позиции на исторических свечах, и (день 2) полный раундовый движок — кошелёк PLAY,
 раунды/ставки, «счёт толпы», сезоны и рейтинги. Без фреймворка, без блокчейна, без
@@ -9,7 +9,7 @@ runtime-зависимостей; сервис на Quarkus (Р-20) обернё
 **Спецификации (авторитетные источники)**:
 [`docs/research/hl_liquidation_math.md`](../docs/research/hl_liquidation_math.md) — математика
 плеча/ликвидации (`crowdvsmarket.engine.margin`, `round.PositionSimulator`); каждая формула там
-помечена javadoc-ссылкой на конкретный подраздел. [`docs/product/decisions.md`](../docs/product/decisions.md)
+помечена javadoc-ссылкой на конкретный подраздел. [`the decision log`](../the decision log)
 (Р-1…Р-21) — продуктовые решения, которые реализует всё остальное (кошелёк, раунды/ставки, счёт
 толпы, сезоны, рейтинги); разбор модели, машины состояний и предложений —
 [`docs/research/round_engine_design.md`](../docs/research/round_engine_design.md).
@@ -29,7 +29,7 @@ mvn -B verify
 (`.sdkmanrc` в этой директории задаёт `java=21.0.11-oracle` для тех, кто использует `sdk env`.)
 
 `mvn -B verify` компилирует (`-Xlint:all` с предупреждениями как ошибками), запускает весь
-JUnit 5-сьют и собирает `engine.jar`. CI: [`.github/workflows/engine.yml`](../.github/workflows/engine.yml)
+JUnit 5-сьют и собирает `engine.jar`. CI: `.github/workflows/engine.yml`
 (actions/checkout, actions/setup-java Temurin 21 с maven-кэшем, `mvn -B verify` в `engine/`) — пока
 не может запуститься, у репозитория ещё нет GitHub-remote (день 1, 2026-09-25).
 
@@ -56,7 +56,7 @@ JUnit 5-сьют и собирает `engine.jar`. CI: [`.github/workflows/engin
     ставкой для других рынков; сигнатуры без неё берут BTC-ставку.
 - `crowdvsmarket.engine.market` — `Candle`/`Interval`/`CandleSeries`: загрузка CSV-фикстур
   (`src/test/resources/fixtures/`, см. там `PROVENANCE.md`) без внешних библиотек.
-- `crowdvsmarket.engine.round` — `Round`/`Position` (форматы данных из `PLAN.md` §3) и
+- `crowdvsmarket.engine.round` — `Round`/`Position` (форматы данных из `the project plan` §3) и
   `PositionSimulator`: реплей позиции по пути свечей раунда, правила ликвидации по OHLC и
   same-candle/gap-through правила — точно по спецификации §2.3.
 
@@ -64,12 +64,12 @@ JUnit 5-сьют и собирает `engine.jar`. CI: [`.github/workflows/engin
 §2.5). Backstop-ликвидация Hyperliquid (полная потеря при equity < 2/3 maintenance margin,
 спецификация §1.7) отдельно не моделируется — но при ликвидации в этом движке игрок и так теряет
 всю ставку (`payout_on_liquidation = 0`, §2.2) по продуктовому решению **Р-7**
-(`docs/product/decisions.md`, Р-7), а не только в backstop-случае, как на самой Hyperliquid; цена
+(`the decision log`, Р-7), а не только в backstop-случае, как на самой Hyperliquid; цена
 ликвидации (`liquidation_price`) при этом остаётся точной формулой Hyperliquid, без изменений.
 
 ## Раундовый движок (кошелёк, раунды/ставки, счёт толпы, сезоны, рейтинги)
 
-Реализует `docs/product/decisions.md` Р-2/Р-3/Р-5…Р-9/Р-12…Р-19 поверх математики выше. Полный
+Реализует `the decision log` Р-2/Р-3/Р-5…Р-9/Р-12…Р-19 поверх математики выше. Полный
 разбор модели и машины состояний раунда — `docs/research/round_engine_design.md`; здесь только
 карта пакетов.
 

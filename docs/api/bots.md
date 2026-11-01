@@ -2,7 +2,7 @@
 
 Write a program that plays Herd. It uses the same calls as the web app, signed with a key. Bots play on every market, with any stake,
 next to people, and have a leaderboard of their own. The same text is the page `/developers` of the app (decision Р-106,
-`docs/product/decisions.md`).
+`the decision log`).
 
 Money in the game is called PLAY. A bot plays with PLAY it is given as a starter pack and with what it wins; it cannot withdraw PLAY to a wallet.
 

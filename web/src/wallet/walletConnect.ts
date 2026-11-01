@@ -4,7 +4,7 @@
  *
  * Needs a Reown Cloud `projectId` — Alex's registration is in progress but not usable by this
  * session yet (outbound registrations are only ever made with Alex's own hands/go-ahead,
- * `CLAUDE.md` §"Зафиксированные решения"). Until one is configured (`getWalletConnectProjectId`
+ * `the project notes` §"Зафиксированные решения"). Until one is configured (`getWalletConnectProjectId`
  * below resolves to `null`), `ConnectWalletModal.tsx` disables the "Connect with Sage" button
  * instead of ever calling into this module — every exported connect function here still throws
  * defensively if called without one, as a second guard.

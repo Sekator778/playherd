@@ -1,7 +1,7 @@
 # verify-oracle
 
 A standalone public verifier for Herd's price oracle singleton (Р-11/Р-40/Р-41/Р-47 in
-[`docs/product/decisions.md`](../../docs/product/decisions.md)). Anyone can run it — it
+[`the decision log`](../../the decision log)). Anyone can run it — it
 needs none of our keys, none of our servers except (optionally) one stand's own public
 API, and it never sends a spend, a signature, or any other mutating request. Full design
 rationale and real runs' output: [`docs/research/oracle_verification.md`](../../docs/research/oracle_verification.md)
@@ -66,7 +66,7 @@ python3 verify_oracle.py c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec0
 ```
 
 Against testnet11 **and** cross-checked with a running local stand
-([`docs/product/local_stand.md`](../../docs/product/local_stand.md)):
+([`CONTRIBUTING.md`](../../CONTRIBUTING.md)):
 
 ```bash
 python3 verify_oracle.py c5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20 \
@@ -157,7 +157,7 @@ is the same in the hashed document and in the journal and is one the registry li
 
 **Not** verified by this tool: that a published price was itself an honest price
 (trust in the operator key + the price source — Hyperliquid, Coinbase, Kraken or Polymarket —
-is a deliberate, documented tradeoff — Р-11, `PLAN.md` §2; the venue only tells you which
+is a deliberate, documented tradeoff — Р-11, `the project plan` §2; the venue only tells you which
 exchange to compare the price with); that a round's payouts were computed correctly by
 the game engine (covered by `engine/`'s own unit tests, a different concern); AGG_SIG_ME
 signatures on each spend (the public chain already rejected any spend that failed that check

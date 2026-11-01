@@ -7,7 +7,7 @@ import java.math.BigDecimal;
 import java.util.Objects;
 
 /**
- * A crowd member's position in a round, matching the {@code Position} data format (PLAN.md
+ * A crowd member's position in a round, matching the {@code Position} data format (the project plan
  * section 3):
  *
  * <pre>

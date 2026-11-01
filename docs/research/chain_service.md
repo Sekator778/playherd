@@ -1015,7 +1015,7 @@ self.start_new_batch(&mut queue).await                             // <- пад�
 
 ## 13. PLAY withdraw/deposit — реальный ончейн вывод/ввод (Р-6, решение Р-53, 2026-09-26)
 
-Источник задания: `docs/product/decisions.md` Р-53 (2026-09-26) — «сделать до альфы» реальный
+Источник задания: `the decision log` Р-53 (2026-09-26) — «сделать до альфы» реальный
 ончейн PLAY withdraw/deposit (Р-6) до закрытой альфы. Assigned paths этой задачи — `chain/`
 (`c2-svc` и `c2-cli`) и этот файл. Реализует ровно FIXED INTERFACE из задания: `POST
 /v1/play/withdrawals`, `GET /v1/play/withdrawals/{requestId}`, `POST /v1/play/deposit-address`,
@@ -1572,9 +1572,9 @@ sim-spike`): **108 passed, 1 ignored (тот же генератор тест-в
 ## 16. Оракул v2, запас комиссионных монет, fsync каталога (2026-10-01)
 
 Источник задания: фиксированные интерфейсы рынков — `docs/research/markets_architecture.md` §7 (Т-9,
-пункты 1–9), открытые пункты `docs/HANDOFF.md` §6 п. 3 (запас комиссионных монет) и п. 8 (`fsync`
+пункты 1–9), открытые пункты `the internal notes` §6 п. 3 (запас комиссионных монет) и п. 8 (`fsync`
 каталога после `rename`, реконсиляция очереди выводов), независимая критика
-`docs/reviews/2026-09-26-independent-critique.md` (rustls). Assigned paths этой работы — `chain/`,
+`an internal security review` (rustls). Assigned paths этой работы — `chain/`,
 `tools/verify-oracle/`, этот файл и `docs/research/oracle_verification.md`; серверная (Java) сторона,
 `docker-compose.yml` и `chain/c2-svc/Dockerfile` — другие агенты, не тронуты.
 
@@ -1615,7 +1615,7 @@ sim-spike`): **108 passed, 1 ignored (тот же генератор тест-в
   предупреждением, как и раньше. Восьмой и далее элементы декодер **игнорирует** (поведение derive
   `#[clvm(list)]`, исходники `clvm-derive-0.36.1/src/from_clvm.rs`); это закреплено тестом-сторожем
   `an_eighth_element_is_ignored_by_the_lineage_decoder` на случай апгрейда `clvm-traits` 0.36 → 0.50
-  (Dependabot, `docs/HANDOFF.md` §6 п. 11) — на 0.50 поведение **не проверялось** (UNVERIFIED).
+  (Dependabot, `the internal notes` §6 п. 11) — на 0.50 поведение **не проверялось** (UNVERIFIED).
 - **Реконсиляция** (`QueueFile::reconcile_with_chain`) сравнивает `chain_record.record == record` — это
   `PartialEq` по всем полям, так что `asset` входит автоматически: запись, отличающаяся от цепи только
   рынком, — конфликт, а не «уже подтверждена» (`reconcile_flags_a_conflict_when_only_the_asset_differs`:
@@ -1688,7 +1688,7 @@ sim-spike`): **108 passed, 1 ignored (тот же генератор тест-в
 **61 174 188** — тест требует `< 150 000 000` (блок — 11 000 000 000). Однозаписевый спенд — 21 509 048
 (`docs/research/week1_testnet_results.md:48`), то есть 40 записей стоят примерно в 2,5 раза больше одной.
 
-### 16.5 Запас комиссионных монет (§7 п. 9, `docs/HANDOFF.md` §6 п. 3)
+### 16.5 Запас комиссионных монет (§7 п. 9, `the internal notes` §6 п. 3)
 
 **Проблема** (§15): каждый бандл в полёте съедает целую комиссионную монету (`build_fee_only` возвращает
 сдачу новой монетой); оракул и паблишер выводов держат по одной, поэтому при единственной монете в кошельке
@@ -1798,7 +1798,7 @@ puzzle hash не равен puzzle hash владельца (`a_coin_that_is_not_
 2026-09-26, §15.1). Живой push split-а на testnet11 не выполнялся (задание запрещает реальные транзакции) —
 первый split на стенде произойдёт на первом тике после деплоя, если в кошельке одна монета.
 
-### 16.6 Долговечность записи на диск и очередь выводов (`docs/HANDOFF.md` §6 п. 8)
+### 16.6 Долговечность записи на диск и очередь выводов (`the internal notes` §6 п. 8)
 
 **`fsync` каталога** (`atomic_file.rs::write_json_atomic` → `sync_dir`): после `rename` каталог открывается и
 синхронизируется. Зачем (§10.4): `fsync` временного файла делает долговечными *данные*, но `rename` — изменение
@@ -2454,7 +2454,7 @@ no-op идемпотентного повтора и в `conflictSeqs` не по
 
 ## 19. Срок хранения очереди оракула (решение сессия, 2026-10-06)
 
-Пункт 1 таблицы `docs/HANDOFF.md` §6.1 (§16.9 выше).
+Пункт 1 таблицы `the internal notes` §6.1 (§16.9 выше).
 
 **Было.** Карта `confirmed` файла очереди не прореживалась, а файл читался целиком на каждом тике, `POST` и `GET`. На стенде это около 10 000 записей в сутки.
 

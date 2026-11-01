@@ -118,5 +118,5 @@
 - `docs/research/why_nobody_house_banked_token_2026-10-17.md` (§2.4 риск банка)
 - `docs/research/player_fair_economics_sources.md` (RTP, ESMA, ликвидации)
 - `docs/product/economy_how_it_works.md` (§4 защита казны, §5.3 κ, §7 статусы правил), `docs/product/game_economy_proposal.md` (§2, §7), `docs/product/economy_implementation_plan.md`
-- `docs/product/decisions.md` (Р-92, Р-93, Р-99…Р-103)
+- `the decision log` (Р-92, Р-93, Р-99…Р-103)
 - `docs/kb/venues/hyperliquid.md` (HLP), `docs/kb/venues/gmx-dydx.md`, `docs/kb/venues/play-money-and-tg-games.md`, `docs/kb/topics/methods.md`, `docs/kb/topics/regulation.md`

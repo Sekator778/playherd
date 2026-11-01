@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
  * other tests drive. They are counted from the end of the round or from the start of the server, whichever is later: a restart gives
  * every round that was in flight its minutes to heal from the candles, instead of letting it go at its first failed attempt. A
  * <i>pause</i> of the whole process does the same to the candles' healing as a restart does — a laptop that sleeps with Docker paused
- * (docs/HANDOFF.md §2: the containers survive the sleep) wakes up in the same JVM with the feeds reconnecting and every round that ended
+ * (the internal notes §2: the containers survive the sleep) wakes up in the same JVM with the feeds reconnecting and every round that ended
  * in the meantime overdue — so the pass that follows a pause is a start too: the scheduler remembers when its previous scheduled pass
  * ended, and a pass that begins more than fifteen seconds after that, or is the first one of all, takes the minutes from its own
  * instant. The time between two passes is what counts, not how long a pass took: a slow pass (a price source that answers slowly) is

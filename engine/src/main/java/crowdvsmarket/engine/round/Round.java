@@ -5,7 +5,7 @@ import java.math.BigDecimal;
 import java.util.Objects;
 
 /**
- * A "BTC up/down" round, matching the {@code Round} data format (PLAN.md section 3):
+ * A "BTC up/down" round, matching the {@code Round} data format (the project plan section 3):
  *
  * <pre>
  * Round { round_id, asset="BTC", timeframe: daily|hourly, start_ts, end_ts,
@@ -16,7 +16,7 @@ import java.util.Objects;
  * replay, {@code openPrice}/{@code closePrice} are a candle's {@code open}/{@code close} (doc
  * section 2.4); {@code resolutionSource} records which price feed produced them (e.g.
  * {@code "candle_snapshot"} for historical replay, {@code "hyperliquid_oracle"} for the live
- * oracle-publish path described in PLAN.md section 3, out of scope for this engine module).
+ * oracle-publish path described in the project plan section 3, out of scope for this engine module).
  */
 public record Round(
         String roundId,

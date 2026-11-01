@@ -9,7 +9,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Task item 4 (event schema evolution, docs/reviews/2026-09-26-independent-critique.md): the
+ * Task item 4 (event schema evolution, an internal security review): the
  * three failure/compatibility behaviors {@link EventStore#decode} adds on top of the plain
  * type-name switch — see {@link EventStoreGoldenFixturesTest} for per-type round-trip/replay
  * coverage of the switch itself.

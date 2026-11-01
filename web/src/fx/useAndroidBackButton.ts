@@ -15,7 +15,7 @@
  * reports no history at all (e.g. a cold app launch straight into a route via a saved-state
  * restore), land on the Lobby instead of exiting. The **only** place hardware Back exits the app is
  * the Lobby itself (`/`, the app's one root screen per the Lobby → Pair-room → Stats/Profile IA,
- * `docs/product/decisions.md` Р-59/Р-61) — matching the task's "only exit from the lobby".
+ * `the decision log` Р-59/Р-61) — matching the task's "only exit from the lobby".
  *
  * Before any of that, a sheet that is open takes the press (`backHandlers.ts`, Р-81: the feedback form closes on Back
  * wherever it was opened, even on the Lobby, where Back would otherwise exit the app).
