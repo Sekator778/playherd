@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
 import type { CrowdAccountDto, RatingsDto } from "../api/contract";
 import { RatingsPage } from "./RatingsPage";
@@ -36,6 +36,15 @@ function renderRatings(botRatings: (season?: string) => Promise<RatingsDto>) {
 }
 
 describe("Ratings - the tab of the API bots (Р-106)", () => {
+  // The page asks for the current month; only Date is faked, so the timers of the page and of userEvent run as usual.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-15T12:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("asks for the bots' boards only when the tab is opened, and lists both with the bot badge", async () => {
     const botRatings = vi.fn(async () => bots);
     renderRatings(botRatings);
