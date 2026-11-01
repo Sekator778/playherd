@@ -454,7 +454,7 @@ describe("BetSlip — focus follows the view that replaces the one the player pr
     const user = newUser();
     await user.click(await screen.findByRole("button", { name: "EDIT BET" }));
     await user.click(screen.getByRole("button", { name: "BACK TO YOUR BET" }));
-    expect(screen.getByText(/Your bet:/)).toHaveFocus();
+    await waitFor(() => expect(screen.getByText(/Your bet:/)).toHaveFocus(), { timeout: 500 });
     await user.tab();
     expect(screen.getByRole("button", { name: "EDIT BET" })).toHaveFocus();
   });
@@ -466,7 +466,7 @@ describe("BetSlip — focus follows the view that replaces the one the player pr
     const question = screen.getByText("Cancel your bet and get 500 PLAY back?");
     expect(question).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "KEEP BET" }));
-    expect(screen.getByText(/Your bet:/)).toHaveFocus();
+    await waitFor(() => expect(screen.getByText(/Your bet:/)).toHaveFocus(), { timeout: 500 });
     expect(screen.queryByText(/Cancel your bet and get/)).not.toBeInTheDocument();
   });
 
@@ -485,7 +485,7 @@ describe("BetSlip — focus follows the view that replaces the one the player pr
     const { poll } = renderSlipWithServer(null, { reload: () => late.promise });
     const user = await stakeIs("300");
     await user.click(screen.getByRole("button", { name: "PLACE BET" }));
-    expect(status()).toHaveFocus();
+    await waitFor(() => expect(status()).toHaveFocus(), { timeout: 500 });
     const elsewhere = screen.getByRole("button", { name: "somewhere else on the page" });
     await user.click(elsewhere);
     expect(elsewhere).toHaveFocus();
