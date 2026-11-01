@@ -1,7 +1,7 @@
 /**
- * Every market's crowd account (D-5, D-17, D-25, D-26, Т-6): "one continuous graph from day one"
+ * Every market's crowd account (D-5, D-17, D-25, D-26, T-6): "one continuous graph from day one"
  * plus the two comparison lines — "hold the asset" (`holdCapital`) and "anti-crowd"
- * (`antiCrowdCapital`), `CrowdHistoryPointDto`'s "предложение" shape, contract.ts. Resolution here
+ * (`antiCrowdCapital`), `CrowdHistoryPointDto`'s "proposal" shape, contract.ts. Resolution here
  * is one point per DAILY round (a mock simplification: the real series would also gain a point per
  * settled HOURLY round — daily is enough to draw a readable multi-month chart without generating
  * thousands of points).
@@ -106,7 +106,7 @@ function stepsUntil(spec: MockMarketSpec, asOfMs: EpochMs): DailyStep[] {
     const rng = rngFor("crowd-daily", roundId);
 
     // Momentum-flavored majority: the crowd tends to chase the previous day's move (a plausible
-    // narrative for why "anti-crowd" sometimes wins — предложение, not a modeled fact).
+    // narrative for why "anti-crowd" sometimes wins; a proposal, not a modeled fact).
     const prevClose = priceAt(spec, window.startMs - DAY_MS, "coarse");
     const momentumUp = priceAt(spec, window.startMs, "coarse") >= prevClose;
     const crowdSide: Side = chance(rng, momentumUp ? 0.64 : 0.36) ? LONG : SHORT;

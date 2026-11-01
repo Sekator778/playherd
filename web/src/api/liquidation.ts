@@ -11,12 +11,12 @@
  * `{ maxLeverage, priceDecimals }` as its last argument (default: BTC, 40 and 2 — the old
  * behaviour). A price handed to a function is the RAW price of the market (what every DTO carries,
  * `priceDecimals` fractional digits); the engine works on the LOT price instead
- * (`lotPrice = price × 10^(priceDecimals − 2)`, scale 2, Т-3), so each function converts on the way
+ * (`lotPrice = price × 10^(priceDecimals − 2)`, scale 2, T-3), so each function converts on the way
  * in, runs the unchanged 2dp formulas with the maintenance margin rate `l = 1/(2·maxLeverage)`
- * (Т-4), and a liquidation price is converted back (÷ 10^(priceDecimals − 2), formatted with
+ * (T-4), and a liquidation price is converted back (÷ 10^(priceDecimals − 2), formatted with
  * `priceDecimals` digits). A position size is in lots (one lot = 10^(priceDecimals − 2) units),
  * 8 dp like `PositionSizing.SIZE_SCALE`. Money (margin, P&L, payout) is USD at 2 dp for every
- * market — P&L and liquidation do not depend on the scale (Т-3).
+ * market — P&L and liquidation do not depend on the scale (T-3).
  *
  * BigDecimal-equivalent: `decimal.js`, cloned with `precision: 50` (comfortably more significant
  * digits than Java's `MathContext.DECIMAL128` — 34 — for every magnitude this game ever produces:
@@ -45,8 +45,8 @@ const MONEY_DP = 2;
 const LOT_PRICE_DP = 2;
 
 /**
- * The two market parameters the math depends on: `MarketDto.maxLeverage` (Т-4: `l` follows from
- * it) and `MarketDto.priceDecimals` (Т-3: `2 + lotExp`). A `MarketDto` satisfies this as is.
+ * The two market parameters the math depends on: `MarketDto.maxLeverage` (T-4: `l` follows from
+ * it) and `MarketDto.priceDecimals` (T-3: `2 + lotExp`). A `MarketDto` satisfies this as is.
  */
 export interface MarketParams {
   maxLeverage: number;

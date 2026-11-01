@@ -7,10 +7,10 @@
  * client later changes zero call sites, by design.
  *
  * Naming follows the Java classes/fields 1:1 wherever a direct counterpart exists; every type
- * below carries a comment pointing at the Java class or the product decision (Р-N,
+ * below carries a comment pointing at the Java class or the product decision (D-N,
  * `the decision log`) that fixes its shape. Shapes that exist only because the UI
  * needs them (pagination, HTTP error codes, the BTC/anti-crowd comparison series, the
- * challenge/verify sign-in flow) are marked "предложение" and cite the research file they come
+ * challenge/verify sign-in flow) are marked "proposal" and cite the research file they come
  * from, per this project's rule that non-sourced technical choices must be flagged.
  *
  * On the wire: an optional field (`name?:`) may be absent OR JSON `null` — the server writes its
@@ -18,7 +18,7 @@
  * compared as text.
  *
  * Sources: the decision log (D-1…D-57), docs/research/round_engine_design.md,
- * docs/research/week1_wallet_auth.md (§4 for the challenge/verify flow, "Реализация" section for
+ * docs/research/week1_wallet_auth.md (§4 for the challenge/verify flow, "Implementation" section for
  * the real WalletConnect/Sage wiring — D-55), docs/product/ux_walkthrough.md.
  */
 
@@ -29,7 +29,7 @@
 /**
  * Interval.java: the two round series every market has (D-19), the shorter and the longer. The
  * names are historical — the real length of a series is `MarketSeriesDto.durationSec` (3 and 15
- * minutes on the stand, 1 hour and 1 day live, Т-11), so label a series by that
+ * minutes on the stand, 1 hour and 1 day live, T-11), so label a series by that
  * (`formatDuration`), never by "Hourly"/"Daily".
  */
 export type Interval = "HOURLY" | "DAILY";
@@ -38,7 +38,7 @@ export type Interval = "HOURLY" | "DAILY";
 export type Direction = "UP" | "DOWN";
 
 /** Leverage.java: an integer in 2..40 (Leverage.MIN/MAX — D-33's slider range); a market's own cap
- *  (`MarketDto.maxLeverage`, Т-4) can be lower. */
+ *  (`MarketDto.maxLeverage`, T-4) can be lower. */
 export type Leverage = number;
 
 /**
@@ -81,10 +81,10 @@ export type MarketId = string;
 
 /** `PERP`: the USD price of an asset, whatever the venue — a Hyperliquid perpetual's mark price, the mid of a
  *  Coinbase or Hyperliquid spot market (the market's `source` says which). `ODDS`: the probability (0..1) of one
- *  outcome of a Polymarket market (Т-2). Same round mechanics for both. */
+ *  outcome of a Polymarket market (T-2). Same round mechanics for both. */
 export type MarketKind = "PERP" | "ODDS";
 
-/** Lobby panels (D-69, Т-1), in display order. */
+/** Lobby panels (D-69, T-1), in display order. */
 export type CategoryId = "crypto" | "politics" | "sports" | "stocks" | "indices" | "commodities";
 
 /**
@@ -103,7 +103,7 @@ export type PriceStr = string;
 export const STARTER_PACK_PLAY: PlayAmountStr = "10000.000";
 /** LedgerBook.MIN_STAKE (D-12) — the bet slip's minimum-stake validation. */
 export const MIN_STAKE_PLAY: PlayAmountStr = "100.000";
-/** `GameService.MIN_WITHDRAWAL` (D-53, `server/`'s own "предложение" — not in decisions.md;
+/** `GameService.MIN_WITHDRAWAL` (D-53, `server/`'s own "proposal" — not in decisions.md;
  *  verified against its source 2026-09-26) — below this, chainsvc's batch-spend fee could eat a
  *  disproportionate share of the withdrawn amount. Same number as `MIN_STAKE_PLAY` today by
  *  coincidence, not by rule — kept as its own constant since the two have no reason to always
@@ -114,7 +114,7 @@ export const MIN_WITHDRAWAL_PLAY: PlayAmountStr = "100.000";
 /** Leverage.MIN — the bet slip's leverage slider lower bound (D-33). */
 export const LEVERAGE_MIN: Leverage = 2;
 /** Leverage.MAX — the platform-wide cap. The bet slip's slider upper bound is the market's own
- *  `MarketDto.maxLeverage` (Т-4), never above this. */
+ *  `MarketDto.maxLeverage` (T-4), never above this. */
 export const LEVERAGE_MAX: Leverage = 40;
 /** RatingBook.DEFAULT_ROUNDS_THRESHOLD, fixed at 10 by D-28 (common to both series, D-30). */
 export const RATING_ROUNDS_THRESHOLD = 10;
@@ -172,7 +172,7 @@ export interface ProfileRoundEntryDto extends WithBetMode {
   stake: PlayAmountStr;
   liquidated: boolean;
   /** sign(close-open) match, independent of liquidation (D-27); null for a flat round
-   *  (close == open), excluded from the "пророки" ratio's denominator (§4.6). */
+   *  (close == open), excluded from the "prophets" ratio's denominator (§4.6). */
   directionCorrect: boolean | null;
   payout: PlayAmountStr; // 0 on liquidation (D-7)
   /** The bet's total fees (herd + network) as charged when it was placed and kept at settlement (a tie keeps them too), PLAY. Absent or null for a
@@ -273,10 +273,10 @@ export interface RoundWindowDto {
 /**
  * Round-level display phase. Not a literal field on any Java class: `GameEngine.runRound`
  * resolves a round (open → monitor → settle) in one atomic call once its whole price path is
- * known (round_engine_design.md §2, "почему одним вызовом"), so the domain model itself has no
+ * known (round_engine_design.md §2, why one call), so the domain model itself has no
  * separately observable RUNNING state. The live backend adds this phase on top, driven by wall
  * clock time against `RoundWindow`, so the UI has something to render for the whole
- * `[startMs, endMs)` duration before the resolve happens — предложение (round_engine_design.md
+ * `[startMs, endMs)` duration before the resolve happens, a proposal (round_engine_design.md
  * does not name a live/real-time API surface, only the historical-replay one).
  */
 export type RoundPhase = "BETTING" | "RUNNING" | "SETTLED" | "CANCELLED";
@@ -312,7 +312,7 @@ export interface PositionDto {
   roundId: RoundId;
   direction: Direction;
   leverage: Leverage;
-  size: string; // position size in lots, 8dp (PositionSizing.SIZE_SCALE; one lot = 10^(priceDecimals-2) units, Т-3)
+  size: string; // position size in lots, 8dp (PositionSizing.SIZE_SCALE; one lot = 10^(priceDecimals-2) units, T-3)
   entryPrice: PriceStr;
   /** Null for a fixed-payout position (`mode: "FIXED"`): it cannot be liquidated. */
   liquidationPrice: PriceStr | null;
@@ -385,7 +385,7 @@ export interface CancellationDto {
   reason: string;
   cancelledAtMs: EpochMs;
   /** Count of bets refunded, including any that would already have been liquidated (D-23:
-   *  "все ставки возвращаются, включая ликвидированные"). */
+   *  "all bets are returned, including liquidated ones"). */
   refundedBetCount: number;
 }
 
@@ -418,8 +418,8 @@ export interface RoundBetting extends RoundBase {
    *  no bet yet. */
   myBet: BetDto | null;
   /**
-   * Additive (D-62, 2026-09-26 — "Расклад толпы (UP/DOWN в %, число игроков)... видны вживую во
-   * время окна ставок, как в Twitch Predictions", **replaces D-22**'s "count only" during
+   * Additive (D-62, 2026-09-26 — "The crowd split (UP/DOWN in %, player count)... is visible live during
+   * the betting window, as in Twitch Predictions", **replaces D-22**'s "count only" during
    * BETTING): the live stake split by direction, updating throughout the betting window — the
    * arena's UP/DOWN half-widths (`docs/product/design/concepts.md` concept A) read straight from
    * these two numbers. Optional so a `RealApi` build that predates D-62 still degrades to the old
@@ -445,7 +445,7 @@ export interface RoundBetting extends RoundBase {
   majorityDirection?: Direction | null;
   majorityLeverage?: Leverage | null;
   /**
-   * Additive (D-62's "лента ставок видна вживую") — recent bets placed during this betting
+   * Additive (D-62's "bet feed visible live") — recent bets placed during this betting
    * window, newest first, capped server-side (mock: 14). Never reveals anything before it's
    * placed — this is bets that have already happened becoming visible live, not a retroactive
    * lift of D-22 on unplaced bets. Optional, same fallback reasoning as `upStake`/`downStake`
@@ -547,7 +547,7 @@ export interface RoundCancelled extends RoundBase {
 
 export type RoundDto = RoundBetting | RoundRunning | RoundSettled | RoundCancelled;
 
-/** D-19: "всегда один идущий и один открытый для ставок раунд" per series. `betting` is
+/** D-19: "always one running round and one round open for bets" per series. `betting` is
  *  expected to be `RoundBetting` — it can be `RoundCancelled` only if the operator cancelled it
  *  early (D-32), before it ever started running. */
 export interface RoundsPairDto {
@@ -749,11 +749,11 @@ export interface DepositAddressDto {
 // ---------------------------------------------------------------------------
 
 /**
- * One round's point on the crowd chart. `holdCapital`/`antiCrowdCapital` — предложение: no
+ * One round's point on the crowd chart. `holdCapital`/`antiCrowdCapital` are a proposal: no
  * `HoldAccount`/`AntiCrowdAccount` class exists in `engine/` yet, only `CrowdAccount`
  * itself. D-26 fixes that these two comparison series must exist and their starting capital
- * ($100 000, same as the crowd account) and mechanics ("тот же счёт, всегда против
- * большинства" for anti-crowd; a flat buy-and-hold of the market's asset for the hold line — it
+ * ($100 000, same as the crowd account) and mechanics ("the same account, always against
+ * the majority" for anti-crowd; a flat buy-and-hold of the market's asset for the hold line — it
  * was `btcHoldCapital` while BTC was the only market) — the per-round DTO shape
  * here is this contract's proposal for how the backend will compute and serve them, modelled
  * as a small sibling engine class per round rather than re-deriving them from candle data on
@@ -766,14 +766,14 @@ export interface CrowdHistoryPointDto {
   seasonBoundary: SeasonId | null;
   crowdCapital: UsdStr;
   /** "Just hold the asset" on the same starting capital, bought at the market's first resolved
-   *  round (D-26, per market — Т-6). */
+   *  round (D-26, per market — T-6). */
   holdCapital: UsdStr;
   antiCrowdCapital: UsdStr;
 }
 
 export interface SeasonReturnDto {
   season: SeasonId;
-  /** e.g. `0.034` = +3.4% (D-25: "рядом доходность за каждый сезон"). */
+  /** e.g. `0.034` = +3.4% (D-25: "the return for each season alongside"). */
   returnPct: number;
 }
 
@@ -840,7 +840,7 @@ export interface MarketSeriesDto {
   feeFactor?: string | null;
 }
 
-/** A market's own crowd account (D-5, D-17, Т-6) in card form — how the herd is doing here. */
+/** A market's own crowd account (D-5, D-17, T-6) in card form — how the herd is doing here. */
 export interface MarketCrowdBriefDto {
   capital: UsdStr;
   /** `capital / 100000 - 1`. */
@@ -867,7 +867,7 @@ export interface MarketDto {
   subtitle: string | null;
   /** Source image when there is one (`ODDS`); null → draw a glyph from `symbol`. */
   iconUrl: string | null;
-  /** Upper bound of the leverage slider for this market (Т-4), 2..40. */
+  /** Upper bound of the leverage slider for this market (T-4), 2..40. */
   maxLeverage: Leverage;
   priceDecimals: number;
   status: "ACTIVE" | "CLOSED";
@@ -987,7 +987,7 @@ export interface MyPositionDto extends WithBetMode {
   untilMs: EpochMs;
 }
 
-/** All markets' crowd accounts side by side (Т-6). */
+/** All markets' crowd accounts side by side (T-6). */
 export interface CrowdOverviewDto {
   totalCapital: UsdStr;
   totalStartingCapital: UsdStr;
@@ -1011,7 +1011,7 @@ export interface CrowdOverviewDto {
 // Ratings (RatingBook.java — D-9, D-18, D-28, D-30)
 // ---------------------------------------------------------------------------
 
-/** RatingBook.RichEntry — "богачи". `growth` is signed (can be negative). */
+/** RatingBook.RichEntry — "the rich". `growth` is signed (can be negative). */
 export interface RichEntryDto {
   rank: number;
   player: PlayerSummaryDto;
@@ -1019,7 +1019,7 @@ export interface RichEntryDto {
   roundsPlayed: number;
 }
 
-/** RatingBook.ProphetEntry — "пророки". */
+/** RatingBook.ProphetEntry — "prophets". */
 export interface ProphetEntryDto {
   rank: number;
   player: PlayerSummaryDto;
@@ -1048,7 +1048,7 @@ export interface WeeklyRatingsDto {
 
 // ---------------------------------------------------------------------------
 // Home aggregate (D-34's fixed layout: open round + bet slip, then the crowd chart, then top
-// ratings — предложение: one call to avoid three round-trips for a screen whose composition is
+// ratings, proposal: one call to avoid three round-trips for a screen whose composition is
 // itself a product decision, not something the UI assembles freely). Describes BTC only: the
 // markets have `markets()`, `rounds(interval, marketId)` and `crowdAccount(marketId)`.
 // ---------------------------------------------------------------------------
@@ -1099,7 +1099,7 @@ export interface SupplyDto {
 
 export interface ServerInfoDto {
   mode: "live" | "replay";
-  /** Where prices come from (Т-12): `live` — the sources' real current prices; `synthetic` — a
+  /** Where prices come from (T-12): `live` — the sources' real current prices; `synthetic` — a
    *  deterministic random walk (CI, offline); `replay` — accelerated history (`mode: "replay"`). */
   priceSource?: "live" | "synthetic" | "replay";
   /** Active markets. */
@@ -1189,7 +1189,7 @@ export interface FeedbackReceiptDto {
 }
 
 // ---------------------------------------------------------------------------
-// Pagination (предложение — no source fixes a page size/cursor shape; kept generic and small)
+// Pagination (proposal: no source fixes a page size/cursor shape; kept generic and small)
 // ---------------------------------------------------------------------------
 
 export interface PageParams {
@@ -1209,14 +1209,14 @@ export interface Page<T> {
 
 /**
  * Codes the UI branches on to show a friendly message instead of a raw backend/Sage error
- * (docs/product/ux_walkthrough.md, вопрос 8). Each is sourced:
+ * (docs/product/ux_walkthrough.md, question 8). Each is sourced:
  * - STAKE_BELOW_MINIMUM / INSUFFICIENT_BALANCE / WITHDRAWAL_EXCEEDS_BALANCE: `LedgerBook`
  *   throws `IllegalArgumentException` for exactly these cases (`reserveStake`,
  *   `requestWithdrawal`).
  * - INVALID_LEVERAGE: the `Leverage` record's compact constructor.
  * - ROUND_NOT_OPEN_FOR_BETTING: `GameEngine.placeBet`/`cancelBet` take a `RoundWindow` but do
  *   not themselves check wall-clock time against it (round_engine_design.md §2) — rejecting a
- *   late bet is the Quarkus service's job (D-8); предложение for how that surfaces to the
+ *   late bet is the Quarkus service's job (D-8); a proposal for how that surfaces to the
  *   client.
  * - NOT_SIGNED_IN / CHALLENGE_EXPIRED_OR_UNKNOWN / SIGNATURE_INVALID: sign-in flow
  *   (week1_wallet_auth.md §4, steps a/d).
@@ -1354,7 +1354,7 @@ export interface Api {
    *  cache it for the session instead of re-fetching on every render. */
   myDepositAddress(): Promise<DepositAddressDto>;
 
-  // --- crowd account (D-5, D-14, D-17, D-25, D-26; one per market, Т-6) ---
+  // --- crowd account (D-5, D-14, D-17, D-25, D-26; one per market, T-6) ---
   /** `marketId` omitted → the BTC pair: the open market whose symbol is BTC (see {@link LiquidationPreviewRequest.marketId}). */
   crowdAccount(marketId?: MarketId): Promise<CrowdAccountDto>;
   crowdOverview(): Promise<CrowdOverviewDto>;

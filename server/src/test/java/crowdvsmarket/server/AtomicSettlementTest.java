@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Settlement and cancellation are atomic where the journal is concerned (docs/research/markets_architecture.md §4 п.3): ONE
+ * Settlement and cancellation are atomic where the journal is concerned (docs/research/markets_architecture.md §4 item 3): ONE
  * transaction appends the event and applies it to the engine inside it; a cancellation writes its result row in that
  * transaction too. A failure at any point after the event was appended — injected here by making the applier, resp. the
  * cancelled-result insert, throw — rolls everything back and rebuilds the in-memory engine from the log, so afterwards

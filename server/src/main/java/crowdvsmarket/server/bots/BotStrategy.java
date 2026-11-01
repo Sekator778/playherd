@@ -7,11 +7,11 @@ import java.util.Optional;
 import java.util.Random;
 
 /**
- * D-46's "20 ботов с разными стратегиями" — five strategies, 4 bots each
+ * D-46's "20 bots with different strategies" — five strategies, 4 bots each
  * ({@code BotService#ensureBotsExist}). All bots obey the same rules as any player (minimum
  * stake, one bet per round per market, leverage 2..the market's cap); only how they pick
  * direction/leverage/stake differs.
- * Предложение: the exact five named here and their parameters are this server's own choice — the
+ * Proposal: the exact five named here and their parameters are this server's own choice — the
  * decision only names the five kinds by description, not exact numbers.
  */
 public enum BotStrategy {
@@ -51,7 +51,7 @@ public enum BotStrategy {
     }
 
     /** Leverage within {@code [Leverage.MIN, maxLeverage]} — the highest leverage allowed for the bot's stake on its market
-     *  in its round length (the cap lowered by the stake tier, {@code EconomyRules#maxLeverage}; Т-4, Т-8, D-92): "always
+     *  in its round length (the cap lowered by the stake tier, {@code EconomyRules#maxLeverage}; T-4, T-8, D-92): "always
      *  maximum" bets that maximum itself, the cautious bot stays within 2..5 (or the maximum if lower). */
     public int chooseLeverage(Random random, int maxLeverage) {
         int cap = Math.max(Leverage.MIN, Math.min(Leverage.MAX, maxLeverage));

@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Closing a market refunds EVERY window of it that holds a bet — as a rebuild does — not only the running window and
- * the one open for betting (review of the core, finding 8; docs/research/markets_architecture.md §4 п.15). In a game
+ * the one open for betting (review of the core, finding 8; docs/research/markets_architecture.md §4 item 15). In a game
  * that runs forward the bets are in those two, but a stake must not depend on that: a bet left in a window the cursor
  * does not point at is debited, never settled, never refunded, and not even counted as "in play". The review met it
  * in a test whose series cursor had been seeded hours ahead and re-seeded at "now" by a rebuild, leaving the bet far

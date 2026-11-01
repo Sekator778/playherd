@@ -27,7 +27,7 @@
 //! ANNOUNCEMENT` the way the oracle is -- reconstructing "every requestId
 //! this treasury coin's lineage has ever paid out" from raw CAT spends alone
 //! (no `seq`-shaped announcement to decode) is materially harder and is left
-//! as an **открытый вопрос** (see `docs/research/chain_service.md` §13);
+//! as an **open question** (see `docs/research/chain_service.md` §13);
 //! this publisher's own durable queue file is its only source of truth for
 //! `requestId` state, same as it was for the oracle queue before §11's fix
 //! (a real, understood risk, not an oversight).
@@ -104,7 +104,7 @@ fn is_fee_rejection(error: Option<&str>) -> bool {
     error.is_some_and(|msg| msg.to_ascii_uppercase().contains("FEE"))
 }
 
-/// **предложение**: `sha256` of the aggregated signature's bytes, same
+/// **proposal**: `sha256` of the aggregated signature's bytes, same
 /// construction and same caveat as `oracle::publisher::bundle_display_id`
 /// (not Chia's canonical `SpendBundle::name()`, which is what
 /// `ChainClient::in_mempool` uses instead wherever the real mempool needs to

@@ -82,7 +82,7 @@ public record PricesConfig(
     public static final Set<String> VENUES = Set.of("hyperliquid", "coinbase", "kraken", "polymarket");
 
     /** {@code herd.prices.source}: {@code live} reads Hyperliquid, Coinbase, Kraken and Polymarket,
-     *  {@code synthetic} is the offline walk for CI, e2e and work without a network (Т-12). */
+     *  {@code synthetic} is the offline walk for CI, e2e and work without a network (T-12). */
     public enum SourceKind {
         LIVE, SYNTHETIC;
 
@@ -269,7 +269,7 @@ public record PricesConfig(
     /** Connect 3 s, read 5 s: {@code resolve} blocks on these (markets_architecture.md §3.2). */
     public static final String DEFAULT_CONNECT_TIMEOUT_MS = "3000";
     public static final String DEFAULT_READ_TIMEOUT_MS = "5000";
-    /** Ten minutes: a flat line across a longer outage is more than a quiet asset (предложение, same as Polymarket's bucket carry). */
+    /** Ten minutes: a flat line across a longer outage is more than a quiet asset (proposal, same as Polymarket's bucket carry). */
     public static final String DEFAULT_QUIET_CARRY_MAX_MS = "600000";
     /** 1200 a minute − 600 polling − 40 catalog = 560 spare; seeds may take 260 of it, so the first minute stays near 900 (see {@link HistorySeeder}). */
     public static final String DEFAULT_HYPERLIQUID_SEED_BUDGET = "260";
@@ -288,7 +288,7 @@ public record PricesConfig(
     public static final String DEFAULT_HYPERLIQUID_MAX_HEAL_MS = "1800000";
     /**
      * Two minutes — Alex's choice of 2026-10-03 among the ways to end the stall of a series behind a round whose exchange went
-     * silent (the decision log, open question 8, variant б; recorded as D-77): long enough for the first retries and
+     * silent (the decision log, open question 8, variant b; recorded as D-77): long enough for the first retries and
      * one backfill of the candles (a minute apart, {@link #DEFAULT_BACKFILL_COOLDOWN_MS}) to heal a short gap, short enough that
      * a series does not stand for the hour that D-23 gives a round without a price.
      */

@@ -51,7 +51,7 @@ class RoundClockTest {
         assertThat(hourly.roundId()).isEqualTo(RoundClock.windowContaining(Interval.HOURLY, 0L).roundId());
     }
 
-    // --- предложение additive overloads (RoundDurations/originMs), D-46 test-mode durations ---
+    // --- proposal additive overloads (RoundDurations/originMs), D-46 test-mode durations ---
 
     @Test
     void configurableDurationsDefaultToTheOriginalFixedOnes() {

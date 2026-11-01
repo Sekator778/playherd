@@ -5,7 +5,7 @@ import { useT } from "../i18n";
 import { playAssetIdOf, RECOMMENDED_DEPOSIT_FEE } from "./playAsset";
 import "./SageHints.css";
 
-/** The two things that trip a first Sage sign-in (`docs/research/sage_real_e2e.md` «Трение» п. 1, 3). */
+/** The two things that trip a first Sage sign-in (`docs/research/sage_real_e2e.md` "Friction" section, items 1 and 3). */
 export function SageSignInTips() {
   const t = useT();
   return (
@@ -22,7 +22,7 @@ export function SageSignInTips() {
 
 /**
  * "Using Sage? Four things to know" on the Wallet screen — the friction a real player met connecting a real
- * Sage (`docs/research/sage_real_e2e.md` «Трение»): the wrong default network, PLAY shown as "Unknown CAT"
+ * Sage (`docs/research/sage_real_e2e.md` "Friction" section): the wrong default network, PLAY shown as "Unknown CAT"
  * (so its asset id, with a copy button), the fee a deposit needs on a busy testnet11, and the fact that every
  * sign-in is a new WalletConnect pairing.
  */

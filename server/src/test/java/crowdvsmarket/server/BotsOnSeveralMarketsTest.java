@@ -24,7 +24,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
- * Т-8 in the running application (docs/research/markets_architecture.md §2): through the real scheduler
+ * T-8 in the running application (docs/research/markets_architecture.md §2): through the real scheduler
  * pass, the real {@code BotService} and the real {@code GameService.placeBet}, every bot bets on
  * {@code herd.bots.markets-per-round} (3) distinct active markets in a round of a series, within each
  * market's leverage cap, and never on a market without a fresh price. (The planning itself is

@@ -171,7 +171,7 @@ ensure_env_file() {
 }
 
 lan_ip() {
-  ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "<не найден — проверьте Wi-Fi/Ethernet>"
+  ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "<not found, check Wi-Fi/Ethernet>"
 }
 
 wait_healthy() {
@@ -326,7 +326,7 @@ print_urls() {
   echo
   log "stand is up. Open in a browser:"
   echo "  Local:  http://localhost:${port}"
-  echo "  LAN:    http://$(lan_ip):${port}   (телефон/другой Mac в той же Wi-Fi)"
+  echo "  LAN:    http://$(lan_ip):${port}   (a phone or another Mac on the same Wi-Fi)"
   echo
 }
 

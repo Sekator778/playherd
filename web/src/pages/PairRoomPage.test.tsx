@@ -195,7 +195,7 @@ describe("Room — a sports game's kick-off, the odds' 24 h change", () => {
   });
 });
 
-describe("Room — leverage is capped at the market's own maximum (Т-4)", () => {
+describe("Room — leverage is capped at the market's own maximum (T-4)", () => {
   it.each([
     ["BTC", "40"],
     ["ETH", "25"],

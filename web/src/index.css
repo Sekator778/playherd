@@ -1,6 +1,6 @@
 /* Herd — global styles.
    Style direction: D-33 ("game", like Twitch Predictions) — dark background, big bright
-   UP/DOWN buttons, visible countdown, minimal jargon. Fixed dark theme only (предложение — no
+   UP/DOWN buttons, visible countdown, minimal jargon. Fixed dark theme only (proposal: no
    source asks for a light mode, and a betting-odds "game" screen reads better with one
    deliberate theme than a toggle); colors below are chosen for WCAG AA contrast against the
    dark background (checked by eye against the AA thresholds: ≥4.5:1 for body text, ≥3:1 for
@@ -56,7 +56,7 @@
 
   /* Device safe areas (status bar / notch / home indicator): 0 in a normal browser tab, real
      insets in "Add to Home Screen" mode with `viewport-fit=cover` (`index.html`) — there the page is
-     drawn under the status bar and the header used to sit under it (HANDOFF §6 п.10). Everything
+     drawn under the status bar and the header used to sit under it (HANDOFF §6 item 10). Everything
      fixed or sticky pads itself by these instead of assuming a rectangular screen. */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
@@ -75,8 +75,8 @@
 
 /* Game-feel tokens (docs/product/design/direction.md §1) — additive layer on top of the tokens
    above; nothing above is removed or replaced. Hex values are pre-computed WCAG relative-
-   luminance contrast ratios, not eyeballed — see direction.md §1's table and the "Правило
-   применения loss/liq-текста" note right after it before using `--loss-neon`/`--liq-magenta` as
+   luminance contrast ratios, not eyeballed — see direction.md §1's table and the "Rule for
+   applying loss/liq text" note right after it before using `--loss-neon`/`--liq-magenta` as
    small/regular-weight text on `--bg-elevated-2`. */
 :root {
   --win-neon: #3cff8a;
@@ -1827,7 +1827,7 @@ ol {
 }
 /* Countdown escalation, last 10s/3s (live-round.md §4) — a real, existing timer (bet close /
    round resolve) reading more urgently as it actually runs out; not a fabricated pressure timer
-   (game-designer.md's "Честность" redline is about invented urgency, not an honest one). */
+   (game-designer.md's "Honesty" redline is about invented urgency, not an honest one). */
 /* Inside a list of cards that all count down together: the number only, same size as its line. */
 .countdown--calm {
   font-size: inherit;
@@ -2072,7 +2072,7 @@ footer.app-footer .footer-link {
   font-weight: 800;
 }
 /* Flame zone (x34-40, live-round.md §1's table) — subtle pulse near max leverage, exactly what
-   Alex asked for ("плечо должно нагреваться... чтобы была динамика"). */
+   Alex asked for ("the leverage should heat up... so that there is momentum"). */
 .leverage-dial--flame input[type="range"] {
   animation: leverage-flame-pulse 500ms ease-in-out infinite;
 }

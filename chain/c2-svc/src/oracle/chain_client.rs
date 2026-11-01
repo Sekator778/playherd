@@ -6,8 +6,8 @@
 //! lookup, balance) plus `chia_sdk_coinset::CoinsetClient` directly (coin
 //! records, `push_tx`, `get_fee_estimate`).
 //!
-//! `get_fee_estimate`'s request/response shape is **не из `chia-sdk-coinset`
-//! (крейт версии 0.36.0 его не оборачивает)** -- verified directly against
+//! `get_fee_estimate`'s request/response shape is **not from `chia-sdk-coinset`
+//! (crate version 0.36.0 does not wrap it)** -- verified directly against
 //! the real testnet11 endpoint today, see `docs/research/chain_service.md`
 //! §4 for the exact `curl` output this struct matches.
 

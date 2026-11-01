@@ -7,7 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 
 /**
- * The memory behind an idempotent {@code placeBet} (architecture plan, lmax_roadmap step 1: "{@code clientRequestId} в ставке"):
+ * The memory behind an idempotent {@code placeBet} (architecture plan, lmax_roadmap step 1: "{@code clientRequestId} in a bet"):
  * the bets that arrived with a client-chosen request id, per player and id, for {@value #WINDOW_MS} ms. A repeat of the same request
  * (the client retried after an error on the way back) finds its entry and is answered with the first answer instead of placing
  * another bet.

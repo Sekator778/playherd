@@ -2,7 +2,7 @@
 # Cargo (chain/), npm (web/). Mirrors the CI gates in .github/workflows/ci.yml so a green
 # `make check` locally means the same checks CI runs. `make` or `make help` lists the targets.
 #
-# Local defaults follow the project notes «Сборка»: Java 21 from SDKMAN and the open-source Maven
+# Local defaults follow the project notes ("Build"): Java 21 from SDKMAN and the open-source Maven
 # settings profile. Both are overridable (`make test-java JDK21=… MVN_SETTINGS=`), and both
 # fall back to the plain toolchain when the path does not exist (CI runners, other machines).
 
@@ -11,7 +11,7 @@ SHELL := bash
 .DEFAULT_GOAL := help
 
 # JAVA_HOME is set explicitly for Maven only: the shell's own JAVA_HOME here is SDKMAN's default
-# Java 8, which must stay as is (the project notes «Сборка»).
+# Java 8, which must stay as is (the project notes ("Build")).
 JDK21 ?= $(HOME)/.sdkman/candidates/java/21.0.11-oracle
 MVN_JAVA := $(if $(wildcard $(JDK21)),JAVA_HOME=$(JDK21),)
 

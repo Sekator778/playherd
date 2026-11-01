@@ -2,15 +2,15 @@
  * The demo's simulated clock, the mock's round-window math, and the ONE place a round id is built
  * or taken apart.
  *
- * `the decision log` D-35: "фронт разрабатывается параллельно с бэкендом, сначала на
- * тестовых данных". Round windows here mirror `RoundClock`/`RoundWindow`
+ * `the decision log` D-35: "the frontend is built in parallel with the backend, first on
+ * test data". Round windows here mirror `RoundClock`/`RoundWindow`
  * (`engine/src/main/java/crowdvsmarket/engine/round/`) — UTC-aligned, no calendar/DST
  * (`round_engine_design.md` §4.3) — hourly rounds on the hour, daily rounds at 00:00 UTC.
  *
  * The clock does not read `Date.now()` directly: it starts at a fixed anchor
  * ({@link SIM_BASE_MS}, "today" per the task) and advances {@link SIM_SPEED}× faster than real
  * time, so a hovering demo session actually sees a round go BETTING → RUNNING → SETTLED instead
- * of waiting up to an hour — предложение, no source fixes a demo playback speed.
+ * of waiting up to an hour, a proposal, no source fixes a demo playback speed.
  *
  * What lives elsewhere: the mock's price paths are `mockPrices.ts`, its market catalog
  * `mockMarkets.ts`. Real code never needs the window math below: a round's window comes from the
@@ -47,7 +47,7 @@ export function simNowMs(): EpochMs {
 
 /**
  * The mock server's round lengths, reported to clients through `MarketSeriesDto.durationSec`
- * (the real server's are config: 180/900 s on the stand, 1 h/1 d live, Т-11). Only the `mock*`
+ * (the real server's are config: 180/900 s on the stand, 1 h/1 d live, T-11). Only the `mock*`
  * modules read this — UI code takes durations from the DTOs, never from constants.
  */
 export const MOCK_SERIES_MS: Readonly<Record<Interval, number>> = { HOURLY: HOUR_MS, DAILY: DAY_MS };

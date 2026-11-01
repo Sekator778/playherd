@@ -1,6 +1,6 @@
 /**
- * Minimal pub/sub (`implementation-plan.md` §2: "без Redux/Zustand — масштаб задачи этого не
- * требует") between `useSettlementWatcher` (publisher, runs regardless of the mounted page) and
+ * Minimal pub/sub (`implementation-plan.md` §2: "no Redux/Zustand, the scale of the task does not
+ * require it") between `useSettlementWatcher` (publisher, runs regardless of the mounted page) and
  * `ResultMomentHost` (the one subscriber, mounted once in `Layout.tsx`).
  */
 import type { ResultEvent } from "./resultEvent";

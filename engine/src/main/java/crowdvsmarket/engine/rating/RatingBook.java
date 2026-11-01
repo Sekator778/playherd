@@ -20,14 +20,14 @@ import java.util.Optional;
  */
 public final class RatingBook {
 
-    /** Предложение — D-9/D-18 fix that a threshold N exists, not its value. */
+    /** Proposal — D-9/D-18 fix that a threshold N exists, not its value. */
     public static final int DEFAULT_ROUNDS_THRESHOLD = 10;
 
-    /** "богачи": {@code growth} is D-18's exact season-growth formula. */
+    /** Rich list: {@code growth} is D-18's exact season-growth formula. */
     public record RichEntry(String playerId, String displayName, PlayAmount growth, int roundsPlayed) {
     }
 
-    /** "пророки": {@code accuracy} = correct / eligible direction calls this season. */
+    /** Prophets: {@code accuracy} = correct / eligible direction calls this season. */
     public record ProphetEntry(String playerId, String displayName, BigDecimal accuracy, int eligibleRounds, int roundsPlayed) {
     }
 
@@ -44,7 +44,7 @@ public final class RatingBook {
     }
 
     /**
-     * "богачи" (D-18): {@code growth = (balance_at_season_end + withdrawn_in_season -
+     * Rich list (D-18): {@code growth = (balance_at_season_end + withdrawn_in_season -
      * deposited_in_season) - (balance_at_season_baseline + starter_pack)}, sorted descending.
      * Players below the D-9 rounds-played threshold are excluded.
      *
@@ -67,7 +67,7 @@ public final class RatingBook {
     }
 
     /**
-     * The player's row of the "богачи" list of {@code season}, empty when the player has no record of the season or has played fewer
+     * The player's row of the rich list of {@code season}, empty when the player has no record of the season or has played fewer
      * rounds than the threshold. The one place the row is computed: the list above and the read views both ask it. A retired
      * player is not asked about (the caller leaves them out).
      */
@@ -83,8 +83,8 @@ public final class RatingBook {
     }
 
     /**
-     * "пророки" (D-18): share of rounds where the player's chosen direction matched
-     * {@code sign(close - open)}, regardless of liquidation (предложение — D-18 leaves the exact
+     * Prophets (D-18): share of rounds where the player's chosen direction matched
+     * {@code sign(close - open)}, regardless of liquidation (proposal — D-18 leaves the exact
      * rule open, see the design doc). Flat rounds (close == open) are excluded from both the
      * numerator and the denominator; a player whose every played round was flat has no defined
      * ratio and is excluded even past the rounds-played threshold.
@@ -101,7 +101,7 @@ public final class RatingBook {
         return entries;
     }
 
-    /** The player's row of the "пророки" list of {@code season}; see {@link #richEntry}. */
+    /** The player's row of the prophets list of {@code season}; see {@link #richEntry}. */
     public static Optional<ProphetEntry> prophetEntry(PlayerAccount account, Season season, int roundsThreshold, String displayName) {
         SeasonRecord sr = account.seasons().get(season);
         if (sr == null || sr.roundsPlayed() < roundsThreshold || sr.directionEligibleRounds() == 0) {

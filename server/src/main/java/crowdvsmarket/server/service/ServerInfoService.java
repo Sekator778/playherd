@@ -88,7 +88,7 @@ public class ServerInfoService {
                 playAssetId(), config.testWalletEnabled(), rebuildService.isReady());
     }
 
-    /** Т-12: {@code "replay"} in {@code mode=replay} (accelerated history), otherwise {@code herd.prices.source}. */
+    /** T-12: {@code "replay"} in {@code mode=replay} (accelerated history), otherwise {@code herd.prices.source}. */
     String priceSource() {
         return config.mode() == GameMode.REPLAY ? "replay" : prices.source().name().toLowerCase(Locale.ROOT);
     }
@@ -146,7 +146,7 @@ public class ServerInfoService {
         return null;
     }
 
-    /** Предложение: tiny lazy cache so {@code serverInfo()} does not re-parse the 5 129-row CSV on
+    /** Proposal: tiny lazy cache so {@code serverInfo()} does not re-parse the 5 129-row CSV on
      *  every call — {@code PriceService} already loads (and owns) the authoritative copy used for
      *  actual round pricing; this is only for the two ISO timestamps shown in {@code serverInfo}. */
     private static final class CandleLoaderCache {

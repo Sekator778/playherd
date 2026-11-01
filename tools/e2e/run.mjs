@@ -11,8 +11,8 @@
 // What it does (task item 3, verbatim, checks updated 2026-09-26 for D-62): 4 simulated players,
 // each with its own real key signing like the browser test wallet; sign in via the RPC; set
 // nicknames; place bets in the open betting window (mixed directions/leverages incl. one 40x);
-// verify the crowd split and bet feed are visible live during betting (D-62, "показывать всё
-// вживую" — replaces D-22's "sides hidden before start") and that positions are visible once the
+// verify the crowd split and bet feed are visible live during betting (D-62, show everything
+// live, replaces D-22's "sides hidden before start") and that positions are visible once the
 // round starts running; wait through one full HOURLY (3-min) round to settlement; check balances
 // vs engine rules; fetch /api/rounds/{id}/results.json and check sha256 == resultsHash; check that
 // chainsvc queued/published the boundary record(s) to testnet11.
@@ -130,8 +130,8 @@ async function main() {
   }
 
   // --- 5. live crowd split + bet feed during betting (D-62, 2026-09-26 — REPLACES D-22's
-  //     "sides hidden before start"): Alex saw the three prototypes and picked "показывать всё
-  //     вживую" (crowd split and bet feed visible live during the betting window, like Twitch
+  //     "sides hidden before start"): Alex saw the three prototypes and picked "show everything
+  //     live" (crowd split and bet feed visible live during the betting window, like Twitch
   //     Predictions), superseding D-22's "no positions/crowd fields until the round starts". The
   //     BETTING-phase DTO now DELIBERATELY carries the live aggregate (upStake/downStake/
   //     upCount/downCount/majorityDirection/majorityLeverage) and a capped, newest-first bet feed

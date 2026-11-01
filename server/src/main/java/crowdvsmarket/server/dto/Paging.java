@@ -2,7 +2,7 @@ package crowdvsmarket.server.dto;
 
 import java.util.List;
 
-/** contract.ts §"Pagination" (предложение — no source fixes a page size/cursor shape). */
+/** contract.ts §"Pagination" (proposal — no source fixes a page size/cursor shape). */
 public final class Paging {
     private Paging() {
     }

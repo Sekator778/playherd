@@ -170,7 +170,7 @@ describe("keyboard/pointer smoke test via userEvent (no fake timers)", () => {
   });
 });
 
-describe("Sage friction hints (docs/research/sage_real_e2e.md «Трение»)", () => {
+describe("Sage friction hints (docs/research/sage_real_e2e.md, Friction section)", () => {
   it("four things to know, on the Wallet screen where the friction happens", async () => {
     renderWallet();
     const card = (await screen.findByRole("heading", { name: "Using Sage? Four things to know" })).closest(".card") as HTMLElement;

@@ -14,7 +14,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Event compatibility for venues (D-76, Т-13): {@code RoundResolved} has one more optional trailing field, {@code venue},
+ * Event compatibility for venues (D-76, T-13): {@code RoundResolved} has one more optional trailing field, {@code venue},
  * the exchange a round of a market with a backup exchange ran on and was settled from.
  * <ul>
  *   <li>the fixtures committed before venues ({@code events/golden}, {@code events/golden-markets}) have no

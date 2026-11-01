@@ -156,12 +156,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * ({@code RoundWindow.parseRoundId}) and every path below works for any market; BTC is the default
  * wherever an argument is optional. Prices leave the server as the market's RAW price strings
  * ({@link Market#rawString}); the engine, {@code round_results} and the oracle record keep ENGINE
- * (lot) prices (Т-3). {@code mode=replay} plays BTC only, from {@link PriceService}; {@code
+ * (lot) prices (T-3). {@code mode=replay} plays BTC only, from {@link PriceService}; {@code
  * mode=live} plays every active market, from {@link MarketPrices}. This service is also the
  * registry's {@link MarketListener}: a listed market gets its engines and series, a closed one has
  * its open rounds cancelled with a refund.
  *
- * <p><b>Settlement is atomic (§4 п.3):</b> {@link #resolveRound} fetches prices BEFORE taking the
+ * <p><b>Settlement is atomic (§4 item 3):</b> {@link #resolveRound} fetches prices BEFORE taking the
  * lock (the source may be asked over the network), then, on the core writer, runs ONE database
  * transaction — the {@code RoundResolved} event, the result and history rows, the oracle record —
  * and applies the event to the engine inside it. If anything throws, the transaction rolls back and — when
@@ -426,7 +426,7 @@ public class GameService implements MarketListener {
     @Inject
     crowdvsmarket.server.persistence.RegistrationIpRepository registrationIps;
 
-    /** Everything that was ever issued: 100 000 000 PLAY (docs/product/economy_implementation_plan.md, "Факт для всех этапов"). */
+    /** Everything that was ever issued: 100 000 000 PLAY (docs/product/economy_implementation_plan.md, "Fact for all stages"). */
     static final PlayAmount ISSUED = PlayAmount.ofWholePlay(100_000_000);
     /** The circuit breaker's last reported state, to say a change once (plan B6). */
     private volatile boolean breakerWasOpen;
@@ -435,11 +435,11 @@ public class GameService implements MarketListener {
     private static final Logger LOG = Logger.getLogger(GameService.class);
     /** A round that cannot be opened (the database down, say) is said once a minute, not every tick. */
     private final crowdvsmarket.server.util.LogThrottle venueLog = new crowdvsmarket.server.util.LogThrottle(60_000L);
-    /** D-53: минимум для настоящего on-chain вывода (предложение — не зафиксировано в
-     *  the decision log; та же цифра, что {@code LedgerBook.MIN_STAKE}, но отдельная по
-     *  смыслу константа: одно — минимальная ставка, другое — минимальный вывод, у них нет причины
-     *  всегда совпадать, просто сегодня совпадают). Ниже {@code MIN_WITHDRAWAL} чейновая комиссия
-     *  батч-спенда чейнсвика могла бы съесть непропорционально большую долю выведенной суммы. */
+    /** D-53: the minimum for a real on-chain withdrawal (proposal, not fixed in
+     *  the decision log; the same number as {@code LedgerBook.MIN_STAKE}, but a separate constant
+     *  by meaning: one is the minimum stake, the other the minimum withdrawal, and they have no reason
+     *  to always match, they just match today). Below {@code MIN_WITHDRAWAL} the chain fee of
+     *  chainsvc's batch spend could eat a disproportionately large share of the withdrawn amount. */
     private static final PlayAmount MIN_WITHDRAWAL = PlayAmount.ofWholePlay(100);
 
     /** See the class javadoc's "Locking" section. */
@@ -835,7 +835,7 @@ public class GameService implements MarketListener {
 
     /** Called at the end of every successful {@code authVerify} — both a brand-new player
      *  (D-1/D-4: identity key = the address signed with at registration) and a returning one
-     *  (D-1: "later логины must sign with the same address").
+     *  (D-1: "later logins must sign with the same address").
      *
      * <p><b>Task item 1 fix (live-verification finding, D-53 follow-up, 2026-09-26):</b> this used
      * to unconditionally append a fresh {@code PlayerRegistered} event on EVERY sign-in, by design
@@ -1293,7 +1293,7 @@ public class GameService implements MarketListener {
 
     /** Whether the market's rounds are played on this server at all: every market in {@code
      *  mode=live}, only BTC in {@code mode=replay}, whatever the registry holds — the replay series
-     *  is BTC's (§3.2 п.7, Т-12). */
+     *  is BTC's (§3.2 item 7, T-12). */
     public boolean runs(Market market) {
         return config.mode() == GameMode.LIVE || Market.BTC_ID.equals(market.id());
     }
@@ -1366,7 +1366,7 @@ public class GameService implements MarketListener {
     }
 
     /** Gives {@code market} its engines and, when its rounds are played, a series per interval
-     *  seeded at the window containing "now" (§4 п.2) — never at the calendar's first window, which
+     *  seeded at the window containing "now" (§4 item 2) — never at the calendar's first window, which
      *  would make the scheduler walk every window since the origin, and never behind a window that
      *  still holds a bet ({@link SeriesSeeder}). Idempotent: a series that already has a cursor keeps
      *  it. Called for a newly listed market, and by the scheduler (with its own clock, {@code nowMs})
@@ -1440,7 +1440,7 @@ public class GameService implements MarketListener {
     }
 
     /**
-     * The catch-up rule of docs/research/markets_architecture.md §4 п.5, for the scheduler: the first
+     * The catch-up rule of docs/research/markets_architecture.md §4 item 5, for the scheduler: the first
      * window at or after {@code from} that must still be resolved or cancelled. A window with bets
      * always is. An EMPTY window that is overdue by more than one step (its betting round is over too)
      * is not worth resolving — no event, no result, no oracle record — so the walk goes on to the next
@@ -1507,7 +1507,7 @@ public class GameService implements MarketListener {
                 if (!bettingWindow.roundId().equals(ref.roundId()) || nowMs >= bettingWindow.startMs()) {
                     throw ApiException.roundNotOpenForBetting(req.roundId());
                 }
-                // §4 п.6: a round that is already closed (the engine's marker) was cancelled by the operator before it
+                // §4 item 6: a round that is already closed (the engine's marker) was cancelled by the operator before it
                 // started — the cancellation refunded and cleared its bets, so a bet accepted now would
                 // sit in the bet book with its stake debited and never be settled or refunded.
                 t = JfrClock.nanos(rec);
@@ -1668,7 +1668,7 @@ public class GameService implements MarketListener {
                 Enums.BetMode.wire(mode));
     }
 
-    /** D-13: cancels the player's bet on a round open for betting and refunds it; no bet — nothing persisted (§4 п.18). */
+    /** D-13: cancels the player's bet on a round open for betting and refunds it; no bet — nothing persisted (§4 item 18). */
     public void cancelBet(String playerId, String roundId, long nowMs) {
         RoundWindow.RoundRef ref = parseRoundId(roundId);
         marketRegistry.require(ref.market());
@@ -1697,7 +1697,7 @@ public class GameService implements MarketListener {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * Resolves {@code window} (of any market) now: two phases, §4 п.3.
+     * Resolves {@code window} (of any market) now: two phases, §4 item 3.
      * <ol>
      *   <li>Without any lock, asks the price source for the window's open, close and path — in
      *       {@code mode=live} that may go to the network, so it must never run under the engine
@@ -1711,14 +1711,14 @@ public class GameService implements MarketListener {
      *       applies the {@code RoundResolved} event to the engine, moves the close to the boundary prices and the series'
      *       cursor on (so the next round takes bets at once, behind this event in the journal). The event is written in
      *       the transaction of the batch the command is in, and the call returns after that commit. A batch that does not
-     *       commit rebuilds the in-memory state from the event log (§4 п.13); the scheduler then sees the failure that
+     *       commit rebuilds the in-memory state from the event log (§4 item 13); the scheduler then sees the failure that
      *       made it fail and counts the attempt.
      *   <li>Without the lock: ONE transaction with the result and history rows and the oracle record, projections of that
      *       event ({@link #storeAfterTheLock}). A failure of that write does not fail the call: it is retried in the
      *       background with a growing delay ({@link #rowsFailed}), and the rebuild writes what a crash left
      *       ({@link #repairSettledResult}). docs/research/settle_outside_lock_2026-10-18.md.
      * </ol>
-     * A round nobody bet on stores a single open→close candle as its path (§4 п.7); one with bets
+     * A round nobody bet on stores a single open→close candle as its path (§4 item 7); one with bets
      * stores the source's path (at most 30 candles in live mode).
      *
      * @return the engine's report, or {@code null} when the round was already resolved or cancelled
@@ -1770,7 +1770,7 @@ public class GameService implements MarketListener {
     /**
      * Phase 2 of {@link #resolveRound}, <b>run by the core writer</b>: the part that must be serialised with every
      * other change of the engine — the {@code RoundResolved} event applied to the engine and staged for the journal (it
-     * is written with the batch; a batch that does not commit rebuilds the in-memory state from the journal, §4 п.13).
+     * is written with the batch; a batch that does not commit rebuilds the in-memory state from the journal, §4 item 13).
      * The result rows, the history and the oracle record are projections of that event; they are written by
      * {@link #storeAfterTheLock}. The round is entered in {@link #storing} at once (and taken out again if the batch
      * does not commit), so that nothing can resolve or cancel it a second time in between.
@@ -2059,7 +2059,7 @@ public class GameService implements MarketListener {
         return (direction == crowdvsmarket.engine.round.Direction.UP) == actualUp;
     }
 
-    /** D-40/41/47, Т-9: queues one oracle record for this round's boundary — one per round of every
+    /** D-40/41/47, T-9: queues one oracle record for this round's boundary — one per round of every
      *  market, one shared {@code seq} — tagged with the game's own mode as the record's {@code source}
      *  (replay test-mode publishes for real too, D-47) and with the market and its registry index.
      *  Part of the settlement transaction: the seq is reserved and the row inserted together with the
@@ -2070,8 +2070,8 @@ public class GameService implements MarketListener {
      *
      *  @param ts        wall-clock publish time (round settlement instant), ms
      *  @param sourceTsMs the underlying price reading's own timestamp — the real historical
-     *                     instant in replay mode (D-47: "в announcement помечено, что цена из
-     *                     повтора истории"), the tick the close price was read from in live mode
+     *                     instant in replay mode (D-47: "the announcement says that the price comes from
+     *                     a history replay"), the tick the close price was read from in live mode
      *  @param priceCents engine (lot) close price times 100 */
     private void enqueueOracleRecord(Connection c, Market market, String roundId, long ts, long sourceTsMs,
                                      long priceCents, String resultsHash, Long oracleSeq) throws SQLException {
@@ -2185,7 +2185,7 @@ public class GameService implements MarketListener {
     }
 
     /** D-62's small, capped, newest-first convenience embed on {@code RoundBetting.recentBets} —
-     *  предложение, matches the number the web side's own mock already used. The full,
+     *  proposal, matches the number the web side's own mock already used. The full,
      *  cursor-paginated feed ({@code betFeed} RPC) has no such cap on total history, only on one
      *  call's page size ({@code BetFeed.PAGE_SIZE}). */
     private static final int RECENT_BETS_LIMIT = 14;
@@ -2261,7 +2261,7 @@ public class GameService implements MarketListener {
                 majorityDirection, majorityLeverage);
     }
 
-    /** Предложение: a live preview of the currently-running round — revealed positions/crowd entry
+    /** Proposal: a live preview of the currently-running round — revealed positions/crowd entry
      *  (D-22) computed from the bets still sitting in the engine's {@code BetBook} plus the price
      *  path so far, WITHOUT mutating {@code LedgerBook}/{@code CrowdAccount} (those only actually
      *  change at real settlement, via {@link #resolveRound}). See
@@ -2537,7 +2537,7 @@ public class GameService implements MarketListener {
     // Player account / ledger (D-2, D-3, D-6, D-12, D-16)
     // ---------------------------------------------------------------------------------------
 
-    /** Предложение: {@code currentSeason} is reported as wall-clock "now"'s season, not
+    /** Proposal: {@code currentSeason} is reported as wall-clock "now"'s season, not
      *  {@code LedgerBook}'s own (unexposed) {@code PlayerAccount.currentSeason()} field — accurate
      *  as long as the player has touched the ledger at least once since the season rolled over,
      *  which every sign-in still guarantees ({@link #registerOrTouchPlayer} touches
@@ -2676,7 +2676,7 @@ public class GameService implements MarketListener {
             throw ApiException.withdrawalBelowMinimum(
                     "withdrawal " + amt + " is below the minimum " + MIN_WITHDRAWAL);
         }
-        withdrawalSubmitter.ensureNamespace(); // E1: before this database's first withdrawal row exists (§4 п.16); not in the writer's turn
+        withdrawalSubmitter.ensureNamespace(); // E1: before this database's first withdrawal row exists (§4 item 16); not in the writer's turn
         Requested requested = write("withdrawal", nowMs, ctx -> {
             PlayAmount balance = hub.ledger().balance(playerId);
             if (amt.compareTo(balance) > 0) {
@@ -2782,7 +2782,7 @@ public class GameService implements MarketListener {
         return true;
     }
 
-    /** Предложение: {@code requestId} is otherwise a small guessable sequential counter
+    /** Proposal: {@code requestId} is otherwise a small guessable sequential counter
      *  ({@code LedgerBook}'s own {@code "w-N"}, see the id-reuse note on the event) — restricting
      *  the lookup to the requesting player, even though contract.ts does not name this method
      *  {@code myWithdrawal}, avoids leaking every player's withdrawal history by counting up. */
@@ -2864,7 +2864,7 @@ public class GameService implements MarketListener {
      * deposit_confirmations} and the {@code DepositConfirmedOnChain} event appended in ONE transaction; the balance
      * is credited once it has committed. A refused call (503) changed nothing, so the poller offers the coin
      * again; a coin is never credited twice ({@code coin_id} is the primary key); a crash before the apply is
-     * healed by the next rebuild (§4 п.18).
+     * healed by the next rebuild (§4 item 18).
      *
      * @return {@code true} if this call is the one that credited the deposit; {@code false} if
      *         {@code coinId} was already credited by an earlier call (not an error — chainsvc can
@@ -3016,8 +3016,8 @@ public class GameService implements MarketListener {
     // Crowd account (D-5, D-14, D-17, D-25, D-26)
     // ---------------------------------------------------------------------------------------
 
-    /** One market's crowd account (Т-6): its own capital, its own chart, its own "hold the asset" and
-     *  "anti-crowd" lines. {@code null}: BTC. */
+    /** One market's crowd account (T-6): its own capital, its own chart, its own hold-the-asset and
+     *  anti-crowd lines. {@code null}: BTC. */
     public Crowd.CrowdAccountDto crowdAccount(String marketIdOrNull) {
         return crowdAccount(marketIdOrNull, snapshot());
     }
@@ -3044,7 +3044,7 @@ public class GameService implements MarketListener {
         return new Crowd.CrowdAccountDto(market.id(), market.symbol(), crowd.capital().toPlainString(), points, seasonReturns);
     }
 
-    /** D-25: "рядом доходность за каждый сезон" — one entry per season the continuous crowd curve
+    /** D-25: "next to it the return for each season" — one entry per season the continuous crowd curve
      *  has ever passed through; a season's return is measured against the curve's own capital at
      *  the moment that season began (the previous season's last point, or
      *  {@link CrowdAccount#STARTING_CAPITAL} for the very first season — the curve is never reset,
@@ -3167,7 +3167,7 @@ public class GameService implements MarketListener {
     // Profiles (D-15, D-29)
     // ---------------------------------------------------------------------------------------
 
-    private static final int PROFILE_HISTORY_LIMIT = 100; // предложение — contract.ts leaves this unpaginated/uncapped
+    private static final int PROFILE_HISTORY_LIMIT = 100; // proposal — contract.ts leaves this unpaginated/uncapped
 
     /**
      * The profile as {@code viewerId} (null: not signed in) may see it (D-90): the player's own profile is complete; anyone else's shows only
@@ -3210,7 +3210,7 @@ public class GameService implements MarketListener {
     // {@link #cancellations}), not {@link EngineHub} state, so neither needs engineLock.
     // ---------------------------------------------------------------------------------------
 
-    /** предложение — no source fixes a number: bounds a first-load backlog after a long absence
+    /** proposal — no source fixes a number: bounds a first-load backlog after a long absence
      *  (a player who never opens the app for weeks should not suddenly get flooded with every
      *  result moment at once); newest-first ordering (see {@code RoundResultRepository
      *  #unseenResults}'s javadoc) means anything beyond this limit is simply older and shows up on
@@ -3557,7 +3557,7 @@ public class GameService implements MarketListener {
     // Home aggregate (D-34)
     // ---------------------------------------------------------------------------------------
 
-    private static final int HOME_TOP_N = 5; // предложение — not fixed by contract.ts
+    private static final int HOME_TOP_N = 5; // proposal — not fixed by contract.ts
 
     /** {@code home} keeps describing BTC (docs/research/markets_architecture.md §8): its pairs, its crowd
      *  account; the other markets have their own calls. BTC is {@link #defaultMarket}: after its price moved to

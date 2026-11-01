@@ -250,7 +250,7 @@ pub fn fee_coin_of(bundle: &SpendBundle, main_coin: Coin) -> Option<Coin> {
 /// already confirmed on chain". Chia's mempool manager rejects a spend of
 /// an already-spent coin with `Err.DOUBLE_SPEND` -- verified live on this
 /// stand, see `docs/research/chain_service.md` §15.1's exact `push_tx`
-/// error text. **предложение**: the broader case-insensitive "contains
+/// error text. **proposal**: the broader case-insensitive "contains
 /// ALREADY SPENT" match widens this for any other phrasing of the same
 /// underlying condition; this classifier only ever decides whether to
 /// *look closer* -- safety never depends on it being exhaustive, because

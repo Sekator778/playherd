@@ -65,7 +65,7 @@ export function CrowdSplitBar({
   );
 }
 
-/** The herd badge — the market's own crowd account (D-5, Т-6) in one chip, signed and arrowed so the
+/** The herd badge — the market's own crowd account (D-5, T-6) in one chip, signed and arrowed so the
  *  colour is never the only signal. A market where the crowd has not traded yet says so instead of a "0.0%". */
 export function HerdBadge({ market }: { market: MarketDto }) {
   const t = useT();

@@ -81,7 +81,7 @@ import org.jboss.logging.Logger;
  * exchange's own marker of the last committed candle, are never used, whatever the clock says. And <b>there is no paging
  * and no older data</b>: a call answers the latest 720 committed minutes and the one in progress, however far back
  * {@code since} is — measured 2026-10-03, 17:0x UTC, from Germany: {@code since} a day back gave 721 rows, the first of
- * them 12.0 h old, and {@code since = 1} the same (docs/research/primary_sources.md §2.3 says "до 720 строк"); {@code since}
+ * them 12.0 h old, and {@code since = 1} the same (docs/research/primary_sources.md §2.3 says "up to 720 rows"); {@code since}
  * only cuts off the old end of what is kept. What lies before the first row is therefore <i>no data</i>, which
  * {@link #candles} notices (the first row comes after the minute asked for) and {@link #historyOf} says in the answer
  * ({@link History#coveredFromMs()}): a seed that asks for a day is done with the twelve hours that exist, a gap older than

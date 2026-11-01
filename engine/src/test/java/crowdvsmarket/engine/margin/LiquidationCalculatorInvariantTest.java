@@ -63,7 +63,7 @@ class LiquidationCalculatorInvariantTest {
     /**
      * At the liquidation price, equity equals the <b>dynamic</b> maintenance margin evaluated at
      * that same price ({@code Q*liq_price*l}) — this is literally the equation the spec's
-     * derivation of {@code liquidation_price} solves (doc section 2.2, "Вывод liquidation_price":
+     * derivation of {@code liquidation_price} solves (doc section 2.2, "Derivation of liquidation_price":
      * {@code isolated_margin + side*Q*(liq_price - P0) = Q*liq_price*l}).
      *
      * <p>This is <b>not</b> the same number as {@link LiquidationCalculator#maintenanceMarginRequired},

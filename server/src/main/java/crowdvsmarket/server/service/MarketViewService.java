@@ -272,7 +272,7 @@ public class MarketViewService {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * Every played market's crowd account side by side (Т-6): a row per market, listing order, and the totals
+     * Every played market's crowd account side by side (T-6): a row per market, listing order, and the totals
      * over them. A closed market keeps its row — its account and its history stay (the engine keeps the
      * account of every market in the registry), only {@code markets()} forgets it after 10 minutes.
      */

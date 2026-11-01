@@ -21,7 +21,7 @@ import java.util.Optional;
  * stake sitting in them) are made of, so that the second is the sum of the first by construction.
  *
  * <p>A series (market + interval) has at most two rounds with bets in the engine (docs/research/
- * markets_architecture.md Т-5: one position per player per round of a market, D-19: one running and one open
+ * markets_architecture.md T-5: one position per player per round of a market, D-19: one running and one open
  * for betting): the round {@link RoundProgress} points at is {@code RUNNING} — its bets stay in the {@code
  * BetBook} until the settlement clears them, there is no stored "running" state in the engine — and the one
  * after it is {@code BETTING}. A series that is not seeded (a closed market, replay mode's other markets) has

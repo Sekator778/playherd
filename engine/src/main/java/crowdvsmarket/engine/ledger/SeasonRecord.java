@@ -62,7 +62,7 @@ public record SeasonRecord(
 
     /**
      * Records one more resolved round. {@code directionCorrect} is {@code null} for a flat round
-     * (close == open), excluded from the "пророки" denominator (D-18); otherwise it marks whether
+     * (close == open), excluded from the prophets denominator (D-18); otherwise it marks whether
      * the player's chosen direction matched the round's actual move, independent of liquidation.
      */
     SeasonRecord withRoundPlayed(Boolean directionCorrect) {

@@ -1,7 +1,7 @@
 /**
  * `prefers-reduced-motion` — read once here, everywhere: the real OS setting, OR the `/lab`
- * "force reduced motion" checkbox (`implementation-plan.md` §5: "переопределяет CSS через атрибут
- * на <html>"). This module is that override's one implementation — `fx.css` keys every
+ * "force reduced motion" checkbox (`implementation-plan.md` §5: "overrides CSS via an attribute
+ * on <html>"). This module is that override's one implementation — `fx.css` keys every
  * reduced-motion rule off `html[data-reduced-motion="true"]` (kept in sync by
  * `usePrefersReducedMotion` below) instead of a raw `@media` query, so the lab checkbox has real
  * effect on CSS-only animations too, not just the JS-driven ones (particles, `RollingDigits`).

@@ -37,7 +37,7 @@ public final class Ledger {
      * chainsvc's internal bookkeeping coin — this server passes through whatever chainsvc reports
      * as-is and does not itself compute or validate it. A direct read of the chain side found
      * {@code chain/c2-svc/src/play/withdrawal_publisher.rs}'s {@code advance_in_flight} currently
-     * records the SAME {@code coin_id} — the shared treasury batch's own change/"сдача" coin — for
+     * records the SAME {@code coin_id} — the shared treasury batch's own change coin — for
      * every request confirmed together in that batch, not each request's individual payout coin;
      * that is a chain-side bug for the chain agent to fix in parallel (task: "it will be corrected
      * on the chain side"), not something addressable from {@code server/}. {@code coinsetVerifyHint}

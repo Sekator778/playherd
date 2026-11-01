@@ -1,6 +1,6 @@
 /**
  * The PLAY token's asset id (the CAT's TAIL hash) — what a player pastes into Sage to name the token it
- * shows as "Unknown CAT" (`docs/research/sage_real_e2e.md` «Трение» п. 2).
+ * shows as "Unknown CAT" (`docs/research/sage_real_e2e.md` "Friction" section, item 2).
  *
  * The server knows it: `ServerInfoDto.playAssetId` (the chain service reads its tail from its own state), and
  * {@link playAssetIdOf} prefers that. The build-time {@link PLAY_ASSET_ID} is the fallback for a server that does

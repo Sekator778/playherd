@@ -1,7 +1,7 @@
 /**
  * The nickname rule, as the server states it (`ApiErrorCode.INVALID_NICKNAME`, `GameService.setNickname`): trimmed,
  * 3–24 characters, each one a letter A–Z, a digit, a space, `_`, `.` or `-`. The sign-in sheet checks it BEFORE asking —
- * with the reason in words — so a player never types "Саша" or "moon🚀" into a field that then does nothing; the server
+ * with the reason in words — so a player never types a Cyrillic name or "moon🚀" into a field that then does nothing; the server
  * stays the judge, and if it refuses anyway its own sentence is shown (`api/apiErrors.ts`).
  */
 import type { PlayerSummaryDto } from "./contract";

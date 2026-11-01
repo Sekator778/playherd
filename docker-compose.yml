@@ -91,13 +91,13 @@ services:
       # `docker run alpine wget https://…` fails, `docker run --network host alpine wget …`
       # succeeds) — `cargo build` needs crates.io. Same root cause the "chain service" agent
       # hit and documented in docs/research/chain_service.md §6. See
-      # CONTRIBUTING.md "Известные ограничения и фиксы".
+      # CONTRIBUTING.md "Known limitations and fixes".
       # HERD_BUILD_NETWORK: the VPS sets `default` (tools/vps/env-init.sh). Compose v5 builds through Bake, which refuses a
       # host-network build without --allow=network.host (measured on the VPS, Compose v5.6.0, 2026-10-11), and the bridge of
       # an ordinary Linux host has egress. Unset (this Mac): host, as before.
       network: ${HERD_BUILD_NETWORK:-host}
-    # Fix (runtime, not just build — see CONTRIBUTING.md "Известные ограничения и
-    # фиксы" for the full story): this machine's compose/bridge networks (`ip-masq` disabled —
+    # Fix (runtime, not just build — see CONTRIBUTING.md "Known limitations and
+    # fixes" for the full story): this machine's compose/bridge networks (`ip-masq` disabled —
     # confirmed via `docker network inspect`/`~/.orbstack/config/docker.json`) give containers on
     # them NO internet egress at all, not even by raw IP (verified: a plain `nc -zv <coinset IP>
     # 443` from a bridge-network container times out). `network_mode: host` is the only network
@@ -182,8 +182,8 @@ services:
       HERD_REPLAY_SPEEDUP: ${HERD_REPLAY_SPEEDUP:-20} # HERD_MODE=replay only
       HERD_BOTS_COUNT: ${HERD_BOTS_COUNT:-21} # D-46: labelled bots (21 = the bots module's catalog)
       HERD_BOTS_ENGINE: ${HERD_BOTS_ENGINE:-catalog} # catalog = the bots module; legacy = the five old strategies (roll-back, restart only)
-      HERD_BOTS_MARKETS_PER_ROUND: ${HERD_BOTS_MARKETS_PER_ROUND:-3} # Т-8: pairs each bot plays per round
-      # Market lists by category (Т-1/Т-10, §10); names are the source's own (`xyz:` = Hyperliquid's
+      HERD_BOTS_MARKETS_PER_ROUND: ${HERD_BOTS_MARKETS_PER_ROUND:-3} # T-8: pairs each bot plays per round
+      # Market lists by category (T-1/T-10, §10); names are the source's own (`xyz:` = Hyperliquid's
       # xyz dex). Polymarket politics/sports markets are picked from the live catalog. Crypto is priced by
       # the asset's own venue: Coinbase Exchange USD products (BTC-USD …) and the Hyperliquid spot pair HYPE/USDC,
       # each with the leverage cap of the pair; HERD_MARKETS_CRYPTO lists Hyperliquid *perpetuals* (empty: none).
@@ -223,9 +223,9 @@ services:
       HERD_MARKETS_POLITICS_COUNT: ${HERD_MARKETS_POLITICS_COUNT:-3}
       HERD_MARKETS_SPORTS_COUNT: ${HERD_MARKETS_SPORTS_COUNT:-3}
       HERD_MARKETS_ODDS_MAX_LEVERAGE: ${HERD_MARKETS_ODDS_MAX_LEVERAGE:-10}
-      # Т-9: a fresh DB starts its oracle `seq` at 1 while the testnet11 singleton is already far
+      # T-9: a fresh DB starts its oracle `seq` at 1 while the testnet11 singleton is already far
       # ahead — with this on, the scheduler settles no round until chainsvc has reported the highest
-      # `seq` it knows (§7 п. 4).
+      # `seq` it knows (§7 item 4).
       HERD_ORACLE_REQUIRE_SEQ_FLOOR: ${HERD_ORACLE_REQUIRE_SEQ_FLOOR:-true}
       # The domain in the text a player signs at sign-in (was hard-coded herd.local).
       HERD_PUBLIC_DOMAIN: ${HERD_PUBLIC_DOMAIN:-herd.local}
@@ -254,7 +254,7 @@ services:
       # HERD_CHAINSVC_TOKEN/C2_SVC_TOKEN below).
       HERD_DB_PASSWORD: ${HERD_DB_PASSWORD:?set in .env — run tools/stand.sh up, which generates one}
       # Service name in this compose file is "db", not application.properties' default
-      # "postgres" — see CONTRIBUTING.md "Известные ограничения и фиксы".
+      # "postgres" — see CONTRIBUTING.md "Known limitations and fixes".
       HERD_DB_URL: jdbc:postgresql://db:5432/herd
       # chainsvc runs with network_mode: host (see its own fix note above), so it has no
       # "chainsvc" DNS name on herd_default — reached via that network's own gateway IP instead,
@@ -339,7 +339,7 @@ volumes:
   # Live-price epoch database (D-70/D-71): a NEW volume on purpose. The replay-epoch volume `herd_pg`
   # (BTC only, accelerated history, rounds anchored to the first server start) is no longer
   # declared here — it stays on the machine untouched as an archive of that game. A new database
-  # also gets the round calendar of markets_architecture.md Т-11 (boundaries on multiples of the
+  # also gets the round calendar of markets_architecture.md T-11 (boundaries on multiples of the
   # round length). `tools/stand.sh reset` removes this volume only, by name; `docker compose down
   # -v` can only reach volumes declared in this file.
   herd_pg_live:

@@ -29,7 +29,7 @@ public class GameConfig {
     @ConfigProperty(name = "herd.bots.count")
     int botsCount;
 
-    /** Т-8 (docs/research/markets_architecture.md §2, §10): how many distinct random active markets
+    /** T-8 (docs/research/markets_architecture.md §2, §10): how many distinct random active markets
      *  each bot bets on in every round of a series; capped by the number of active markets. */
     @ConfigProperty(name = "herd.bots.markets-per-round", defaultValue = "3")
     int botsMarketsPerRound;
@@ -179,7 +179,7 @@ public class GameConfig {
     @ConfigProperty(name = "herd.execution.hyperliquid.wallet-address")
     java.util.Optional<String> hyperliquidWalletAddress;
 
-    /** предложение: Hyperliquid assigns integer asset indices via its own {@code /info}
+    /** proposal: Hyperliquid assigns integer asset indices via its own {@code /info}
      *  {@code "meta"} request — this codebase does not look that up dynamically in this pass (see
      *  {@code HyperliquidAdapter}'s javadoc), so it is a plain config value instead. */
     @ConfigProperty(name = "herd.execution.hyperliquid.asset-index", defaultValue = "0")

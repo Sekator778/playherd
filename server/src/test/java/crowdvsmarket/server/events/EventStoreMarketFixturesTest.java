@@ -18,7 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Event compatibility for markets (docs/research/markets_architecture.md §6, Т-13), the two halves:
+ * Event compatibility for markets (docs/research/markets_architecture.md §6, T-13), the two halves:
  * <ul>
  *   <li>the golden fixtures that were committed before markets existed ({@code events/golden},
  *       untouched — {@link EventStoreGoldenFixturesTest} keeps asserting them field for field) have no
@@ -117,7 +117,7 @@ class EventStoreMarketFixturesTest {
 
     @Test
     void theCurrentSchemaVersionIsTwoAndTheseRowsAreVersionOne() {
-        // markets are an additive, defaulted field: no schema bump (Т-13)
+        // markets are an additive, defaulted field: no schema bump (T-13)
         assertThat(EventStore.CURRENT_SCHEMA_VERSION).isEqualTo(2); // F4; the shape above is a version-1 row and still decodes
     }
 

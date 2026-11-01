@@ -30,8 +30,8 @@
   animation: result-backdrop-in var(--dur-base) var(--ease-out-expo);
 }
 
-/* LIQUIDATION — a compact toast, no full-screen dimming (result-moment.md §2: "не общий оверлей
-   на весь экран"), pinned near the top so it never covers the DEMO banner/meta rail underneath. */
+/* LIQUIDATION — a compact toast, no full-screen dimming (result-moment.md §2: "not a general overlay
+   over the whole screen"), pinned near the top so it never covers the DEMO banner/meta rail underneath. */
 .result-overlay--toast {
   /* Nothing under a toast is blocked (the next bet, a scroll): only the card itself takes taps, to dismiss. */
   pointer-events: none;
@@ -587,7 +587,7 @@ html[data-reduced-motion="true"] .card--pulse-critical {
   background: var(--bg-elevated);
 }
 
-/* Header lift during a WIN's coin-arc (result-moment.md §3: "Пилюля баланса в шапке:
+/* Header lift during a WIN's coin-arc (result-moment.md §3: "Balance pill in the header:
    scale(1→1.08→1)..." needs to read clearly while coins land, not sit dimmed under the
    `.result-overlay` backdrop above). Toggled on `<body>` by `ResultCard.tsx` only for the
    coin-arc's duration — see the invariant comment on `.result-overlay` above: this must sit
@@ -599,7 +599,7 @@ body.fx-header-lift .app-header {
 
 /* ---------------------------------------------------------------------------
    Live numeric flash — Crowd/Home stat tiles and the Wallet balance (live-round.md §5,
-   direction.md §0 "числа реагируют... на изменение, а не просто перерисовываются")
+   direction.md §0 "numbers react... to change, not just redraw")
 --------------------------------------------------------------------------- */
 
 /* A single border/glow pulse in win/loss color when a tracked number changes between polls.

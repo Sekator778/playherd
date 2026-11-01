@@ -35,9 +35,9 @@ class BotStatsModeTest(unittest.TestCase):
         self.assertEqual(fixed[("family", "momentum", "HOURLY")]["wins"], 70)
         self.assertEqual(pct[("family", "momentum", "HOURLY")]["wins"], 52)
         # 70 % against the coin's 50 % excludes zero in FIXED, 52 % does not in PERCENTAGE
-        self.assertEqual(fixed[("family", "momentum", "HOURLY")]["verdict"], "отличима от монетки")
-        self.assertEqual(pct[("family", "momentum", "HOURLY")]["verdict"], "нет")
-        self.assertEqual(fixed[("family", "coin", "HOURLY")]["verdict"], "контроль")
+        self.assertEqual(fixed[("family", "momentum", "HOURLY")]["verdict"], "differs from a coin")
+        self.assertEqual(pct[("family", "momentum", "HOURLY")]["verdict"], "no")
+        self.assertEqual(fixed[("family", "coin", "HOURLY")]["verdict"], "control")
         # Wilson and Newcombe columns are filled
         win = fixed[("family", "momentum", "HOURLY")]["win"]
         self.assertAlmostEqual(win[0], 0.70)
@@ -49,9 +49,9 @@ class BotStatsModeTest(unittest.TestCase):
         by = stats.split_by_mode(ROWS)
         outs = {m: stats.build(r, ["HOURLY"]) for m, r in by.items()}
         md = stats.markdown(outs, dict(since="a", until="b", hours=72, at="c"))
-        self.assertIn("Режим: FIXED", md)
-        self.assertIn("Режим: PERCENTAGE", md)
-        self.assertLess(md.index("Режим: FIXED"), md.index("Режим: PERCENTAGE"))
+        self.assertIn("Mode: FIXED", md)
+        self.assertIn("Mode: PERCENTAGE", md)
+        self.assertLess(md.index("Mode: FIXED"), md.index("Mode: PERCENTAGE"))
         fixed_rows = [r for r in outs["FIXED"] if r["level"] == "family" and r["name"] == "momentum" and r["iv"] == "HOURLY"]
         cells = stats.fmt_row(fixed_rows[0], "FIXED")
         self.assertEqual(cells[7], "—")  # liquidations

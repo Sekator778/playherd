@@ -429,7 +429,7 @@ public class DbMarketRegistry implements MarketRegistry {
     /** What a catalog may hand over: everything {@code Market} documents, checked once here so a bad
      *  listing fails before it touches the table (the engine would reject the id/leverage later, at
      *  a worse moment). */
-    /** The highest single cap a catalog may list a market with (Т-4). */
+    /** The highest single cap a catalog may list a market with (T-4). */
     static final int MAX_LISTED_LEVERAGE = 40;
 
     private static void validate(NewMarket spec) {

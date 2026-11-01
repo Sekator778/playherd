@@ -76,7 +76,7 @@ public class ServerMetaRepository {
     }
 
     /** {@link #reserveOracleSeqRange(int)} inside the caller's transaction: round settlement
-     *  (docs/research/markets_architecture.md §4 п.3) reserves the seq in the very transaction that
+     *  (docs/research/markets_architecture.md §4 item 3) reserves the seq in the very transaction that
      *  appends the {@code RoundResolved} event and inserts the oracle record, so a rolled-back
      *  settlement leaves no hole in the sequence. The row stays locked until that transaction
      *  ends. */
@@ -135,7 +135,7 @@ public class ServerMetaRepository {
     }
 
     /**
-     * The oracle seq floor (docs/research/markets_architecture.md §7 п.4): raises the counter so that
+     * The oracle seq floor (docs/research/markets_architecture.md §7 item 4): raises the counter so that
      * the next {@code seq} issued is above {@code floor}, and never lowers it — a floor at or below
      * the counter changes nothing. One oracle singleton lives on chain for good while a server
      * database can be new; a fresh database whose counter starts at 1 although the chain already

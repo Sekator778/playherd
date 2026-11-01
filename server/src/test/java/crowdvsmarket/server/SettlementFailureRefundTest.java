@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * D-23 — "если за 1 час цену получить не удалось — раунд отменяется целиком" — for every way a
+ * D-23 — "if the price could not be obtained within 1 hour, the whole round is cancelled" — for every way a
  * settlement can fail, not only for {@code PriceUnavailableException} (review of the multi-market
  * core, finding 3). The scheduler used to retry any other exception every second for ever and never
  * refund the bets of that window: an HTTP error out of the price source, a price the engine cannot take

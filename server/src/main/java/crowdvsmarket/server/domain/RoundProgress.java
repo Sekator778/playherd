@@ -14,14 +14,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * The authoritative "next window to resolve" per series (D-19) — deliberately not recomputed from
  * wall-clock {@code now} on every read (see {@link RoundCalendar}'s javadoc for the boundary race
  * that would cause). A series is a market plus an interval (docs/research/markets_architecture.md
- * §4 п.1): the key is {@code (marketId, Interval)}. {@code RoundSchedulerService} is the only
+ * §4 item 1): the key is {@code (marketId, Interval)}. {@code RoundSchedulerService} is the only
  * writer in normal operation ({@link #advance}, {@link #jumpTo}); every reader (the RPC layer,
  * bots) treats {@link #next} as "RUNNING" and {@code RoundClock.next(next(...))} as "BETTING" for
  * that series right now.
  *
  * <p>Seeded at startup ({@code EngineRebuildService}) from the latest resolved round of the
  * series in {@code round_results} (its {@code window_end_ms} becomes the new {@code next.startMs()}),
- * or from the window containing "now" when the market has no round yet (§4 п.2 — never from the
+ * or from the window containing "now" when the market has no round yet (§4 item 2 — never from the
  * calendar origin, which would make the scheduler resolve every window since then) — and never
  * behind a window that still holds a bet, which the scheduler must resolve or cancel ({@code
  * SeriesSeeder}); a market listed later is seeded the same way by {@code GameService.onListed}. A
@@ -118,7 +118,7 @@ public final class RoundProgress {
     }
 
     /** Moves the cursor from {@code expected} to {@code target} — a catch-up jump over empty
-     *  overdue windows (§4 п.5, no event, no result) — only if it still is {@code expected}.
+     *  overdue windows (§4 item 5, no event, no result) — only if it still is {@code expected}.
      *
      *  @return whether the cursor moved */
     public boolean jumpTo(String marketId, Interval interval, RoundWindow expected, RoundWindow target) {

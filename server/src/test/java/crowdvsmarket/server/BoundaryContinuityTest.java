@@ -21,7 +21,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * D-40 in the core (docs/research/markets_architecture.md §4 п.14; {@code BoundaryPrices}): the close of a round is
+ * D-40 in the core (docs/research/markets_architecture.md §4 item 14; {@code BoundaryPrices}): the close of a round is
  * the open of the next one, and both series of a market share their boundaries — whatever the price pipeline still
  * remembers. After a restart a later merge of history can give a boundary a price other than the one a round already
  * closed on, settled, and anchored on chain; the settled rows of {@code round_results} are the durable fact, so a

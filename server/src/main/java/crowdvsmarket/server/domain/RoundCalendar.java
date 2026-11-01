@@ -15,7 +15,7 @@ import jakarta.inject.Inject;
  * shift any round boundary out from under bets already placed on it. Every market runs on the same
  * clock (a window belongs to a market, the boundaries do not).
  *
- * <p><b>Which instant (Т-11, docs/research/markets_architecture.md §2):</b> on a FRESH database in
+ * <p><b>Which instant (T-11, docs/research/markets_architecture.md §2):</b> on a FRESH database in
  * {@code mode=live} the origin is {@code floor(now / dailyStep) * dailyStep}, so boundaries are
  * multiples of the daily series' length from the Unix epoch — hourly rounds on hh:00 and daily on
  * 00:00 UTC with the production durations, :00/:03/… and :00/:15/… on the 180 s / 900 s stand. In

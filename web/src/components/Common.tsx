@@ -146,7 +146,7 @@ export function OracleStatusLine() {
   );
 }
 
-/** D-33/§2 ("Про управляемый оракул"): shown wherever the outcome depends on the oracle. The first half names where the
+/** D-33/§2 ("About the managed oracle"): shown wherever the outcome depends on the oracle. The first half names where the
  *  number really comes from — "Price from Coinbase", "Price from Kraken", "Price from Hyperliquid", "Odds from
  *  Polymarket" (`originPhrase`); a Polymarket odds market is not "a price from Hyperliquid" (D-69); the second half is the
  *  same for every source: it is OUR key that publishes it. A caller that does not know the source passes none and the
@@ -201,7 +201,7 @@ export function RoundVenueNote({
   );
 }
 
-/** §2 ("Про отсутствие защиты от мультиаккаунтов"). */
+/** §2 ("About the lack of multi-account protection"). */
 export function MultiAccountDisclosureLine() {
   const t = useT();
   return <p className="disclaimer-line">{t("common.multiAccount")}</p>;
@@ -332,7 +332,7 @@ export function Countdown({
   const remaining = Math.max(0, targetMs - nowMs);
   // Escalation in the last 10s/3s (docs/product/design/live-round.md §4) — a real, existing
   // timer reading more urgently as it actually runs out, not a fabricated pressure timer
-  // (game-designer.md's "Честность" redline covers invented urgency, not an honest one).
+  // (game-designer.md's "Honesty" redline covers invented urgency, not an honest one).
   const tier = calm ? "" : remaining <= 3000 ? "countdown--critical" : remaining <= 10000 ? "countdown--warn" : "";
   return (
     <span className={`countdown mono ${calm ? "countdown--calm" : ""} ${tier}`}>

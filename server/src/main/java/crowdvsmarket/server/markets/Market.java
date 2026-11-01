@@ -5,10 +5,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /**
- * One market ("pair") — docs/research/markets_architecture.md §3.1. Immutable once listed (Т-10):
+ * One market ("pair") — docs/research/markets_architecture.md §3.1. Immutable once listed (T-10):
  * if the source changes a parameter, that is a new market.
  *
- * <p><b>Lot price (Т-3).</b> The engine computes prices at scale 2. A market's raw price is handed
+ * <p><b>Lot price (T-3).</b> The engine computes prices at scale 2. A market's raw price is handed
  * to the engine as the price of a lot of {@code 10^lotExp} units ({@link #toEngine}); every price
  * that leaves the server is converted back ({@link #toRaw}) and carries {@link #priceDecimals()}
  * fractional digits. P&L and liquidation distances do not depend on the scale.
@@ -96,7 +96,7 @@ public record Market(
     }
 
     /**
-     * Т-3: {@code clamp(3 - floor(log10(raw)), 0, 8)} — the lot price lands in [1000, 10000) at
+     * T-3: {@code clamp(3 - floor(log10(raw)), 0, 8)} — the lot price lands in [1000, 10000) at
      * listing time, so 2 engine decimals keep at least 6 significant digits.
      */
     public static int lotExpFor(BigDecimal rawPrice) {

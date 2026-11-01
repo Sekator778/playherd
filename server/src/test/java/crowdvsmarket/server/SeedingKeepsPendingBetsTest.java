@@ -17,7 +17,7 @@ import io.quarkus.test.junit.TestProfile;
 import org.junit.jupiter.api.Test;
 
 /**
- * A stake is never left behind a cursor (docs/research/markets_architecture.md §4 п.2, п.5; review of
+ * A stake is never left behind a cursor (docs/research/markets_architecture.md §4 item 2, item 5; review of
  * the multi-market core, finding 1). A series used to be seeded at the window containing "now" when it
  * had no result row yet, without looking for bets: a market listed (its series seeded at W0), a bet on
  * the window open for betting (W1, which a new market cannot resolve before the next row exists), the

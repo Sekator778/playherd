@@ -222,7 +222,7 @@ describe("detectResultEvent — settlement WIN/LOSS/EVEN", () => {
     expect(event?.tier).toBe(4);
   });
 
-  it("EVEN: payout === stake -> net 0, fixed tier 1 (§0's предложение path)", () => {
+  it("EVEN: payout === stake -> net 0, fixed tier 1 (§0's proposal path)", () => {
     const prev = makeRunning([makePosition({ leverage: 10 })]);
     const curr = makeSettled([makePosition({ leverage: 10, payout: "100.000" })]);
     const event = detectResultEvent({

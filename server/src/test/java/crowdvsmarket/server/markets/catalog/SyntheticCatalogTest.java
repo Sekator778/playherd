@@ -47,7 +47,7 @@ class SyntheticCatalogTest {
 
         assertThat(added).isEqualTo(11); // BTC is in the registry already
         assertThat(registry.log).doesNotContain("listed BTC");
-        // id, leverage cap, lot exponent of the start price (Т-3)
+        // id, leverage cap, lot exponent of the start price (T-3)
         record Expected(String id, int leverage, int lotExp, String start, String category) {
         }
         for (Expected e : List.of(

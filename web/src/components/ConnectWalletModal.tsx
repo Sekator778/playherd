@@ -604,7 +604,7 @@ function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => v
         <>
           {testWalletOffered ? (
             <>
-              {/* The test wallet leads on this stand (HANDOFF §6 п.10): it is the one path that works for
+              {/* The test wallet leads on this stand (HANDOFF §6 item 10): it is the one path that works for
                *  everybody — the Sage button first was a dead end for a visitor without Sage. Both stay. */}
               <p className="test-wallet-tag">{t("connect.testWalletTag")}</p>
               <p className="muted">

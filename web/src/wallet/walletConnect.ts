@@ -1,10 +1,10 @@
 /**
  * Real Sage sign-in over WalletConnect v2 (D-4/D-55, `docs/research/week1_wallet_auth.md`
- * §1.1–§1.2 and its "Реализация" appendix below for the parts that proposal left open).
+ * §1.1–§1.2 and its "Implementation" appendix below for the parts that proposal left open).
  *
  * Needs a Reown Cloud `projectId` — Alex's registration is in progress but not usable by this
  * session yet (outbound registrations are only ever made with Alex's own hands/go-ahead,
- * `the project notes` §"Зафиксированные решения"). Until one is configured (`getWalletConnectProjectId`
+ * `the project notes` §"Fixed decisions"). Until one is configured (`getWalletConnectProjectId`
  * below resolves to `null`), `ConnectWalletModal.tsx` disables the "Connect with Sage" button
  * instead of ever calling into this module — every exported connect function here still throws
  * defensively if called without one, as a second guard.
@@ -17,7 +17,7 @@
  *   Apache-2.0/MIT like this project's own code (D-36) or every other dependency here. That's
  *   fine: it's a dependency used under its own terms, not code of ours. Terms that actually bind
  *   us: (1) royalty-free below **2,500,000 RPCs/month or 500 MAU/month** (§3) — the closed alpha
- *   (D-42: "5–10 человек по ссылке") is nowhere near either, revisit before any wider opening;
+ *   (D-42: "5–10 people via a link") is nowhere near either, revisit before any wider opening;
  *   (2) must connect to Reown's own relay, never a self-hosted one (§2.b) — exactly what
  *   `RELAY_URL` below does, the same default Sage itself uses (`week1_wallet_auth.md` §1.1); (3)
  *   requires the notice **"Portions © 2025 Reown, Inc. All Rights Reserved"** wherever the

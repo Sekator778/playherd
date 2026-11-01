@@ -55,7 +55,7 @@ public final class EconomyRules {
     public static final int PAYOUT_MULTIPLE = 20;
     /**
      * The treasury of the payout cap before the economy cutover (stage B): the treasury coin on chain, 99 998 100 PLAY
-     * (docs/product/economy_implementation_plan.md, "Факт для всех этапов", checked 2026-10-15). After it the cap follows the
+     * (docs/product/economy_implementation_plan.md, "Fact for all stages", checked 2026-10-15). After it the cap follows the
      * TREASURY balance ({@code LedgerBook#payoutCapTreasury}).
      */
     public static final PlayAmount TREASURY_FALLBACK = PlayAmount.ofWholePlay(99_998_100);

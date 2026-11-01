@@ -14,7 +14,7 @@ import java.math.RoundingMode;
  * 200 000.00 under every market's leverage range by {@code MarketPositionPropertyTest}. See
  * docs/research/round_engine_design.md "Units" for the precision argument this depends on.
  *
- * <p><b>Предложение:</b> {@link #SIZE_SCALE} = 8dp (satoshi precision, the standard BTC
+ * <p><b>Proposal:</b> {@link #SIZE_SCALE} = 8dp (satoshi precision, the standard BTC
  * subdivision). Rounding {@code size} to 8dp introduces at most {@code 0.5e-8 * price} of error in
  * {@code size * price}; dividing by leverage (>= 2) only shrinks it further, and the 2dp rounding
  * of the final {@code initialMargin} absorbs it — see the design doc for the bound.

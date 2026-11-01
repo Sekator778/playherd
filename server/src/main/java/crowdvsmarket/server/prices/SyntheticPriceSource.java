@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.function.LongSupplier;
 
 /**
- * The offline price source ({@code herd.prices.source=synthetic}, markets_architecture.md §2 Т-12):
+ * The offline price source ({@code herd.prices.source=synthetic}, markets_architecture.md §2 T-12):
  * a deterministic random walk per market for CI, e2e and work without a network. No HTTP at all.
  *
  * <p>The walk is a <b>Brownian bridge</b> seeded from the market id: a Gaussian random walk of

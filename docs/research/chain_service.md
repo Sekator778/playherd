@@ -1571,7 +1571,7 @@ sim-spike`): **108 passed, 1 ignored (тот же генератор тест-в
 
 ## 16. Оракул v2, запас комиссионных монет, fsync каталога (2026-10-01)
 
-Источник задания: фиксированные интерфейсы рынков — `docs/research/markets_architecture.md` §7 (Т-9,
+Источник задания: фиксированные интерфейсы рынков — `docs/research/markets_architecture.md` §7 (T-9,
 пункты 1–9), открытые пункты `the internal notes` §6 п. 3 (запас комиссионных монет) и п. 8 (`fsync`
 каталога после `rename`, реконсиляция очереди выводов), независимая критика
 `an internal security review` (rustls). Assigned paths этой работы — `chain/`,
@@ -1596,7 +1596,7 @@ sim-spike`): **108 passed, 1 ignored (тот же генератор тест-в
 `cargo clippy --workspace --all-targets --locked` — новых категорий предупреждений нет (остались прежние
 `cloned_ref_to_slice_refs`, §7/§13.1/§14.1/§15.5).
 
-### 16.2 Запись v2: поле `asset` (Т-9, §7 п. 1–2)
+### 16.2 Запись v2: поле `asset` (T-9, §7 п. 1–2)
 
 - `OracleRecordDto` и `OracleRecord` получили `asset: u32` с `#[serde(default)]` (`oracle/types.rs`):
   поле отсутствует на проводе — значит 0 = BTC, единственный рынок до v2. `from_dto` переносит его.

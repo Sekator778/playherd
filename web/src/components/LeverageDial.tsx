@@ -9,12 +9,12 @@ import { DEFAULT_LEVERAGE_LIMIT, SLIDER_STEPS, leverageAfterMove, leverageToPosi
 
 /**
  * "Power dial" leverage control (`docs/product/design/live-round.md` §1) — replaces the unstyled
- * `<input type="range">` the audit flagged ("x10 и x39 выглядят идентично, кроме цифры в
- * подписи"). Stays a real range input under the hood (keyboard/screen-reader semantics for
+ * `<input type="range">` the audit flagged ("x10 and x39 look identical apart from the number in
+ * the caption"). Stays a real range input under the hood (keyboard/screen-reader semantics for
  * free) — only the visual layer changes: a filled track colored by the heat ramp
  * (`index.css`'s `--heat-1..5`), a big tabular-nums value above it, and a subtle pulse in the
- * top "Flame" zone (x34-40) — the "плечо должно нагреваться, с размером выигрыша, чтобы была
- * динамика" Alex asked for. Ambient sparks (Hot/Danger/Flame zones) and per-step haptics from
+ * top "Flame" zone (x34-40) — the "leverage should heat up with the size of the win, so that there is
+ * momentum" Alex asked for. Ambient sparks (Hot/Danger/Flame zones) and per-step haptics from
  * live-round.md §1's table are wired below via `fx/particles.ts`/`fx/haptics.ts`.
  */
 const ZONE_LABEL: Record<HeatTier, TKey> = {
@@ -29,7 +29,7 @@ const ZONE_LABEL: Record<HeatTier, TKey> = {
 const AMBIENT_RATE: Record<HeatTier, number> = { 1: 0, 2: 0, 3: 1.5, 4: 5, 5: 9 };
 /** Haptic step interval per zone — fires every Nth step change; `1` = every step (Flame). */
 const HAPTIC_STEP_INTERVAL: Record<HeatTier, number> = { 1: 0, 2: 0, 3: 5, 4: 2, 5: 1 };
-const HAPTIC_MIN_GAP_MS = 80; // Flame's "throttle ≥80ms между тиками — не сплошной зуммер"
+const HAPTIC_MIN_GAP_MS = 80; // Flame's "throttle ≥80ms between ticks, not a continuous buzz"
 
 export function LeverageDial({
   id,
@@ -89,7 +89,7 @@ export function LeverageDial({
     const interval = HAPTIC_STEP_INTERVAL[nextTier];
     const now = performance.now();
     if (crossedIntoHotter && nextTier === 5) {
-      impact("medium"); // "разовый Medium impact при первом пересечении в эту зону"
+      impact("medium"); // "a single Medium impact on the first crossing into this zone"
       lastHapticAtRef.current = now;
     } else if (interval > 0) {
       stepsSinceHapticRef.current += 1;

@@ -40,7 +40,7 @@ public class OracleReconciliationService {
 
     private static final Logger LOG = Logger.getLogger(OracleReconciliationService.class);
 
-    /** предложение: long enough that a record queued only moments ago (chainsvc hasn't had a
+    /** proposal: long enough that a record queued only moments ago (chainsvc hasn't had a
      *  chance to ingest it yet) is not mistaken for one chainsvc actually lost track of. */
     private static final long UNKNOWN_BACKFILL_AGE_MS = 120_000;
 

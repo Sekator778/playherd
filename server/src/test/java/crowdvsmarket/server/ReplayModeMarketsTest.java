@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@code mode=replay} plays BTC only, "whatever the registry holds" (docs/research/
- * markets_architecture.md Т-12, §3.2 п.7): another market in the registry gets its engines (a rebuild
+ * markets_architecture.md T-12, §3.2 item 7): another market in the registry gets its engines (a rebuild
  * must know it) but no series, so nothing is bet on, resolved or priced for it, while BTC runs exactly as
  * before from the accelerated history, its prices still the 2-decimal strings they always were.
  */

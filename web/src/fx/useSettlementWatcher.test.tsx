@@ -1,5 +1,5 @@
 /**
- * Integration-level tests of the global result moment (D-50, "видно с любой страницы"): the REAL
+ * Integration-level tests of the global result moment (D-50, "visible from any page"): the REAL
  * `useSettlementWatcher` (+ `useAwayReplay`) + `resultEventBus` + `ResultMomentHost` wiring — no
  * mocked hook — against a fake `Api` and fake timers.
  *
@@ -354,7 +354,7 @@ describe("useSettlementWatcher — unseenResults is the single source: any marke
     api.world.balance = 10004.96;
     await tick();
 
-    // Reaches the screen (the "видно с любой страницы" requirement) — checked right on this same
+    // Reaches the screen (the "visible from any page" requirement) — checked right on this same
     // tick, before the card's own auto-dismiss timer has had a chance to run.
     expect(cardTitleText()).toBe("+4.96 PLAY");
     expect(events).toHaveLength(1);
@@ -598,7 +598,7 @@ describe("useSettlementWatcher — legacy fallback (an Api without unseenResults
 
     await tick(); // the rollover tick — detects it, chases round("1h-1"), publishes WIN — SETTLED
 
-    // Reaches the screen (the "видно с любой страницы" requirement) — checked right on this same
+    // Reaches the screen (the "visible from any page" requirement) — checked right on this same
     // tick, before the card's own auto-dismiss timer (well under 2000ms) has had a chance to run.
     expect(cardTitleText()).toBe("+4.96 PLAY");
     expect(events).toHaveLength(1);

@@ -102,16 +102,16 @@ def main():
     players = [json.loads(x) for x in psql(pre + SQL_PLAYERS % (since, until), env) if x.startswith("{")]
     bets = [json.loads(x) for x in psql(pre + SQL_BETS, env) if x.startswith("{")]
     res, detail = analyse(players, bets, {x for x in a.exclude.split(",") if x})
-    lines = ["Когорта: люди (`is_bot = false`), созданные %s — %s UTC; расчёт сделан %s UTC." %
+    lines = ["Cohort: humans (`is_bot = false`), created %s — %s UTC; computed %s UTC." %
              (ts(since), ts(until), datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")),
-             "Исключено по `--exclude`: %d." % len([x for x in a.exclude.split(",") if x]), "",
-             "| Вошли | Поставили | ≥3 раундов | ≥5 раундов (старая) | Играли (новая: ≥5 окон по 3 мин в ≥2 днях UTC) | Вернулись (ставка в другой день UTC) |",
+             "Excluded by `--exclude`: %d." % len([x for x in a.exclude.split(",") if x]), "",
+             "| Entered | Bet | ≥3 rounds | ≥5 rounds (old) | Played (new: ≥5 windows of 3 min on ≥2 UTC days) | Returned (a bet on another UTC day) |",
              "|---|---|---|---|---|---|",
              "| %(entered)d | %(bet)d | %(r3)d | %(r5)d | %(played)d | %(returned)d |" % res, ""]
     if a.detail:
-        lines += ["| № | Создан (UTC) | Ставок | Ставок в рассчитанных раундах | 3-мин окон | Дней UTC | Играл | Вернулся |", "|---|---|---|---|---|---|---|---|"]
+        lines += ["| # | Created (UTC) | Bets | Bets in settled rounds | 3-min windows | UTC days | Played | Returned |", "|---|---|---|---|---|---|---|---|"]
         for i, d in enumerate(detail, 1):
-            lines.append("| %d | %s | %d | %d | %d | %d | %s | %s |" % (i, ts(d[0]), d[1], d[2], d[3], d[4], "да" if d[5] else "нет", "да" if d[6] else "нет"))
+            lines.append("| %d | %s | %d | %d | %d | %d | %s | %s |" % (i, ts(d[0]), d[1], d[2], d[3], d[4], "yes" if d[5] else "no", "yes" if d[6] else "no"))
         lines.append("")
     md = "\n".join(lines) + "\n"
     if a.out:

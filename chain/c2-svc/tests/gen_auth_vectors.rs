@@ -116,7 +116,7 @@ fn generate() {
     });
 
     // 5. all-hex message edge case (`docs/research/week1_wallet_auth.md`
-    //    §2's "ловушка"): a message string that consists *entirely* of hex
+    //    §2's "trap"): a message string that consists *entirely* of hex
     //    digits. This service always hashes `message` as raw UTF-8 bytes
     //    (`auth.rs` module doc point 3), so as long as the signer (this
     //    generator) does the same, verification must still succeed.

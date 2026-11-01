@@ -22,7 +22,7 @@ import java.util.List;
  * outside the journal on purpose: the API keys of API bots, the referral and source columns of a player, the withdrawal and deposit
  * bookkeeping tables. An event of schema version 1 (everything written before F4) has none of the new fields and replays as it always did.
  *
- * <p><b>Markets (D-69, docs/research/markets_architecture.md §6, Т-13):</b> the four round events
+ * <p><b>Markets (D-69, docs/research/markets_architecture.md §6, T-13):</b> the four round events
  * ({@link BetPlaced}, {@link BetCancelled}, {@link RoundResolved}, {@link RoundCancelled}) carry an
  * optional trailing {@code market} (a {@code MarketSpec} id). A row written before markets existed
  * has no such key, Jackson hands the component {@code null}, and the compact constructor turns it
@@ -39,7 +39,7 @@ import java.util.List;
  */
 public sealed interface GameEvent {
 
-    /** A missing market means BTC (Т-13) — the one place that rule lives. */
+    /** A missing market means BTC (T-13) — the one place that rule lives. */
     private static String marketOrBtc(String market) {
         return market == null ? MarketSpec.BTC_ID : market;
     }

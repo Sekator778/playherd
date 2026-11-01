@@ -16,7 +16,7 @@ import javax.sql.DataSource;
 import org.postgresql.util.PGobject;
 
 /**
- * Small JDBC helper (предложение: plain JDBC over Agroal's {@link DataSource}, not an ORM — the
+ * Small JDBC helper (proposal: plain JDBC over Agroal's {@link DataSource}, not an ORM — the
  * schema is event-log-plus-read-models, not an object graph, so hand-written SQL stays simpler
  * than mapping it through Hibernate/Panache). Every mutating call in this codebase manages its own
  * transaction explicitly via {@link #tx}, rather than relying on JTA/{@code @Transactional}.

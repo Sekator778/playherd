@@ -26,7 +26,7 @@ import crowdvsmarket.server.chain.ChainSvcClient;
 
 /**
  * E1 and E3: what a withdrawal is called at the chain service, and what happens when it refuses the name
- * (docs/research/markets_architecture.md §4 п.16).
+ * (docs/research/markets_architecture.md §4 item 16).
  *
  * <p>The scenario of the live stand: its database is new while the chain service keeps the state of the previous
  * one — its withdrawal queue still holds confirmed requests {@code w-11 … w-15}. The server's ids start again from

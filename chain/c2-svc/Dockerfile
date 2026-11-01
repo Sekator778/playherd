@@ -97,7 +97,7 @@ FROM debian:bookworm-slim AS runtime
 # `reqwest`'s `rustls-tls` feature bundles its own trust roots
 # (`webpki-roots`), but `ca-certificates` is kept anyway -- cheap, and
 # avoids depending on that not changing across a `reqwest`/rustls version
-# bump. **предложение**.
+# bump. **proposal**.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -118,5 +118,5 @@ EXPOSE 8090
 # local-only, no-untrusted-input threat model -- this service only ever
 # talks to this stand's own server and coinset.org, never the public
 # internet directly); revisit if/when this ships beyond the local stand,
-# **предложение**.
+# **proposal**.
 ENTRYPOINT ["/usr/local/bin/c2-svc"]

@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Т-8 (docs/research/markets_architecture.md §2): each bot, in each round of a series, bets on
+ * T-8 (docs/research/markets_architecture.md §2): each bot, in each round of a series, bets on
  * {@code herd.bots.markets-per-round} distinct random active markets, once in each, within the market's
  * leverage cap, looking at that market's own previous majority — and in live mode never on a market
  * without a fresh price. Every collaborator is a fake; time is the argument of {@code tick}.

@@ -37,7 +37,7 @@ import org.jboss.logging.Logger;
  * for every configured coin name that the registry does not know, one {@code metaAndAssetCtxs}
  * answer per dex gives {@code maxLeverage}, {@code szDecimals}, {@code marginTableId} and the
  * current {@code markPx}, from which the market is made — leverage {@code min(40, maxLeverage)}
- * (Т-4), lot exponent {@link Market#lotExpFor} of the current price (Т-3, fixed from then on), id
+ * (T-4), lot exponent {@link Market#lotExpFor} of the current price (T-3, fixed from then on), id
  * the coin name with {@code ':'} turned into {@code '_'}, symbol the part after the dex prefix.
  *
  * <p>A name the dex does not list, a delisted one, one on a dex the price pipeline does not poll,
@@ -80,7 +80,7 @@ public class HyperliquidCatalog {
     static final String JOB = "catalog-hyperliquid";
     static final String WATCH_EVERY = "${herd.markets.hyperliquid.watch-every:5s}";
     static final String JOB_WATCH = "catalog-hyperliquid-watch";
-    /** Т-4: no market lets a player take more than 40x, whatever the perp allows. */
+    /** T-4: no market lets a player take more than 40x, whatever the perp allows. */
     static final int LEVERAGE_CAP = 40;
     /** An asset must have been reported delisted by every answer for this long before its market is closed ... */
     static final long DELISTED_CLOSE_AFTER_MS = 10_000L;

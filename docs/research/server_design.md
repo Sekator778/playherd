@@ -33,23 +33,23 @@ Java 21, `mvn -s ~/.m2/settings-oss.xml …` (правило the project notes).
 | Пакет | Роль |
 |---|---|
 | `dto` | Java-записи 1:1 из `web/src/api/contract.ts` (Rounds/Ledger/Crowd/Ratings/Home/Auth/Identity/Betting/ServerInfo/Paging/Enums, а с волны 7 ещё `Markets` — DTO лобби, цен, позиций и сводки толпы; в `Enums` с волны 8 ещё `WithdrawalChainState` — слова `chain_state` вывода) — сгруппированы во вложенные `record` внутри нескольких файлов, а не по файлу на тип, ради скорости; на JSON это не влияет (Jackson сериализует по именам компонентов записи, не по имени Java-класса) |
-| `domain` | Живое состояние процесса: `EngineHub` (**один** общий `LedgerBook`; на каждый рынок — `CrowdAccount`, два `GameEngine` HOURLY/DAILY и `ComparisonAccounts` — линии «держать актив»/«анти-толпа», D-26, Т-6), `RoundProgress` (курсор «следующее окно к резолву» на серию = пара (рынок, интервал)), `RoundCalendar` (origin-эпоха, Т-11), `PlayerDirectory` (кэш игроков), `BetFeed` (лента ставок, D-62), `WinStreak` (правило серии побед профиля, D-71), `BetWindows` (указатель окон, в которых лежит ставка без итога, — по нему закрытие рынка и посев серии находят каждое такое окно; `markets_architecture.md` §4 п.15) |
-| `markets` | Рынки (Т-1…Т-4, Т-10): `Market`, `NewMarket`, `Category`, `MarketKind`, `MarketStatus`, `MarketRegistry` (интерфейс; реализации `DbMarketRegistry` над таблицей `markets` и запасная `InMemoryMarketRegistry`), `MarketListener` (`GameService` — его слушатель: листинг даёт движки и серию, закрытие отменяет раунды с возвратом) |
+| `domain` | Живое состояние процесса: `EngineHub` (**один** общий `LedgerBook`; на каждый рынок — `CrowdAccount`, два `GameEngine` HOURLY/DAILY и `ComparisonAccounts` — линии «держать актив»/«анти-толпа», D-26, T-6), `RoundProgress` (курсор «следующее окно к резолву» на серию = пара (рынок, интервал)), `RoundCalendar` (origin-эпоха, T-11), `PlayerDirectory` (кэш игроков), `BetFeed` (лента ставок, D-62), `WinStreak` (правило серии побед профиля, D-71), `BetWindows` (указатель окон, в которых лежит ставка без итога, — по нему закрытие рынка и посев серии находят каждое такое окно; `markets_architecture.md` §4 п.15) |
+| `markets` | Рынки (T-1…T-4, T-10): `Market`, `NewMarket`, `Category`, `MarketKind`, `MarketStatus`, `MarketRegistry` (интерфейс; реализации `DbMarketRegistry` над таблицей `markets` и запасная `InMemoryMarketRegistry`), `MarketListener` (`GameService` — его слушатель: листинг даёт движки и серию, закрытие отменяет раунды с возвратом) |
 | `markets.catalog` | Каталоги — какие рынки листить: `HyperliquidCatalog` (перпы из `herd.markets.*`), `PolymarketCatalog` (шансы политики и спорта), `SyntheticCatalog` (офлайн-набор для `herd.prices.source=synthetic`) |
-| `prices` | Живой ценовой конвейер (Т-12, §4.2): интерфейс `MarketPrices` и его реализация `LiveMarketPrices`, `PriceFeedService` (опрос по расписанию), `TickStore`/`TickRing` (буфер тиков), источники `HyperliquidPriceSource`/`PolymarketPriceSource`/`SyntheticPriceSource`, `RoundPath` (свёртка в ≤30 свечей) |
-| `events` | Event sourcing: `GameEvent` (замкнутый интерфейс с записями-вариантами; события раундов несут необязательное `market`, `null` = BTC, Т-13), `EventStore` (append-only `game_events`), `EventApplier` (**единственный** код, мутирующий `EngineHub` — используется и живым трафиком, и полным реплеем при рестарте, в том числе реплеем «рядом» при пересборке), `StoredRoundPrices` |
+| `prices` | Живой ценовой конвейер (T-12, §4.2): интерфейс `MarketPrices` и его реализация `LiveMarketPrices`, `PriceFeedService` (опрос по расписанию), `TickStore`/`TickRing` (буфер тиков), источники `HyperliquidPriceSource`/`PolymarketPriceSource`/`SyntheticPriceSource`, `RoundPath` (свёртка в ≤30 свечей) |
+| `events` | Event sourcing: `GameEvent` (замкнутый интерфейс с записями-вариантами; события раундов несут необязательное `market`, `null` = BTC, T-13), `EventStore` (append-only `game_events`), `EventApplier` (**единственный** код, мутирующий `EngineHub` — используется и живым трафиком, и полным реплеем при рестарте, в том числе реплеем «рядом» при пересборке), `StoredRoundPrices` |
 | `persistence` | `Db` (тонкая JDBC-обвязка поверх Agroal `DataSource`, ручные транзакции, JSONB через Jackson), плюс по репозиторию на read-model таблицу (`RoundResultRepository` — итоги раундов, история игроков, серия побед; `OracleRecordRepository`, `ServerMetaRepository`, `FeedbackRepository` — отзывы из приложения, §22 и др.) |
 | `replay` | `CandleLoader` (парсер CSV, не завязан на `engine.market.CandleSeries`/`Interval` — см. §4), `ReplayRoundPrices` — источник цен режима `replay` (только BTC) |
 | `live` | Осталась одна `HyperliquidClient` (generic `/info` REST-клиент) — ею пользуется только адаптер исполнения (§15.7, выключен по умолчанию). `LivePriceSampler` и `LiveRoundPrices` (старый поллер `markPx` и построитель путей) удалены: их заменил пакет `prices` |
 | `price` | `PriceService` — только режим `replay`: replay-серия BTC и «референсная» цена `replayReference` |
 | `chain` | `ChainSvcClient` (мокируемый CDI-интерфейс) + `ChainSvcRestClient` (сырой MP REST Client, FIXED INTERFACE 3 дословно) + `ChainSvcClientImpl`; `OracleSeqGate` (нижняя граница `seq` оракула: пока она не получена, планировщик не рассчитывает раунды — всё, что `seq` не резервирует, идёт, §5), `OracleStatusCache` (фоновое обновление статуса оракула), `ChainRequestIds` (id вывода в chainsvc = id движка + тег БД, §16.4) |
 | `auth` | `AuthService` (challenge/verify, D-4/D-45; домен в тексте подписи — `herd.public-domain`), `SessionService` (`herd_session`) |
-| `bots` | `BotStrategy` (5 стратегий), `BotService` (D-46, Т-8: ставки на несколько рынков за раунд) |
+| `bots` | `BotStrategy` (5 стратегий), `BotService` (D-46, T-8: ставки на несколько рынков за раунд) |
 | `scheduler` | `RoundSchedulerService` (главный тик, §5), `SettlementBackoff` (отсрочка повтора расчёта окна), `OraclePublisherService` (D-40/41/47), `OracleReconciliationService`, `EngineRebuildService` + `EngineStateBuilder` (рестарт и восстановление после сбоя расчёта: состояние строится рядом и подменяется целиком, fail-stop), поллеры вывода/ввода PLAY |
 | `service` | `GameService` — оркестратор всех мутирующих операций Api и большинства чтений, замок движка и его узкое API чтения (`readEngine`, `requireEngineReady`); вокруг него: `SeriesSeeder` (откуда стартует серия), `RoundCancellations`, `RoundPriceChecks`, `BoundaryPrices` (закрытие раунда — открытие следующего, из памяти ядра, D-40), `WithdrawalSubmitter` (единственное место, откуда вывод уходит в chainsvc); **модель чтения рынков** (волна 7, §20): `MarketViewService` (`markets`, `myPositions`, `crowdOverview`), `OpenBets`, `CrowdStatsMemo`, `MarketMapper`, `PriceSeriesService` + `PriceThinning` (`priceSeries`), `ServerInfoService` (`serverInfo`); `FeedbackService` (`submitFeedback`, список оператора, §22) |
 | `api` | `RpcResource` (`POST /api/rpc/{method}`), `AdminResource` (D-43), `ResultsJsonResource` (`GET /api/rounds/{id}/results.json`), `ApiExceptionMapper`, `RateLimiter` |
 | `geoip` | Страна по IP для отзыва (D-81, §22): `CountryLookup` (интерфейс), `DbIpCountryLookup` (бин: фоновая нить загрузки + ответы), `GeoIpUpdater` (когда и что грузить), `DbIpDownloader` (скачать и распаковать файл месяца), `CountryDatabase` (MMDB в памяти поверх `com.maxmind.db.Reader`), `IpAddresses` (разбор адреса без DNS) |
-| `util` | `ResultsHasher` (канонический JSON итогов и его хеш; для BTC байт-в-байт прежний, Т-13), `LogThrottle`, `FailureLog` (первый сбой со стеком, дальше одна строка за период), `ConstantTimeTokens` |
+| `util` | `ResultsHasher` (канонический JSON итогов и его хеш; для BTC байт-в-байт прежний, T-13), `LogThrottle`, `FailureLog` (первый сбой со стеком, дальше одна строка за период), `ConstantTimeTokens` |
 | `config` | `GameConfig`, `GameMode`, `JacksonConfig` |
 
 Источник списка — дерево `server/src/main/java/crowdvsmarket/server/` на 2026-10-02 и `docs/research/markets_architecture.md` §3–§6.
@@ -104,7 +104,7 @@ oracle) — `requestWithdrawal`/`requestDeposit` сразу же перевод�
 `round_results`, `player_round_history` и `oracle_records` получили колонку `market` (по умолчанию
 `'BTC'`: вся прежняя история — BTC без пересчёта), `oracle_records` ещё и `asset_index`. События
 раундов в `game_events` несут необязательное поле `market` (`null` = BTC), `schema_version` не
-повышался (Т-13): старый журнал воспроизводится как есть. Где в тексте выше сказано «BTC» про
+повышался (T-13): старый журнал воспроизводится как есть. Где в тексте выше сказано «BTC» про
 `ComparisonAccounts`, «счёт толпы» и `EngineHub` — теперь это по одному комплекту на рынок.
 
 ## 4. Режимы (D-46) — replay (по умолчанию) и live
@@ -140,7 +140,7 @@ start epoch»): `RoundCalendar`/`ServerMetaRepository.originMsOrInit` фикси
 (эквивалент вызову с `RoundDurations.DEFAULT`/`originMs=0`), с юнит-тестами в
 `RoundClockTest` (5 новых кейсов).
 
-### 4.2 Live (D-70, Т-12)
+### 4.2 Live (D-70, T-12)
 
 В `herd.mode=live` играются **все активные рынки** реестра (`GameService.runs`/`runningMarkets`),
 а цены — живые: раунд рассчитывается по ценам источника на его границах, а не по повтору истории.
@@ -240,7 +240,7 @@ runRound` резолвит атомарно, отдельного состоян
 сбой источника через границу), `RoundRunning.openPrice` — `null`, позиций и позиции толпы нет: ни
 нуля, ни последней цены вместо неё не показывается (contract.ts).
 
-## 6. Боты (D-46, Т-8)
+## 6. Боты (D-46, T-8)
 
 `BotService` держит 20 (config `herd.bots.count`) серверных игроков (`is_bot=true`),
 по 4 на 5 стратегий (`BotStrategy` — предложение, конкретные названия/параметры не из
@@ -249,7 +249,7 @@ runRound` резолвит атомарно, отдельного состоян
 `GameService.placeBet`, что и у игрока-человека — те же проверки (минимальная ставка, плечо
 2..предел рынка, одна ставка на раунд рынка).
 
-**Рынки (Т-8, `docs/research/markets_architecture.md` §2, §10):** в каждом раунде серии каждый бот
+**Рынки (T-8, `docs/research/markets_architecture.md` §2, §10):** в каждом раунде серии каждый бот
 ставит на `herd.bots.markets-per-round` (по умолчанию 3) разных случайных активных рынков — меньше,
 если рынков меньше, — по одной ставке на рынок, в случайный момент окна ставок этого рынка (не позже
 90% его длины). Плечо — в пределах лимита рынка (`Market.maxLeverage`); «прошлое большинство» для
@@ -1374,7 +1374,7 @@ unknown withdrawal request: w-golden-1`, что и в описании зада�
 ## 20. Волна 7 (рынки: модель чтения, новые RPC, сквозной тест live) — 2026-10-02
 
 Основание: D-68…D-71 (`the decision log`); архитектура и зафиксированные интерфейсы —
-`docs/research/markets_architecture.md` (Т-1…Т-13, §8 «API»); источник правды по именам полей —
+`docs/research/markets_architecture.md` (T-1…T-13, §8 «API»); источник правды по именам полей —
 `web/src/api/contract.ts`. Этот срез — «API-поверхность рынков на сервере»: чтение из памяти (новый
 `MarketViewService` и соседи), четыре новых RPC, дополнения `serverInfo` и профиля, мелкие правки и
 сквозной тест всего сервера в режиме `live` на настоящем ценовом конвейере. Ядро рынков, конвейер цен
@@ -1409,7 +1409,7 @@ unknown withdrawal request: w-golden-1`, что и в описании зада�
 | `PriceSeriesService`, `PriceThinning` | `priceSeries` и правило прореживания |
 | `ServerInfoService` | `serverInfo` (переехал из `GameService`; `AdminResource.status` берёт его же) |
 
-Правило цен (Т-3): наружу идут только **сырые** цены строкой ровно с `priceDecimals` знаками рынка
+Правило цен (T-3): наружу идут только **сырые** цены строкой ровно с `priceDecimals` знаками рынка
 (`MarketMapper.rawPrice`): перп с лот-экспонентой 0 — 2 знака, с экспонентой 4 — 6, рынок шансов
 (`ODDS`, экспонента 4) — 6, перп вроде DOGE (экспонента 5) — 7.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # D-43 operator CLI — a thin curl wrapper over server/'s admin endpoints
-# (crowdvsmarket.server.api.AdminResource). "CLI с подписью ключом оператора" is not
+# (crowdvsmarket.server.api.AdminResource). "CLI signed with the operator key" is not
 # implemented yet: today this posts a bearer token (HERD_OPERATOR_TOKEN, same value the server
 # reads from its own env — see server/src/main/resources/application.properties
 # "herd.operator.token") as a stand-in until real operator-key signing exists — see

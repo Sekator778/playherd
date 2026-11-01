@@ -3,7 +3,7 @@
 //! `C2_DATA_DIR`, default `/data`; on the stand it is `~/.c2/testnet11`
 //! mounted read-write)"). No config file, no CLI flags for these -- a
 //! container gets its whole configuration from its environment (12-factor,
-//! **предложение**: consistent with how the rest of this project runs
+//! **proposal**: consistent with how the rest of this project runs
 //! services in Docker, `the decision log` D-44).
 
 use std::net::IpAddr;
@@ -50,12 +50,12 @@ pub struct Config {
     pub coinset_base_url: String,
     /// How often the background oracle publisher loop wakes up to check
     /// in-flight-spend confirmation / start a new batch from the queue.
-    /// **предложение**: 10s balances "publish promptly after a round
+    /// **proposal**: 10s balances "publish promptly after a round
     /// boundary" against not hammering coinset.org.
     pub publisher_tick: std::time::Duration,
     /// How long an in-flight (broadcast, unconfirmed) spend is left alone
     /// before this service retries `push_tx` again (task instruction:
-    /// "retries with backoff"). **предложение**: 45s, comfortably above
+    /// "retries with backoff"). **proposal**: 45s, comfortably above
     /// testnet11's ~average block time (see
     /// `docs/research/week1_chain_access.md`) so a normal confirmation
     /// isn't mistaken for a stuck push.
@@ -65,14 +65,14 @@ pub struct Config {
     /// `publisher.rs::advance_in_flight`) before this service stops
     /// auto-retrying it and only reports the stuck spend via
     /// `GET /v1/oracle/status` (`inFlightBundleId`) for the operator to
-    /// look at (D-43: "операторский CLI + публичная страница статуса").
-    /// **предложение**.
+    /// look at (D-43: "operator CLI + public status page").
+    /// **proposal**.
     pub max_retry_attempts: u32,
     /// Hard ceiling on the fee (mojos) a rebuilt spend may pay when the node
     /// keeps rejecting a broadcast for being under the mempool's current
     /// minimum (task instruction: "on each consecutive fee rejection
     /// multiply the fee ... up to a configurable cap"). `C2_MAX_FEE_MOJOS`,
-    /// **предложение** default 50 000 000 mojos = 0.00005 TXCH (task
+    /// **proposal** default 50 000 000 mojos = 0.00005 TXCH (task
     /// instruction's own suggested default) -- generous enough to clear
     /// testnet11's observed ~90-100% full mempool (`docs/research/
     /// week1_testnet_results.md` §5.1: a real accepted fee there was
@@ -82,13 +82,13 @@ pub struct Config {
     /// The rate a spend is priced at when `get_fee_estimate` fails or answers 0 and no estimate has
     /// succeeded yet in this process (afterwards the last successful estimate's rate is used,
     /// `fee_estimate.rs`), in **millimojos per unit of cost** -- an integer, so 100 means 0.1 mojo
-    /// per cost. `C2_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST`, **предложение** default 100 (derived
+    /// per cost. `C2_FALLBACK_FEE_RATE_MILLIMOJOS_PER_COST`, **proposal** default 100 (derived
     /// from the numbers of 2026-10-02, `docs/research/chain_service.md` §17.2); 0 = no floor. The
     /// result is capped at `max_fee_mojos` like every other fee.
     pub fallback_fee_rate_millimojos_per_cost: u64,
     /// How long an in-flight bundle may sit in the node's mempool, unconfirmed, before the
     /// publisher replaces it with one that pays more (`Publisher::replace_in_mempool`,
-    /// `docs/research/chain_service.md` §17.3). `C2_MEMPOOL_REPLACE_AFTER_SECS`, **предложение**
+    /// `docs/research/chain_service.md` §17.3). `C2_MEMPOOL_REPLACE_AFTER_SECS`, **proposal**
     /// default 180 s: a healthy batch took about two minutes on 2026-10-02, and 180 s is also the
     /// cadence at which the server queues records, so at most one more batch waits behind a slow
     /// one. 0 turns the replacement off (a bundle in the mempool is then left alone, as before).
@@ -109,7 +109,7 @@ pub struct Config {
     /// N consecutive `tick()` failures before `GET /v1/oracle/status`'s
     /// `stuckReason` and `GET /health` report degraded (task fix,
     /// `docs/research/chain_service.md` §12: "any repeated tick failure (N
-    /// consecutive, e.g. 3)"). `C2_TICK_FAILURE_THRESHOLD`, **предложение**
+    /// consecutive, e.g. 3)"). `C2_TICK_FAILURE_THRESHOLD`, **proposal**
     /// default 3 -- the task's own suggested example, and small enough
     /// (`publisher_tick`'s 10s default => ~30s) that an operator/the Docker
     /// healthcheck notices promptly without flapping on one transient
@@ -119,7 +119,7 @@ pub struct Config {
     /// operator wallet is kept at no fewer than `C2_FEE_COINS_MIN` free standard coins of at
     /// least `C2_FEE_COIN_MOJOS` each -- when it falls below, the oracle publisher's tick splits
     /// the largest coin (while the oracle has nothing in flight and no fee coin is reserved).
-    /// **предложение**: 4 coins of 200 000 000 mojos (0.0002 TXCH, four times `max_fee_mojos`'s
+    /// **proposal**: 4 coins of 200 000 000 mojos (0.0002 TXCH, four times `max_fee_mojos`'s
     /// default). `C2_FEE_COINS_MIN=0` turns the reserve off.
     pub fee_coins_min: usize,
     pub fee_coin_mojos: u64,

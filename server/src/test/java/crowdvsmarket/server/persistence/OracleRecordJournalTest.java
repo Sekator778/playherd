@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@link OracleRecordRepository#journal}: the read behind the public {@code GET /api/oracle/records}
- * (docs/research/markets_architecture.md §7 п.6) — rows of every market, ascending by {@code seq}, from a
+ * (docs/research/markets_architecture.md §7 item 6) — rows of every market, ascending by {@code seq}, from a
  * {@code seq} inclusive, capped by a limit, plus {@code firstSeq}, the start of this database's range.
  * {@link LiveMarketsProfile}: no scheduler, no bots, so nothing else writes {@code oracle_records} while a
  * test counts its rows.

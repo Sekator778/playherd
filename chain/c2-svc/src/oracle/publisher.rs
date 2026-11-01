@@ -95,7 +95,7 @@ use super::types::{OracleRecord, OracleRecordStatusResponse, OracleStatusRespons
 /// chain_service.md`) and the same one already documented from a live
 /// testnet11 `push_tx` in `docs/research/week1_testnet_results.md` §5.1
 /// (`c2 issue-play`, same mempool-manager rejection). The broader
-/// case-insensitive "contains FEE" match below is a **предложение**, not a
+/// case-insensitive "contains FEE" match below is a **proposal**, not a
 /// verified enumeration of every Chia fee-rejection error code -- it only
 /// ever *widens* which rejections get the extra chain-verified rebuild
 /// treatment below; the actual "never double-spend" safety comes from
@@ -136,7 +136,7 @@ fn stuck_reason(in_flight: &InFlightSpend, max_retry_attempts: u32, max_fee_mojo
     ))
 }
 
-/// **предложение**: `sha256` of the aggregated signature's bytes, a stable
+/// **proposal**: `sha256` of the aggregated signature's bytes, a stable
 /// per-attempt label for `GET /v1/oracle/status`'s `inFlightBundleId` --
 /// *not* Chia's canonical spend-bundle name (`SpendBundle::name()`, used
 /// instead wherever the real chain/mempool needs to identify this exact
@@ -158,7 +158,7 @@ fn now_unix() -> i64 {
 /// How often `tick` runs the retention of confirmed records (`Publisher::retain_confirmed`): a pass
 /// that drops anything is a write of the whole queue file, and records confirm every few seconds, so
 /// the pass is made every ten minutes, not every tick -- the file then holds the last
-/// `C2_ORACLE_RETAIN_CONFIRMED_SECS` plus at most these ten minutes. **предложение**.
+/// `C2_ORACLE_RETAIN_CONFIRMED_SECS` plus at most these ten minutes. **proposal**.
 const RETENTION_EVERY_SECS: i64 = 600;
 
 /// Where `settle_from_block_spend` got the spend from (only the log text differs).
@@ -172,7 +172,7 @@ enum SpendSource {
 
 /// Heights the stale-index scan (`Publisher::scan_blocks_for_spends`) reads per tick: one or two
 /// `get_puzzle_and_solution` calls each, under `queue_lock`. A spend is normally a few blocks past
-/// the coin's creation, so one tick finds it; a long backlog is read at this pace. **предложение**.
+/// the coin's creation, so one tick finds it; a long backlog is read at this pace. **proposal**.
 const STALE_INDEX_SCAN_HEIGHTS_PER_TICK: u32 = 40;
 
 /// A replacement bundle `replace_in_mempool` is ready to make durable and push.
@@ -271,7 +271,7 @@ pub struct Publisher<C: ChainClient> {
     pub max_fee_mojos: u64,
     /// `target_times` seconds passed to `get_fee_estimate` (task
     /// instruction: "fees from coinset get_fee_estimate with the dry-run
-    /// cost"). **предложение**: 60s, see `Config::retry_backoff` doc.
+    /// cost"). **proposal**: 60s, see `Config::retry_backoff` doc.
     pub fee_target_time_secs: u32,
     /// How long a bundle may sit in the node's mempool unconfirmed before `replace_in_mempool`
     /// replaces it (`C2_MEMPOOL_REPLACE_AFTER_SECS`, `Config::mempool_replace_after`); zero turns
@@ -285,7 +285,7 @@ pub struct Publisher<C: ChainClient> {
     /// which is `c2_cli::chain::balance`'s 20 sequential, un-timed-out
     /// `get_coin_records_by_puzzle_hash` calls -- slow or stalled coinset
     /// made `GET /v1/oracle/status` hang along with it; `/health` was
-    /// unaffected because it never touches chain state). **предложение**:
+    /// unaffected because it never touches chain state). **proposal**:
     /// caching the balance instead of computing it per-request.
     pub balance_snapshot: tokio::sync::RwLock<Option<String>>,
     /// Serializes every read-modify-write cycle over the durable queue file
@@ -765,7 +765,7 @@ impl<C: ChainClient> Publisher<C> {
                 Some(proof) => {
                     oracle_state.current_coin = walk.tip_coin;
                     oracle_state.current_proof_dto = proof.into();
-                    // **предложение**: one singleton spend is exactly one
+                    // **proposal**: one singleton spend is exactly one
                     // generation regardless of how many records it batched
                     // (same convention `advance_in_flight` already uses,
                     // `+= 1` there too) -- `next_sequence` is informational
@@ -1827,7 +1827,7 @@ impl<C: ChainClient> Publisher<C> {
         // Task instruction: "re-estimate with get_fee_estimate for the real
         // cost at a shorter target time" -- a rejected, congested-mempool
         // spend needs to outbid the mempool *sooner* than a fresh batch's
-        // default target, not just match it. **предложение**: a third of
+        // default target, not just match it. **proposal**: a third of
         // `fee_target_time_secs`, floor 1s.
         let shorter_target = (self.fee_target_time_secs / 3).max(1);
         // A failed or zero estimate is the fallback rate (`fee_estimate.rs`, §17.2), not 0: the old

@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.jboss.logging.Logger;
 
 /**
- * Предложение (additive, bug fix): {@code GET /v1/oracle/status} on chainsvc has been observed on
+ * Proposal (additive, bug fix): {@code GET /v1/oracle/status} on chainsvc has been observed on
  * the local stand to take anywhere from well under a second to several seconds — occasionally
  * past the client's own 5s read-timeout ({@code quarkus.rest-client.chainsvc.read-timeout}) —
  * even though the TCP connection itself is instant (raw curl to the same

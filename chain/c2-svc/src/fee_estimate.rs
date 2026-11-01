@@ -34,7 +34,7 @@ use anyhow::Result;
 
 use crate::oracle::chain_client::ChainClient;
 
-/// **предложение** -- 100 millimojos = 0.1 mojo per unit of cost. Chosen from the numbers of
+/// **proposal** -- 100 millimojos = 0.1 mojo per unit of cost. Chosen from the numbers of
 /// 2026-10-02 (`docs/research/chain_service.md` §17.2): the estimate that night was 0.0377 mojo/cost
 /// (1,131,704 mojos for cost 30,000,000, 60 s target); the 36-record batch that confirmed in about two
 /// minutes paid 3,426,863 mojos for a draft cost of 50,601,260 (measured, `tests/oracle_replace.rs`

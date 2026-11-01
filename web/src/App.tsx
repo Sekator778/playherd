@@ -21,7 +21,7 @@ import { ConceptALobby, ConceptARoom, ConceptAStats } from "./pages/lab/concepts
  * Routes — task IA: "Lobby / Pair room / bottom tabs (Lobby, Stats, Profile)", concept A chosen
  * per D-61 (`docs/product/design/concepts.md`), grown into Polymarket-style category panels → market
  * cards → a room with a leveraged bet (D-69, `docs/product/design/markets-lobby.md`). Predates this
- * task's own note in `ux_spec.md` §1 ("предложение — ни один источник не фиксирует URL-схему"): still
+ * task's own note in `ux_spec.md` §1 ("proposal: no source fixes the URL scheme"): still
  * true, this is this session's proposal for the new IA's URLs, not a fixed decision.
  *
  * The lobby keeps its panel, chips and search in the query string (`?c=sports&sort=hot&q=ger`); the room

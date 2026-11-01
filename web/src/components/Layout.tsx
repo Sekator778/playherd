@@ -89,7 +89,7 @@ function BalancePill() {
     <NavLink to="/wallet" className="balance-pill" aria-label={t("layout.balanceAria", { amount: formatPlayAmount(balance) })}>
       <CoinIcon className="balance-pill__coin" />
       {/* Rolls on ANY change, not only while a result moment is on screen — the direct answer to
-       *  Alex's "чтобы сумма выигрыша или проигрыша... сразу это проявлялось"
+       *  Alex's "so that the win or loss amount... shows up right away"
        *  (implementation-plan.md §2). Icon-only unit here (polish item 2, 2026-09-26): a bare
        *  number + "PLAY" wrapped the word onto its own line on a 1080px phone once the header ran
        *  tight on width — the gold coin icon already says "this is PLAY", so the word is dropped
@@ -275,8 +275,8 @@ function Header() {
 }
 
 /** Task IA: "bottom tab bar: Lobby / Stats / Profile" — the app's one primary nav, desktop and
- *  mobile alike (concept A, `docs/product/design/concepts.md`: "плавающая нижняя навигация-
- *  таблетка с иконками"). */
+ *  mobile alike (concept A, `docs/product/design/concepts.md`: "floating bottom navigation
+ *  pill with icons"). */
 function BottomTabBar() {
   const t = useT();
   return (
@@ -313,7 +313,7 @@ function LanguageSwitcher() {
 export function Layout() {
   const t = useT();
   // Global settlement-event watcher (implementation-plan.md §3) — runs regardless of which page
-  // is mounted below, so a result moment fires "видно с любой страницы" (game-designer.md).
+  // is mounted below, so a result moment fires "visible from any page" (game-designer.md).
   useSettlementWatcher();
   // The mid-round LIQUIDATION moment (D-50): `myPositions()` says a running position is liquidated long before
   // its round settles, so this fires then — once, remembered across reloads and tabs.

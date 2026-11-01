@@ -37,7 +37,7 @@ use super::withdrawal_queue::WithdrawalRequest;
 
 /// Task instruction: "many outputs per treasury CAT spend" -- capped the
 /// same way the oracle publisher caps its own batch
-/// (`oracle::spend::MAX_RECORDS_PER_SPEND`), **предложение** at the same
+/// (`oracle::spend::MAX_RECORDS_PER_SPEND`), **proposal** at the same
 /// value (20): bounds CLVM cost per spend, no source fixes an exact number
 /// for withdrawals.
 pub const MAX_WITHDRAWALS_PER_SPEND: usize = 20;
@@ -119,7 +119,7 @@ pub fn build_play_withdrawal_batch(
     // again (same self-recreation principle `builders::oracle`'s singleton
     // uses, see `docs/research/chain_service.md` §13) -- refuse to fully
     // drain it in one spend rather than leave the treasury with no coin left
-    // to continue from. **предложение**: the treasury is expected to always
+    // to continue from. **proposal**: the treasury is expected to always
     // hold far more PLAY than one batch pays out; genuine exhaustion needs an
     // operator to top it up (`c2 send-play`/a fresh `issue-play`), not a
     // silent dead end here.

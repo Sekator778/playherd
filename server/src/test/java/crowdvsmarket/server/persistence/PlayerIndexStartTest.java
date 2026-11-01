@@ -16,7 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * E2 (docs/research/markets_architecture.md §4 п.17): the first player index of a NEW database is random in
+ * E2 (docs/research/markets_architecture.md §4 item 17): the first player index of a NEW database is random in
  * {@code [2^20, 2^30)}. The chain service keeps its deposit registry for good while a database can be new, and a
  * deposit address derived from the same index twice is one address for two players: databases that all counted
  * 0, 1, 2 … would hand out the same addresses. A database that has handed out an index — a counter that has moved,

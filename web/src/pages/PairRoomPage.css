@@ -584,7 +584,7 @@
   display: contents;
 }
 
-/* «Вы»: marks the viewer's own row in the live-bets list and the movers strip. */
+/* "You": marks the viewer's own row in the live-bets list and the movers strip. */
 .you-badge {
   flex: none;
   font-size: 10px;

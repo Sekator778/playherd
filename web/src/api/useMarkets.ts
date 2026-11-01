@@ -58,7 +58,7 @@ export interface MarketsState {
   loading: boolean;
   /** The latest poll failed; `markets` is still the last good list (empty if there never was one). */
   error: boolean;
-  /** Only categories with a market in them, in Т-1 order (as the server sends them). */
+  /** Only categories with a market in them, in T-1 order (as the server sends them). */
   categories: readonly CategoryDto[];
   /** Active markets plus those closed within the last 10 minutes, in listing order. */
   markets: readonly MarketDto[];

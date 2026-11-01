@@ -48,7 +48,7 @@ import org.mockito.Mockito;
 
 /**
  * A recovery that fails stops the game instead of leaving it on memory that cannot be trusted
- * (docs/research/markets_architecture.md §4 п.3; review of the multi-market core, finding 2).
+ * (docs/research/markets_architecture.md §4 item 3; review of the multi-market core, finding 2).
  *
  * <p>A settlement transaction that fails AFTER its event was applied to the engine leaves memory ahead
  * of the database, so the engine is rebuilt from the event log. Before, if that rebuild failed too,

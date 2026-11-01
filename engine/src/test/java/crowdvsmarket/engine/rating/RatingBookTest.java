@@ -29,7 +29,7 @@ class RatingBookTest {
     }
 
     @Test
-    void richListMatchesTheР18GrowthFormula() {
+    void richListMatchesTheD18GrowthFormula() {
         LedgerBook ledger = new LedgerBook();
         ledger.ensureSeasonPack("alice", NOW); // balance 10000, baseline 0
         playRounds(ledger, "alice", 10, PlayAmount.fromMoney(new BigDecimal("50.00")), true); // net +50/round -> balance 10500

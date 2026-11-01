@@ -5,7 +5,7 @@
  * accuracy/history that the label promised. This page is what the tab now opens: the player's own
  * profile overview (identical content to `ProfilePage mine`, reused as-is, not duplicated) with
  * Wallet moved inside it as a plain in-page sub-tab (`the decision log` D-59/D-61's
- * "не финансовый терминал" — the wallet becomes one section of the player's profile, not the
+ * "not a financial terminal" — the wallet becomes one section of the player's profile, not the
  * whole tab). `/wallet` itself is untouched and still works as a standalone deep link (header
  * balance pill, profile-menu "Wallet" link, old bookmarks) — this page embeds the exact same
  * `WalletContent` rather than forking it.

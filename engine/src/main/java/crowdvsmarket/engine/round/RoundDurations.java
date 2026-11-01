@@ -3,8 +3,8 @@ package crowdvsmarket.engine.round;
 import crowdvsmarket.engine.market.Interval;
 
 /**
- * Configurable per-{@link Interval} round step length, milliseconds (предложение — additive
- * addition for the Quarkus server's test mode, D-46: "часовой" round = 3 min, "дневной" = 15 min,
+ * Configurable per-{@link Interval} round step length, milliseconds (proposal — additive
+ * addition for the Quarkus server's test mode, D-46: the hourly round = 3 min, the daily one = 15 min,
  * instead of the real 3 600 000 / 86 400 000 ms {@link RoundClock#DEFAULT} uses). Carries no
  * behavior of its own beyond {@link #forInterval}; {@link RoundClock}'s overloads that take this
  * are new methods added alongside the original fixed-duration ones (see that class's javadoc) —

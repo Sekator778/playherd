@@ -49,7 +49,7 @@ What "verified" means here, precisely:
     published, the round's closePriceCents in that file equals the priceCents this tool
     independently decoded from the chain, and the asset index on chain equals the asset the
     stand assigns to that round (and its registry maps that index to that round's market).
-    This is D-41's whole point: "любой может сверить, что итоги не поменяли задним числом" —
+    This is D-41's whole point: "anyone can check that the results were not changed after the fact" —
     this tool is that anyone.
   - (with --stand-url) Which exchange a crypto round ran on (D-76). A market that has a backup
     exchange (the registry's `backup`) opens each round on its main exchange or on the backup and

@@ -6,7 +6,7 @@ Python 3 standard library only.
 
 Everything is split by payout mode (D-106): FIXED ("Win or lose") and PERCENTAGE, each with its own tables, its own `coin` control
 and the same Wilson / Newcombe columns. The mode is `player_round_history.mode` (V18). In FIXED there is no leverage and no
-liquidation, so those two columns are blank there. The split is internal (D-105 п. 3), not shown to players.
+liquidation, so those two columns are blank there. The split is internal (D-105 item 3), not shown to players.
 
 Per strategy family (bollinger, rsi, ema, coin, donchian, momentum, crowd-follow, crowd-contrarian, legacy names) and per
 full strategy name, per round length (3 min = HOURLY, 15 min = DAILY) and for both together:
@@ -35,7 +35,7 @@ from settlement_audit import load_env, psql  # noqa: E402
 
 Z = 1.959964
 MOJO_PER_PLAY = 1000
-IV_NAME = {"HOURLY": "3 мин", "DAILY": "15 мин"}
+IV_NAME = {"HOURLY": "3 min", "DAILY": "15 min"}
 CONTROL = "coin"
 MODES = ("FIXED", "PERCENTAGE")
 
@@ -128,11 +128,11 @@ def build(rows, ivs):
             diff = newcombe(wi, ci) if not (lname == "family" and key == CONTROL) else None
             after = t["pnl"] - t["fee"]
             if key == CONTROL and lname == "family":
-                verdict = "контроль"
+                verdict = "control"
             elif diff is None:
-                verdict = "нет данных"
+                verdict = "no data"
             else:
-                verdict = "отличима от монетки" if (diff[1] > 0 or diff[2] < 0) else "нет"
+                verdict = "differs from a coin" if (diff[1] > 0 or diff[2] < 0) else "no"
             out.append(dict(level=lname, name=key, iv=iv, bots=t["bots"], bets=t["n"], decided=t["d"], wins=t["w"],
                             win=wi, diff=diff, liq=t["liq"], liq_share=t["liq"] / t["n"] if t["n"] else None,
                             avg_lev=t["lev"] / t["n"] if t["n"] else None, pnl_before=play(t["pnl"]), fees=play(t["fee"]),
@@ -154,44 +154,44 @@ def fmt_row(r, mode="PERCENTAGE"):
     win = "%s [%s; %s]" % (pct(w[0]), pct(w[1]), pct(w[2])) if w else "—"
     d = r["diff"]
     diff = "%+.1f [%+.1f; %+.1f]" % (100 * d[0], 100 * d[1], 100 * d[2]) if d else "—"
-    return [r["name"], IV_NAME.get(r["iv"], "обе"), str(r["bots"]), str(r["bets"]), str(r["decided"]), win, diff,
+    return [r["name"], IV_NAME.get(r["iv"], "both"), str(r["bots"]), str(r["bets"]), str(r["decided"]), win, diff,
             "%d (%s)" % (r["liq"], pct(r["liq_share"])) if r["liq_share"] is not None and mode != "FIXED" else "—",
             "%.1f" % r["avg_lev"] if r["avg_lev"] is not None and mode != "FIXED" else "—",
             "%.1f" % r["pnl_before"], "%.1f" % r["fees"], "%.1f" % r["pnl_after"], "%.0f" % r["staked"],
             pct(r["ret"]) if r["ret"] is not None else "—", r["verdict"]]
 
 
-MODE_TITLE = {"FIXED": "FIXED («Выиграл или проиграл»: 2 x ставка или 0, без плеча и ликвидации)",
-              "PERCENTAGE": "PERCENTAGE (ставка x плечо x движение цены)"}
+MODE_TITLE = {"FIXED": "FIXED (\"Win or lose\": 2 x stake or 0, no leverage and no liquidation)",
+              "PERCENTAGE": "PERCENTAGE (stake x leverage x price move)"}
 
-HEAD = ["Группа", "Раунд", "Ботов", "Ставок", "Решённых", "Угадал, % [95 % Уилсон]", "Разница с монеткой, п.п. [95 %]",
-        "Ликвидаций", "Ср. плечо", "PnL до комиссий", "Комиссии", "PnL после комиссий", "Поставлено", "Доходность после комиссий",
-        "Вердикт"]
+HEAD = ["Group", "Round", "Bots", "Bets", "Decided", "Correct, % [95 % Wilson]", "Difference from coin, pp [95 %]",
+        "Liquidations", "Avg. leverage", "PnL before fees", "Fees", "PnL after fees", "Staked", "Return after fees",
+        "Verdict"]
 
 
 def markdown(outs, meta):
     """outs: {mode: rows of build()}; the same tables once per payout mode, FIXED first."""
-    lines = ["Период: %s — %s UTC (%d ч), расчёт сделан %s UTC. Суммы в PLAY (1 PLAY = 1000 mojo). Источник: `player_round_history`, "
-             "`players`, `round_results`, событие `BetPlaced`; только боты (`is_bot`). «Угадал» — доля `direction_correct` среди "
-             "решённых ставок (ничья и возвраты не входят). Разница с монеткой — интервал Ньюкомба из двух интервалов Уилсона, контроль — "
-             "семейство `coin` того же раунда и того же режима выплаты (`player_round_history.mode`)." % (
+    lines = ["Period: %s — %s UTC (%d h), computed %s UTC. Amounts in PLAY (1 PLAY = 1000 mojo). Source: `player_round_history`, "
+             "`players`, `round_results`, the `BetPlaced` event; bots only (`is_bot`). \"Correct\" is the share of `direction_correct` among "
+             "decided bets (draws and refunds excluded). Difference from coin is the Newcombe interval built from two Wilson intervals, the control is "
+             "the `coin` family of the same round and the same payout mode (`player_round_history.mode`)." % (
                  meta["since"], meta["until"], meta["hours"], meta["at"]), ""]
     for mode in (m for m in MODES if m in outs):
-        lines += ["# Режим: %s" % MODE_TITLE[mode], ""]
-        for lname, title in (("family", "По семействам"), ("strategy", "По полным именам стратегий")):
+        lines += ["# Mode: %s" % MODE_TITLE[mode], ""]
+        for lname, title in (("family", "By family"), ("strategy", "By full strategy name")):
             lines += ["## %s — %s" % (title, mode), "", "| " + " | ".join(HEAD) + " |", "|" + "---|" * len(HEAD)]
             for r in outs[mode]:
                 if r["level"] == lname:
                     lines.append("| " + " | ".join(fmt_row(r, mode)) + " |")
             lines.append("")
-    lines.append("Ставки одного бота зависимы друг от друга, интервалы считают их независимыми; на деле интервалы уже, чем показано "
-                 "[вывод: ставки одного бота повторяют его правило, а не независимые испытания].")
-    lines.append("Строк с вердиктом — десятки; при уровне 95 % часть «отличима» выпадает случайно [вывод: 5 % от числа проверок]; "
-                 "вердикт читать вместе с числом ставок и повторяемостью на другом периоде.")
-    lines.append("В режиме FIXED нет плеча и ликвидации: столбцы «Ликвидаций» и «Ср. плечо» пусты. Статистика внутренняя (D-105 п. 3).")
+    lines.append("Bets of one bot depend on each other, the intervals treat them as independent; in fact the intervals are wider than shown "
+                 "[inference: the bets of one bot repeat its rule, they are not independent trials].")
+    lines.append("There are dozens of rows with a verdict; at the 95 % level some of the \"distinguishable from a coin\" verdicts appear by chance [inference: 5 % of the number of checks]; "
+                 "read a verdict together with the number of bets and its repeatability on another period.")
+    lines.append("In FIXED mode there is no leverage and no liquidation: the \"Liquidations\" and \"Avg. leverage\" columns are empty. The statistics are internal (D-105 item 3).")
     miss = sum(r["nofee"] for out in outs.values() for r in out if r["level"] == "family" and r["iv"] == "ALL")
     if miss:
-        lines.append("Ставок без события `BetPlaced` (комиссия принята за 0): %d." % miss)
+        lines.append("Bets without a `BetPlaced` event (fee taken as 0): %d." % miss)
     return "\n".join(lines) + "\n"
 
 

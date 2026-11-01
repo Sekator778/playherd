@@ -20,10 +20,10 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The public "счёт толпы" (crowd account, D-5, D-14, D-17): one paper-USD position per round,
+ * The public crowd account (D-5, D-14, D-17): one paper-USD position per round,
  * opened on the majority side of that round's player bets and sized as 10% of the account's own
- * running capital — entirely independent of player balances (D-5: "на балансы игроков не
- * влияет", it is a display/scoreboard account, not something players pay into or out of).
+ * running capital — entirely independent of player balances (D-5: it does not affect player balances;
+ * it is a display/scoreboard account, not something players pay into or out of).
  *
  * <p>One account per market (D-69): it trades its {@link MarketSpec}'s market, with that market's
  * maintenance margin rate and leverage cap. The constructors without a spec are the BTC account,
@@ -102,7 +102,7 @@ public final class CrowdAccount {
         return capital;
     }
 
-    /** Capital after every round processed so far, oldest first — the source for the "толпа против рынка" chart (D-17). */
+    /** Capital after every round processed so far, oldest first — the source for the crowd-versus-market chart (D-17). */
     /** Puts a saved state into a fresh account (architecture plan F5: a snapshot): its capital and its rounds so far. */
     public void restore(BigDecimal savedCapital, List<RoundResult> savedHistory) {
         if (!history.isEmpty()) {

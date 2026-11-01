@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  *                        ({@code BTC:40,ETH:25,…}); neither venue has one of its own, and nothing is above 40
  * @param spotBackup      {@code herd.markets.spot.backup}: the backup exchange per symbol of the two lists above
  *                        ({@code BTC:kraken,…,HYPE:coinbase}; {@code none} for a symbol that has no backup) — recorded
- *                        in the market's {@code sourceMeta} when it is listed and fixed from then on (Т-10), like
+ *                        in the market's {@code sourceMeta} when it is listed and fixed from then on (T-10), like
  *                        everything else about a listed market; a symbol that is not in it has none
  * @param disabledVenues  {@code herd.prices.disabled-venues}: venues that give no price at all, the catalog's requests
  *                        to them included
@@ -138,7 +138,7 @@ public record CatalogConfig(
     public static final String DEFAULT_SPOT_BACKUP = "BTC:kraken,ETH:kraken,SOL:kraken,XRP:kraken,DOGE:kraken,HYPE:coinbase";
     /** A spot symbol that is in no table gets this cap. */
     public static final int FALLBACK_SPOT_LEVERAGE = 10;
-    /** Т-4: no market lets a player take more than 40x. */
+    /** T-4: no market lets a player take more than 40x. */
     public static final int LEVERAGE_CAP = 40;
     public static final String DEFAULT_STOCKS = "xyz:NVDA,xyz:TSLA";
     public static final String DEFAULT_INDICES = "xyz:SP500,xyz:XYZ100";
@@ -148,7 +148,7 @@ public record CatalogConfig(
     public static final String DEFAULT_SPORTS_COUNT = "3";
     public static final String DEFAULT_ODDS_MAX_LEVERAGE = "10";
     public static final String DEFAULT_IN_PLAY_FIRST = "true";
-    /** Six hours: longer than any game of the sports Polymarket lists, and the closed market's game is over (предложение). */
+    /** Six hours: longer than any game of the sports Polymarket lists, and the closed market's game is over (proposal). */
     public static final String DEFAULT_GAME_COOLDOWN = "6h";
 
     /** The defaults with real sources — for tests. */

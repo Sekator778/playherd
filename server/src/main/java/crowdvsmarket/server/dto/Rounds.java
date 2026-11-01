@@ -128,7 +128,7 @@ public final class Rounds {
     }
 
     /** {@code upStake}/{@code downStake}/{@code recentBets} match the shape already added to
-     *  contract.ts by the web side (D-62, "Расклад толпы... видны вживую... как в Twitch
+     *  contract.ts by the web side (D-62, "The crowd split... visible live... as in Twitch
      *  Predictions", replacing D-22's "count only" during BETTING) — {@code upCount}/
      *  {@code downCount}/{@code majorityDirection}/{@code majorityLeverage} are this server's
      *  additive extension of the same live aggregate (the task's full spec: "upStake, downStake,

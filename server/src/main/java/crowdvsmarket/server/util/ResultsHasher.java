@@ -23,7 +23,7 @@ import java.util.TreeMap;
  * these all-ASCII field names is plain byte-lexicographic order, matching what any other
  * implementation reading "keys sorted" the same way would produce independently.
  *
- * <p><b>Предложение</b> (not spelled out by the task): {@code outcome} is {@code "SETTLED"},
+ * <p><b>Proposal</b> (not spelled out by the task): {@code outcome} is {@code "SETTLED"},
  * {@code "LIQUIDATED"} or {@code "CANCELLED"}; a cancelled round's canonical JSON has
  * {@code openPriceCents}/{@code closePriceCents}/{@code crowd} all {@code null} and each
  * position's {@code payoutMojos == stakeMojos} (a full refund, D-23/D-32) with

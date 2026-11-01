@@ -232,7 +232,7 @@ sha256_of() { # sha256_of FILE -> the digest only
   fi
 }
 
-# --- the one-publisher rule (README: "Одна ключевая пара — один издатель"). The oracle singleton and the PLAY payouts are
+# --- the one-publisher rule (README: "One key pair, one publisher"). The oracle singleton and the PLAY payouts are
 # operated by one key, so the chain service of this Mac's stand must not be running when the VPS's starts.
 
 # Whether a chainsvc container of the Mac's own stand (compose project herd) is running. No docker, or a daemon that is
@@ -255,7 +255,7 @@ require_local_chainsvc_stopped() { # require_local_chainsvc_stopped ALLOW_FLAG_V
     return 0
   fi
   if local_chainsvc_running; then
-    die "the chain service of the stand on this machine is running (compose project ${STAND_PROJECT}). The oracle singleton and the PLAY payouts have one operator key: ${2:-this step} would put a second publisher on it. Stop the local stand first (docker compose -p ${STAND_PROJECT} stop), then repeat. See tools/vps/README.md, \"Один издатель\"."
+    die "the chain service of the stand on this machine is running (compose project ${STAND_PROJECT}). The oracle singleton and the PLAY payouts have one operator key: ${2:-this step} would put a second publisher on it. Stop the local stand first (docker compose -p ${STAND_PROJECT} stop), then repeat."
   fi
 }
 

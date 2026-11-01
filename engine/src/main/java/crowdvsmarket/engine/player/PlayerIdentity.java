@@ -16,7 +16,7 @@ public record PlayerIdentity(String playerId, String nickname, String walletAddr
     }
 
     /**
-     * {@code "nickname (first6…last4)"} — предложение for the shortened form (see
+     * {@code "nickname (first6…last4)"} — proposal for the shortened form (see
      * docs/research/round_engine_design.md); addresses of 14 characters or fewer are shown in full
      * since shortening would not save anything.
      */

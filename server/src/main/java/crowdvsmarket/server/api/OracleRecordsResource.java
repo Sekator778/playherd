@@ -12,7 +12,7 @@ import jakarta.ws.rs.core.Response;
 import java.util.List;
 
 /**
- * FIXED INTERFACE O (docs/research/markets_architecture.md §7 п.6): {@code GET
+ * FIXED INTERFACE O (docs/research/markets_architecture.md §7 item 6): {@code GET
  * /api/oracle/records?fromSeq=&limit=} — the journal of every oracle record this server queued, with
  * the round each belongs to, for the public verifier ({@code tools/verify-oracle}) and anyone else who
  * wants to hold the stand's rounds against the chain: {@code {firstSeq, records: [{seq, roundId,

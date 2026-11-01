@@ -204,7 +204,7 @@ pub struct OracleStatusResponse {
     pub pending_records: usize,
     pub in_flight_bundle_id: Option<String>,
     pub operator_balance_mojos: Option<String>,
-    /// **предложение** (extends the FIXED INTERFACE (3) status shape the
+    /// **proposal** (extends the FIXED INTERFACE (3) status shape the
     /// same way `inFlightBundleId`/`operatorBalanceMojos` already do, see
     /// `chain_service.md` §4 -- `chainsvc` is an internal service, not part
     /// of the public web contract). `Some` once the in-flight spend has

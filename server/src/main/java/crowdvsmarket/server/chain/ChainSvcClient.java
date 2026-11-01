@@ -16,7 +16,7 @@ public interface ChainSvcClient {
     /** One record of {@code POST /v1/oracle/records}'s {@code records} array.
      *
      *  <p>{@code asset} is the record's market in the public registry (record format 2,
-     *  docs/research/markets_architecture.md §7 п.1; chain/c2-svc {@code OracleRecordDto.asset}):
+     *  docs/research/markets_architecture.md §7 item 1; chain/c2-svc {@code OracleRecordDto.asset}):
      *  0 is BTC, the only market before format 2. A chain service older than format 2 drops the
      *  unknown JSON key and would publish a non-zero asset as a BTC price — which is why
      *  {@code OraclePublisherService} sends {@code asset > 0} only after

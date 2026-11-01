@@ -11,12 +11,12 @@ import { HEAT_VAR, liquidationZone } from "./heat";
  * `.liquidation-preview`) with a horizontal bar: entry price / liquidation price as the two
  * endpoints, fill = how much room is left, colored by the same heat ramp the leverage dial uses.
  *
- * `docs/product/design/implementation-plan.md` §2: "Пре-бет версия... работает уже сегодня,
- * никаких новых данных не требует" — this is exactly that static version, driven only by the
- * existing `LiquidationPreviewDto`. The live, updating-during-RUNNING version (§2's "Live-
- * версия") needs `btcReferencePrice()` wired into a poll loop and is out of scope for this pass.
+ * `docs/product/design/implementation-plan.md` §2: "Pre-bet version... already works today,
+ * needs no new data" — this is exactly that static version, driven only by the
+ * existing `LiquidationPreviewDto`. The live, updating-during-RUNNING version (§2's "Live
+ * version") needs `btcReferencePrice()` wired into a poll loop and is out of scope for this pass.
  *
- * предложение: live-round.md §2's zone thresholds (Safe ≥50% / Watch 25-50% / Close 10-25% /
+ * proposal: live-round.md §2's zone thresholds (Safe ≥50% / Watch 25-50% / Close 10-25% /
  * Critical <10%) describe the LIVE case, where the denominator is the distance at bet time and
  * the fraction shrinks toward 0 as price moves. Pre-bet, `percentToLiquidation` alone has no such
  * shrinking denominator — no source fixes what "full bar" means here. `SAFE_REFERENCE` below is
@@ -65,8 +65,8 @@ export function LiquidationBar({
 }
 
 /**
- * The live distance-to-liquidation meter of a RUNNING position (live-round.md §2, "полоска до
- * ликвидации"): the bar is the room left as a share of the distance the position had at entry, coloured
+ * The live distance-to-liquidation meter of a RUNNING position (live-round.md §2, "bar to
+ * liquidation"): the bar is the room left as a share of the distance the position had at entry, coloured
  * and pulsing by zone — the same ramp the pre-bet bar and the leverage dial use — and the caption says it
  * in plain words (how far the price still has to move against the position). `thin` is the positions
  * strip's compact version, the caption left to the card around it.

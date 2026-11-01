@@ -59,7 +59,7 @@ public final class Report {
         StringBuilder md = new StringBuilder();
         StringBuilder csv = new StringBuilder("step,planned_per_s,arrived_per_s,responses_per_s,ok_per_s,rejected_per_s,rejects,"
                 + "p50_ms,p99_ms,p99.9_ms,max_ms,mid_p50_ms,mid_p99_ms,mid_p99.9_ms,mid_max_ms,bnd_p50_ms,bnd_p99_ms,bnd_p99.9_ms,bnd_max_ms,mid_n,bnd_n\n");
-        md.append("| ступень | план/с | пришло/с | ответов/с | принято/с | отклонено (код: число) | p50 | p99 | p99,9 | max | mid p99,9 | граница p99,9 (n) |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+        md.append("| step | plan/s | arrived/s | answers/s | accepted/s | rejected (code: count) | p50 | p99 | p99.9 | max | mid p99.9 | boundary p99.9 (n) |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n");
         int idx = 0;
         for (Step st : steps) {
             idx++;

@@ -25,7 +25,7 @@ export function DirectionGlyph({ direction, className }: { direction: "UP" | "DO
  * Outcome icons (docs/product/design/direction.md §3 "Outcome chips") — same inline-SVG pattern
  * as the glyphs above, `currentColor` so each sits in its own `.result-tile--*`/`.player-chip`
  * color. Always paired with colored text/a label next to it (never the only signal, per
- * `.claude/agents/game-designer.md`'s "Честность") — these are decoration for an outcome that is
+ * `.claude/agents/game-designer.md`'s "Honesty") — these are decoration for an outcome that is
  * already stated in words nearby, so `aria-hidden`.
  */
 export function TrophyIcon({ className = "" }: { className?: string }) {
@@ -55,8 +55,8 @@ export function TrophyIcon({ className = "" }: { className?: string }) {
   );
 }
 
-/** Liquidation — a snapped crack, not a slow fracture (result-moment.md §2: "щелчок, не
- *  нарастание"). */
+/** Liquidation — a snapped crack, not a slow fracture (result-moment.md §2: "a snap, not
+ *  a buildup"). */
 export function CrackIcon({ className = "" }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">

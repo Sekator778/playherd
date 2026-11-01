@@ -182,7 +182,7 @@ async fn main() -> Result<()> {
     // starts new batches from the durable queue on a fixed tick, so a
     // `POST /v1/oracle/records` handler never blocks its HTTP response on a
     // chain round-trip (task instruction doesn't require synchronous
-    // publish-on-POST, only durable queueing -- **предложение**).
+    // publish-on-POST, only durable queueing -- **proposal**).
     {
         let publisher = Arc::clone(&publisher);
         let tick = config.publisher_tick;
@@ -223,7 +223,7 @@ async fn main() -> Result<()> {
     // into the tick loop above: the wallet scan (`ChainClient::unspent_coins`,
     // 20 sequential address lookups, `ADDRESS_GAP`) is the slowest chain call
     // this service makes, and it must never delay `tick()`'s own
-    // confirmation/retry timing (**предложение**: reuses `publisher_tick`'s
+    // confirmation/retry timing (**proposal**: reuses `publisher_tick`'s
     // interval, no new config surface). The same scan also feeds the fee-coin
     // gauge in `GET /v1/oracle/status` (`feeCoinsFree`) and tells the fee-coin
     // reserve (`fee_reserve.rs`) whether the wallet needs topping up.

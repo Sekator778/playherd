@@ -104,21 +104,21 @@ public final class Enums {
         WITHDRAWAL_EXCEEDS_BALANCE,
         CHALLENGE_EXPIRED_OR_UNKNOWN,
         SIGNATURE_INVALID,
-        /** предложение — not in contract.ts's ApiErrorCode list, used for admin-token/route
+        /** proposal — not in contract.ts's ApiErrorCode list, used for admin-token/route
          *  failures and unknown RPC method names, which contract.ts does not model (it only
          *  documents Api-method-level failures). */
         UNAUTHORIZED,
         /** HTTP 404 — no such player, round or request (contract.ts names it). */
         NOT_FOUND,
         BAD_REQUEST,
-        /** предложение (wave-1 finding; contract.ts names it) — {@code setNickname}'s dedicated validation
+        /** proposal (wave-1 finding; contract.ts names it) — {@code setNickname}'s dedicated validation
          *  failure, kept distinct from the generic {@code BAD_REQUEST} so a client can show a specific
          *  message. 400. */
         INVALID_NICKNAME,
-        /** предложение (task item 2: per-IP rate limit on authChallenge/authVerify/placeBet,
+        /** proposal (task item 2: per-IP rate limit on authChallenge/authVerify/placeBet,
          *  D-38 VPS stand-in) — same "additive, not in contract.ts" situation as above. */
         RATE_LIMITED,
-        /** предложение (wave-2 security fix) — {@code requestWithdrawal}/{@code requestDeposit}'s
+        /** proposal (wave-2 security fix) — {@code requestWithdrawal}/{@code requestDeposit}'s
          *  dedicated rejection for a zero/negative/otherwise non-positive amount, kept distinct
          *  from the generic {@code BAD_REQUEST} (parse failure) so a client can tell "not a number"
          *  apart from "a number, but not a valid one here". Same "additive" situation as above. */
@@ -132,7 +132,7 @@ public final class Enums {
          *  disabling withdrawal too" guidance — it auto-confirms with no chain call, which would
          *  otherwise falsely claim a CAT left the game). */
         WITHDRAWAL_UNAVAILABLE,
-        /** D-53: {@code requestWithdrawal} rejects an amount below the (предложение, documented in
+        /** D-53: {@code requestWithdrawal} rejects an amount below the (proposal, documented in
          *  {@code GameService}) minimum withdrawal — additive, same situation as {@code
          *  INVALID_AMOUNT} above. */
         WITHDRAWAL_BELOW_MINIMUM,

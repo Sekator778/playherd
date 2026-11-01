@@ -24,7 +24,7 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Cancels one round with a refund of every pending bet (docs/research/markets_architecture.md §4 п.3): the
+ * Cancels one round with a refund of every pending bet (docs/research/markets_architecture.md §4 item 3): the
  * {@code RoundCancelled} event and its application to the engine (every stake refunded, the round's bet book entry cleared); the
  * cancelled result row follows once the event is durable ({@link DerivedRows}). {@link #cancel} never touches {@code RoundProgress} — the scheduler steps over
  * the round when it sees the row; {@link #closeSeries} stops a closed market's series.

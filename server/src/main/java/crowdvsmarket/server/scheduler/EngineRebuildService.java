@@ -178,10 +178,10 @@ public class EngineRebuildService {
      * <p>The series of every running market is seeded from that market's latest {@code round_results}
      * row — its {@code window_end_ms} is where the next window to resolve starts — or, for a market
      * without one, from the window that contains "now" (docs/research/markets_architecture.md §4
-     * п.2): never from the calendar origin, which for a market listed later would make the scheduler
+     * item 2): never from the calendar origin, which for a market listed later would make the scheduler
      * resolve every window since the origin — and never later than the earliest window that still
      * holds a bet ({@code SeriesSeeder}). After a long stop the catch-up rule of the scheduler (§4
-     * п.5) skips the empty windows in between.
+     * item 5) skips the empty windows in between.
      */
     public void rebuildStateLocked(long nowMs) {
         lastAttemptAtNanos = System.nanoTime();

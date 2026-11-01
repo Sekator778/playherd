@@ -5,7 +5,7 @@ import java.util.Map;
 
 /**
  * The built-in parameters of the synthetic markets (herd.prices.source=synthetic,
- * docs/research/markets_architecture.md §2 Т-12): leverage cap and start price per symbol, rounded
+ * docs/research/markets_architecture.md §2 T-12): leverage cap and start price per symbol, rounded
  * from Hyperliquid's real numbers of 2026-10-01 (hl_multi_asset_live.md §2, §7.3). Shared by
  * {@code SyntheticCatalog} (which lists the markets) and {@link SyntheticPriceSource} (which prices
  * them, including BTC, whose row is created by the V7 migration and has no start price of its own).

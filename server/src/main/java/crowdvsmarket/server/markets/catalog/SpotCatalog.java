@@ -41,7 +41,7 @@ import org.jboss.logging.Logger;
  * {@code herd.markets.hyperliquid-spot} ({@code HYPE} → {@code spot_HYPE}, the pair HYPE/USDC of Hyperliquid's spot
  * market) — and <b>retires the market each of them replaces</b>
  * (docs/research/primary_sources.md §4; iteration 1 of the move from Hyperliquid's perpetuals to the venues' own
- * prices). A source change is a new market (Т-10): the new one has its own id, source, lot exponent and oracle index.
+ * prices). A source change is a new market (T-10): the new one has its own id, source, lot exponent and oracle index.
  *
  * <p><b>The market.</b> Kind {@code PERP} — which now means "the USD price of an asset", whatever the venue — category
  * {@code crypto}, the symbol the coin's own ({@code BTC}), the title from {@link MarketNames}. The id is
@@ -51,13 +51,13 @@ import org.jboss.logging.Logger;
  * pair's name in Hyperliquid's spot meta ({@code "@107"}, found by the token names HYPE and USDC — never hard-coded),
  * {@code sourceMeta} {@code {"spot":true,"pair":"HYPE/USDC"}}. Leverage is {@code herd.markets.spot.max-leverage} of the
  * symbol (the caps the six markets had as perpetuals), at most 40; the lot exponent is {@link Market#lotExpFor} of the
- * first price read, fixed from then on (Т-3).
+ * first price read, fixed from then on (T-3).
  *
  * <p><b>The backup exchange</b> (D-76: a round runs entirely on one exchange, chosen when it opens): the listing records
  * in {@code sourceMeta} the exchange a round moves to when the primary cannot price its start, from
  * {@code herd.markets.spot.backup} — Kraken ({@code "backup":{"source":"kraken","ref":"BTC/USD"}}) behind Coinbase for BTC, ETH,
  * SOL, XRP and DOGE, Coinbase ({@code {"source":"coinbase","ref":"HYPE-USD"}}) behind Hyperliquid's spot market for HYPE. Like
- * the rest of a listing it is fixed from then on (Т-10): a change of the setting is for the markets listed after it. A Kraken pair
+ * the rest of a listing it is fixed from then on (T-10): a change of the setting is for the markets listed after it. A Kraken pair
  * is looked up in {@code /0/public/AssetPairs} first and a market whose pair Kraken says it does not know is listed without a
  * backup ({@link #recordBackup}); a market is not kept from the lobby because Kraken cannot be asked right now, or because the
  * backup's pair does not answer right now — and Coinbase, the backup of HYPE, is not asked at all.
@@ -325,7 +325,7 @@ public class SpotCatalog {
     /**
      * Writes the symbol's backup exchange into the market's {@code sourceMeta}
      * ({@code "backup":{"source":"kraken","ref":"BTC/USD"}}) — what {@code Instruments} reads, and fixed from here on like
-     * everything else a listing records (Т-10). A symbol with none in {@code herd.markets.spot.backup}, or one named
+     * everything else a listing records (T-10). A symbol with none in {@code herd.markets.spot.backup}, or one named
      * {@code none}, has no backup; a backup on the very venue that prices the market is no backup, said once and left out.
      *
      * <p><b>A Kraken backup is checked against {@code /0/public/AssetPairs}</b> ({@link #krakenKnows}): a pair that Kraken

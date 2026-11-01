@@ -14,9 +14,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Holds the live, in-memory engine state: ONE shared {@link LedgerBook} — a player has one PLAY
- * balance behind a bet on any market (Т-5: "Один баланс PLAY на игрока") and the ratings/seasons
- * are common to every market and series (Т-7, D-30) — and, per market (docs/research/
- * markets_architecture.md §4 п.1, Т-6): one {@link CrowdAccount} (its own $100 000 and chart,
+ * balance behind a bet on any market (T-5: "One PLAY balance per player") and the ratings/seasons
+ * are common to every market and series (T-7, D-30) — and, per market (docs/research/
+ * markets_architecture.md §4 item 1, T-6): one {@link CrowdAccount} (its own $100 000 and chart,
  * D-17/D-25), the market's two {@link GameEngine}s (HOURLY and DAILY, each with its own private
  * {@code BetBook}, per round_engine_design.md §1: "construct one GameEngine per series" — both
  * share that crowd account and the ledger) and the market's {@link ComparisonAccounts} (the
@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Every mutating call in this codebase goes through {@code GameService}, which synchronizes on
  * this instance for the whole of one logical operation (persist event(s) + mutate this state +
  * update read models) — none of {@code LedgerBook}/{@code CrowdAccount}/{@code GameEngine} is
- * internally thread-safe (round_engine_design.md §3: "Однопоточный... функциональное ядро").
+ * internally thread-safe (round_engine_design.md §3: "Single-threaded... functional core").
  */
 @ApplicationScoped
 public final class EngineHub {

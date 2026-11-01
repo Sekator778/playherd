@@ -14,7 +14,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * The "богачи" archive of a past season (D-10, D-18) must not move when a player rolls into the
+ * The rich-list archive of a past season (D-10, D-18) must not move when a player rolls into the
  * next season: {@code RatingBook.richList} used to take the CURRENT balance for every season, so
  * the next season's starter pack, results, deposits and withdrawals all leaked into last
  * season's growth for exactly the players who had already moved on
@@ -96,7 +96,7 @@ class RatingBookSeasonArchiveTest {
         playRounds(ledger, "alice", "a-", 10, play("50.00"), APRIL);
         ledger.requestWithdrawal("alice", PlayAmount.ofWholePlay(200), APRIL);
 
-        // same numbers as RatingBookTest.richListMatchesTheР18GrowthFormula: (10300 + 200 - 0) - (0 + 10000)
+        // same numbers as RatingBookTest.richListMatchesTheD18GrowthFormula: (10300 + 200 - 0) - (0 + 10000)
         assertThat(growthOf(ratings.richList(APRIL_SEASON, NO_IDENTITIES), "alice")).isEqualTo(play("500.00"));
     }
 

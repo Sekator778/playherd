@@ -2,7 +2,7 @@ package crowdvsmarket.server.dto;
 
 import java.util.List;
 
-/** contract.ts §"Crowd account" (D-5, D-14, D-17, D-25, D-26) — one account per market (Т-6). */
+/** contract.ts §"Crowd account" (D-5, D-14, D-17, D-25, D-26) — one account per market (T-6). */
 public final class Crowd {
     private Crowd() {
     }

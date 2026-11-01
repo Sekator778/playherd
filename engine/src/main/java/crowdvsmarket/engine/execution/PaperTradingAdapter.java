@@ -12,8 +12,8 @@ import java.util.Optional;
 
 /**
  * Task item 7's default {@link ExecutionAdapter}: exactly what {@code CrowdAccount}/{@code
- * ComparisonAccounts} already did inline (before this task) to run the public "счёт толпы"/"анти-
- * толпа" paper trades — {@link Position#openFromMargin} + {@link PositionSimulator#simulate}, the
+ * ComparisonAccounts} already did inline (before this task) to run the public crowd account and
+ * anti-crowd paper trades — {@link Position#openFromMargin} + {@link PositionSimulator#simulate}, the
  * same two calls, now behind this interface instead of duplicated at each call site. Stateless and
  * side-effect-free: {@link #openPosition} and {@link #closePosition} are pure functions of their
  * arguments, so a single shared instance is safe to reuse across every caller (crowd account,

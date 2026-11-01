@@ -5,7 +5,7 @@ import crowdvsmarket.engine.market.MarketSpec;
 
 /**
  * Pure UTC round-boundary arithmetic (D-19: hourly rounds on UTC hour boundaries, daily on
- * 00:00 UTC — предложение: aligned with Hyperliquid candle boundaries, see
+ * 00:00 UTC — proposal: aligned with Hyperliquid candle boundaries, see
  * docs/research/round_engine_design.md). Epoch milliseconds are already UTC, and both step sizes
  * (3 600 000 ms, 86 400 000 ms) divide evenly into a UTC day — flooring is exact, with no
  * calendar/DST handling needed.
@@ -15,7 +15,7 @@ import crowdvsmarket.engine.market.MarketSpec;
  * immediately after the currently running one ({@link #next}), matching "betting window for round
  * N = the whole duration of round N-1".
  *
- * <p><b>Предложение (additive):</b> {@link #stepMs(Interval, RoundDurations)} and
+ * <p><b>Proposal (additive):</b> {@link #stepMs(Interval, RoundDurations)} and
  * {@link #windowContaining(Interval, long, RoundDurations, long)} let a caller supply a
  * non-default {@link RoundDurations} (e.g. the Quarkus server's D-46 test-mode durations) and an
  * {@code originMs} the floor arithmetic is relative to (e.g. the server's own start time, rather
@@ -38,7 +38,7 @@ public final class RoundClock {
         return stepMs(interval, RoundDurations.DEFAULT);
     }
 
-    /** Predложение overload — see class javadoc. */
+    /** Proposal overload — see class javadoc. */
     public static long stepMs(Interval interval, RoundDurations durations) {
         return durations.forInterval(interval);
     }
@@ -49,7 +49,7 @@ public final class RoundClock {
     }
 
     /**
-     * Предложение overload — see class javadoc. {@code originMs} is a fixed reference instant
+     * Proposal overload — see class javadoc. {@code originMs} is a fixed reference instant
      * that a window boundary always lands exactly on (typically {@code originMs} itself, if it is
      * ever exactly on a window start); floors {@code epochMs} to the nearest {@code originMs +
      * k*step} at or before it. A BTC window; see the market-aware overload below.

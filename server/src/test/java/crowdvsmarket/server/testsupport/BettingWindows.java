@@ -21,7 +21,7 @@ import java.time.Duration;
  *       past.</li>
  * </ul>
  * Both helpers therefore wait for a window that still has real time ahead of it. A series is a market
- * plus an interval (docs/research/markets_architecture.md §4 п.1); the overloads without a market are
+ * plus an interval (docs/research/markets_architecture.md §4 item 1); the overloads without a market are
  * BTC's.
  */
 public final class BettingWindows {

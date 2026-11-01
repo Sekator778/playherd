@@ -100,7 +100,7 @@ public final class ApiException extends RuntimeException {
                         + "on-chain as a real CAT; nothing was debited");
     }
 
-    /** D-53: {@code requestWithdrawal} rejects an amount below the minimum (предложение,
+    /** D-53: {@code requestWithdrawal} rejects an amount below the minimum (proposal,
      *  {@code GameService.MIN_WITHDRAWAL}), distinct from {@link #invalidAmount(String)} (which
      *  covers "not positive at all") so a client can tell the two apart. */
     public static ApiException withdrawalBelowMinimum(String message) {
@@ -136,7 +136,7 @@ public final class ApiException extends RuntimeException {
     }
 
     /** The market exists but is {@code CLOSED}: it opens no new rounds and takes no bets (§3.3,
-     *  Т-10). 409. */
+     *  T-10). 409. */
     public static ApiException marketClosed(String marketId) {
         return new ApiException(Enums.ApiErrorCode.MARKET_CLOSED, 409,
                 "market " + marketId + " is closed — it takes no new bets");

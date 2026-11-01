@@ -183,7 +183,7 @@ public final class LedgerBook {
     }
 
     /**
-     * The player's balance at the end of {@code season} — what the "богачи" archive of a past
+     * The player's balance at the end of {@code season} — what the rich-list archive of a past
      * season (D-10, D-18) must be computed from, instead of the balance now. A {@link SeasonRecord}
      * does not store its own end balance, but the next one does: {@link #ensureSeasonPack} records
      * "the balance just before the new season's pack" as the new record's
@@ -268,7 +268,7 @@ public final class LedgerBook {
     /**
      * Lazily grants a starter pack on the player's first activity in {@code now}'s season (D-2,
      * D-12): a brand-new player, or an existing one whose current season has rolled over. Records
-     * the pre-pack balance as the new season's baseline (D-16, used by the "богачи" rating, D-18).
+     * the pre-pack balance as the new season's baseline (D-16, used by the rich-list rating, D-18).
      * A no-op if the player is already on {@code now}'s season. Every mutating operation below
      * calls this first, so callers rarely need to call it directly.
      */
@@ -417,7 +417,7 @@ public final class LedgerBook {
     /**
      * Settles a resolved (non-cancelled) position: credits {@code payout} — 0 on liquidation, per
      * D-7 — and counts the round toward the D-9/D-18 rounds-played threshold and, when
-     * {@code directionCorrect} is present, toward the "пророки" ratio (D-18); {@code
+     * {@code directionCorrect} is present, toward the prophets ratio (D-18); {@code
      * Optional.empty()} for a flat round (close == open price), excluded from that ratio's
      * denominator.
      *
@@ -550,7 +550,7 @@ public final class LedgerBook {
      * that is an earlier season than the player's current one, the {@code originalAmount} credit
      * (which can only land in the live balance) is also restated into every later season's baseline
      * ({@link #restateLaterBaselines}). So the reversal moves no season's growth, the past season's
-     * "богачи" archive included — the withdrawal's debit sat in {@code originalSeason}'s flow, and
+     * rich-list archive included — the withdrawal's debit sat in {@code originalSeason}'s flow, and
      * its reversal now does too, together with the {@code withdrawn} bookkeeping above.
      *
      * @throws IllegalStateException    if {@code relatedWithdrawalRequestId} was already reversed

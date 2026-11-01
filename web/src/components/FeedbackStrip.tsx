@@ -94,7 +94,7 @@ function useControlsUnderStrip(strip: RefObject<HTMLElement | null>, enabled: bo
 }
 
 /**
- * The invitation to leave feedback (D-81, Alex: "может нам сделать какой-то баннер, оставить отзыв"): a closable strip at
+ * The invitation to leave feedback (D-81, Alex: "maybe we could add a banner to leave feedback"): a closable strip at
  * the bottom of the screen, above the tab bar, shown to everyone — signed in or not — until the person sends a message or
  * closes it. Then it is gone for good on this browser (`api/feedback.ts` remembers it); the entry point stays in the footer
  * and the profile menu.

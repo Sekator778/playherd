@@ -12,7 +12,7 @@
  */
 import type { BetDto, LiveBetDto, PlayerSummaryDto } from "../api/contract";
 
-/** A list row; `own` marks the viewer's own bet («Вы»). */
+/** A list row; `own` marks the viewer's own bet ("You"). */
 export type LiveBetRow = LiveBetDto & { own: boolean };
 
 /**

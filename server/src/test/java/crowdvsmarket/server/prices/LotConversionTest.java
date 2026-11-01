@@ -14,7 +14,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Т-3: the raw price of a market reaches the engine as a lot price in [1000, 10000) at listing time
+ * T-3: the raw price of a market reaches the engine as a lot price in [1000, 10000) at listing time
  * ({@code Market.lotExpFor}), 2 engine decimals keep six significant digits, and a candle built from
  * it is one the engine accepts. The prices are the ones the live samples of 2026-10-01 had.
  */

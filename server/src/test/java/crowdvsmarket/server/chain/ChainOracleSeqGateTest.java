@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link ChainOracleSeqGate} — the oracle seq floor (docs/research/markets_architecture.md §7 п.4) against a
+ * {@link ChainOracleSeqGate} — the oracle seq floor (docs/research/markets_architecture.md §7 item 4) against a
  * real database counter and {@link FakeChainSvc}. One oracle singleton lives on chain for good while a
  * server database can be new: a fresh database whose counter starts at 1 although the chain already holds
  * {@code seq} 1..1145 would hand out numbers the chain service ignores as already known. The gate raises the

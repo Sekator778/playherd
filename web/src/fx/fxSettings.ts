@@ -2,7 +2,7 @@
  * Sound/haptics toggles (`docs/product/design/direction.md` §6): `localStorage`-persisted,
  * `sfxEnabled` default `false`, `hapticsEnabled` default `true`. A tiny same-tab pub/sub sits
  * alongside the storage read/write because the header's toggle and the result card's own toggle
- * (direction.md §6: "повторно... маленькой иконкой на самой карточке момента итога") both need to
+ * (direction.md §6: "again... via a small icon on the result moment card itself") both need to
  * reflect a change the other one made, and the browser's own `storage` event only fires
  * cross-tab, never within the tab that made the change.
  */
@@ -33,8 +33,8 @@ function writeBool(key: string, value: boolean): void {
   listeners.forEach((listener) => listener());
 }
 
-// `/lab`'s "force sound/haptics on" checkboxes (implementation-plan.md §5: "только для превью на
-// этой странице, не трогает реальный fxSettings в localStorage") — an in-memory override, checked
+// `/lab`'s "force sound/haptics on" checkboxes (implementation-plan.md §5: "only for preview on
+// this page, does not touch the real fxSettings in localStorage") — an in-memory override, checked
 // before the persisted value, that never touches `localStorage`.
 let previewSfxOverride: boolean | null = null;
 let previewHapticsOverride: boolean | null = null;

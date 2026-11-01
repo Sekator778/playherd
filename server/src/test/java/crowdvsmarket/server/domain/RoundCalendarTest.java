@@ -15,7 +15,7 @@ import crowdvsmarket.server.persistence.ServerMetaRepository;
 import org.junit.jupiter.api.Test;
 
 /**
- * Т-11 (docs/research/markets_architecture.md §2): a FRESH database in {@code mode=live} gets an
+ * T-11 (docs/research/markets_architecture.md §2): a FRESH database in {@code mode=live} gets an
  * origin that is a multiple of the daily series' length from the epoch; {@code mode=replay} and any
  * database that already has an origin are unchanged.
  */

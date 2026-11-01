@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@link ServerMetaRepository#raiseOracleSeqTo}: the oracle seq floor's one write
- * (docs/research/markets_architecture.md §7 п.4) — monotonic, in a transaction of its own, under the same
+ * (docs/research/markets_architecture.md §7 item 4) — monotonic, in a transaction of its own, under the same
  * row lock as the settlement transaction that reserves a {@code seq}. {@link LiveMarketsProfile}: nothing else
  * reserves a {@code seq} while a test looks at the counter. The counter survives test classes, so every test
  * leaves it at or above where it found it.

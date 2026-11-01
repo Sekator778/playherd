@@ -1,5 +1,5 @@
 /**
- * The mid-round LIQUIDATION moment (D-50: "ликвидация — сразу в середине раунда, «трещина» и штамп
+ * The mid-round LIQUIDATION moment (D-50: "liquidation right in the middle of the round, a crack and the stamp
  * LIQUIDATED"). The moment fires the first time `myPositions()` reports a RUNNING position as liquidated
  * (`useLiquidationWatcher.ts`) — not when its round settles, which can be many minutes later — and says what is
  * true at that point: the stake is gone (D-7) and the round is still running.

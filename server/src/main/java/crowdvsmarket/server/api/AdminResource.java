@@ -30,8 +30,8 @@ import org.jboss.logging.Logger;
 
 /**
  * D-43: operator admin endpoints, protected by a bearer token from {@code HERD_OPERATOR_TOKEN}
- * (predложение stand-in — "the token is a stand-in until operator-key signing", see
- * docs/research/server_design.md). No web admin UI (D-43: "Веб-админки нет") — this plus
+ * (proposal stand-in — "the token is a stand-in until operator-key signing", see
+ * docs/research/server_design.md). No web admin UI (D-43: no web admin) — this plus
  * {@code tools/herd-operator.sh} is the whole operator surface.
  */
 @Path("/api/admin")

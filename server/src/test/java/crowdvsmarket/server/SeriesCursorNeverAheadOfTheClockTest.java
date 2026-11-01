@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * A series is seeded where its last result row says, but never ahead of the clock (review of the core, finding 4;
- * docs/research/markets_architecture.md §4 п.12). The latest {@code round_results} row can be a window that has
+ * docs/research/markets_architecture.md §4 item 12). The latest {@code round_results} row can be a window that has
  * not started yet — an operator cancels the betting round (a row for the window after the running one) or the
  * running one while a bet waits on the next — and a restart inside the same window then seeded the cursor at
  * "the window after that row": ahead of "now", showing a running round that had not started and taking bets for

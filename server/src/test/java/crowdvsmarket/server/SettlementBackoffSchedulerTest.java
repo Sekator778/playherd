@@ -41,7 +41,7 @@ import org.mockito.Mockito;
 
 /**
  * A settlement that keeps failing is retried with a backoff, and only a failure that may have touched the engine
- * rebuilds it (review of the core, finding 3; docs/research/markets_architecture.md §4 п.13). Before: every tick
+ * rebuilds it (review of the core, finding 3; docs/research/markets_architecture.md §4 item 13). Before: every tick
  * tried again, every failure after the event was applied ran a full rebuild from the log under the global write
  * lock — 5.6 µs per event plus 25 ms, so a lobby poll got 503 for 83 % of its calls at 1.8 k events and for 99 %
  * at 91 k — and each of them logged a stack trace.

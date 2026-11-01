@@ -9,7 +9,7 @@ import crowdvsmarket.engine.round.RoundWindow;
 import org.junit.jupiter.api.Test;
 
 /** {@link RoundProgress} is keyed by (market, interval) — docs/research/markets_architecture.md §4
- *  п.1: one cursor per series, no series leaks into another. */
+ *  item 1: one cursor per series, no series leaks into another. */
 class RoundProgressTest {
 
     private static final long STEP = 60_000L;

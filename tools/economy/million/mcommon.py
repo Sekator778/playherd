@@ -59,7 +59,7 @@ PREM15 = float((rm * W15).sum())
 
 STEPS15 = 96   # 15-minute super-steps per day (each holds five 3-min rounds and one 15-min round)
 
-# groups for the proxies (UNVERIFIED, see doc section "входы и пробелы")
+# groups for the proxies (UNVERIFIED, see doc section "inputs and gaps")
 RHO_EQ, RHO_COM = 0.42, 0.33   # BTC-NVDA 0.423 and BTC-GOLD 0.334 on 3.5 days: economy_at_scale_math_2026-10-16.md section 3
 
 

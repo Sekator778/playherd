@@ -25,7 +25,7 @@ import java.util.List;
  * {@code StoredRoundPrices} — this class is only ever consulted once, live, at the moment a round
  * is first resolved).
  *
- * <p><b>Предложение, documented caveat:</b> when a round's slice would run past the end of the
+ * <p><b>Proposal, documented caveat:</b> when a round's slice would run past the end of the
  * loaded series it wraps to the start, which can introduce one synthetic price discontinuity
  * inside that round's path (the last loaded candle's close next to the first loaded candle's
  * open) — acceptable for a local test stand, not attempted to be smoothed.
@@ -55,7 +55,7 @@ public final class ReplayRoundPrices implements RoundPrices {
     }
 
     /** The source-candle index the virtual replay clock is at, at wall-clock {@code epochMs} —
-     *  also used outside any round window for {@code btcReferencePrice()} (predложение). */
+     *  also used outside any round window for {@code btcReferencePrice()} (proposal). */
     public int indexAt(long epochMs) {
         long elapsedWallMs = epochMs - originMs;
         double sourceElapsedMs = elapsedWallMs * speedup;
@@ -63,7 +63,7 @@ public final class ReplayRoundPrices implements RoundPrices {
         return Math.floorMod(sourceMinuteOffset, candles.size());
     }
 
-    /** The current replay reference price at wall-clock {@code epochMs} (predложение — used for
+    /** The current replay reference price at wall-clock {@code epochMs} (proposal — used for
      *  {@code btcReferencePrice()}/{@code previewLiquidation()}'s default reference price, not
      *  itself a round's entry price). */
     public BigDecimal priceAt(long epochMs) {

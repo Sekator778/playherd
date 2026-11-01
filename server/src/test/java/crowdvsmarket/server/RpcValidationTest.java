@@ -271,7 +271,7 @@ class RpcValidationTest {
 
     @Test
     void requestWithdrawalRejectsBelowMinimum() {
-        // D-53: minimum withdrawal (предложение, GameService.MIN_WITHDRAWAL) — checked after the
+        // D-53: minimum withdrawal (proposal, GameService.MIN_WITHDRAWAL) — checked after the
         // positive-amount check, before the balance check.
         String session = signIn("txch1wd-below-min-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         Response resp = rpc(session, "requestWithdrawal", "50.000");

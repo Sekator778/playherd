@@ -1,6 +1,6 @@
 # Лобби «категории → пары → комната со ставкой» (D-69, D-70, D-71)
 
-Дата: 2026-10-02. Автор: гейм-дизайнер интерфейса (`.claude/agents/game-designer.md`). Источники: `the decision log` D-69 (навигация как в мобильном приложении Polymarket), D-70 (живые цены и шансы), D-71 (мы должны быть лучше образца — свои «фишки» поверх него); `docs/research/markets_architecture.md` (Т-1…Т-13, §8 API, §9 Веб); `docs/product/design/polymarket-mobile-reference.md` (структура образца); `direction.md`, `concepts.md` (концепция A, D-61), `live-round.md`, `result-moment.md`; `the internal notes` §6 п. 9–10; `docs/research/sage_real_e2e.md` «Трение». Данные — слой, сделанный до этого шага (`web/src/api/useMarkets.ts`, `useMyPositions.ts`, `usePriceSeries.ts`, `favorites.ts`, `marketMeta.ts`); контракт не менялся.
+Дата: 2026-10-02. Автор: гейм-дизайнер интерфейса (`.claude/agents/game-designer.md`). Источники: `the decision log` D-69 (навигация как в мобильном приложении Polymarket), D-70 (живые цены и шансы), D-71 (мы должны быть лучше образца — свои «фишки» поверх него); `docs/research/markets_architecture.md` (T-1…T-13, §8 API, §9 Веб); `docs/product/design/polymarket-mobile-reference.md` (структура образца); `direction.md`, `concepts.md` (концепция A, D-61), `live-round.md`, `result-moment.md`; `the internal notes` §6 п. 9–10; `docs/research/sage_real_e2e.md` «Трение». Данные — слой, сделанный до этого шага (`web/src/api/useMarkets.ts`, `useMyPositions.ts`, `usePriceSeries.ts`, `favorites.ts`, `marketMeta.ts`); контракт не менялся.
 
 Статус: реализовано в `web/`, проверено на моке в headless Chrome (390, 360 и 320 px и 1280 px). Андроид-эмуляторы по условию шага не запускались, Safari/iPhone не проверялись.
 
@@ -176,7 +176,7 @@
 
 ## 9. Открытые вопросы к Алексу
 
-1. **Порядок категорий.** Т-1 в прозе говорит «первые три — в порядке слов Алекса» (спорт, политика, крипто — D-69), в списке — crypto, politics, sports. Реализован список; менять порядок можно в одном месте — `CATEGORY_ORDER` (`api/marketMeta.ts`).
+1. **Порядок категорий.** T-1 в прозе говорит «первые три — в порядке слов Алекса» (спорт, политика, крипто — D-69), в списке — crypto, politics, sports. Реализован список; менять порядок можно в одном месте — `CATEGORY_ORDER` (`api/marketMeta.ts`).
 2. **Hot и Closing soon — сортировки**, а не фильтры. Нужен ли фильтр «только топ-5»?
 3. **UP/DOWN на шансах.** Кнопки остаются UP/DOWN (шанс вырастет/упадёт). Альтернатива — «Yes/No»-язык Polymarket — вводила бы в заблуждение (ставка не на исход); оставлено, пояснение — строка в комнате.
 4. **Избранное** живёт в браузере (не на сервере, не между устройствами). Нужно ли на сервере?

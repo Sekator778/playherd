@@ -184,7 +184,7 @@ public class OracleRecordRepository {
 
     /**
      * The public records journal ({@code GET /api/oracle/records}, docs/research/markets_architecture.md
-     * §7 п.6): up to {@code limit} rows with {@code seq >= fromSeq}, ascending, of every market, queued
+     * §7 item 6): up to {@code limit} rows with {@code seq >= fromSeq}, ascending, of every market, queued
      * to chainsvc or not yet — plus {@code firstSeq}, the lowest {@code seq} this database holds
      * ({@code null} while it holds none). A reader that sees a chain {@code seq} below {@code firstSeq}
      * knows it was published before this database existed. A read over the primary key, so it costs

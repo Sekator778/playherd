@@ -266,7 +266,7 @@ export function pickMarkets(lobby) {
 // --- what the stand's own documents must agree on ---
 
 /**
- * A raw price string of a market (`priceDecimals` fractional digits, Т-3) as the integer the oracle record and the
+ * A raw price string of a market (`priceDecimals` fractional digits, T-3) as the integer the oracle record and the
  * results.json carry: the digits without the point. `price = priceCents / 10^priceDecimals`
  * (api/MarketRegistryResource.java), so no float is ever in play. `null` for anything that is not such a string.
  */

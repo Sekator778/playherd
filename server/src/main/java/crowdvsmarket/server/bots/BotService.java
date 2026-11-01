@@ -46,7 +46,7 @@ import org.jboss.logging.Logger;
  * validated path (min stake, one bet per round, leverage bounds) as a human player, just without
  * ever signing a wallet challenge (see {@code GameService#createBotPlayer}).
  *
- * <p><b>Markets (Т-8, docs/research/markets_architecture.md §2):</b> in every round of a series
+ * <p><b>Markets (T-8, docs/research/markets_architecture.md §2):</b> in every round of a series
  * ({@code Interval}) each bot bets on {@code herd.bots.markets-per-round} (default 3) distinct
  * random active markets — fewer when there are fewer markets — placing one bet in each, at a random
  * moment of that market's betting window. Leverage stays within the market's cap, and the "previous
@@ -506,7 +506,7 @@ public class BotService {
     }
 
     /** In {@code mode=live}: a price exists and is not stale (docs/research/markets_architecture.md
-     *  §3.2 п.3). In {@code mode=replay} there is no price feed to ask — BTC always has one. */
+     *  §3.2 item 3). In {@code mode=replay} there is no price feed to ask — BTC always has one. */
     private boolean hasFreshPrice(Market market) {
         if (config.mode() != GameMode.LIVE) {
             return true;

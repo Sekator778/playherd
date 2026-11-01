@@ -90,8 +90,8 @@ export function LiveStatTile({ label, value, format }: { label: string; value: n
 
 /**
  * Positions as a "stage", split into UP/DOWN camps (`docs/product/design/direction.md` §4
- * "Stage/split-camp"; audit.md's Round section: "толпа раскололась на два лагеря... это
- * отсортированный список транзакций" was the complaint — the fix is two always-visible,
+ * "Stage/split-camp"; audit.md's Round section: "the crowd split into two camps... it is
+ * a sorted list of transactions" was the complaint — the fix is two always-visible,
  * color-washed panels, never one merged grey list, even when one side is empty (D-22).
  */
 export function PositionsList({

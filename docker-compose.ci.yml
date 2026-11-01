@@ -19,7 +19,7 @@
 #    spends without ever calling push_tx.
 # 2. CI must not depend on any external service. The local stand plays on live Hyperliquid/
 #    Polymarket prices (D-70); here `server` runs on the synthetic price source (a deterministic
-#    random walk, docs/research/markets_architecture.md §2 Т-12) with Polymarket off. The oracle
+#    random walk, docs/research/markets_architecture.md §2 T-12) with Polymarket off. The oracle
 #    seq floor is off too: it asks chainsvc for the highest seq of the on-chain singleton, and this
 #    job has no singleton (no `oracle-launch`) and a throwaway database, so there is nothing to
 #    stay above.

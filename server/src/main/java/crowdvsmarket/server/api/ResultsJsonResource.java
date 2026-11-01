@@ -11,8 +11,8 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
 /** FIXED INTERFACE (1)/(2): {@code GET /api/rounds/{roundId}/results.json} — public verification
- *  endpoint. Returns the exact bytes that were sha256'd into {@code resultsHash} (D-41: "итоги
- *  публично лежат на сайте — любой может сверить, что их не меняли задним числом"). */
+ *  endpoint. Returns the exact bytes that were sha256'd into {@code resultsHash} (D-41: "the
+ *  results are public on the site, anyone can check that they were not changed after the fact"). */
 @Path("/api/rounds")
 public class ResultsJsonResource {
 

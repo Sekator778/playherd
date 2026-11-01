@@ -25,7 +25,7 @@ public final class ServerInfo {
     }
 
     /**
-     * {@code priceSource}: where prices come from (Т-12) — {@code "replay"} in {@code mode=replay}, otherwise
+     * {@code priceSource}: where prices come from (T-12) — {@code "replay"} in {@code mode=replay}, otherwise
      * {@code herd.prices.source} ({@code "live"} | {@code "synthetic"}); {@code markets}: how many markets are
      * active (played) on this server; {@code playAssetId}: the PLAY CAT's asset id ({@code "0x"} + 64 hex),
      * {@code null} when the configured value is not one; {@code testWallet}: whether the browser test wallet

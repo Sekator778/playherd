@@ -12,7 +12,7 @@
 #
 # THE ONE-PUBLISHER RULE. The oracle singleton and the PLAY payouts are operated by one key. Two chain services on it would
 # fight over the singleton's coin and the treasury's. So the data step refuses to run while a chainsvc of the stand on this
-# machine is running or one is running on the VPS; stop the stand on this machine first (README, "Один издатель"). The .env
+# machine is running or one is running on the VPS; stop the stand on this machine first (README, "One publisher"). The .env
 # step has no such limit and is the one to run early.
 #
 # Options:

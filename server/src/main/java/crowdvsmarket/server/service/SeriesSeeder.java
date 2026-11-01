@@ -19,7 +19,7 @@ import java.util.Optional;
  * event log into) and for a market that gets its series while the game runs ({@code
  * GameService#ensureSeries}).
  *
- * <p><b>Rule (docs/research/markets_architecture.md §4 п.2, п.5, п.12; the money rule behind it: a stake is
+ * <p><b>Rule (docs/research/markets_architecture.md §4 item 2, item 5, item 12; the money rule behind it: a stake is
  * never left behind a cursor).</b> A series is seeded where its last result row says the next window to
  * resolve starts — but never later than the window that contains "now": a cursor ahead of the clock would
  * show a running round that has not started and open betting two round lengths early (an operator cancels

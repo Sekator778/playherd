@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The scheduler asks the {@link OracleSeqGate} around the settlement itself and nowhere else (docs/research/
- * markets_architecture.md §7 п.4, §4 п.11; review of the core, finding 5): a settlement reserves a {@code seq}, and
+ * markets_architecture.md §7 item 4, §4 item 11; review of the core, finding 5): a settlement reserves a {@code seq}, and
  * one handed out below what is already on chain is a record rejected for good, so while the oracle's sequence floor
  * has not been obtained no round is settled — however late. Everything that reserves no {@code seq} goes on: the
  * catch-up jump over empty overdue windows (no event, no record), the refund of a round that is an hour late (a
@@ -158,7 +158,7 @@ class OracleGateSchedulerTest extends LiveGameTestBase {
         assertThat(oracleSeq()).isEqualTo(seqBefore);
         verify(botService, atLeast(1)).tick(restartAt);
         // ... and betting in the series stays closed until the gate opens: the window that waits for it is one whose
-        // betting window has started already (the known remainder, markets_architecture.md §4 п.11)
+        // betting window has started already (the known remainder, markets_architecture.md §4 item 11)
         assertThatThrownBy(() -> gameService.placeBet(p, bet(roundProgress.bettingWindow(market.id(), Interval.HOURLY),
                 Enums.Direction.UP, 3, "100.000"), restartAt))
                 .isInstanceOfSatisfying(ApiException.class,

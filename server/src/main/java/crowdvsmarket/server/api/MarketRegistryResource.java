@@ -13,7 +13,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * FIXED INTERFACE O (docs/research/markets_architecture.md §7 п.5): {@code GET /api/markets/registry.json}
+ * FIXED INTERFACE O (docs/research/markets_architecture.md §7 item 5): {@code GET /api/markets/registry.json}
  * — the public asset registry. Every market ever listed, closed ones too, by oracle index: the number
  * a record carries on chain as its {@code asset} (BTC = 0) and what a reader needs to turn it back into
  * a market and to read the record's {@code priceCents} as a price ({@code price = priceCents /

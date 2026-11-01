@@ -51,7 +51,7 @@ async function expectApiError(promise: Promise<unknown>, code: string): Promise<
 }
 
 describe("markets() — the lobby in one call", () => {
-  it("lists the 19 markets in catalog order, with the categories of Т-1 and their counts", async () => {
+  it("lists the 19 markets in catalog order, with the categories of T-1 and their counts", async () => {
     const res = await mockApi.markets();
     expect(res.markets.map((m) => m.id)).toEqual(MOCK_MARKETS.map((m) => m.id));
     expect(res.categories).toEqual([
@@ -137,7 +137,7 @@ describe("markets() — the lobby in one call", () => {
     expect(caps).toEqual({ BTC: 40, ETH: 25, SOL: 20, XRP: 20, DOGE: 10, HYPE: 10 }); // herd.markets.spot.max-leverage
   });
 
-  it("each market has its own bots, so the crowds differ (Т-8)", async () => {
+  it("each market has its own bots, so the crowds differ (T-8)", async () => {
     const { markets } = await mockApi.markets();
     const counts = markets.map((m) => m.series[0].participantCount);
     expect(new Set(counts).size).toBeGreaterThan(5);
@@ -478,7 +478,7 @@ describe("placeBet and the player's positions across markets", () => {
     );
   });
 
-  it("one player can hold a position in several markets in the same window (Т-5), all listed in myPositions()", async () => {
+  it("one player can hold a position in several markets in the same window (T-5), all listed in myPositions()", async () => {
     const eth = await bettingRoundOf("ETH");
     const sol = await bettingRoundOf("SOL");
     const gold = await bettingRoundOf("xyz_GOLD", "DAILY");
@@ -628,7 +628,7 @@ describe("settling the player's own bets, in any market", () => {
   });
 });
 
-describe("the market that closes during a session (Т-10)", () => {
+describe("the market that closes during a session (T-10)", () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     await signIn();
@@ -738,7 +738,7 @@ describe("the market that closes during a session (Т-10)", () => {
   });
 });
 
-describe("crowd accounts, one per market (Т-6)", () => {
+describe("crowd accounts, one per market (T-6)", () => {
   it("each market has its own history with holdCapital and antiCrowdCapital, from its own listing day", async () => {
     const btc = await mockApi.crowdAccount();
     expect(btc.marketId).toBe("BTC");

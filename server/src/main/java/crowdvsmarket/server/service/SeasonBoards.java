@@ -16,7 +16,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * The season leaderboards ("богачи" and "пророки", D-18) of every season, kept sorted as part of the read views (architecture plan F8):
+ * The season leaderboards (rich list and prophets, D-18) of every season, kept sorted as part of the read views (architecture plan F8):
  * what {@link RatingBook} computes by walking the whole ledger on each call is here a sorted array per season and board, and a
  * batch moves only the rows of the players it touched ({@link #with}: one pass over each array that changes, not a new sort). A
  * value of this class never changes; {@link #with} and {@link #of} build the next one.
@@ -30,11 +30,11 @@ final class SeasonBoards {
 
     static final SeasonBoards EMPTY = new SeasonBoards(Map.of());
 
-    /** A row of the "богачи" board and where its player joined the ledger (the tie-break). */
+    /** A row of the rich board and where its player joined the ledger (the tie-break). */
     record RichRow(RatingBook.RichEntry entry, int joinOrder) {
     }
 
-    /** A row of the "пророки" board and where its player joined the ledger (the tie-break). */
+    /** A row of the prophets board and where its player joined the ledger (the tie-break). */
     record ProphetRow(RatingBook.ProphetEntry entry, int joinOrder) {
     }
 
@@ -103,12 +103,12 @@ final class SeasonBoards {
         this.boards = boards;
     }
 
-    /** The "богачи" board of the season, best first; empty for a season nobody has a record of. */
+    /** The rich board of the season, best first; empty for a season nobody has a record of. */
     List<RichRow> rich(Season season) {
         return boards.getOrDefault(season, NO_BOARD).rich().rows;
     }
 
-    /** The "пророки" board of the season, best first. */
+    /** The prophets board of the season, best first. */
     List<ProphetRow> prophets(Season season) {
         return boards.getOrDefault(season, NO_BOARD).prophets().rows;
     }

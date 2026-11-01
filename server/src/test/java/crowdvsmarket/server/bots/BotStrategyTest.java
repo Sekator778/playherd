@@ -10,7 +10,7 @@ import java.math.BigDecimal;
 import java.util.Random;
 import org.junit.jupiter.api.Test;
 
-/** A bot never asks for more leverage than the market allows (Т-4, Т-8). */
+/** A bot never asks for more leverage than the market allows (T-4, T-8). */
 class BotStrategyTest {
 
     @Test

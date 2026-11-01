@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { CategoryDto } from "./contract";
 import { CATEGORY_ORDER, CATEGORY_TITLES, categoryTitle, sortCategories, symbolMeta } from "./marketMeta";
 
-describe("categories (Т-1)", () => {
-  it("are in the order of Т-1 / the architecture's ribbon, each with a title", () => {
+describe("categories (T-1)", () => {
+  it("are in the order of T-1 / the architecture's ribbon, each with a title", () => {
     expect(CATEGORY_ORDER).toEqual(["crypto", "politics", "sports", "stocks", "indices", "commodities"]);
     expect(CATEGORY_ORDER.map(categoryTitle)).toEqual(["Crypto", "Politics", "Sports", "Stocks", "Indices", "Commodities"]);
     expect(Object.keys(CATEGORY_TITLES).sort()).toEqual([...CATEGORY_ORDER].sort());
   });
 
-  it("sortCategories puts any arrival order into Т-1 order, unknown ids last", () => {
+  it("sortCategories puts any arrival order into T-1 order, unknown ids last", () => {
     const cat = (id: string): CategoryDto => ({ id: id as CategoryDto["id"], title: id, marketCount: 1 });
     const sorted = sortCategories([cat("commodities"), cat("sports"), cat("weather"), cat("crypto"), cat("indices"), cat("politics")]);
     expect(sorted.map((c) => c.id)).toEqual(["crypto", "politics", "sports", "indices", "commodities", "weather"]);

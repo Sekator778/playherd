@@ -65,7 +65,7 @@ beforeEach(() => {
   wc.pairing = "uri";
 });
 
-describe("Connect-wallet modal — the test wallet leads (HANDOFF §6 п.10)", () => {
+describe("Connect-wallet modal — the test wallet leads (HANDOFF §6 item 10)", () => {
   it("the test wallet is the primary action and comes first; Sage is the second, quieter one — both stay", async () => {
     const dialog = await openModal();
     const buttons = within(dialog).getAllByRole("button");

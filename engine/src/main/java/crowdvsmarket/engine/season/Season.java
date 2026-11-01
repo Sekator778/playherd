@@ -5,9 +5,9 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 
 /**
- * A calendar-month season, UTC (D-10, D-16: "сезоны по месяцу").
+ * A calendar-month season, UTC (D-10, D-16: seasons by month).
  *
- * <p><b>Предложение</b> (see docs/research/round_engine_design.md "Sezons"): the sources fix the
+ * <p><b>Proposal</b> (see docs/research/round_engine_design.md "Sezons"): the sources fix the
  * season length at one calendar month but not which calendar/timezone; UTC is used everywhere
  * else in this engine (D-19's round boundaries), so a season boundary always lands exactly on an
  * hourly-round boundary too, and picking anything else would need its own justification.

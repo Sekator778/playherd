@@ -484,7 +484,7 @@ jobs:
   # Why `!cancelled() && needs.ci-ok.result == 'success'` and not the implicit success(): the
   # implicit check also looks at ci-ok's own ancestors, and a single one skipped by the path
   # filter made GitHub skip this job too — the images stayed at cc035e2
-  # (an internal status review §3.4 п.1). ci-ok already fails on any real failure,
+  # (an internal status review §3.4 item 1). ci-ok already fails on any real failure,
   # so its result is the only gate needed. Publishing is opt-in (see the header): the variable for
   # pushes to develop, the `publish` input for a manual run on any ref.
   publish-develop:

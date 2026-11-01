@@ -170,7 +170,7 @@ pub struct InFlightSpend {
     /// coin from the live UTXO set and would need re-signing).
     pub bundle: SpendBundle,
     /// Locally computed identifier for `GET /v1/oracle/status`'s
-    /// `inFlightBundleId` (**предложение**: `sha256` of the aggregated
+    /// `inFlightBundleId` (**proposal**: `sha256` of the aggregated
     /// signature's bytes -- `chia-sdk-coinset`'s `PushTxResponse` does not
     /// expose coinset's own `tx_id` field, see `chain_client.rs`; this is
     /// not claimed to be Chia's canonical spend-bundle name, only a stable

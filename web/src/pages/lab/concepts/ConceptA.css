@@ -1,6 +1,6 @@
 /* Concept A — "Arcade" (docs/product/design/concepts.md). Scoped under .cA-* so nothing here
    leaks onto the real app's own screens — additive-only file, per game-designer.md's boundary
-   ("работать только в web/ и docs/product/"), not a change to index.css/fx.css. Tokens reused
+   ("work only in web/ and docs/product/"), not a change to index.css/fx.css. Tokens reused
    from index.css/direction.md, no new hex values invented here. */
 
 .cA-root {

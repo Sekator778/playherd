@@ -11,7 +11,7 @@ import java.util.List;
  * when it has no value, never left out.
  *
  * <p>Every price in these DTOs is a RAW price string of its market with exactly {@code
- * MarketDto.priceDecimals} fractional digits (Т-3), never an engine (lot) price; money in PLAY is a
+ * MarketDto.priceDecimals} fractional digits (T-3), never an engine (lot) price; money in PLAY is a
  * string with three decimals, paper USD (the crowd's) one with two.
  */
 public final class Markets {
@@ -133,7 +133,7 @@ public final class Markets {
                                         int roundsWon) {
     }
 
-    /** All markets' crowd accounts side by side (Т-6). */
+    /** All markets' crowd accounts side by side (T-6). */
     public record CrowdOverviewDto(String totalCapital, String totalStartingCapital, double returnPct,
                                      List<CrowdOverviewRowDto> markets) {
     }

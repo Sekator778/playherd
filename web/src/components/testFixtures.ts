@@ -47,7 +47,7 @@ export function market(id: string, over: Partial<MarketDto> = {}): MarketDto {
   });
 }
 
-/** `markets()` as the server answers it: the categories are the ones with an ACTIVE market, in Т-1 order. */
+/** `markets()` as the server answers it: the categories are the ones with an ACTIVE market, in T-1 order. */
 export function marketsOf(markets: MarketDto[], serverTimeMs = NOW): MarketsDto {
   const order: CategoryId[] = ["crypto", "politics", "sports", "stocks", "indices", "commodities"];
   const categories: CategoryDto[] = order

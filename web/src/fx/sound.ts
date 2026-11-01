@@ -86,7 +86,7 @@ export function playWinJingle(tier: Tier): void {
   if (tier === 4) thud(ctx, tailAt + 0.05, 70, 0.2, 0.09);
 }
 
-/** "Тад" (LOSS, settlement) — a single low burst, deeper/longer by tier. */
+/** LOSS (settlement): a single low burst, deeper/longer by tier. */
 export function playLossThud(tier: Tier): void {
   if (!getSfxEnabled()) return;
   const ctx = getCtx();

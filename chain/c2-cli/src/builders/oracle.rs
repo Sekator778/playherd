@@ -1,6 +1,6 @@
 //! `oracle-launch` / `oracle-publish`: the minimal oracle singleton of
-//! decision D-11 ("подпись ключа владельца + пересоздание себя +
-//! announcement (цена, время, номер)"), exactly the pattern proven in
+//! decision D-11 ("owner key signature + recreating itself +
+//! announcement (price, time, number)"), exactly the pattern proven in
 //! `chain/sim-spike/tests/oracle_singleton.rs`. No action layer, no
 //! `RewardDistributorType::Managed` -- a plain singleton whose inner puzzle
 //! is a standard p2 controlled by the wallet's own (synthetic) key.

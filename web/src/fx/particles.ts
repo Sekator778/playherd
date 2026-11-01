@@ -1,5 +1,5 @@
 /**
- * Hand-rolled canvas particle engine (`implementation-plan.md` §1: "Свой канвас-модуль" —
+ * Hand-rolled canvas particle engine (`implementation-plan.md` §1: "Our own canvas module" —
  * chosen over `canvas-confetti`/`tsparticles`, see that file for the comparison). Three sprite
  * kinds share one pool/loop: `coin` (WIN, flies a quadratic-bezier arc from the result card to the
  * header balance pill), `spark`/`confetti` (WIN burst, and the leverage dial's ambient heat
@@ -148,7 +148,7 @@ function drawParticle(c: CanvasRenderingContext2D, p: Particle): void {
   } else if (p.kind === "confetti") {
     c.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
   } else {
-    // shard — an angular sliver, not a soft blob (result-moment.md §2's "осколки")
+    // shard — an angular sliver, not a soft blob (result-moment.md §2's "shards")
     c.beginPath();
     c.moveTo(-p.size / 2, -p.size);
     c.lineTo(p.size / 2, -p.size * 0.25);

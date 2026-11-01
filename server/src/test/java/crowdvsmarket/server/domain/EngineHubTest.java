@@ -12,7 +12,7 @@ import crowdvsmarket.server.markets.MarketStatus;
 import org.junit.jupiter.api.Test;
 
 /** {@link EngineHub}: one shared ledger, per market one crowd account, two engines and one pair of
- *  comparison lines (docs/research/markets_architecture.md §4 п.1, Т-5, Т-6). */
+ *  comparison lines (docs/research/markets_architecture.md §4 item 1, T-5, T-6). */
 class EngineHubTest {
 
     static Market market(String id, int maxLeverage, int lotExp, MarketStatus status) {

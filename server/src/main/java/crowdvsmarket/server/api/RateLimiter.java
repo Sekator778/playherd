@@ -25,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * past that shares one overflow bucket. IPv6 callers are keyed by their /64 ({@link #addressKey(String)}), one subscriber's
  * whole range, so rotating the low 64 bits is no escape.
  *
- * <p>In-memory only — предложение, explicitly a stand-in:
+ * <p>In-memory only — proposal, explicitly a stand-in:
  * it resets on every server restart and does not share state across multiple server instances,
  * which is fine for this project's single-process local stand/demo VPS (D-38) and not meant to
  * survive a real multi-instance deployment.

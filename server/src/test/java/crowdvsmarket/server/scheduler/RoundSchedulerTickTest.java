@@ -7,7 +7,7 @@ import java.lang.reflect.Method;
 import org.junit.jupiter.api.Test;
 
 /**
- * docs/research/markets_architecture.md §4 п.4: the scheduler tick must not overlap itself. Quarkus's
+ * docs/research/markets_architecture.md §4 item 4: the scheduler tick must not overlap itself. Quarkus's
  * default is {@code concurrentExecution = PROCEED} (verified in quarkus-scheduler-api: the attribute's
  * default is {@code ConcurrentExecution.PROCEED}), under which a tick still busy at the next second
  * would run side by side with it — so the SKIP is pinned here.

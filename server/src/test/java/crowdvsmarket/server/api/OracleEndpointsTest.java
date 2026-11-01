@@ -25,7 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The two public endpoints the oracle verifier reads (docs/research/markets_architecture.md §7 п.5–6), over
+ * The two public endpoints the oracle verifier reads (docs/research/markets_architecture.md §7 item 5–6), over
  * real HTTP, in exactly the field names {@code tools/verify-oracle} reads:
  * {@code GET /api/markets/registry.json} and {@code GET /api/oracle/records?fromSeq=&limit=}. Public (no
  * session), {@code no-store}, and a malformed query is a 400 — never a 404, which the verifier takes for "a

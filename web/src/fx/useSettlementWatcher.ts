@@ -11,7 +11,7 @@ const INTERVALS: Interval[] = ["HOURLY", "DAILY"];
 
 /**
  * Global settlement-event detector (`implementation-plan.md` §3) — its own poll, independent of
- * whichever page is mounted, so a moment fires "видно с любой страницы" (`game-designer.md`) even
+ * whichever page is mounted, so a moment fires "visible from any page" (`game-designer.md`) even
  * from `/wallet` or `/ratings`.
  *
  * Market-agnostic since D-69: a player has bets in many pairs at once, so the watcher no longer
@@ -31,7 +31,7 @@ const INTERVALS: Interval[] = ["HOURLY", "DAILY"];
  * Legacy fallback — only for an `Api` that lacks `unseenResults` (a server or build that predates
  * it): the original `home()`-based detector, BTC only, kept as it was. Deviates from
  * `implementation-plan.md` §3's literal algorithm in one place, corrected against `mockApi.ts`'s
- * behavior (this project's "правила фактов" — checked against the source, not assumed): that plan
+ * behavior (this project's "fact rules" — checked against the source, not assumed): that plan
  * reads `home()`'s `.running` round straight through BETTING→RUNNING→SETTLED. In the mock,
  * `.running` is "the window containing now" — so it is always phase `"RUNNING"` and never itself
  * reaches `"SETTLED"`; the round's identity simply rolls over to the next window once `now` passes

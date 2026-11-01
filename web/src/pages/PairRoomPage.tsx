@@ -20,7 +20,7 @@
  * - an `ODDS` market's 24 h change in percentage points; a sports game's "Starts in 2h 05m" / LIVE mark.
  *
  * `?side=up|down` (from a lobby card's UP/DOWN) preselects the direction, `?series=daily` the longer series.
- * Two round contexts, as before (D-19: "всегда один идущий и один открытый для ставок раунд"): `betting`
+ * Two round contexts, as before (D-19: "always one running round and one round open for bets"): `betting`
  * (the arena and slip act on this one) and `running` (revealed positions, the crowd's live position).
  * `result-moment.md`'s fx are wired globally in `Layout.tsx` (`ResultMomentHost`), not here.
  */
@@ -131,7 +131,7 @@ interface Mover {
 /** Fix (player review, item 1): the room used to dump the RUNNING round's entire `PositionsList`
  *  "stage" (both UP/DOWN camps, every player, unconditionally) under the arena — a financial
  *  ledger sitting permanently on a screen that's supposed to feel like a game, not a terminal
- *  (Alex: "у нас оно как список какой-то, финансовый терминал"). Picks the few positions with the
+ *  (Alex: "ours looks like some kind of list, a financial terminal"). Picks the few positions with the
  *  biggest live swing (winning or losing — never hides a loss, same honesty rule as everywhere
  *  else) so the compact strip below the arena reads like a highlight reel, not a spreadsheet; the
  *  full, unfiltered list is still one tap away via "See all positions" (`/round/:id`). A
@@ -155,7 +155,7 @@ function topMovers(
     withLive.push({ position: p, live: live.toNumber() });
   }
   withLive.sort((a, b) => Math.abs(b.live) - Math.abs(a.live));
-  // The viewer's own position is always shown (marked «Вы»), even when it is not among the biggest swings.
+  // The viewer's own position is always shown (marked "You"), even when it is not among the biggest swings.
   return topWithOwn(withLive, count, (m) => m.position.playerId === ownPlayerId);
 }
 
@@ -318,12 +318,12 @@ function Room({ market }: { market: MarketDto }) {
   const { positions: myPositions } = useMyPositions();
 
   // Fix (player review item 3, `the decision log` D-59/D-62): the round a player bet on
-  // doesn't vanish when its betting window closes — per D-19's conveyor ("всегда один идущий и
-  // один открытый для ставок раунд"), `RoundsPairDto.betting` simply rolls over to the NEXT round
+  // doesn't vanish when its betting window closes — per D-19's conveyor ("always one running and
+  // one round open for bets"), `RoundsPairDto.betting` simply rolls over to the NEXT round
   // the instant the one the player bet on starts running. The arena, bound to `betting` so it can
   // double as the bet slip's direction picker for that next round, used to just silently start
   // showing that brand-new round's fresh, fully bright split — no acknowledgement the player's own
-  // round had locked at all (Alex: "на экране телефона я вообще ничего этого не заметил"). This
+  // round had locked at all (Alex: "on the phone screen I did not notice any of this at all"). This
   // remembers the just-closed round's `myBet` across that rollover so a brief locked overlay can
   // stamp over the arena.
   const [lockedOverlay, setLockedOverlay] = useState<{ direction: Direction } | null>(null);

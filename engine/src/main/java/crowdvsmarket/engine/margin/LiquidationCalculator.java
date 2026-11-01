@@ -6,7 +6,7 @@ import java.math.RoundingMode;
 
 /**
  * Isolated-margin liquidation math (BTC by default, any market via an explicit rate), implementing
- * exactly docs/research/hl_liquidation_math.md section 2.2 ("Модель для нашего движка") — no more,
+ * exactly docs/research/hl_liquidation_math.md section 2.2 ("Model for our engine") — no more,
  * no less. Every method here is a direct translation of one of that section's formulas.
  *
  * <p><b>Scope (doc section 2.1, engine decision):</b> isolated margin only, tier0 only. The

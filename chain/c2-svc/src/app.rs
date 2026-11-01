@@ -161,7 +161,7 @@ async fn auth_verify<C: ChainClient>(
 /// public-facing `{"error":{"code":...,"message":...}}` envelope -- that one
 /// is the web<->server RPC contract; `chainsvc` is only ever called by that
 /// server, never by the browser, so a plain `{"error": "..."}` is enough
-/// here, **предложение**).
+/// here, **proposal**).
 struct AppError(StatusCode, String);
 
 impl IntoResponse for AppError {

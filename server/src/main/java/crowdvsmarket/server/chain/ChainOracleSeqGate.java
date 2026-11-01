@@ -8,7 +8,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
- * The real {@link OracleSeqGate} (docs/research/markets_architecture.md §7 п.4): owns the oracle seq
+ * The real {@link OracleSeqGate} (docs/research/markets_architecture.md §7 item 4): owns the oracle seq
  * floor. One oracle singleton lives on chain for good, while a server database can be new — a fresh
  * database would start its {@code seq} at 1 although the chain already holds 1..N, and every such
  * record would be rejected as a replay (or silently ignored as already known). So before the first

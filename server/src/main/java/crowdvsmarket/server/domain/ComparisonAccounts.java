@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Предложение (contract.ts explicitly flags {@code holdCapital}/{@code antiCrowdCapital} as
+ * Proposal (contract.ts explicitly flags {@code holdCapital}/{@code antiCrowdCapital} as
  * such — "no HoldAccount/AntiCrowdAccount class exists in engine/ yet"): the two comparison
  * lines on a market's crowd chart (D-26), computed alongside that market's {@link CrowdAccount}
  * rather than inside it, one point appended per resolved round (any interval), same order and
@@ -27,17 +27,17 @@ import java.util.Objects;
  * {@code RoundResolved} event stream (live or replayed), so index {@code i} here always lines up
  * with {@code crowdAccount.history().get(i)} of the same market.
  *
- * <p>One instance per market (Т-6, docs/research/markets_architecture.md §2): {@link EngineHub}
+ * <p>One instance per market (T-6, docs/research/markets_architecture.md §2): {@link EngineHub}
  * owns them, next to the market's crowd account and engines; the class itself is a plain object,
  * not a CDI bean. All prices are engine (lot) prices — the same unit the market's crowd account
- * trades in — and both lines are scale-invariant, so the lot scaling (Т-3) does not matter here.
+ * trades in — and both lines are scale-invariant, so the lot scaling (T-3) does not matter here.
  *
  * <ul>
- *   <li><b>"просто держать актив"</b>: buys the asset once, at the very first round ever resolved
+ *   <li><b>hold the asset</b>: buys the asset once, at the very first round ever resolved
  *       for this market (any series), with the same starting capital as the crowd account; every
  *       later point revalues that fixed quantity at the round's close price. Never liquidates,
  *       never re-trades.
- *   <li><b>"анти-толпа"</b>: "тот же счёт, всегда против большинства" — same starting capital,
+ *   <li><b>anti-crowd</b>: the same account, always against the majority, — same starting capital,
  *       same 10%-of-capital margin sizing and same leverage as the real crowd trade that round
  *       (D-14), but the opposite direction; simulated exactly like {@link CrowdAccount} itself
  *       (through {@link ExecutionAdapter}, opened with the market's {@link MarketSpec}). No trade

@@ -13,7 +13,7 @@
  * real server would derive (leverage cap, price scale; `liquidation.ts` does the math per market).
  * One `ODDS` market closes 90 simulated minutes into a session (`MOCK_CLOSING_AT_MS`): from then on
  * it is `CLOSED`, its running and betting rounds are cancelled and a bet on them refunded
- * ("market closed", Т-10), and `placeBet` on it answers `MARKET_CLOSED` — so a UI can be built
+ * ("market closed", T-10), and `placeBet` on it answers `MARKET_CLOSED` — so a UI can be built
  * against that state. One `ODDS` market is "listed moments ago" (`MOCK_NEW_LISTING_ID`): the round window the
  * session opens in began before it had a price, so that running round has no opening price
  * (`RoundRunning.openPrice === null`) — the "waiting for the opening price" state.
@@ -146,7 +146,7 @@ const CANCELLED_REASON =
 const CANCELLED_AT_MS = CANCELLED_WINDOW.endMs + 5 * 60 * 1000;
 const CANCELLED_REFUNDED_COUNT = 19;
 
-/** Why the rounds of a closed `ODDS` market are cancelled (Т-10) — shown on the round page. */
+/** Why the rounds of a closed `ODDS` market are cancelled (T-10) — shown on the round page. */
 const MARKET_CLOSED_REASON =
   "Market closed: the underlying market ended or was withdrawn by its source, so this round was cancelled and every bet refunded.";
 
@@ -231,7 +231,7 @@ export class MockApi implements Api {
       const window = windowFor(parsed.interval, parsed.startMs);
       if (isCancelledByClose(spec, window, now)) {
         // The market closed while this round was still open or running: the round is cancelled
-        // and the bet refunded in full (Т-10; D-23: liquidation-proof — everything comes back).
+        // and the bet refunded in full (T-10; D-23: liquidation-proof — everything comes back).
         this.refundBet(bet, roundId);
         this.settledRoundIds.add(roundId);
         this.refundedRoundIds.add(roundId);
@@ -677,7 +677,7 @@ export class MockApi implements Api {
     const runningWindow = windowFor(interval, now);
     const bettingWindow = nextWindow(runningWindow);
     if (isMockMarketClosed(spec, now)) {
-      // Both the running and the betting round of a closed market are cancelled (Т-10).
+      // Both the running and the betting round of a closed market are cancelled (T-10).
       return {
         interval,
         running: this.marketClosedRound(spec, runningWindow),
@@ -896,7 +896,7 @@ export class MockApi implements Api {
    * Simulates the real flow's two moving parts — `requestWithdrawal`'s own synchronous chainsvc
    * submit attempt, then `WithdrawalPollerService`'s polling (`server/`, task's FIXED INTERFACE)
    * — moving `chainState` null → "submitted" → "queued" → "in_flight" → "confirmed"/"failed"
-   * (`state` itself only flips to `CONFIRMED`/`FAILED` at that last step). предложение: no
+   * (`state` itself only flips to `CONFIRMED`/`FAILED` at that last step). proposal: no
    * research file measures real timing for any of this (`week1_testnet_results.md` covers
    * individual spends, not a batched queue's cadence) — tuned only so every state is reachable in
    * a demo.
@@ -955,7 +955,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Crowd account (D-5, D-14, D-17, D-25, D-26; one per market, Т-6)
+  // Crowd account (D-5, D-14, D-17, D-25, D-26; one per market, T-6)
   // -------------------------------------------------------------------------
 
   async crowdAccount(marketId: MarketId = MOCK_BTC.id): Promise<CrowdAccountDto> {
@@ -1055,7 +1055,7 @@ export class MockApi implements Api {
     const all: CancellationDto[] = [];
     for (const spec of MOCK_MARKETS) {
       if (!isMockMarketClosed(spec, now)) continue;
-      // The rounds that were open or running at the moment the market closed (Т-10).
+      // The rounds that were open or running at the moment the market closed (T-10).
       const closedAt = spec.closesAtMs!;
       for (const interval of INTERVALS) {
         const running = windowFor(interval, closedAt);
@@ -1077,7 +1077,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Home aggregate (D-34) — describes BTC (markets_architecture.md §8: "`home` остаётся и описывает BTC")
+  // Home aggregate (D-34) — describes BTC (markets_architecture.md §8: "`home` stays and describes BTC")
   // -------------------------------------------------------------------------
 
   async home(): Promise<HomeSummaryDto> {
@@ -1133,7 +1133,7 @@ function requireMarket(marketId: MarketId): MockMarketSpec {
   return spec;
 }
 
-/** `Leverage` is an integer in 2..the market's cap (Т-4) — the server rejects anything else. */
+/** `Leverage` is an integer in 2..the market's cap (T-4) — the server rejects anything else. */
 function requireValidLeverage(leverage: number, spec: MockMarketSpec): void {
   if (!Number.isInteger(leverage) || leverage < LEVERAGE_MIN || leverage > spec.maxLeverage) {
     throw new ApiRequestError(
@@ -1188,7 +1188,7 @@ function mockFixedCosts(stake: string) {
 }
 
 /** A round of a market that has closed by `now` is cancelled when it had not ended by the closing
- *  moment (Т-10: the betting round and the running round); one that had already ended settled. */
+ *  moment (T-10: the betting round and the running round); one that had already ended settled. */
 function isCancelledByClose(spec: MockMarketSpec, window: RoundWindowDto, now: EpochMs): boolean {
   return spec.closesAtMs !== null && now >= spec.closesAtMs && window.endMs > spec.closesAtMs;
 }

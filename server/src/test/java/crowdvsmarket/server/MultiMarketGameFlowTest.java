@@ -86,7 +86,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         assertThat(ethBet.roundId()).isEqualTo("T_ETH-1h-" + btcBet.startMs());
         long nowMs = btcBet.startMs() - 1;
 
-        // the same player, the same window, three markets (Т-5); the 25x/10x markets take their caps
+        // the same player, the same window, three markets (T-5); the 25x/10x markets take their caps
         gameService.placeBet(p1, bet(btcBet, Enums.Direction.UP, 5, "500.000"), nowMs);
         gameService.placeBet(p1, bet(ethBet, Enums.Direction.DOWN, 20, "300.000"), nowMs);
         gameService.placeBet(p1, bet(oddsBet, Enums.Direction.UP, 10, "200.000"), nowMs);
@@ -287,7 +287,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         assertThat(hub.crowdAccount(market.id()).spec().maxLeverage()).isEqualTo(10);
         for (Interval interval : Interval.values()) {
             RoundWindow running = roundProgress.next(market.id(), interval);
-            // §4 п.2: the window running NOW — not the calendar's first window — is the running round
+            // §4 item 2: the window running NOW — not the calendar's first window — is the running round
             assertThat(running.market()).isEqualTo(market.id());
             assertThat(running.startMs()).isLessThanOrEqualTo(after);
             assertThat(running.endMs()).isGreaterThan(before);

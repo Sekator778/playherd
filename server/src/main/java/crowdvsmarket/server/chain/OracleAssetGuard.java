@@ -7,7 +7,7 @@ import org.jboss.logging.Logger;
 /**
  * Answers one question before a record of a market other than BTC (asset above 0) is sent to the
  * chain service: does it understand the {@code asset} field? (docs/research/markets_architecture.md
- * §7 п.4, docs/research/chain_service.md §16.2.)
+ * §7 item 4, docs/research/chain_service.md §16.2.)
  *
  * <p>A chain service older than record format 2 drops the unknown JSON key and publishes the record
  * as a BTC price — silently, on a public chain, for good. So the answer is "yes" only when the

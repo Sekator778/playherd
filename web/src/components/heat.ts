@@ -46,10 +46,10 @@ export function liquidationZone(fraction: number): { tier: HeatTier; className: 
 }
 
 /** Same zone table, as the class that pulses the whole card hosting a LIVE (RUNNING-phase) position —
- *  `live-round.md` §2: "карточка получает... пульс". Takes the room left as a 0..1 share of the distance the
+ *  `live-round.md` §2: "the card gets... a pulse". Takes the room left as a 0..1 share of the distance the
  *  position had at ENTRY (not the raw distance in % of the price: a x40 position (an example; caps differ per market) starts only ~2.4 % from
  *  liquidation, which read as "critical" from the first second). `""` for the Safe zone (no card-level
- *  pulse there, matching the bar's own "статично" row). */
+ *  pulse there, matching the bar's own "static" row). */
 export function liquidationLiveCardClass(roomFraction: number): string {
   const { className } = liquidationZone(Math.max(0, Math.min(1, roomFraction)));
   if (className === "liq-bar--watch") return "card--pulse-watch";

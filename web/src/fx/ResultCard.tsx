@@ -1,8 +1,8 @@
 /**
  * The result-moment card itself (`docs/product/design/result-moment.md` §2–§4). One component,
  * branching heavily on `kind`/`tier`: WIN/LOSS/EVEN render as a full-screen moment (backdrop +
- * centered card, §3/§4); LIQUIDATION renders as a compact, backdrop-less toast (§2's "не общий
- * оверлей на весь экран... компактная toast-карточка" branch — always taken here rather than
+ * centered card, §3/§4); LIQUIDATION renders as a compact, backdrop-less toast (§2's "not a general
+ * overlay over the whole screen... compact toast card" branch — always taken here rather than
  * trying to locate the specific position card in the DOM, a scoped-down but spec-permitted
  * fallback). `ResultMomentHost.tsx` is the only caller.
  */
@@ -27,8 +27,8 @@ import type { ShareResultInput } from "../components/shareCard";
 import { TrophyIcon, CrackIcon, MinusDiscIcon, EqualsDiscIcon, SpeakerOnIcon, SpeakerMuteIcon } from "../components/icons";
 
 // Tier tables — result-moment.md §2. Durations in ms.
-// T1 raised 2026-09-26 (D-59 follow-up, Alex: full-stake WIN/LOSS on Android "не заметил
-// вообще") — T1's own coins/sparks/duration were still each individually less than T2's (kept
+// T1 raised 2026-09-26 (D-59 follow-up, Alex: full-stake WIN/LOSS on Android "didn't notice
+// at all") — T1's own coins/sparks/duration were still each individually less than T2's (kept
 // that way below), but a ~1s total on-screen time made even a full-attention viewer likely to
 // miss it; see result-moment.md §2 changelog for the reasoning and the full before/after table.
 const WIN_TABLE: Record<Tier, { coins: number; sparks: number; confetti: number; glowPulses: number; countUpMs: number; holdMs: number; staggerMs: number }> = {

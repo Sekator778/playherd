@@ -19,7 +19,7 @@ import java.util.Optional;
 /** Read model for settled/cancelled rounds — see {@code V1__init.sql}'s comment on {@code
  *  round_results}/{@code player_round_history} and {@code V7__markets.sql} for the {@code market}
  *  column. Never replayed; written once, in the same transaction as the {@code RoundResolved}/
- *  {@code RoundCancelled} event (docs/research/markets_architecture.md §4 п.3), by {@code
+ *  {@code RoundCancelled} event (docs/research/markets_architecture.md §4 item 3), by {@code
  *  GameService}.
  *
  *  <p>{@code open_price_cents}/{@code close_price_cents} are the market's ENGINE (lot) price times
@@ -162,7 +162,7 @@ public class RoundResultRepository {
     }
 
     /** The previous settled round's crowd-majority direction for the series — used by the
-     *  {@code CONTRARIAN}/{@code FOLLOW_MAJORITY} bot strategies (D-46), per market (Т-8). Empty if
+     *  {@code CONTRARIAN}/{@code FOLLOW_MAJORITY} bot strategies (D-46), per market (T-8). Empty if
      *  no settled round exists yet, or the most recent one was a tie/no-bets (crowd did not
      *  trade). */
     public Optional<Enums.Direction> lastMajorityDirection(String marketId, Interval interval) {

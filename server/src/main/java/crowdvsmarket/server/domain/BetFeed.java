@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @ApplicationScoped
 public final class BetFeed {
 
-    /** Per-round retention cap (предложение — no source fixes a number) — generous for the 20-bot/
+    /** Per-round retention cap (proposal — no source fixes a number) — generous for the 20-bot/
      *  few-human local stand (D-46) while still bounding memory for a process that runs for weeks. */
     public static final int MAX_ENTRIES_PER_ROUND = 120;
     /** How many rounds' feeds are kept at all — bounds total memory across a long-running process

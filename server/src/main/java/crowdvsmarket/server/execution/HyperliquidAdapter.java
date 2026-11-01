@@ -25,7 +25,7 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 import org.jboss.logging.Logger;
 
 /**
- * Task item 7 (the project plan §3, README's "адаптер на реальную биржу (Hyperliquid) есть в коде" claim):
+ * Task item 7 (the project plan §3, README's claim that an adapter for a real exchange (Hyperliquid) exists in the code):
  * a real {@link ExecutionAdapter} for Hyperliquid — request building against the real, sourced
  * wire shapes ({@link HyperliquidExchangeRequests}, fetched from Hyperliquid's own public API docs
  * 2026-09-26) — but {@link #openPosition}/{@link #closePosition} DISABLED by default and refusing
@@ -36,8 +36,8 @@ import org.jboss.logging.Logger;
  * finish it). Nothing in this codebase constructs this adapter with real keys or wires it into any
  * live game path today — {@link crowdvsmarket.engine.crowd.CrowdAccount}/{@code
  * ComparisonAccounts} use {@link crowdvsmarket.engine.execution.PaperTradingAdapter} exclusively
- * (D-38: "Активация Hyperliquid-адаптера реальными деньгами... решение и ответственность того, кто
- * разворачивает продукт").
+ * (D-38: "Activating the Hyperliquid adapter with real money... is the decision and responsibility of whoever
+ * deploys the product").
  *
  * <p>{@link #getPosition} is the one method this adapter can genuinely execute today without any
  * signing at all — Hyperliquid's {@code POST /info} {@code clearinghouseState} is a public,

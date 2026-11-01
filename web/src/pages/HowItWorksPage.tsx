@@ -5,7 +5,7 @@ import { formatPlayAmount } from "../format";
 import { useT } from "../i18n";
 import { Rich } from "../i18n/Rich";
 
-/** Static content, baked into the build (`ux_spec.md` §9 — предложение: this screen has no
+/** Static content, baked into the build (`ux_spec.md` §9, proposal: this screen has no
  *  dynamic fields, so it works even if the backend is unreachable). The exchanges it names are the design's (D-74, D-76,
  *  `the decision log`): crypto from the exchange of the asset itself with a backup, a round on one exchange,
  *  stocks, indices and commodities from Hyperliquid, odds from Polymarket. The Status page lists what a running server

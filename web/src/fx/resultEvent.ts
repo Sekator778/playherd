@@ -1,7 +1,7 @@
 /**
  * Result-moment event model and tier math (`docs/product/design/result-moment.md` §0/§1/§2).
- * Pure functions only (`implementation-plan.md` §2: "вынесены отдельно от React ради
- * unit-тестов") — `useSettlementWatcher.ts` and `unseenResults.ts` are the callers, and own the
+ * Pure functions only (`implementation-plan.md` §2: "kept apart from React for the sake of
+ * unit tests") — `useSettlementWatcher.ts` and `unseenResults.ts` are the callers, and own the
  * dedup `Set` and the previous-round `Map` this module treats as inputs, not state.
  */
 import type { Direction, Interval, MarketId, MarketKind, ProfileRoundEntryDto, PublicPositionDto, RoundDto, RoundId } from "../api/contract";
@@ -48,7 +48,7 @@ export interface ResultEvent {
   atMs: number;
   tier: Tier;
   /** LIQUIDATION only: told the moment `myPositions()` first reported the position liquidated, while its round is
-   *  STILL RUNNING (D-50: "ликвидация — сразу в середине раунда"). The card says so: the stake is lost, the
+   *  STILL RUNNING (D-50: "liquidation right in the middle of the round"). The card says so: the stake is lost, the
    *  round is not over. */
   midRound?: boolean;
   /** The settlement of a round whose liquidation the player has ALREADY been shown (`midRound`): there is
@@ -92,10 +92,10 @@ export function liquidationTier(leverage: number): Tier {
 }
 
 /**
- * Leverage kicker (§2): "выжил/поймал на топ-плече" (WIN or settlement-LOSS at leverage ≥ 30)
+ * Leverage kicker (§2): "survived/caught at top leverage" (WIN or settlement-LOSS at leverage ≥ 30)
  * gets a heavier tier regardless of the raw amount — bumps by one, floors at T2, ceilings at T4.
  * Not applied to LIQUIDATION (its own table already tiers off leverage directly, §2's own text:
- * "liquidations получают своё, более тяжёлое обращение" — via {@link liquidationTier}, not this).
+ * "liquidations get their own, heavier treatment" — via {@link liquidationTier}, not this).
  */
 export function applyLeverageKicker(tier: Tier, leverage: number): Tier {
   if (leverage < 30) return tier;
@@ -189,9 +189,9 @@ export interface DetectParams {
    *  caller owns this set, this function only reads it. */
   alreadyEmitted: boolean;
   /**
-   * The player's account balance as most recently observed. предложение (no source pins this
+   * The player's account balance as most recently observed. proposal (no source pins this
    * exactly): `PositionDto.stake` is debited at `placeBet` time, not at settlement
-   * (result-moment.md §2's LIQUIDATION note — "Баланс уже списан при постановке ставки"), so the
+   * (result-moment.md §2's LIQUIDATION note — "The balance is already debited when the bet is placed"), so the
    * only balance change AT settlement is `+payout`, not `+net`. Using
    * `balanceBefore = currentBalance - netPlay` keeps the card's own "coins fly in / shards fall
    * out" animation internally consistent with the number the honesty redline requires it to show
@@ -273,7 +273,7 @@ export function detectResultEvent(params: DetectParams): ResultEvent | null {
       const stakeShare = balanceBefore > 0 ? stake / balanceBefore : 1;
       return { ...base, kind: "LOSS", tier: applyLeverageKicker(lossTier(stakeShare), currPos.leverage) };
     }
-    // EVEN — result-moment.md §0 flags this as "предложение": the contract doesn't document a
+    // EVEN — result-moment.md §0 flags this as "proposal": the contract doesn't document a
     // condition under which a single player's `payout === stake` occurs. Defensive, one fixed
     // tier (no escalation table exists for it).
     return { ...base, kind: "EVEN", tier: 1 };

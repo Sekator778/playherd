@@ -7,7 +7,7 @@ import java.math.RoundingMode;
 
 /**
  * What a settlement needs of the prices it is handed, checked BEFORE the engine lock is taken and
- * anything is written (docs/research/markets_architecture.md §3.2 п.4, §4 п.7; review of the
+ * anything is written (docs/research/markets_architecture.md §3.2 item 4, §4 item 7; review of the
  * multi-market core, finding 3): data that cannot be settled on used to reach the settlement
  * transaction, fail there and get the whole engine rebuilt from the log, once a second, until the round
  * was cancelled an hour later (or, for an exception that was not a {@code PriceUnavailableException},
@@ -16,7 +16,7 @@ import java.math.RoundingMode;
  */
 final class RoundPriceChecks {
 
-    /** The most candles one round's path may have in {@code mode=live} (§4 п.7). */
+    /** The most candles one round's path may have in {@code mode=live} (§4 item 7). */
     static final int MAX_PATH_CANDLES = 30;
 
     private RoundPriceChecks() {

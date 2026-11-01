@@ -1,6 +1,6 @@
 /**
  * Display metadata for markets and categories that the server does not send: the order and titles
- * of the lobby panels (D-69, Т-1) and a glyph + colour for a symbol when a market has no source
+ * of the lobby panels (D-69, T-1) and a glyph + colour for a symbol when a market has no source
  * image (`MarketDto.iconUrl === null`, every `PERP`). Pure data and pure functions — nothing here
  * is a source of truth for a market's parameters (those are `MarketDto`'s).
  */
@@ -8,9 +8,9 @@ import type { CategoryDto, CategoryId } from "./contract";
 import { tEn, type TFn } from "../i18n";
 
 /**
- * The lobby panels in display order — Т-1 (`docs/research/markets_architecture.md` §2) lists
+ * The lobby panels in display order — T-1 (`docs/research/markets_architecture.md` §2) lists
  * `crypto`, `politics`, `sports`, `stocks`, `indices`, `commodities`, and §9's category ribbon
- * "All · Crypto · Politics · Sports · Stocks · Indices · Commodities" agrees. (Т-1's prose says the
+ * "All · Crypto · Politics · Sports · Stocks · Indices · Commodities" agrees. (T-1's prose says the
  * first three follow Alex's words in D-69, whose order is sports, politics, crypto — the list is
  * what is implemented; change the order HERE only.)
  */
@@ -40,7 +40,7 @@ export function categoryName(category: Pick<CategoryDto, "id" | "title">, t: TFn
   return Object.hasOwn(CATEGORY_TITLES, category.id) ? categoryLabel(category.id, t) : category.title || category.id;
 }
 
-/** `categories` in Т-1 order, whatever order they arrived in (unknown ids, from a newer server, last). */
+/** `categories` in T-1 order, whatever order they arrived in (unknown ids, from a newer server, last). */
 export function sortCategories(categories: readonly CategoryDto[]): CategoryDto[] {
   const rank = (id: string): number => {
     const i = (CATEGORY_ORDER as readonly string[]).indexOf(id);

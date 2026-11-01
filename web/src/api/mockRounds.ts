@@ -5,8 +5,8 @@
  * state (the player's own recorded bets) and passes it in.
  *
  * All the numbers of a round — open, close, extremes (`mockPrices.ts`), size, liquidation price,
- * payout (`liquidation.ts`) — are computed per market with the same rule the server uses (Т-3,
- * Т-4): the market's price scale and leverage cap are parameters of every call. A RUNNING round
+ * payout (`liquidation.ts`) — are computed per market with the same rule the server uses (T-3,
+ * T-4): the market's price scale and leverage cap are parameters of every call. A RUNNING round
  * liquidates a position when the price path SO FAR has touched its liquidation price, and the
  * SETTLED round extends the same path to the window's end, so a liquidated flag never flips back.
  * `payout`/`directionCorrect` still correctly read `null` until the round actually reaches
@@ -64,7 +64,7 @@ function roundBase(spec: MockMarketSpec) {
   return { marketId: spec.id, asset: spec.symbol, kind: spec.kind, priceDecimals: spec.priceDecimals, source: spec.source };
 }
 
-/** One round's bots (Т-8, mock version): a seeded number of NPCs — the market's `bots` range, BTC
+/** One round's bots (T-8, mock version): a seeded number of NPCs — the market's `bots` range, BTC
  *  12–32 as it always was — each with a direction, leverage within the market's cap, and stake.
  *  Seeded by the round id, so the same round always has the same crowd. */
 function generateNpcBets(spec: MockMarketSpec, roundId: RoundId): BetDto[] {
@@ -272,8 +272,8 @@ function crowdSettledResult(
 const LIVE_FEED_LIMIT = 14;
 
 /** When each bet of a round was placed, newest first: the NPCs' at seeded points of the betting
- *  period (the window BEFORE `window`, D-19: "ставки принимаются в течение всего предыдущего
- *  раунда"), the player's own always "just now". Seeded by the round id, so a given round's feed
+ *  period (the window BEFORE `window`, D-19: "bets are accepted during the whole previous
+ *  round"), the player's own always "just now". Seeded by the round id, so a given round's feed
  *  order is stable across polls. */
 function timedBets(
   roundId: RoundId,

@@ -12,7 +12,7 @@ function fractionDigits(price: string): number {
   return price.split(".")[1]?.length ?? 0;
 }
 
-describe("the market catalog (docs/research/markets_architecture.md Т-3, Т-4)", () => {
+describe("the market catalog (docs/research/markets_architecture.md T-3, T-4)", () => {
   it("has 19 markets in 6 categories: 6 crypto, 2 stocks, 2 indices, 2 commodities, 4 politics, 3 sports", () => {
     expect(MOCK_MARKETS).toHaveLength(19);
     const count = (category: string) => MOCK_MARKETS.filter((m) => m.category === category).length;
@@ -26,7 +26,7 @@ describe("the market catalog (docs/research/markets_architecture.md Т-3, Т-4)"
     expect(PERPS.map((m) => m.symbol)).toEqual(["BTC", "ETH", "SOL", "XRP", "DOGE", "HYPE", "NVDA", "TSLA", "SP500", "XYZ100", "GOLD", "BRENTOIL"]);
   });
 
-  it("PERP priceDecimals follow Т-3 at the listing price (BTC fixed at 2), maxLeverage is min(40, Hyperliquid's)", () => {
+  it("PERP priceDecimals follow T-3 at the listing price (BTC fixed at 2), maxLeverage is min(40, Hyperliquid's)", () => {
     for (const m of PERPS) {
       expect(m.priceDecimals).toBe(m.id === "BTC" ? 2 : perpPriceDecimals(m.startPrice));
       expect(m.maxLeverage).toBeGreaterThanOrEqual(2);
@@ -38,7 +38,7 @@ describe("the market catalog (docs/research/markets_architecture.md Т-3, Т-4)"
     expect(perpPriceDecimals(0.094534)).toBe(7);
     const byId = (id: string) => mockMarketById(id)!;
     expect([byId("BTC"), byId("ETH"), byId("SOL"), byId("XRP"), byId("DOGE"), byId("HYPE")].map((m) => m.maxLeverage)).toEqual([40, 25, 20, 20, 10, 10]);
-    expect(byId("xyz_SP500").maxLeverage).toBe(40); // Hyperliquid says 50, Т-4 caps at 40
+    expect(byId("xyz_SP500").maxLeverage).toBe(40); // Hyperliquid says 50, T-4 caps at 40
   });
 
   it("ODDS markets: priceDecimals 6, maxLeverage 10, a question, a subtitle — an end date (politics) or a kick-off (sports)", () => {
@@ -59,7 +59,7 @@ describe("the market catalog (docs/research/markets_architecture.md Т-3, Т-4)"
     }
   });
 
-  it("the oracle index follows the listing order, BTC first as 0 (Т-9)", () => {
+  it("the oracle index follows the listing order, BTC first as 0 (T-9)", () => {
     expect(MOCK_MARKETS.map((m) => m.oracleIndex)).toEqual(MOCK_MARKETS.map((_, i) => i));
     expect(BTC.oracleIndex).toBe(0);
   });

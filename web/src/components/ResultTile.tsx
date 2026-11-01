@@ -10,7 +10,7 @@ import { isFixedMode } from "./betModeModel";
 /**
  * A settled round as one result tile — icon + signed net + context, never a table row with the
  * outcome as bare colored text (`docs/product/design/direction.md` §4/§3, audit.md's Profile
- * section: "три состояния... обозначены исключительно цветом текста слова, без иконки/формы").
+ * section: "three states... are marked solely by the colour of the word's text, with no icon/shape").
  * Used by `ProfilePage`'s round history and `HomePage`'s "Your last results".
  */
 export type ResultKind = "won" | "lost" | "liquidated" | "even";

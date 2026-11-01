@@ -4,7 +4,7 @@
 //! hashes to scan, and -- unlike the oracle singleton -- there is no on-chain
 //! lineage to walk to rediscover that list from scratch.
 //!
-//! **Derivation path (документируется по заданию: "document the path")**:
+//! **Derivation path (documented as the task requires: "document the path")**:
 //! the same unhardened standard-wallet path every other key in this project
 //! uses (`c2_cli::keys::derive_wallet_key`, `m/12381/8444/2/i` -- see that
 //! module's own doc comment for the full chain of primitives, sources
@@ -13,7 +13,7 @@
 //! mnemonic for anything else (`keys_file::load_operator_wallet_key`, used as
 //! both the oracle manager key, `oracle/lineage.rs`, and the PLAY treasury
 //! owner key, `withdrawal_publisher.rs`) -- `DEPOSIT_INDEX_OFFSET`
-//! (**предложение**: 1_000_000) is far above any index this project's
+//! (**proposal**: 1_000_000) is far above any index this project's
 //! operator wallet is ever expected to use by hand, so a player deposit
 //! address can never collide with the operator's own oracle/treasury key
 //! regardless of `playerIndex` (checked explicitly below, not just assumed).

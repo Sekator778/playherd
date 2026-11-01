@@ -17,7 +17,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * The 25 scenarios from docs/research/hl_liquidation_math.md section 5 ("Сценарии для тестов"):
+ * The 25 scenarios from docs/research/hl_liquidation_math.md section 5 ("Scenarios for tests"):
  * the 10 largest daily drops, 10 largest daily rises, and 5 most extreme hourly candles from the
  * fixtures, each with the exact set of leverages (2..40) that get liquidated. A position is
  * opened at STANDARD_SIZE_BTC (0.10000, doc section 2.7) at the candle's open price and replayed

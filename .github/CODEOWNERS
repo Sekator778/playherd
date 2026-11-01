@@ -1,4 +1,4 @@
-# Code owners for Herd (C2 «Толпа против рынка»).
+# Code owners for Herd (C2 "Crowd vs Market").
 # Solo project today — one collaborator on repos/Sekator778/playherd (verified via
 # `gh api repos/Sekator778/playherd/collaborators`, 2026-09-26). This file exists mainly so
 # `CONTRIBUTING.md`'s `main` ruleset can require code-owner review once there is more

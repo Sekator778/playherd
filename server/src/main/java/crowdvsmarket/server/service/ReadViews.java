@@ -246,12 +246,12 @@ public final class ReadViews {
             return view == null ? Optional.empty() : Optional.ofNullable(view.account().seasons().get(season));
         }
 
-        /** The "богачи" board of the season (people and API bots together, retired players left out), best first. */
+        /** The rich board of the season (people and API bots together, retired players left out), best first. */
         List<SeasonBoards.RichRow> richBoard(Season season) {
             return boards.rich(season);
         }
 
-        /** The "пророки" board of the season, best first; see {@link #richBoard}. */
+        /** The prophets board of the season, best first; see {@link #richBoard}. */
         List<SeasonBoards.ProphetRow> prophetBoard(Season season) {
             return boards.prophets(season);
         }

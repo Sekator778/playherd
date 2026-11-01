@@ -24,7 +24,7 @@ import java.util.Collection;
  *
  * <p>Every price that leaves the server is a RAW price with the market's {@code priceDecimals} digits
  * ({@link #rawPrice}): a PERP with lot exponent 0 has 2, one with lot exponent 4 has 6, an ODDS market (lot
- * exponent 4) has 6 — never an engine (lot) price (docs/research/markets_architecture.md Т-3).
+ * exponent 4) has 6 — never an engine (lot) price (docs/research/markets_architecture.md T-3).
  */
 final class MarketMapper {
 

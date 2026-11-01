@@ -1,15 +1,15 @@
 /**
  * "Odometer" number component (`implementation-plan.md` §2) — reused by the result card's
  * headline AND `Layout.tsx`'s `BalancePill` (any balance change rolls, not only while a result
- * moment is on screen — the direct answer to Alex's "чтобы сумма... сразу это проявлялось").
+ * moment is on screen — the direct answer to Alex's "so that the amount... shows up right away").
  * Interpolates the numeric value smoothly via `requestAnimationFrame` rather than animating each
- * digit independently on its own delay (result-moment.md §3's "каждый разряд крутится
- * независимо") — a scoped-down but still clearly "rolling" reading of that spec line, chosen to
+ * digit independently on its own delay (result-moment.md §3's "each digit spins
+ * independently") — a scoped-down but still clearly "rolling" reading of that spec line, chosen to
  * keep this component small and framework-free (no per-digit DOM diffing).
  *
  * `prefers-reduced-motion: reduce` (real or the `/lab` override, `reducedMotion.ts`) skips the
- * animation entirely and renders the final value immediately (`direction.md` §6: "число появляется
- * сразу финальным значением").
+ * animation entirely and renders the final value immediately (`direction.md` §6: "the number appears
+ * immediately with its final value").
  */
 import { useEffect, useRef, useState } from "react";
 import { usePrefersReducedMotion } from "./reducedMotion";

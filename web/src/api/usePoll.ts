@@ -7,7 +7,7 @@ import { PUSH_FALLBACK_POLL_MS, getPush, throttled } from "./push";
  * time for as long as the tab stays visible — paused entirely while
  * `document.visibilityState !== "visible"` (a backgrounded/minimized tab), and refreshed
  * immediately the moment it becomes visible again rather than waiting out the rest of the
- * paused interval. предложение: the hook shape itself isn't specified by the task, only the
+ * paused interval. proposal: the hook shape itself isn't specified by the task, only the
  * polling contract it must honor; used the same way for both `MockApi` (cheap, local) and
  * `RealApi` (actual network calls) so screens don't need to know which one is live.
  *

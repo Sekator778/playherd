@@ -1,7 +1,7 @@
 /**
  * The mock's market catalog (D-69): 6 categories, 19 markets — the six crypto markets, two stocks,
  * two indices, two commodities (the `herd.markets.*` defaults of `docs/research/markets_architecture.md`
- * §10) and four politics + three sports `ODDS` markets (Т-10), one of them listed "moments ago" so the
+ * §10) and four politics + three sports `ODDS` markets (T-10), one of them listed "moments ago" so the
  * no-opening-price state exists (`MOCK_NEW_LISTING_ID`). Static data only; the price paths
  * are `mockPrices.ts`, the round/crowd builders `mockRounds.ts`/`mockCrowdHistory.ts`.
  *
@@ -11,7 +11,7 @@
  * Hyperliquid, `ODDS` by Polymarket. The mock never switches to a backup (no `MarketPriceDto.venue`, every round on its
  * main exchange): there is no exchange here to go silent — `/lab/states` draws those states from fixed data.
  *
- * Every parameter that the server fixes at listing time (Т-3, Т-4) follows the same rule here:
+ * Every parameter that the server fixes at listing time (T-3, T-4) follows the same rule here:
  * `maxLeverage` is `min(40, Hyperliquid's tier-0 maxLeverage)` for a `PERP` (the six crypto caps are also the server's
  * `herd.markets.spot.max-leverage` defaults) and 10 for an `ODDS`
  * market; `priceDecimals` is `2 + lotExp` with `lotExp = clamp(3 − floor(log10(price)), 0, 8)` at
@@ -49,32 +49,32 @@ export interface MockMarketSpec {
   endsAtMs: EpochMs | null;
   /** `ODDS` sports game: kick-off (`MarketDto.eventStartsAtMs`). */
   eventStartsAtMs: EpochMs | null;
-  /** Mock only: when this market is closed (`ODDS`: "less than 5 minutes to the end", Т-10). */
+  /** Mock only: when this market is closed (`ODDS`: "less than 5 minutes to the end", T-10). */
   closesAtMs: EpochMs | null;
   /** Mock only: why it closes, in the words a source would use (`MarketDto.closeReason`). */
   closeReason: string | null;
-  /** First day of this market's crowd account (D-25, Т-6). */
+  /** First day of this market's crowd account (D-25, T-6). */
   listedAtMs: EpochMs;
   /** Mock only: the first instant the mock has a price for this market (null = from the start of time).
    *  A round that STARTED before it has no opening price (`RoundRunning.openPrice === null`) — the state of
    *  a market listed moments ago, which the server hands the window "now" lies in (markets_architecture.md
-   *  §4 п.2). Also no 24 h change until a day of prices exists. */
+   *  §4 item 2). Also no 24 h change until a day of prices exists. */
   priceFromMs: EpochMs | null;
   /** The market's index in the on-chain oracle record (`MarketDto.oracleIndex`; 0 = BTC, the rest in
-   *  listing order, Т-9). */
+   *  listing order, T-9). */
   oracleIndex: number;
-  /** Bots in a round of this market: `[min, max]` (Т-8). */
+  /** Bots in a round of this market: `[min, max]` (T-8). */
   bots: readonly [number, number];
 }
 
-/** Т-3: `priceDecimals = 2 + lotExp`, `lotExp = clamp(3 − floor(log10(price)), 0, 8)` at listing. */
+/** T-3: `priceDecimals = 2 + lotExp`, `lotExp = clamp(3 − floor(log10(price)), 0, 8)` at listing. */
 export function perpPriceDecimals(listingPrice: number): number {
   return 2 + Math.min(8, Math.max(0, 3 - Math.floor(Math.log10(listingPrice))));
 }
 
-/** Т-4: an `ODDS` market's leverage cap (`herd.markets.odds.max-leverage`). */
+/** T-4: an `ODDS` market's leverage cap (`herd.markets.odds.max-leverage`). */
 const ODDS_MAX_LEVERAGE = 10;
-/** Т-3: an `ODDS` price (0..1) always has `lotExp = 4`. */
+/** T-3: an `ODDS` price (0..1) always has `lotExp = 4`. */
 const ODDS_PRICE_DECIMALS = 6;
 
 const DAY_ONE = Date.UTC(2026, 0, 1);
@@ -172,7 +172,7 @@ function odds(
 }
 
 /** When the closing `ODDS` market closes: 90 simulated minutes (= 90 real seconds) after the demo
- *  starts, so a session sees it open first and then watch it go (Т-10, "до конца меньше 5 минут"). */
+ *  starts, so a session sees it open first and then watch it go (T-10, "less than 5 minutes to the end"). */
 export const MOCK_CLOSING_AT_MS = SIM_BASE_MS + 90 * 60_000;
 
 /** The politics markets were listed a week before the demo anchor. */
@@ -185,7 +185,7 @@ const POLITICS_LISTED_AT = Date.UTC(2026, 8, 18);
 export const MOCK_NEW_LISTING_ID: MarketId = "PM900107";
 const NEW_LISTING_PRICE_FROM = SIM_BASE_MS - 2 * 60_000;
 
-/** Listing order = the order `markets()` returns them in; the oracle index follows it (BTC is 0, Т-9). */
+/** Listing order = the order `markets()` returns them in; the oracle index follows it (BTC is 0, T-9). */
 const CATALOG: readonly MockMarketBase[] = [
   // crypto (`herd.markets.crypto` default): spot markets with a backup exchange (D-76)
   perp("BTC", "crypto", "BTC", "Bitcoin", 83_451, 40, 0.0045, DAY_ONE, [12, 32], 2, COINBASE_KRAKEN),

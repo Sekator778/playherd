@@ -109,7 +109,7 @@ pub struct InFlightWithdrawalBatch {
     /// `oracle::queue::InFlightSpend::bundle`'s doc comment).
     pub bundle: SpendBundle,
     /// Locally computed identifier for `GET /v1/play/withdrawals/{requestId}`
-    /// (**предложение**, same construction and same caveat as
+    /// (**proposal**, same construction and same caveat as
     /// `oracle::publisher::bundle_display_id`: `sha256` of the aggregated
     /// signature, not Chia's canonical `SpendBundle::name()`).
     pub bundle_id: String,

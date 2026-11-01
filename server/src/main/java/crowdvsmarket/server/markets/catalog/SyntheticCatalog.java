@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
 import org.jboss.logging.Logger;
 
 /**
- * The offline catalog ({@code herd.prices.source=synthetic}, markets_architecture.md Т-12): lists the
+ * The offline catalog ({@code herd.prices.source=synthetic}, markets_architecture.md T-12): lists the
  * configured PERP names ({@code herd.markets.crypto|stocks|indices|commodities}) with the built-in
  * {@link SyntheticParams parameter table} (BTC 40x at 84000, ETH 25x at 2700, … unknown names 10x at
  * 100) — with no {@code herd.markets.crypto} configured, the six crypto markets the list had before the crypto markets

@@ -90,7 +90,7 @@ export function BetSlip({
 }: BetSlipProps) {
   const { player, openConnectModal } = useSession();
   const t = useT();
-  // The market's own leverage cap (Т-4) bounds the dial; until the market list arrives the
+  // The market's own leverage cap (T-4) bounds the dial; until the market list arrives the
   // platform-wide cap stands, as it did before markets.
   const { market } = useMarket(round.marketId);
   // Economy stage A/C: the cap belongs to the market AND the round length (up to x4000); the older single cap is the fallback.

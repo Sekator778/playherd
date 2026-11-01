@@ -41,7 +41,7 @@ use super::types::OracleRecord;
 /// bounds a single `Publisher::tick()`'s worst case (checkpointed resumes
 /// only ever re-walk what's advanced since the last scan, so this is only
 /// ever exercised in full on a first-ever bootstrap with no checkpoint yet,
-/// or after an operator wipes one). **предложение**: generously above any
+/// or after an operator wipes one). **proposal**: generously above any
 /// generation count this project's testnet11 singleton has reached so far
 /// (91, `lineage_result_wave2.json`), cheap even at 10x that.
 const MAX_GENERATIONS_PER_WALK: u64 = 10_000;

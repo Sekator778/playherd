@@ -36,7 +36,7 @@ import { Address, Clvm, SecretKey, standardPuzzleHash, type PublicKey } from "ch
 const STORAGE_KEY = "herd_test_wallet_seed_v1";
 
 /** `m/12381n/8444n/2/0` — Chia's standard "wallet" derivation path, first unhardened key.
- *  предложение: not itself required for challenge verification (only the final synthetic key
+ *  proposal: not itself required for challenge verification (only the final synthetic key
  *  has to match Sage's scheme, see the module doc above) — matching it anyway means this test
  *  wallet derives its key exactly the way a real wallet would. */
 const DERIVATION_PATH = [12381, 8444, 2, 0];

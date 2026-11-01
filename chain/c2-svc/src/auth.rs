@@ -19,12 +19,12 @@
 //!    (a CLVM cons pair of the fixed prefix atom and the message atom),
 //!    verified with the fixed-DST Augmented BLS scheme
 //!    (`chia_bls::verify`, `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_AUG_`).
-//! 3. **предложение** (this service's own choice, not from a source): the
+//! 3. **proposal** (this service's own choice, not from a source): the
 //!    `message` field of this HTTP request is always treated as raw UTF-8
 //!    bytes, exactly as received over JSON -- never re-interpreted as hex.
 //!    This deliberately does *not* replicate Sage's own
 //!    hex-vs-utf8 `parse_signature_message` heuristic
-//!    (`week1_wallet_auth.md` §2's "ловушка"): the caller that assembles
+//!    (`week1_wallet_auth.md` §2's "trap"): the caller that assembles
 //!    the login challenge (week 2+ work, not this crate) is responsible for
 //!    only ever asking Sage to sign a message that starts with a
 //!    non-hex-digit human-readable prefix, so Sage's own heuristic always

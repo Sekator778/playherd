@@ -2,7 +2,7 @@ package crowdvsmarket.server.markets;
 
 import java.util.List;
 
-/** A lobby panel (D-69, Т-1). {@link #ORDER} is the display order. */
+/** A lobby panel (D-69, T-1). {@link #ORDER} is the display order. */
 public record Category(String id, String title) {
 
     public static final String CRYPTO = "crypto";

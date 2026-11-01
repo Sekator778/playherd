@@ -6,9 +6,9 @@ import { BotBadge } from "./Common";
 /**
  * Leaderboard cards (`docs/product/design/direction.md` §4 "Leaderboard cards, not tables") —
  * one reusable component for the Ratings page's Richest/Prophets lists and for Home's top-5
- * preview of the same two lists ("тот же компонент переиспользуется на Home", direction.md §4).
- * Replaces `RatingsPage`'s `<table>` (the audit's "most literally 'bухгалтерский' экран... ничем
- * не отличается от экспорта в Excel") and `HomePage`'s plain `.list-row` rows.
+ * preview of the same two lists ("the same component is reused on Home", direction.md §4).
+ * Replaces `RatingsPage`'s `<table>` (the audit's "the most literally 'accounting' screen... is no
+ * different from an Excel export") and `HomePage`'s plain `.list-row` rows.
  */
 export interface LeaderboardEntry {
   rank: number;

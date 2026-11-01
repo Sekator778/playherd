@@ -8,7 +8,7 @@
  * `btcPriceAt` anchor series unchanged) plus value-noise octaves of shrinking period (hour, ten
  * minutes, minute, one 3 s tick), each smoothly interpolated between seeded random knots — the sum
  * wiggles like a real price at every zoom and costs a handful of knot lookups per evaluation.
- * `ODDS` markets (probabilities, Т-2) live in logit space with bounded octaves, so a price can never
+ * `ODDS` markets (probabilities, T-2) live in logit space with bounded octaves, so a price can never
  * leave 0.10–0.90 for the starting levels in the catalog. Numbers are demo-grade, not calibrated
  * to any real feed; nothing here is a Coinbase, Kraken, Hyperliquid or Polymarket reading.
  *

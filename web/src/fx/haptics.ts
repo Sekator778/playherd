@@ -5,7 +5,7 @@
  * in `web/package.json`, and wiring it in means `npx cap sync android` + a debug-APK rebuild
  * across three emulators, per the task's own instructions — a separate, riskier change than this
  * pass's scope). `navigator.vibrate` covers both the web/PWA build and the Android WebView (best
- * effort — some WebViews restrict it) with zero new dependencies. предложение: adding the native
+ * effort — some WebViews restrict it) with zero new dependencies. proposal: adding the native
  * plugin is a good follow-up, tracked here rather than attempted silently.
  */
 import { getHapticsEnabled } from "./fxSettings";

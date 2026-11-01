@@ -278,7 +278,7 @@ class RealApi implements Api {
     return rpc("myDepositAddress", []);
   }
 
-  // --- crowd account (one per market, Т-6) ---
+  // --- crowd account (one per market, T-6) ---
   crowdAccount(marketId?: MarketId): Promise<CrowdAccountDto> {
     return rpc("crowdAccount", [marketId ?? null]);
   }

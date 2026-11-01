@@ -8,7 +8,7 @@ import java.math.RoundingMode;
  * the decision log), stored the way a CAT2 balance is stored on-chain: as an integer
  * count of the smallest unit ("mojos"), never as a floating-point number.
  *
- * <p><b>Unit scale (предложение — see docs/research/round_engine_design.md "Units"):</b> 1 PLAY =
+ * <p><b>Unit scale (proposal — see docs/research/round_engine_design.md "Units"):</b> 1 PLAY =
  * 1000 mojos, not Chia's native 10^12-mojos-per-XCH scale. The game never needs sub-milli-PLAY
  * precision (every USD-facing amount in {@code crowdvsmarket.engine.margin}/{@code round} settles
  * at 2dp, i.e. multiples of 10 mojos here), and 1000 keeps whole-PLAY amounts (the 10 000-PLAY

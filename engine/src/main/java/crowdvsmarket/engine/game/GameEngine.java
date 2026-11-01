@@ -280,7 +280,7 @@ public final class GameEngine {
         }
     }
 
-    /** {@code Optional.empty()} for a flat round (close == open, excluded from the "пророки" ratio, D-18). */
+    /** {@code Optional.empty()} for a flat round (close == open, excluded from the prophets ratio, D-18). */
     private static Optional<Boolean> directionCorrect(Direction direction, BigDecimal openPrice, BigDecimal closePrice) {
         int cmp = closePrice.compareTo(openPrice);
         if (cmp == 0) {

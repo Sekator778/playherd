@@ -41,7 +41,7 @@ import org.jboss.logging.Logger;
  * quarkus.rest-client.chainsvc.*-timeout} was raised accordingly (application.properties) — now
  * safe to be more generous since a slow chainsvc no longer costs round-processing latency.
  *
- * <p><b>Record format 2 (docs/research/markets_architecture.md §7, Т-9).</b> Every pending record goes
+ * <p><b>Record format 2 (docs/research/markets_architecture.md §7, T-9).</b> Every pending record goes
  * out with its market's registry index ({@code asset}; 0 = BTC), whatever the market. A chain service
  * older than format 2 would drop that field and publish the record as a BTC price — on a public
  * chain, for good — so a record with {@code asset > 0} is sent only when {@link OracleAssetGuard}

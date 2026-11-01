@@ -5,7 +5,7 @@
 #   backup.sh pre-deploy        the same, taken by remote.sh before a deploy replaces the running stand
 #   backup.sh list              what there is
 #   backup.sh restore FILE --yes   put a database dump back: the schema is dropped and recreated from the dump, in one
-#                                  transaction (rewinds the game: see README, "Откат"), and the journal archive with the same stamp
+#                                  transaction (rewinds the game: see README, "Rollback"), and the journal archive with the same stamp
 #                                  back into the journal volume. A dump taken before D-107 has none: add --empty-journal, and the server
 #                                  imports the restored table into a new journal on its start
 #

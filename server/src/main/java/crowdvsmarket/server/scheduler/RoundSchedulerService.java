@@ -30,7 +30,7 @@ import org.jboss.logging.Logger;
  *
  * <p>The tick is {@code concurrentExecution = SKIP}: Quarkus's default is {@code PROCEED}, i.e. a
  * tick that is still busy when the next second arrives does NOT delay it — two ticks would then
- * resolve the same window side by side (docs/research/markets_architecture.md §4 п.4). With SKIP the
+ * resolve the same window side by side (docs/research/markets_architecture.md §4 item 4). With SKIP the
  * scheduler never overlaps itself; {@code GameService}'s mutating methods all take its write lock
  * and re-check {@code round_results} under it anyway, so even an operator action racing the tick
  * cannot settle a round twice.
@@ -88,7 +88,7 @@ import org.jboss.logging.Logger;
  * once per tick, until it works — and does nothing else: nothing is resolved, no bot bets, no
  * series is seeded on a state that cannot be trusted.
  *
- * <p><b>The oracle's sequence floor (§7 п.4) is asked around the settlement itself, and nowhere else.</b> A
+ * <p><b>The oracle's sequence floor (§7 item 4) is asked around the settlement itself, and nowhere else.</b> A
  * settlement reserves a {@code seq}, and a {@code seq} handed out below what is already on chain is a record
  * rejected for good, so while {@link OracleSeqGate#open()} is false no round is settled. Everything else
  * goes on: the catch-up jump over empty windows (no event, no record), the seeding of missing series, the
@@ -97,7 +97,7 @@ import org.jboss.logging.Logger;
  * after a restart with some downtime no series had a round open for betting until the chain service answered.)
  * The closed gate is said once a minute.
  *
- * <p><b>Catch-up (§4 п.5):</b> a window with bets is always resolved or cancelled, however late; an
+ * <p><b>Catch-up (§4 item 5):</b> a window with bets is always resolved or cancelled, however late; an
  * EMPTY window that is overdue by more than one step is not resolved at all — the series jumps to the
  * window that contains "now", with no event, no result and no oracle record (one log line per jump).
  * <b>No price (D-23):</b> a failed attempt to settle — {@link PriceUnavailableException}, any other
@@ -117,10 +117,10 @@ public class RoundSchedulerService {
     /**
      * More than this between the end of one scheduled pass and the start of the next is a pause of the whole process, not a busy second
      * (the passes are one second apart; a stop-the-world collection or a database that answers late is seconds, not this) — a start
-     * for the minutes that a round that cannot be priced is given (D-79). Предложение: no measurement, a host's sleep is minutes.
+     * for the minutes that a round that cannot be priced is given (D-79). Proposal: no measurement, a host's sleep is minutes.
      */
     static final long PAUSE_MS = 15_000L;
-    /** D-23: "если за 1 час цену получить не удалось — раунд отменяется целиком". The upper bound of every wait: D-77 and D-79 let a round go sooner. */
+    /** D-23: "if the price could not be obtained within 1 hour, the whole round is cancelled". The upper bound of every wait: D-77 and D-79 let a round go sooner. */
     private static final long PRICE_GRACE_MS = 3_600_000L;
     private static final String NO_PRICE_REASON = "no oracle price available within 1 hour of round close";
     private static final String SETTLEMENT_FAILED_REASON = "settlement failed within 1 hour of round close";
@@ -286,7 +286,7 @@ public class RoundSchedulerService {
     }
 
     /** A running market without a series — listed while no listener was registered, or its
-     *  notification was lost — gets one at the window containing "now" (§4 п.2). */
+     *  notification was lost — gets one at the window containing "now" (§4 item 2). */
     private void seedMissingSeries(Market market, long now) {
         boolean missing = false;
         for (Interval interval : Interval.values()) {

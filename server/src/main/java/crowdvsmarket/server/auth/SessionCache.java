@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * A bounded, short-lived, in-memory read-through of the {@code sessions} table (architecture plan, lmax_roadmap step 1: "кэш сессий").
+ * A bounded, short-lived, in-memory read-through of the {@code sessions} table (architecture plan, lmax_roadmap step 1: "session cache").
  * Only sessions that exist are cached (a miss always goes to the database, so a session created by another path is seen at once).
  *
  * <p><b>Rules.</b>
