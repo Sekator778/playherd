@@ -46,7 +46,9 @@ docker() {
       return 0
       ;;
     "inspect -f "*) echo herd; return 0 ;; # every herd-* container is this compose project's
-    *" up -d --build") echo "UP HERD_WEB_PORT=${HERD_WEB_PORT:-}" >>"${CALLS}"; return 0 ;;
+    *" build --print") return 0 ;;
+    "buildx bake "*) return 0 ;;
+    *" up -d") echo "UP HERD_WEB_PORT=${HERD_WEB_PORT:-}" >>"${CALLS}"; return 0 ;;
     *" ps --format "*) printf 'db healthy\nchainsvc healthy\nserver healthy\nweb healthy\n'; return 0 ;;
   esac
   case "${HERD_FAKE_DOWN:-}" in

@@ -266,7 +266,10 @@ cmd_up() {
   if docker volume inspect "${ARCHIVE_DB_VOLUME}" >/dev/null 2>&1; then
     log "volume ${ARCHIVE_DB_VOLUME} (replay-epoch archive) exists — kept as is, not used; the stand's database is ${DB_VOLUME}"
   fi
-  "${COMPOSE[@]}" up -d --build
+  # Compose hands the build to bake on stdin, so bake cannot ask for the host network the images
+  # build on (docker-compose.yml, HERD_BUILD_NETWORK): grant it here and start from those images.
+  "${COMPOSE[@]}" build --print | docker buildx bake --allow=network.host --load -f -
+  "${COMPOSE[@]}" up -d
   wait_healthy
   check_price_source
   print_urls
