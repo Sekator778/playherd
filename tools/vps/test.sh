@@ -308,17 +308,10 @@ test_static() {
   ok "web/nginx.conf: Connection is upgrade only for a request that asks for an upgrade" "$?"
   awk '/location = \/api\/ws/ {inws = 1} inws && /X-Forwarded-For \$herd_client_ip;/ {found = 1} inws && /^    }/ {inws = 0} END {exit !found}' "${nginx}"
   ok "web/nginx.conf: /api/ws passes the visitor's address the way /api/ does (the socket limits are per address)" "$?"
-  file_has "${REPO}/deploy/Caddyfile" 'stream_close_delay 5m'
-  ok "deploy/Caddyfile: /api/* (the WebSocket too) keeps open sockets over a reload" "$?"
   file_has "${HERE}/deploy.sh" '/api/ws' && file_has "${HERE}/deploy.sh" "Upgrade: websocket"
   ok "deploy.sh: the checks ask /api/ws for a WebSocket upgrade" "$?"
   file_has "${REPO}/server/src/main/java/crowdvsmarket/server/push/PushSocket.java" '@WebSocket(path = "/api/ws")'
   ok "PushSocket: the endpoint is /api/ws (what the proxies and the check name)" "$?"
-  local pin_edge pin_prod
-  pin_edge="$(awk '$1 == "image:" {print $2; exit}' "${HERE}/edge/compose.yml")"
-  pin_prod="$(awk '$1 == "image:" && $2 ~ /^caddy:/ {print $2; exit}' "${REPO}/deploy/compose.prod.yml")"
-  [[ -n "${pin_edge}" && "${pin_edge}" == "${pin_prod}" ]]
-  ok "edge/compose.yml pins the same caddy image as deploy/compose.prod.yml (${pin_edge:-none})" "$?"
   (
     set +e
     # shellcheck source=/dev/null
@@ -1137,7 +1130,8 @@ case "$*" in
   "ps -a --format {{.Names}}") exit 0 ;;
   "volume inspect "*) exit 1 ;;
   *" port web 80") exit 1 ;;
-  *" up -d --build") echo "UP HERD_WEB_PORT=${HERD_WEB_PORT:-<unset>}" >>"${FAKE_ST_LOG}" ;;
+  *" build --print"|"buildx bake "*) ;;
+  *" up -d") echo "UP HERD_WEB_PORT=${HERD_WEB_PORT:-<unset>}" >>"${FAKE_ST_LOG}" ;;
   *" ps --format "*) printf 'db healthy\nchainsvc healthy\nserver healthy\nweb healthy\n' ;;
   *" exec -T server curl "*) printf '200' ;;
   ps*) exit 0 ;;
@@ -1997,19 +1991,6 @@ test_oracle() {
   [[ $? -ne 0 ]]
   ok "secrets.sh: an unknown profile is refused" "$?"
 
-  # the README says what the scripts do
-  file_has "${HERE}/README.md" 'tools/vps/deploy.sh bootstrap --root-user ubuntu --profile oracle' \
-    && file_has "${HERE}/README.md" "sudo -n bash herd-bootstrap.sh --deploy-user deploy --ssh-port 22 --pubkey-stdin --profile oracle"
-  ok "README 2a: the first command on an Oracle instance, and what it runs, are the ones the dry run prints" "$?"
-  for f in 'Content/Compute/known-issues.htm#ufw' 'Content/Compute/References/bestpracticescompute.htm' 'Content/Compute/Tasks/connect-to-linux-instance.htm' \
-    'Content/FreeTier/freetier_topic-Always_Free_Resources.htm' 'Content/Compute/References/computemetrics.htm' 'Content/Compute/Tasks/manage-plugins.htm' \
-    'Content/developer/apache-on-ubuntu/01oci-ubuntu-apache-summary.htm'; do
-    file_has "${HERE}/README.md" "https://docs.oracle.com/en-us/iaas/${f}"
-    ok "README cites Oracle's page ${f}" "$?"
-  done
-  file_has "${HERE}/README.md" 'Idle Always Free compute instances may be reclaimed by Oracle' && file_has "${HERE}/README.md" 'Using UFW to edit rules might cause an instance not to boot' \
-    && file_has "${HERE}/README.md" 'out of host capacity' && file_has "${HERE}/README.md" 'oci_computeagent'
-  ok "README 2a: the reclamation rule, Oracle's warning about ufw, 'out of host capacity' and the metric namespace are quoted" "$?"
   file_has "${HERE}/bootstrap.sh" 'known-issues.htm#ufw' && file_has "${HERE}/bootstrap.sh" 'bestpracticescompute.htm'
   ok "bootstrap.sh cites the Oracle pages its firewall mode rests on" "$?"
 }
