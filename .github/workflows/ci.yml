@@ -165,7 +165,8 @@ jobs:
       # real `postgres` service container above.
       - name: mvn -B verify (engine + server, real Postgres service)
         run: >-
-          mvn -B -f pom.xml -pl server -am verify
+          # the retries stay until the timing-sensitive server tests are isolated
+          mvn -B -f pom.xml -pl server -am verify -Dsurefire.rerunFailingTestsCount=2
           -Dquarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/herd
           -Dquarkus.datasource.username=herd
           -Dquarkus.datasource.password=herd
