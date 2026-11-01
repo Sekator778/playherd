@@ -36,7 +36,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * What the minutes of a round that cannot be priced (Р-79, and the two minutes of Р-77) are counted from, through the scheduled
+ * What the minutes of a round that cannot be priced (D-79, and the two minutes of D-77) are counted from, through the scheduled
  * pass itself — the {@code @Scheduled} {@code tick()}, one second apart on a clock the test owns, not the {@code tick(now)} that
  * other tests drive. They are counted from the end of the round or from the start of the server, whichever is later: a restart gives
  * every round that was in flight its minutes to heal from the candles, instead of letting it go at its first failed attempt. A
@@ -220,7 +220,7 @@ class SourceReleaseAfterAPauseTest {
         long wake = w0.endMs() + 20 * MIN;
 
         everySecond(wake, wake + 2 * MIN - SEC); // the other exchange is alive, the round's own is not back
-        assertThat(cancellations).as("the two minutes of Р-77 count from the wake as well").isEmpty();
+        assertThat(cancellations).as("the two minutes of D-77 count from the wake as well").isEmpty();
         pass(wake + 2 * MIN);
 
         assertThat(cancellations).singleElement().satisfies(c -> {

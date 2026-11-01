@@ -21,9 +21,9 @@ import io.quarkus.test.junit.TestProfile;
 import org.junit.jupiter.api.Test;
 
 /**
- * Economy stage A (Р-92, docs/product/economy_implementation_plan.md A1-A5) through the service: the symbol "SOL" is one of
+ * Economy stage A (D-92, docs/product/economy_implementation_plan.md A1-A5) through the service: the symbol "SOL" is one of
  * the plan's twelve price markets, so the market gets its caps 600 (short round, {@code HOURLY}) / 300 (long round,
- * {@code DAILY}) and {@code r_m = 1.25 bp} (Р-102), whatever single cap it is listed with. Bets of 200 PLAY: the first tier, the full cap.
+ * {@code DAILY}) and {@code r_m = 1.25 bp} (D-102), whatever single cap it is listed with. Bets of 200 PLAY: the first tier, the full cap.
  *
  * <pre>
  * 100x on 200 PLAY: herd fee 200 * min(20%, 0.000125 * 100) = 2.500, network fee 0.100 -> 202.600 leaves the balance
@@ -159,7 +159,7 @@ class EconomyStageAFlowTest extends LiveGameTestBase {
         assertThat(dto.feeNetwork()).isEqualTo("0.100");
         assertThat(dto.totalDebit()).isEqualTo("202.600");
         assertThat(dto.maxLeverageForStake()).isEqualTo(600);
-        // on the long round the herd fee has k = 2.2: 200 * 0.000125 * 100 * 2.2 = 5.500 (Р-102)
+        // on the long round the herd fee has k = 2.2: 200 * 0.000125 * 100 * 2.2 = 5.500 (D-102)
         assertThat(gameService.previewLiquidation(new Betting.LiquidationPreviewRequest(sol.id(), Enums.Direction.UP, 100,
                 "200.000", "100.00", Enums.Interval.DAILY)).feeHerd()).isEqualTo("5.500");
         // on the long round the cap is 300

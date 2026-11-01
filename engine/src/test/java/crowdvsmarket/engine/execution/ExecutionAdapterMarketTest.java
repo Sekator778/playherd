@@ -15,7 +15,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * The market-aware {@code openPosition(spec, …)} of {@link ExecutionAdapter} (Р-69) and its BTC
+ * The market-aware {@code openPosition(spec, …)} of {@link ExecutionAdapter} (D-69) and its BTC
  * default: {@link PaperTradingAdapter} must still be exactly {@link Position#openFromMargin}.
  */
 class ExecutionAdapterMarketTest {

@@ -49,7 +49,7 @@
 //! batch: it stays pending, in its place, and a later batch pays it. A batch an earlier version of this
 //! service built with such a pair (it can never be accepted) is rebuilt without the repeats.
 //!
-//! What *is* reused here (decision Р-53 follow-up, "treasury self-heal",
+//! What *is* reused here (decision D-53 follow-up, "treasury self-heal",
 //! `docs/research/chain_service.md` §13): the oracle's §12 principle "make
 //! the chain the source of truth for our own position" -- `tick()` (and
 //! `bootstrap_treasury_from_chain` at startup) reconciles the cached

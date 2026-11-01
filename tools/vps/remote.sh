@@ -552,7 +552,7 @@ check_memory() {
   fi
 }
 
-# Р-107: the event journal. The volume of the journal is there and mounted in the server, and the copy of the journal in Postgres (the projector's)
+# D-107: the event journal. The volume of the journal is there and mounted in the server, and the copy of the journal in Postgres (the projector's)
 # is close behind it: the lag is the events the journal holds that game_events does not yet (a few at most when healthy; the start waits for none
 # of it, but the stand is not "up" while the lag grows). The status is the operator's (/api/admin/status), asked from inside the server container
 # with the token of .env.

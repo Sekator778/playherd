@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone public verifier for Herd's price oracle singleton (Р-11/Р-40/Р-41/Р-47), v2.
+"""Standalone public verifier for Herd's price oracle singleton (D-11/D-40/D-41/D-47), v2.
 
 Anyone can run this — it needs none of our keys, none of our servers except (optionally)
 one stand's own public HTTP API, and it never sends a spend, a signature or any mutating
@@ -13,7 +13,7 @@ request anywhere. It only reads:
   2. (only if --stand-url is given) that stand's own public, unauthenticated HTTP API:
      GET /api/oracle/records (the journal of every oracle record the stand queued, with the
      round each belongs to), GET /api/markets/registry.json (asset index -> market), and
-     GET /api/rounds/{id}/results.json (FIXED INTERFACE (2), Р-41) — to fetch, for each round
+     GET /api/rounds/{id}/results.json (FIXED INTERFACE (2), D-41) — to fetch, for each round
      the stand claims, the exact bytes it says were hashed into that round's on-chain
      resultsHash. A stand that predates the journal is read through its public JSON-RPC
      (POST /api/rpc/rounds, /api/rpc/round — CONTRIBUTING.md, FIXED INTERFACE (1))
@@ -33,7 +33,7 @@ What "verified" means here, precisely:
     (priceCents ts seq); a short or long list; an `asset` outside 0..2^32-1; a resultsHash
     that is not 32 bytes) is not a record and is listed under "unparsed", never guessed at.
     See chain/README.md / docs/research/chain_service.md §3.1 and §16 for the format, and
-    the decision log Р-11/Р-40/Р-41/Р-47 for why it exists.
+    the decision log D-11/D-40/D-41/D-47 for why it exists.
   - Every seq number is checked for: first occurrence (which coin/height actually put it
     on chain), duplicates (the same seq announced again later — chainsvc's durable queue
     can and does re-publish an already-confirmed record after a reconciliation race; if
@@ -49,9 +49,9 @@ What "verified" means here, precisely:
     published, the round's closePriceCents in that file equals the priceCents this tool
     independently decoded from the chain, and the asset index on chain equals the asset the
     stand assigns to that round (and its registry maps that index to that round's market).
-    This is Р-41's whole point: "любой может сверить, что итоги не поменяли задним числом" —
+    This is D-41's whole point: "любой может сверить, что итоги не поменяли задним числом" —
     this tool is that anyone.
-  - (with --stand-url) Which exchange a crypto round ran on (Р-76). A market that has a backup
+  - (with --stand-url) Which exchange a crypto round ran on (D-76). A market that has a backup
     exchange (the registry's `backup`) opens each round on its main exchange or on the backup and
     runs on that one exchange to the end; the round says which in a root key "venue" of its
     results.json — so the venue is inside the hash the chain anchored, and priceCents is the
@@ -65,7 +65,7 @@ What "verified" means here, precisely:
 What this tool does NOT verify (out of scope, said plainly instead of implied): that the
 priceCents the oracle published was itself a correct/honest price on the exchange it names (that
 trust is in the operator key + the price source, Hyperliquid, Coinbase, Kraken or Polymarket,
-Р-11/the project plan §2 — a centralized-oracle tradeoff made on purpose and documented, not hidden; the
+D-11/the project plan §2 — a centralized-oracle tradeoff made on purpose and documented, not hidden; the
 venue only tells you WHICH exchange to compare it against); that the positions/payouts
 inside results.json were computed correctly by the engine's leverage math (a separate
 concern, covered by engine/'s own unit tests, not by this tool); AGG_SIG_ME signatures on
@@ -252,7 +252,7 @@ class StandClient:
     """Thin client for one stand's own public, unauthenticated HTTP API. The RPC methods used
     here (`round`, `rounds`) take no session cookie (see server/src/main/java/crowdvsmarket/
     server/api/RpcResource.java — neither is in requireSignedIn); the GET endpoints
-    (results.json, oracle/records, markets/registry.json) are deliberately public (Р-41,
+    (results.json, oracle/records, markets/registry.json) are deliberately public (D-41,
     docs/research/markets_architecture.md §7). No operator token, no cookie, no mutating call is
     ever made from this class.
 
@@ -690,7 +690,7 @@ def discover_rounds(stand: Any, verbose: bool) -> dict[int, dict]:
                     found += 1
             # BETTING/RUNNING/CANCELLED rounds carry no chain seq to cross-check; keep walking
             # backward regardless, since a cancelled round in the middle of history is expected
-            # (Р-32) and must not stop the walk.
+            # (D-32) and must not stop the walk.
             start_ms -= step
         if verbose:
             eprint(f"  {interval}: found {found} settled round(s) with an oracle anchor")
@@ -788,7 +788,7 @@ def cross_check(
                     f"the stand's registry maps asset {chain_asset} to {reg.get('id')} but the round's market is {market_id}"
                 )
 
-        # Which exchange the round ran on (Р-76): what the journal says, and below what the hashed document says.
+        # Which exchange the round ran on (D-76): what the journal says, and below what the hashed document says.
         journal_venue = record.get("venue") if asset_known else None
         doc_venue: Any = None
         venue_ok = True

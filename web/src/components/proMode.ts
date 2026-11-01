@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * The "Pro view" switch (Р-98, variant A): the default screens are the game — two buttons, a sheet, one pinned card — and Pro keeps
+ * The "Pro view" switch (D-98, variant A): the default screens are the game — two buttons, a sheet, one pinned card — and Pro keeps
  * everything the terminal-like screens had (the boost slider, the crowd shortcuts, the fee rows, every chart line, the old
  * "Your bets" strip). It is remembered per browser; a browser that will not store it still switches for the page.
  */

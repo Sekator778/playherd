@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { Direction, Interval, MarketId } from "../api/contract";
 
 /**
- * The bet sheet's open/closed state (Р-98): a tap on UP or DOWN — a lobby card's, the room's arena — opens a sheet over the screen instead of
+ * The bet sheet's open/closed state (D-98): a tap on UP or DOWN — a lobby card's, the room's arena — opens a sheet over the screen instead of
  * taking the player down a page to a form. The sheet is mounted once, in the layout (`BetSheetHost`), so a small module-level store connects it
  * to the buttons that open it, the same way `betDraft.ts` connects the slip to the sign-in dialog.
  */

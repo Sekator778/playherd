@@ -21,7 +21,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-62's live bet feed ({@code betFeed} RPC, backed by {@link BetFeed}): ordering, {@code sinceSeq}
+ * D-62's live bet feed ({@code betFeed} RPC, backed by {@link BetFeed}): ordering, {@code sinceSeq}
  * pagination, and both caps ({@link BetFeed#PAGE_SIZE} per call, {@link BetFeed#MAX_ENTRIES_PER_ROUND}
  * retained per round). Drives {@link GameService} directly with a controlled {@code nowMs}, same
  * pattern as {@code PlaceBetWindowBoundaryTest} — no HTTP, no waiting on the real scheduler.
@@ -102,7 +102,7 @@ class BetFeedCapsTest {
         assertThat(tail.entries()).hasSize(2);
         assertThat(tail.entries()).allMatch(e -> e.seq() > firstSeq);
 
-        // an edit by an existing player (Р-13) appends a NEW row, does not rewrite the old one
+        // an edit by an existing player (D-13) appends a NEW row, does not rewrite the old one
         bet(p1, window, nowMs, Enums.Direction.DOWN, 20);
         Rounds.BetFeedDto afterEdit = gameService.betFeed(window.roundId(), null);
         assertThat(afterEdit.entries()).hasSize(4);
@@ -118,7 +118,7 @@ class BetFeedCapsTest {
         String soleBettor = signUpPlayer("cap");
 
         // One player editing their bet repeatedly generates one feed row per placeBet call,
-        // independent of Р-13's "one position per player per round" (that rule only bounds the
+        // independent of D-13's "one position per player per round" (that rule only bounds the
         // BetBook's CURRENT state, not this append-only activity log).
         int totalPlacements = BetFeed.MAX_ENTRIES_PER_ROUND + 5;
         for (int i = 0; i < totalPlacements; i++) {

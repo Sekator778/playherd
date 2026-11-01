@@ -1,5 +1,5 @@
-/* Pair room (`/play/:marketId`) — concept A arena (Р-61/`docs/product/design/concepts.md`) for every
-   market (Р-69). Tokens reused from index.css/direction.md; no new hex values invented here. */
+/* Pair room (`/play/:marketId`) — concept A arena (D-61/`docs/product/design/concepts.md`) for every
+   market (D-69). Tokens reused from index.css/direction.md; no new hex values invented here. */
 
 .room-root {
   max-width: 560px;
@@ -138,7 +138,7 @@
   font-weight: 800;
   color: var(--warning);
 }
-/* The number is the BACKUP exchange's (Р-76): a muted mark, the reason is its hover text — not a warning. */
+/* The number is the BACKUP exchange's (D-76): a muted mark, the reason is its hover text — not a warning. */
 .room-venue {
   font-size: 11px;
   font-weight: 800;
@@ -445,7 +445,7 @@
   font-weight: 700;
 }
 
-/* ---- layout wrappers (Р-83): one column as before below 1100 px, two columns above ---------------------------------
+/* ---- layout wrappers (D-83): one column as before below 1100 px, two columns above ---------------------------------
    Below the breakpoint the three wrappers disappear (`display: contents`) and the room is a flex column whose `order`
    puts the exchange note after the series tabs, exactly where it always was. */
 

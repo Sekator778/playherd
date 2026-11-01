@@ -419,7 +419,7 @@ test("a weekend does not excuse an xyz market that has nothing to bet on, nor a 
 });
 
 test("an xyz or odds round cancelled for want of a price fails the run; cancelled because its market closed it is a day off", async () => {
-  // (a round the server lets go for want of a price is cancelled minutes after its end, Р-79; a stand that did it sooner is
+  // (a round the server lets go for want of a price is cancelled minutes after its end, D-79; a stand that did it sooner is
   // still no day off: the family has no such reason)
   const noPrice = "No price from the source; stakes returned";
   const [xyz, odds, closed] = await Promise.all([

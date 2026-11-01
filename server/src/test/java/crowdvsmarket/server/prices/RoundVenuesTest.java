@@ -8,7 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The holder of the round venues (Р-76): a decision is written once and whoever wrote first decided, it is kept in memory
+ * The holder of the round venues (D-76): a decision is written once and whoever wrote first decided, it is kept in memory
  * next to its row, loaded again at start, and two rounds of a market that start together find each other.
  */
 class RoundVenuesTest {

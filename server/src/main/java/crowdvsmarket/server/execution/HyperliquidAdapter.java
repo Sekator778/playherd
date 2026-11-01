@@ -36,7 +36,7 @@ import org.jboss.logging.Logger;
  * finish it). Nothing in this codebase constructs this adapter with real keys or wires it into any
  * live game path today — {@link crowdvsmarket.engine.crowd.CrowdAccount}/{@code
  * ComparisonAccounts} use {@link crowdvsmarket.engine.execution.PaperTradingAdapter} exclusively
- * (Р-38: "Активация Hyperliquid-адаптера реальными деньгами... решение и ответственность того, кто
+ * (D-38: "Активация Hyperliquid-адаптера реальными деньгами... решение и ответственность того, кто
  * разворачивает продукт").
  *
  * <p>{@link #getPosition} is the one method this adapter can genuinely execute today without any
@@ -93,7 +93,7 @@ public class HyperliquidAdapter implements ExecutionAdapter {
             Leverage leverage, BigDecimal margin, BigDecimal entryPrice) {
         requireEnabledAndConfigured();
         // Liquidation price is a property of the position itself, independent of which venue
-        // executes it (Р-7's Hyperliquid formula) — see ExecutionAdapter's javadoc.
+        // executes it (D-7's Hyperliquid formula) — see ExecutionAdapter's javadoc.
         Position position = Position.openFromMargin(userId, roundId, direction, leverage, margin, entryPrice, spec);
         HlOrderAction action = buildOrderAction(config.hyperliquidAssetIndex(), direction == Direction.UP, false,
                 entryPrice, position.size());

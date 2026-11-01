@@ -138,7 +138,7 @@ call_api() {
     # plan supports the required reviewers protection rule" (environment reviewers).
     if echo "$out" | grep -qiE "Upgrade to GitHub Pro|billing plan supports"; then
       echo "  [skipped — plan limit] ${method} ${path}: private repo on GitHub Free can't use this API." >&2
-      echo "      -> either upgrade the account plan, or wait for the Р-54 public repo; see CONTRIBUTING.md §7." >&2
+      echo "      -> either upgrade the account plan, or wait for the D-54 public repo; see CONTRIBUTING.md §7." >&2
       return 0
     fi
     echo "  [ERROR] ${method} ${path} failed:" >&2
@@ -344,7 +344,7 @@ fi
 # 4. Dependabot alerts
 # ---------------------------------------------------------------------------
 # Alerts only: they run no Actions. Security updates (/automated-security-fixes) stay off: every PR
-# they open runs the full CI on the limited Actions minutes (CONTRIBUTING.md §9, Р-112).
+# they open runs the full CI on the limited Actions minutes (CONTRIBUTING.md §9, D-112).
 section "4. Dependabot alerts"
 if [[ "$TOGGLE_DEPENDABOT_SECURITY" -eq 1 ]]; then
   call_api PUT "/vulnerability-alerts" ""
@@ -390,11 +390,11 @@ fi
 # ---------------------------------------------------------------------------
 section "6. Secrets / variables checklist (add these yourself — this script does not set values)"
 cat <<'EOF'
-  Repository variable (NOT secret — Р-58, the decision log: this projectId is public,
+  Repository variable (NOT secret — D-58, the decision log: this projectId is public,
   it ships in the web bundle regardless):
     - VITE_WALLETCONNECT_PROJECT_ID = 680e4897ed8a55aa0b10263cc74159dd
 
-  Repository variable, optional (Р-67: Actions minutes are limited, so image publishing is OFF
+  Repository variable, optional (D-67: Actions minutes are limited, so image publishing is OFF
   until this is set):
     - HERD_PUBLISH_DEVELOP = true   — ci.yml pushes the :develop and :sha-<short> images to ghcr.io
                                        after every green push to develop (the staging deploy pulls
@@ -405,7 +405,7 @@ cat <<'EOF'
   No secret is needed to push images to GHCR: use the workflow-scoped GITHUB_TOKEN with
   `permissions: { packages: write }` in release.yml.
 
-  Environment "production" secrets (VPS deploy — blocked until Р-38's VPS exists, docs/product/
+  Environment "production" secrets (VPS deploy — blocked until D-38's VPS exists, docs/product/
   decisions.md; add once Alex has provisioned it — names must match .github/workflows/deploy.yml
   exactly, which is what actually reads them):
     - VPS_HOST         — VPS hostname/IP
@@ -420,7 +420,7 @@ cat <<'EOF'
   again on environment "staging" once it has its own deploy target — deploy.yml's staging job
   reads them from there, independently of production's copies.
 
-  Explicitly NOT a CI/CD secret (per this task's constraint and Р-21, the decision log):
+  Explicitly NOT a CI/CD secret (per this task's constraint and D-21, the decision log):
   the Chia testnet11 operator/oracle key. It stays only on whichever machine runs chainsvc
   (today: Atlas; later: the VPS itself, provisioned directly there) and never touches GitHub
   Actions.

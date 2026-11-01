@@ -7,7 +7,7 @@ import java.util.Objects;
 
 /**
  * Who a bot is: its id (the seed source and the account key), its rule and its character, and the payout mode it prefers
- * (Р-106): a fixed trait of the bot, {@link BetMode#FIXED} where the market allows it, else the percentage mode.
+ * (D-106): a fixed trait of the bot, {@link BetMode#FIXED} where the market allows it, else the percentage mode.
  */
 public record BotProfile(String botId, SignalStrategy strategy, Persona persona, BetMode preferredMode) {
 

@@ -48,7 +48,7 @@ final class MarketMapper {
      *  and the side the crowd is on. */
     record Split(int participantCount, PlayAmount upStake, PlayAmount downStake) {
 
-        /** The side with more stake; {@code null} for a tie, 0 vs 0 included (Р-5: no majority, no crowd trade). */
+        /** The side with more stake; {@code null} for a tie, 0 vs 0 included (D-5: no majority, no crowd trade). */
         Enums.Direction majorityDirection() {
             int cmp = upStake.compareTo(downStake);
             return cmp == 0 ? null : cmp > 0 ? Enums.Direction.UP : Enums.Direction.DOWN;

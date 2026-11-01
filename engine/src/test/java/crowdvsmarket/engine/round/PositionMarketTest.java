@@ -9,7 +9,7 @@ import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link Position}'s market overloads (Р-69): the market contributes exactly one thing, the
+ * {@link Position}'s market overloads (D-69): the market contributes exactly one thing, the
  * maintenance margin rate inside {@code liquidationPrice}; everything pre-markets is the BTC case.
  */
 class PositionMarketTest {

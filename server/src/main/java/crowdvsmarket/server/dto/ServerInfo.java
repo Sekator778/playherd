@@ -29,7 +29,7 @@ public final class ServerInfo {
      * {@code herd.prices.source} ({@code "live"} | {@code "synthetic"}); {@code markets}: how many markets are
      * active (played) on this server; {@code playAssetId}: the PLAY CAT's asset id ({@code "0x"} + 64 hex),
      * {@code null} when the configured value is not one; {@code testWallet}: whether the browser test wallet
-     * (Р-45) is offered on the sign-in sheet; {@code engineReady}: {@code false} while the server rebuilds its
+     * (D-45) is offered on the sign-in sheet; {@code engineReady}: {@code false} while the server rebuilds its
      * state after a failure — every call that reads or changes the engine answers 503 {@code ENGINE_NOT_READY}
      * until it is {@code true} again (contract.ts: absent means true; the server always says).
      */

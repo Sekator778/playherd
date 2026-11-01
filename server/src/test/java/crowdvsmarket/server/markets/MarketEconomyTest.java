@@ -43,7 +43,7 @@ class MarketEconomyTest {
 
         assertThat(e.capHourly()).isEqualTo(10);
         assertThat(e.capDaily()).isEqualTo(10);
-        assertThat(e.herdFeeBp()).as("r_m of an odds market, Р-102").isEqualByComparingTo("2.5");
+        assertThat(e.herdFeeBp()).as("r_m of an odds market, D-102").isEqualByComparingTo("2.5");
         // l = kappa / cap = 0.5 / 10 = 1 / (2 * 10): unchanged from before the economy change
         MarketSpec spec = new Market("PM1", MarketKind.ODDS, "politics", "GER", "Q", null, null, "polymarket", "t", null, 10,
                 4, 5, MarketStatus.ACTIVE, 0L, null, null, null).spec();
@@ -81,7 +81,7 @@ class MarketEconomyTest {
                 "xyz:SP500", null, 40, 2, 9, MarketStatus.ACTIVE, 0L, null, null, null);
         MarketSpec spec = sp500.spec();
 
-        // r_m = 0.24 bp: 4000x on 100 PLAY is 9.6% of the stake, no cap below the 20% guard (Р-102)
+        // r_m = 0.24 bp: 4000x on 100 PLAY is 9.6% of the stake, no cap below the 20% guard (D-102)
         assertThat(EconomyRules.fees(spec, Interval.HOURLY, 4000, PlayAmount.ofWholePlay(100)).herd()).isEqualTo(new PlayAmount(9_600));
         // 10x: 100 * 0.000024 * 10 = 0.024
         assertThat(EconomyRules.fees(spec, Interval.HOURLY, 10, PlayAmount.ofWholePlay(100)).herd()).isEqualTo(new PlayAmount(24));

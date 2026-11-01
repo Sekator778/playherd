@@ -158,7 +158,7 @@ export function catalogue(): MarketDto[] {
 }
 
 /**
- * The crypto markets the way a server lists them since Р-76 (ids `spot_*`): priced by the exchange of the asset itself with a
+ * The crypto markets the way a server lists them since D-76 (ids `spot_*`): priced by the exchange of the asset itself with a
  * backup exchange behind it — BTC, ETH and DOGE on Coinbase with Kraken behind them, HYPE on Hyperliquid's spot market with
  * Coinbase behind it — and the legacy BTC perpetual that the new market replaced, closed with the server's reason. `spot_ETH`
  * shows Kraken's price (its main exchange has no fresh price, `MarketPriceDto.venue`), the others their own.

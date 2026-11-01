@@ -13,7 +13,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
 /**
- * The operator's status page lists every price feed (Р-76): which exchange it is, whether it is a polled feed or a
+ * The operator's status page lists every price feed (D-76): which exchange it is, whether it is a polled feed or a
  * stream, and how the stream is doing — {@code idle}, {@code connected}, {@code silent}, {@code rest-fallback}, or {@code
  * disabled} for an exchange switched off. Memory only, so the page answers whatever is wrong elsewhere. The states
  * themselves are tested with the sources ({@code KrakenPriceSourceTest}, {@code StreamSupervisorTest}); here it is the

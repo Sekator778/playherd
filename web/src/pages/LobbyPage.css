@@ -1,5 +1,5 @@
-/* Lobby (`/`) — category ribbon, sort/filter chips, search, market cards (Р-69). Concept A's tiles
-   (Р-61) grew into Polymarket-style panels → cards; the card itself is `components/MarketCard.css`.
+/* Lobby (`/`) — category ribbon, sort/filter chips, search, market cards (D-69). Concept A's tiles
+   (D-61) grew into Polymarket-style panels → cards; the card itself is `components/MarketCard.css`.
    Tokens only (index.css / direction.md). */
 
 .lobby-root {
@@ -230,7 +230,7 @@
   }
 }
 
-/* Р-83: on a wide window the lobby uses the width — a wider container and a fourth column of cards.
+/* D-83: on a wide window the lobby uses the width — a wider container and a fourth column of cards.
    Below 1100 px nothing changes. */
 @media (min-width: 1100px) {
   .container:has(> .lobby-root) {

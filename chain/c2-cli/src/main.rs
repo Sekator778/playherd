@@ -110,7 +110,7 @@ enum Command {
         #[arg(long)]
         push: bool,
     },
-    /// Launches the minimal oracle singleton (Р-11), manager key = this wallet. Dry-run unless --push.
+    /// Launches the minimal oracle singleton (D-11), manager key = this wallet. Dry-run unless --push.
     OracleLaunch {
         #[arg(long)]
         name: String,

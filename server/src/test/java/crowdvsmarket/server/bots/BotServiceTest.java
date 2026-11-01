@@ -86,7 +86,7 @@ class BotServiceTest {
         registry = mock(MarketRegistry.class);
         prices = mock(MarketPrices.class);
         when(prices.latest(anyString())).thenReturn(Optional.empty());
-        // the bots ask for a market's quote, the primary exchange's or the backup's (Р-76); this mock answers by the market's id
+        // the bots ask for a market's quote, the primary exchange's or the backup's (D-76); this mock answers by the market's id
         when(prices.latest(any(Market.class))).thenAnswer(inv -> prices.latest(inv.<Market>getArgument(0).id()));
 
         bots = new BotService();
@@ -226,7 +226,7 @@ class BotServiceTest {
         for (Betting.PlaceBetRequest r : request.getAllValues()) {
             RoundWindow.RoundRef ref = RoundWindow.parseRoundId(r.roundId());
             PlayAmount stake = PlayAmount.fromMoney(new BigDecimal(r.stake()));
-            // economy stage A (Р-92): the market's cap for the round length, lowered by the tier of the stake
+            // economy stage A (D-92): the market's cap for the round length, lowered by the tier of the stake
             int allowed = EconomyRules.maxLeverage(markets.get(ref.market()).spec(), ref.interval(), stake);
             assertThat(r.leverage()).as("%s stake %s", r.roundId(), r.stake()).isBetween(2, allowed);
             sawAStakeAboveTheFirstTier |= stake.compareTo(PlayAmount.ofWholePlay(250)) > 0;

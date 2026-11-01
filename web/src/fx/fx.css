@@ -38,7 +38,7 @@
   align-items: flex-start;
   justify-content: center;
   /* Below the sticky header incl. the status-bar inset (`--header-offset`, index.css). It used to read
-     `--banner-height`, which Р-63 removed together with the DEMO banner: the undefined variable made
+     `--banner-height`, which D-63 removed together with the DEMO banner: the undefined variable made
      the whole declaration invalid and the toast stuck to the very top edge. */
   padding-top: calc(var(--header-offset) + 12px);
   background: transparent;
@@ -204,7 +204,7 @@
   color: var(--text-muted);
   margin: 4px 0;
 }
-/* "Stake 100 → returned 0 PLAY": as readable as the balance under it, not fine print (Р-98). */
+/* "Stake 100 → returned 0 PLAY": as readable as the balance under it, not fine print (D-98). */
 .result-card__returned {
   font-size: 15px;
   color: var(--text);
@@ -215,7 +215,7 @@
   font-weight: 700;
   font-size: 14px;
 }
-/* The round settled on its market's backup exchange (Р-76): one quiet, muted line under the figures. */
+/* The round settled on its market's backup exchange (D-76): one quiet, muted line under the figures. */
 .result-card__venue {
   margin: 2px 0 4px;
   color: var(--text-muted);

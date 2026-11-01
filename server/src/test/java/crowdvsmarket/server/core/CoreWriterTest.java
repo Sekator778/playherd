@@ -63,7 +63,7 @@ class CoreWriterTest {
 
         World() throws Exception {
             when(store.lastId()).thenAnswer(inv -> (long) journal().size());
-            // the batch's commit is the append to the journal (Р-107): the gate holds it, the failure fails it
+            // the batch's commit is the append to the journal (D-107): the gate holds it, the failure fails it
             org.mockito.Mockito.doAnswer(inv -> {
                 transactions.incrementAndGet();
                 CountDownLatch hold = commitGate;

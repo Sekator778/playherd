@@ -79,7 +79,7 @@ class ServerInfoRpcTest extends LiveRpcTestBase {
         Market market = list("T_SI_SEQ", MarketKind.PERP, Category.CRYPTO, "SIQ", 20, 0);
         prices.setPrice(market, "100");
         prices.setPrice(registry.require("BTC"), "84000");
-        // a settled round of each series enqueues one oracle record (Р-40)
+        // a settled round of each series enqueues one oracle record (D-40)
         RoundWindow running = roundProgress.next(market.id(), Interval.HOURLY);
         scheduler.tick(running.endMs());
         long lowest = db.read(c -> db.queryOne(c, "SELECT MIN(seq) AS m FROM oracle_records",

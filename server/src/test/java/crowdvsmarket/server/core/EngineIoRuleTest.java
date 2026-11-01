@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test;
  *   <li><b>The writer's stages.</b> The logic thread ({@code CoreWriter}) and the output stage ({@code OutputStage}, with the batch and slot
  *       classes they share) reach no sink at all, again by the call graph - no database, no network, and not the journal: the logic thread
  *       never waits for the disk. The journal stage ({@code JournalStage}) is the one place where a batch is appended and synced
- *       ({@code EventStore.appendAll}, Р-107: a Chronicle Queue on disk, no database); nothing else in it reaches a sink. The only boundary is
+ *       ({@code EventStore.appendAll}, D-107: a Chronicle Queue on disk, no database); nothing else in it reaches a sink. The only boundary is
  *       the rebuild after a failed commit ({@code CoreWriter.recover}).
  *   <li><b>The journal is written by the journal stage only</b> ({@link #onlyTheJournalStageWritesTheJournalForTheCommands}): no other class of
  *       the application calls {@code EventStore.append}/{@code appendAll} but the ones listed there, which run with the pipeline drained.
@@ -241,7 +241,7 @@ class EngineIoRuleTest {
             return methodName == null || !methodName.equals("json") && !methodName.equals("jsonb");
         }
         if (owner.equals("crowdvsmarket/server/events/EventStore")) {
-            // marketOf/playerOf/resolveTypeAlias are pure; lastId is the journal's last seq (Р-107: a Chronicle Queue on disk, no database)
+            // marketOf/playerOf/resolveTypeAlias are pure; lastId is the journal's last seq (D-107: a Chronicle Queue on disk, no database)
             return methodName == null || !methodName.equals("marketOf") && !methodName.equals("playerOf")
                     && !methodName.equals("resolveTypeAlias") && !methodName.equals("lastId");
         }

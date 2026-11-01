@@ -1,6 +1,6 @@
 /**
- * Renders `value` as a scannable QR code — used by the Wallet page's deposit address (Р-53) and
- * the WalletConnect pairing URI (Р-55, `ConnectWalletModal.tsx`).
+ * Renders `value` as a scannable QR code — used by the Wallet page's deposit address (D-53) and
+ * the WalletConnect pairing URI (D-55, `ConnectWalletModal.tsx`).
  *
  * Library check (task item 1 — "small permissive QR lib or hand-rolled"): `qrcode-generator`
  * (npm, `2.0.4`, checked 2026-09-26 via `npm view`) — MIT license, the well-known

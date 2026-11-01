@@ -1,6 +1,6 @@
 package crowdvsmarket.server.dto;
 
-/** Р-53: real on-chain PLAY withdraw/deposit DTOs beyond {@link Ledger}'s {@code
+/** D-53: real on-chain PLAY withdraw/deposit DTOs beyond {@link Ledger}'s {@code
  *  WithdrawalRequestDto} — additive, not in contract.ts (same situation documented on the
  *  additive {@code ApiErrorCode}/DTO fields elsewhere in this package). */
 public final class PlayChain {

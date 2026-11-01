@@ -8,7 +8,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * The win streak (Р-71, contract.ts {@code PublicProfileDto.streak}), over rounds taken newest first: a win
+ * The win streak (D-71, contract.ts {@code PublicProfileDto.streak}), over rounds taken newest first: a win
  * is {@code payout > stake}, a flat round ({@code payout == stake}) neither extends nor breaks a streak, a
  * liquidation (payout 0) is a loss. (A cancelled round is not a round: it never has a history row to feed
  * this, which {@code ProfileRpcTest} checks against the database.)

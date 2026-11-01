@@ -1,4 +1,4 @@
-/** API bots in the mock (Р-106): same contract as the server's `createBot` / `myBots` / `regenerateBotKey` / `revokeBotKey` / `botRatings`. */
+/** API bots in the mock (D-106): same contract as the server's `createBot` / `myBots` / `regenerateBotKey` / `revokeBotKey` / `botRatings`. */
 import { describe, expect, it } from "vitest";
 import { ApiRequestError } from "./contract";
 import { MockApi } from "./mockApi";
@@ -19,7 +19,7 @@ async function signedInApi(address: string): Promise<MockApi> {
   return api;
 }
 
-describe("API bots in the mock (same contract as the server, Р-106)", () => {
+describe("API bots in the mock (same contract as the server, D-106)", () => {
   it("creates a bot with a key shown once; the list carries only the hint", async () => {
     const api = await signedInApi("txch1botmock");
     const created = await api.createBot(" Alpha ");

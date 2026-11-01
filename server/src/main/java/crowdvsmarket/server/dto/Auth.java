@@ -1,6 +1,6 @@
 package crowdvsmarket.server.dto;
 
-/** contract.ts §"Sign-in" (Р-4; docs/research/week1_wallet_auth.md §4). */
+/** contract.ts §"Sign-in" (D-4; docs/research/week1_wallet_auth.md §4). */
 public final class Auth {
     private Auth() {
     }

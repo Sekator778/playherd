@@ -1,7 +1,7 @@
 /**
  * What became of a liquidation the player was told about (`liquidationMoment.ts`). The moment says "your whole stake is
  * lost"; the one rule that can still change it is a cancellation — every bet in a cancelled round is refunded, liquidated
- * ones too (Р-23). A cancelled round leaves no history row (`unseenResults()` never lists it), so the position simply
+ * ones too (D-23). A cancelled round leaves no history row (`unseenResults()` never lists it), so the position simply
  * disappears from `myPositions()` and the balance rises by the stake with nothing said. This asks the round once its
  * position is gone: CANCELLED → one quiet note, "round cancelled — stake refunded"; SETTLED → nothing to say here (the
  * settlement's own quiet summary comes from `unseenResults.ts`); anything else is asked again later.

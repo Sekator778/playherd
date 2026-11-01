@@ -68,7 +68,7 @@ public class RpcResource {
             Set.of("authChallenge", "authVerify", "placeBet", "cancelBet");
 
     /**
-     * Р-106: the calls an API key may make ({@code Authorization: Bearer <key>}) - what a bot needs to read the game and to bet: the
+     * D-106: the calls an API key may make ({@code Authorization: Bearer <key>}) - what a bot needs to read the game and to bet: the
      * markets, rounds and prices (public for everyone), the bet and its cancellation, and the bot's own positions, account, ledger and
      * history. Everything else - creating bots, keys, withdrawals and deposits, the nickname, sign-in and sign-out, feedback, the
      * "while you were away" results - is for a signed-in person and answers 403 {@code API_CALL_NOT_ALLOWED} with a key. An allow
@@ -82,7 +82,7 @@ public class RpcResource {
 
     private static final String BEARER = "Bearer ";
 
-    /** Р-81: in-app feedback. Open to everyone (a visitor who is not signed in can send it) and written to the database,
+    /** D-81: in-app feedback. Open to everyone (a visitor who is not signed in can send it) and written to the database,
      *  so it has a per-IP budget of its own, far stricter than the shared one ({@code herd.feedback.rate-limit.*}); a cap
      *  on everyone together per day is {@code FeedbackService}'s. Not in {@link #RATE_LIMITED_METHODS}: that set is the
      *  shared budget. */
@@ -170,7 +170,7 @@ public class RpcResource {
         String keyToken = bearerToken(authorization);
         String keyPlayerId = null;
         if (keyToken != null) {
-            // Р-106: a request with a key acts as that bot and only as that bot (a cookie sent along is ignored); its budget is the
+            // D-106: a request with a key acts as that bot and only as that bot (a cookie sent along is ignored); its budget is the
             // key's own, not the address's, so a developer's bots behind one address do not share the visitors' buckets.
             keyPlayerId = authenticateKey(keyToken, method, httpRequest, now);
         } else {
@@ -245,7 +245,7 @@ public class RpcResource {
             // `marketId` is the optional second argument (omitted → BTC, docs/research/markets_architecture.md §8).
             case "rounds" -> result = gameService.roundsPair(interval(args, 0), str(args, 1), playerId);
             case "round" -> result = gameService.round(str(args, 0), playerId);
-            // Р-62: public, no session required — same visibility as the round itself during BETTING.
+            // D-62: public, no session required — same visibility as the round itself during BETTING.
             case "betFeed" -> result = gameService.betFeed(str(args, 0), longOrNull(args, 1));
             case "btcReferencePrice" -> result = gameService.btcReferencePrice();
             case "referencePrice" -> result = gameService.referencePrice(requiredStr(args, 0, "marketId"));
@@ -287,7 +287,7 @@ public class RpcResource {
                 requireSignedIn(playerId);
                 result = gameService.deposit(playerId, str(args, 0));
             }
-            // Р-53: additive, not in contract.ts (same "additive" situation as ledgerCorrections
+            // D-53: additive, not in contract.ts (same "additive" situation as ledgerCorrections
             // above) — the real on-chain deposit address a player sends PLAY to; deposits credit
             // automatically (DepositPollerService), no further RPC needed on the player's end.
             case "myDepositAddress" -> {
@@ -305,7 +305,7 @@ public class RpcResource {
                 requireSignedIn(playerId);
                 result = gameService.publicProfile(playerId, playerId);
             }
-            // Р-62 "while you were away" — RPC method names match contract.ts's `Api.unseenResults`/
+            // D-62 "while you were away" — RPC method names match contract.ts's `Api.unseenResults`/
             // `Api.acknowledgeResults` exactly (web already wrote+wired these against MockApi; the
             // real implementation just has to answer under the same names for RealApi to work
             // unchanged once it calls them).
@@ -321,17 +321,17 @@ public class RpcResource {
             case "cancellations" -> result = gameService.cancellations(pageParams(args, 0));
             // Wave-2 security fix: public, additive (not in contract.ts, same "additive" situation
             // as the extra ApiErrorCode values above) — the public audit log for operator ledger
-            // corrections (Р-32/Р-43 pattern), unauthenticated exactly like "cancellations".
+            // corrections (D-32/D-43 pattern), unauthenticated exactly like "cancellations".
             case "ledgerCorrections" -> result = gameService.ledgerCorrections(pageParams(args, 0));
             case "home" -> result = gameService.home(playerId);
-            // Р-81: public, no session required (the player's id is stored when there is one); additive (contract.ts:
+            // D-81: public, no session required (the player's id is stored when there is one); additive (contract.ts:
             // submitFeedback). The client's address is used for the country and then dropped — never stored or logged.
             case FEEDBACK_METHOD -> result = feedbackService.submit(requiredObj(args, 0, Feedback.SubmitRequest.class),
                     playerId, clientIp(httpRequest), now);
             case "serverInfo" -> result = serverInfoService.serverInfo();
-            // Economy stage C (C5): public, no session; the supply and where it sits, never HERD on its own (Р-90)
+            // Economy stage C (C5): public, no session; the supply and where it sits, never HERD on its own (D-90)
             case "supply" -> result = gameService.supply(now);
-            // Р-106: API bots. The first four are for a signed-in person only (not in API_KEY_METHODS); `botRatings` is public.
+            // D-106: API bots. The first four are for a signed-in person only (not in API_KEY_METHODS); `botRatings` is public.
             case "myBots" -> {
                 requireSignedIn(playerId);
                 result = gameService.myApiBots(playerId);
@@ -385,7 +385,7 @@ public class RpcResource {
     }
 
     /**
-     * Р-106: the bot a key opens, after the checks a keyed request goes through in this order: the key exists (a wrong one is counted
+     * D-106: the bot a key opens, after the checks a keyed request goes through in this order: the key exists (a wrong one is counted
      * against the ADDRESS's bucket, so guessing keys is throttled), the call is one a key may make, the key's own bucket has a token.
      * Also gives the bot its starter pack when this is its first call of a season.
      */
@@ -431,8 +431,8 @@ public class RpcResource {
     }
 
     /** Task item 3 (security minor): {@code Secure} follows {@code herd.cookie.secure}
-     *  (GameConfig) — {@code false} for the local http-only Docker stand (Р-44), must be set
-     *  {@code true} once this is ever deployed behind TLS (Р-38 VPS), so the session cookie is
+     *  (GameConfig) — {@code false} for the local http-only Docker stand (D-44), must be set
+     *  {@code true} once this is ever deployed behind TLS (D-38 VPS), so the session cookie is
      *  never sent in cleartext over the open internet. */
     private NewCookie sessionCookie(String sessionId) {
         return new NewCookie.Builder(SESSION_COOKIE)

@@ -19,7 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The move of the journal from the table to the queue (Р-107): on the first start with an empty journal directory the rows of
+ * The move of the journal from the table to the queue (D-107): on the first start with an empty journal directory the rows of
  * {@code game_events} are imported with their ids and payloads, verified by count and SHA-256, and only then is the queue the journal.
  * Rows of schema version 1 and 2, all the golden fixtures, gaps in the ids, more rows than one excerpt of the import holds; a crash in the
  * middle; a table that is ahead of the journal.

@@ -1,5 +1,5 @@
 //! Extends `c2_cli::builders::oracle`'s minimal oracle singleton (decision
-//! Р-11: one manager-key-controlled singleton, self-recreating, no action
+//! D-11: one manager-key-controlled singleton, self-recreating, no action
 //! layer) so **one spend carries up to `MAX_RECORDS_PER_SPEND` (40) records**, each as its own
 //! `CREATE_PUZZLE_ANNOUNCEMENT` (task instruction). `chain/c2-cli` itself is
 //! left unmodified (`docs/research/chain_service.md` §1) -- this is new

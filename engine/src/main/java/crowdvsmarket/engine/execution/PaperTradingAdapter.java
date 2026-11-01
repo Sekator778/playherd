@@ -30,7 +30,7 @@ public final class PaperTradingAdapter implements ExecutionAdapter {
     /** Always {@link Optional#empty()}: paper trading has no independent live price feed to poll
      *  between open and close — its only source of truth is the candle path
      *  {@link #closePosition} replays, exactly like {@code GameEngine}'s own player positions
-     *  (Р-8: liquidation/settlement are both determined once, at round-resolution time, from the
+     *  (D-8: liquidation/settlement are both determined once, at round-resolution time, from the
      *  round's full path — never queried mid-round). A caller that wants an interim state has to
      *  simulate against the candles seen so far itself; this adapter does not cache that for them,
      *  same as before this task existed. */

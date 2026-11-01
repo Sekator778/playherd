@@ -2,13 +2,13 @@
  * Status (`/status`) — public, no sign-in. The one page where a player can see what Polymarket's app does not
  * show: where every price comes from and how fresh it is, what the server has anchored on the Chia chain, and
  * every round that was cancelled and why. Plain words and numbers only — nothing here is there to sell the
- * product (`the decision log` Р-43: "публичная страница статуса — последняя публикация оракула, казна
- * PLAY, журнал отмен"; Р-71: the extras that earn trust).
+ * product (`the decision log` D-43: "публичная страница статуса — последняя публикация оракула, казна
+ * PLAY, журнал отмен"; D-71: the extras that earn trust).
  *
  * Five sections (the supply block, `supply()`, comes after the oracle: issued, treasury coin, held by players, platform reserve,
- * withdrawn, books balanced — never the platform's revenue on its own, Р-90), each with its own loading / empty / error state so one failing source never blanks the page:
+ * withdrawn, books balanced — never the platform's revenue on its own, D-90), each with its own loading / empty / error state so one failing source never blanks the page:
  * - mode and price source (`serverInfo()`: `mode`, `priceSource`, `replay`, `bots`, `roundDurationsSec`, `engineReady`);
- * - the markets, one row each: source (and the backup exchange of a crypto market, Р-76), last price — marked when it is
+ * - the markets, one row each: source (and the backup exchange of a crypto market, D-76), last price — marked when it is
  *   the backup's — how old it is, stale / no price / closed (`markets()`); above them one row per source (Coinbase,
  *   Kraken, Hyperliquid, Polymarket): the markets it is the main source of and the backup for, how its prices are doing.
  *   The public API has no list of price feeds (`/api/admin/status` has one, behind the operator's key), so the rows are
@@ -328,7 +328,7 @@ function OracleSection() {
 /**
  * The public reconciliation: what was issued, the treasury coin on chain (with its id, to look it up), what the players hold, the
  * platform's reserve, what has left on chain, and whether the books balance. The reserve is the treasury and the platform's own
- * account together — the platform's revenue is never shown on its own (Р-90). A mock build has no such call.
+ * account together — the platform's revenue is never shown on its own (D-90). A mock build has no such call.
  */
 function SupplySection() {
   const api = useApi();

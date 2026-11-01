@@ -36,7 +36,7 @@ import org.jboss.logging.Logger;
  * <p><b>Nothing is merged behind a boundary a round settled on.</b> {@link #pinBoundary} remembers, per
  * market, the latest boundary pinned in this process, and every merge ({@link #mergeHistory},
  * {@link #mergeCarried}, {@link #seedHistory}, {@link #fillHoles}) drops the points at or before it: whatever
- * happens to the ticks afterwards, a price a settled round used stays the price there (Р-40). A restart
+ * happens to the ticks afterwards, a price a settled round used stays the price there (D-40). A restart
  * forgets the pins; the next opening price then comes from the persisted close of the previous round (core).
  *
  * <p>Besides the ticks the store remembers, per market, which feed delivered them (the staleness

@@ -1,5 +1,5 @@
 /**
- * The room's live price chart data (`Api.priceSeries`, Р-70): the last 15 minutes of ticks on the
+ * The room's live price chart data (`Api.priceSeries`, D-70): the last 15 minutes of ticks on the
  * first load, then only what is new (`sinceMs` = the newest tick we hold), appended to a bounded
  * buffer. One store per (`Api`, market) is shared by everything in the room that reads the series
  * (chart, price header), and a store that nobody is watching any more forgets its buffer, so

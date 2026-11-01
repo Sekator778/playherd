@@ -1,5 +1,5 @@
 /**
- * The mid-round LIQUIDATION moment (Р-50), back: the REAL `useLiquidationWatcher` + `useSettlementWatcher` +
+ * The mid-round LIQUIDATION moment (D-50), back: the REAL `useLiquidationWatcher` + `useSettlementWatcher` +
  * `useAwayReplay` + `resultEventBus` + `ResultMomentHost` against a fake `Api` and fake timers — the wiring
  * `Layout.tsx` has — plus the claim store (`liquidationMoment.ts`) on its own.
  *
@@ -587,7 +587,7 @@ describe("a storage that silently drops writes", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// A liquidated bet whose round is later CANCELLED: the stake comes back (Р-23), and the player is told once, quietly
+// A liquidated bet whose round is later CANCELLED: the stake comes back (D-23), and the player is told once, quietly
 // ---------------------------------------------------------------------------------------------------------------
 
 function cancelledRound(over: Partial<RoundCancelled> = {}): RoundCancelled {

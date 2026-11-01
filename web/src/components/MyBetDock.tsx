@@ -23,7 +23,7 @@ import "./MyBetDock.css";
 const FALLBACK: PriceFormatMarket = { kind: "PERP", priceDecimals: 2 };
 
 /**
- * "My bet" — the player's newest open bet, pinned above the tab bar on every page (Р-98; first tester P9: "I see the crowd's data, but not
+ * "My bet" — the player's newest open bet, pinned above the tab bar on every page (D-98; first tester P9: "I see the crowd's data, but not
  * my own position"). It answers P9's three questions without a scroll: the price now, which side and how much, and how far the wipeout line
  * (the liquidation price) is — in words and in a bar. While the round has not started it says that the bet is placed, when it starts, and that
  * it can be cancelled for free until then (true: both fees come back). A tap opens it: the entry price, what the wipeout line means, the way to

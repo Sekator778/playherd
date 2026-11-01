@@ -53,7 +53,7 @@ class ReplayRoundPricesTest {
     void pathOpenPriceCloseSpanExactlyTheWindow() {
         List<Candle> candles = series(20);
         ReplayRoundPrices prices = new ReplayRoundPrices(candles, 20.0, 0L);
-        // 180_000ms window (Р-46 hourly test duration) * speedup 20 / 60_000 = 60 source minutes,
+        // 180_000ms window (D-46 hourly test duration) * speedup 20 / 60_000 = 60 source minutes,
         // but our series only has 20 candles -> path wraps and repeats, still exactly 60 entries.
         RoundWindow window = new RoundWindow(Interval.HOURLY, 0L, 180_000L);
         List<Candle> path = prices.path(window);

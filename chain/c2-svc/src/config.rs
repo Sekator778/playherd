@@ -4,7 +4,7 @@
 //! mounted read-write)"). No config file, no CLI flags for these -- a
 //! container gets its whole configuration from its environment (12-factor,
 //! **предложение**: consistent with how the rest of this project runs
-//! services in Docker, `the decision log` Р-44).
+//! services in Docker, `the decision log` D-44).
 
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -65,7 +65,7 @@ pub struct Config {
     /// `publisher.rs::advance_in_flight`) before this service stops
     /// auto-retrying it and only reports the stuck spend via
     /// `GET /v1/oracle/status` (`inFlightBundleId`) for the operator to
-    /// look at (Р-43: "операторский CLI + публичная страница статуса").
+    /// look at (D-43: "операторский CLI + публичная страница статуса").
     /// **предложение**.
     pub max_retry_attempts: u32,
     /// Hard ceiling on the fee (mojos) a rebuilt spend may pay when the node

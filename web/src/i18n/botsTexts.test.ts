@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DICTIONARIES } from "./translate";
 import type { Locale } from "./locale";
 
-/** The texts added for the API bots and the developers' page (Р-106). */
+/** The texts added for the API bots and the developers' page (D-106). */
 function botTexts(locale: Locale): Array<[string, string]> {
   const dict = DICTIONARIES[locale] as unknown as { bots: Record<string, string>; developers: Record<string, string>; ratings: Record<string, string>; layout: Record<string, string> };
   return [

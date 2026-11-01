@@ -8,7 +8,7 @@ import { DEFAULT_LEVERAGE_LIMIT, dialCeiling, highLeverageAvailable, leverageLim
 import { useLiquidationPreview } from "./useLiquidationPreview";
 
 /**
- * The slip's leverage control (economy stage C, C2; Р-92): the dial, up to x100 (or the market's cap when that is lower), and — where the
+ * The slip's leverage control (economy stage C, C2; D-92): the dial, up to x100 (or the market's cap when that is lower), and — where the
  * market and the stake allow more — a "High leverage" switch. Turning it ON does not unlock anything yet: it asks first, with the number
  * that matters (from the liquidation preview at the highest leverage on offer: "a move of 0.083% against you liquidates this bet"),
  * and only the answer "Unlock" lifts the dial's ceiling to what the stake allows. Turning it off drops the dial back to x100.

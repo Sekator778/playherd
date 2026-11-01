@@ -20,7 +20,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
- * The event journal (Р-107): where the game's events live. The truth is the Chronicle Queue in {@code herd.journal.dir}
+ * The event journal (D-107): where the game's events live. The truth is the Chronicle Queue in {@code herd.journal.dir}
  * ({@link ChronicleJournalStore}); the {@code game_events} table is a copy filled after it by {@link JournalProjector}. The core writer's
  * batch is durable when {@link #append} returns.
  *

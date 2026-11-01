@@ -1,5 +1,5 @@
 /**
- * The leverage slider's rules once the caps are in the hundreds and thousands (economy stage C, C2; Р-92).
+ * The leverage slider's rules once the caps are in the hundreds and thousands (economy stage C, C2; D-92).
  *
  * - **Default ceiling.** The slider goes to x100 (or the market's cap when that is lower). Above it a "High leverage" switch,
  *   confirmed by the player, unlocks the slider up to the highest leverage the stake allows.

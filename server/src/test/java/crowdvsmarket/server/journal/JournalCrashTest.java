@@ -33,7 +33,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The journal is the truth and {@code game_events} its copy (Р-107), with the production setting: the game does not wait for the copy.
+ * The journal is the truth and {@code game_events} its copy (D-107), with the production setting: the game does not wait for the copy.
  * Each test is a crash or a failure at one place between the player's request and the table:
  * <ul>
  *   <li>the journal's append fails before the sync (the callers get 503, the engine is rebuilt, nothing of the batch survives, the retry works);

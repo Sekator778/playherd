@@ -6,7 +6,7 @@ import type { Api, SupplyDto } from "../api/contract";
 import { catalogue, marketsOf } from "../components/testFixtures";
 import { StatusPage } from "./StatusPage";
 
-/** Economy stage C (C5, Р-90): the public supply block of the status page. */
+/** Economy stage C (C5, D-90): the public supply block of the status page. */
 
 const COIN = "0x4f6e8d8f5d2b0a7c9e1b3a5d7f9c2e4a6b8d0f1a3c5e7092b4d6f8a0c2e4b6d8";
 

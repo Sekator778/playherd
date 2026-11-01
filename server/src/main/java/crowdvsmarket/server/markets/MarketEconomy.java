@@ -5,7 +5,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The stored economy parameters of a market (economy stage A, Р-92, docs/product/economy_implementation_plan.md A1-A4; the
+ * The stored economy parameters of a market (economy stage A, D-92, docs/product/economy_implementation_plan.md A1-A4; the
  * columns {@code cap_hourly}, {@code cap_daily}, {@code kappa}, {@code herd_fee_bp}, {@code stress_move} of {@code markets},
  * V11):
  *
@@ -26,14 +26,14 @@ public record MarketEconomy(int capHourly, int capDaily, BigDecimal kappa, BigDe
     public static final BigDecimal ODDS_KAPPA = new BigDecimal("0.5");
     /** {@code r_m} of every price market the plan has no figure for (plan A4). */
     public static final BigDecimal DEFAULT_FEE_BP = new BigDecimal("1.0");
-    /** {@code r_m} of an odds market: 2.5 bp (Р-102, rule 2g; before it {@link #DEFAULT_FEE_BP}). */
+    /** {@code r_m} of an odds market: 2.5 bp (D-102, rule 2g; before it {@link #DEFAULT_FEE_BP}). */
     public static final BigDecimal ODDS_FEE_BP = new BigDecimal("2.5");
     /**
      * {@code k} of the herd fee in the long (15-minute) round of a price market: 2.2, the same number as
-     * {@link #LONG_ROUND_STRESS_FACTOR} (the mean move of 15 minutes against 3; Р-102, rule 2b). The short round has k = 1.
+     * {@link #LONG_ROUND_STRESS_FACTOR} (the mean move of 15 minutes against 3; D-102, rule 2b). The short round has k = 1.
      */
     public static final BigDecimal LONG_ROUND_FEE_FACTOR = new BigDecimal("2.2");
-    /** {@code k} of the herd fee in the long round of an odds market: 3.0 (Р-102, rule 2g). */
+    /** {@code k} of the herd fee in the long round of an odds market: 3.0 (D-102, rule 2g). */
     public static final BigDecimal ODDS_LONG_ROUND_FEE_FACTOR = new BigDecimal("3.0");
 
     /** Plan A2/A4 starting values by symbol: short-round cap, long-round cap, {@code r_m} in bp. Kept equal to V11. */

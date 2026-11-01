@@ -35,7 +35,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.Test;
 
 /**
- * Economy stage B (Р-92, docs/product/economy_implementation_plan.md B1-B7) through the service, with the economy switched on
+ * Economy stage B (D-92, docs/product/economy_implementation_plan.md B1-B7) through the service, with the economy switched on
  * ({@link EconomyProfile}): TREASURY opens at the cutover with 1 000 000 PLAY, so the 0.25% / 1% limits of B5 are a few hundred thousand of
  * notional and a handful of bets reaches them.
  *
@@ -414,7 +414,7 @@ class EconomyStageBFlowTest extends LiveGameTestBase {
                 .isEqualTo(ledger().treasury().plus(ledger().herd()).toMoney().toPlainString());
         assertThat(r.jsonPath().getBoolean("booksBalanced")).isTrue();
         assertThat(r.jsonPath().getBoolean("circuitBreakerOpen")).isFalse();
-        // HERD (the platform's revenue, Р-90) is only ever part of the reserve: no field of its own, no fees
+        // HERD (the platform's revenue, D-90) is only ever part of the reserve: no field of its own, no fees
         assertThat(r.asString()).doesNotContainIgnoringCase("herd").doesNotContainIgnoringCase("fee");
     }
 

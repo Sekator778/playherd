@@ -82,7 +82,7 @@ public final class EventApplier {
             case GameEvent.BetPlaced e -> {
                 EngineHub.MarketEngines market = marketOf(e, e.market());
                 RoundWindow window = new RoundWindow(e.market(), e.interval(), e.windowStart(), e.windowEnd());
-                if (e.betMode() == BetMode.FIXED) { // Р-106: the leverage in the event is a placeholder, there is no liquidation
+                if (e.betMode() == BetMode.FIXED) { // D-106: the leverage in the event is a placeholder, there is no liquidation
                     market.engine(e.interval()).replayBet(e.playerId(), window, e.direction(), Bet.FIXED_LEVERAGE,
                             new PlayAmount(e.stakeMojos()),
                             new Fees(new PlayAmount(e.feeHerdMojos()), new PlayAmount(e.feeNetMojos())),
@@ -223,9 +223,9 @@ public final class EventApplier {
     }
 
     /** Refunds every bet still pending on {@code window} and clears it — the operator/automatic
-     *  cancellation operation (Р-23, Р-32); {@code GameEngine} has no such method itself, this is
+     *  cancellation operation (D-23, D-32); {@code GameEngine} has no such method itself, this is
      *  built from its public {@code ledger()}/{@code betBook()} accessors, same primitives
-     *  {@code GameEngine.refundBet} (stake and fees) already used for a plain bet edit/cancel (Р-13). */
+     *  {@code GameEngine.refundBet} (stake and fees) already used for a plain bet edit/cancel (D-13). */
     public static int refundAndClear(GameEngine engine, RoundWindow window, Instant now) {
         String roundId = window.roundId();
         List<Bet> bets = new ArrayList<>(engine.betBook().betsFor(roundId));
@@ -236,7 +236,7 @@ public final class EventApplier {
         return bets.size();
     }
 
-    /** Р-62: appends one {@link BetFeed} row for this placement/edit — live or replayed, since this
+    /** D-62: appends one {@link BetFeed} row for this placement/edit — live or replayed, since this
      *  runs from the same {@code BetPlaced} case either way. Falls back to the raw {@code playerId}/
      *  {@code isBot=false} if the directory has no row for it yet (defensive only: every
      *  {@code BetPlaced} in practice is preceded by that player's own {@code PlayerRegistered},

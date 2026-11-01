@@ -1,7 +1,7 @@
 package crowdvsmarket.server.domain;
 
 /**
- * A player's win streak (Р-71, contract.ts {@code PublicProfileDto.streak}), over the player's settled
+ * A player's win streak (D-71, contract.ts {@code PublicProfileDto.streak}), over the player's settled
  * rounds taken NEWEST FIRST:
  * <ul>
  *   <li>a round is a <b>win</b> when {@code payout > stake}; a liquidation (payout 0) is therefore a loss;

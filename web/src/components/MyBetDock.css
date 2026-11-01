@@ -1,4 +1,4 @@
-/* "My bet" — the pinned card above the tab bar (`MyBetDock.tsx`, Р-98).
+/* "My bet" — the pinned card above the tab bar (`MyBetDock.tsx`, D-98).
    It sits over the page like the tab bar does, so the page keeps room under its content for it (`.page--dock`, below). Colours, radii,
    shadows and durations are the app's tokens (index.css). Words and the arrow glyph carry the side and the state; colour only helps. */
 

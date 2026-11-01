@@ -37,7 +37,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Letting a round go (Р-77) with the real price pipeline under the real scheduler — the scenario of the stand on 2026-10-03, in
+ * Letting a round go (D-77) with the real price pipeline under the real scheduler — the scenario of the stand on 2026-10-03, in
  * simulated time, a second at a time: a round of a market with a backup exchange is opened on the exchange that has a live price
  * at its start, one of the two exchanges goes silent in the middle of it, and the settlement is asked what the real rings of the
  * real {@code LiveMarketPrices} say. The settlement and the question whether the other exchange is alive go to the real
@@ -45,7 +45,7 @@ import org.junit.jupiter.api.Test;
  * sources are scripted: the ticks the test feeds, and a history that answers or fails when the test says.
  *
  * <p>The round is the stand's "hourly" one, three minutes, so the two minutes of the release are inside it, as on the stand. The release
- * after the minutes of the source (Р-79) is off in the scenarios of Р-77 and on in those of both exchanges silent.
+ * after the minutes of the source (D-79) is off in the scenarios of D-77 and on in those of both exchanges silent.
  */
 class VenueReleaseWithRealPricesTest {
 
@@ -136,7 +136,7 @@ class VenueReleaseWithRealPricesTest {
         });
         when(gameService.otherVenueLive(any(), any(), anyLong()))
                 .thenAnswer(inv -> prices.otherVenueLive(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
-        when(gameService.hasPendingBets(any())).thenReturn(true); // a round with a bet: one nobody bet on is skipped at once (Р-79)
+        when(gameService.hasPendingBets(any())).thenReturn(true); // a round with a bet: one nobody bet on is skipped at once (D-79)
         // what GameService#instrumentOf does: the exchange the round was decided on, from the real pipeline
         when(gameService.instrumentOf(any(), any())).thenAnswer(inv -> {
             Market market = inv.getArgument(0);
@@ -153,7 +153,7 @@ class VenueReleaseWithRealPricesTest {
         scheduler.roundProgress = progress;
         scheduler.oracleSeqGate = gate;
         scheduler.config = config;
-        scheduler.pricesConfig = pricesConfig.withReleaseAfter(PricesConfig.ReleaseAfter.off()); // Р-79's release has its own scenarios below
+        scheduler.pricesConfig = pricesConfig.withReleaseAfter(PricesConfig.ReleaseAfter.off()); // D-79's release has its own scenarios below
         progress.seed(btc.id(), Interval.HOURLY, window(S));
     }
 
@@ -313,17 +313,17 @@ class VenueReleaseWithRealPricesTest {
         assertThat(progress.findNext(btc.id(), Interval.HOURLY)).as("the series goes on").contains(RoundClock.next(w0));
     }
 
-    // ------------------------------------------------------------------ both exchanges silent: the minutes of the exchange of the round (Р-79)
+    // ------------------------------------------------------------------ both exchanges silent: the minutes of the exchange of the round (D-79)
 
     @Test
     void withBothExchangesSilentTheRoundIsLetGoAtTheFiveMinutesOfItsExchangeWithTheWordsOfThePriceSource() {
-        scheduler.pricesConfig = pricesConfig; // Р-79's release is on, as it is by default
+        scheduler.pricesConfig = pricesConfig; // D-79's release is on, as it is by default
         RoundWindow w0 = window(S);
 
         run(S - 10 * SEC, END + 5 * 60 * SEC - SEC, until(S + 100 * SEC), until(S + 100 * SEC)); // both stop 100 s into the round
 
         assertThat(prices.decidedVenue(btc, w0)).contains("coinbase");
-        assertThat(cancellations).as("the two minutes of Р-77 do not apply: the other exchange is silent too").isEmpty();
+        assertThat(cancellations).as("the two minutes of D-77 do not apply: the other exchange is silent too").isEmpty();
         assertThat(progress.findNext(btc.id(), Interval.HOURLY)).contains(w0);
 
         run(END + 5 * 60 * SEC, END + 5 * 60 * SEC + 5 * SEC, until(S + 100 * SEC), until(S + 100 * SEC));

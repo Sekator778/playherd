@@ -80,7 +80,7 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
           </span>
         </span>
       ) : fixed ? (
-        // Р-106, "Win or lose": no live P&L and no wipeout meter - what a win and a loss are worth, and where the price stands
+        // D-106, "Win or lose": no live P&L and no wipeout meter - what a win and a loss are worth, and where the price stands
         <span className="pos-card__pnl pos-card__pnl--wait">
           <span className="pos-card__note mono">{t("mode.ownRunning", { win: formatPlayAmount(position.stake), lose: formatPlayAmount(position.stake) })}</span>
         </span>
@@ -107,7 +107,7 @@ export function PositionCard({ position, market, nowMs }: { position: MyPosition
 
 /**
  * "Your bets" — the signed-in player's every pending bet and open position across ALL markets in one strip
- * (Р-71: Polymarket keeps them inside a section, Herd keeps them in view on every screen): symbol,
+ * (D-71: Polymarket keeps them inside a section, Herd keeps them in view on every screen): symbol,
  * direction, leverage, stake, time left and — for a running one — the live P&L and a thin distance-to-
  * liquidation meter. A tap opens that market's room on that series. Collapsible to one line, remembered.
  *

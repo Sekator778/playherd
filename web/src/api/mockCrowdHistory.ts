@@ -1,5 +1,5 @@
 /**
- * Every market's crowd account (Р-5, Р-17, Р-25, Р-26, Т-6): "one continuous graph from day one"
+ * Every market's crowd account (D-5, D-17, D-25, D-26, Т-6): "one continuous graph from day one"
  * plus the two comparison lines — "hold the asset" (`holdCapital`) and "anti-crowd"
  * (`antiCrowdCapital`), `CrowdHistoryPointDto`'s "предложение" shape, contract.ts. Resolution here
  * is one point per DAILY round (a mock simplification: the real series would also gain a point per
@@ -42,7 +42,7 @@ interface DailyStep {
   crowdCapital: number;
   holdCapital: number;
   antiCrowdCapital: number;
-  /** The crowd opened a position (false on a tie / empty round, Р-5). */
+  /** The crowd opened a position (false on a tie / empty round, D-5). */
   traded: boolean;
   /** Ended with more capital than it started with. */
   won: boolean;
@@ -111,12 +111,12 @@ function stepsUntil(spec: MockMarketSpec, asOfMs: EpochMs): DailyStep[] {
     const momentumUp = priceAt(spec, window.startMs, "coarse") >= prevClose;
     const crowdSide: Side = chance(rng, momentumUp ? 0.64 : 0.36) ? LONG : SHORT;
     const antiSide: Side = crowdSide === LONG ? SHORT : LONG;
-    // Р-14: weighted-avg leverage of the winning side, clamped 2..the market's cap
+    // D-14: weighted-avg leverage of the winning side, clamped 2..the market's cap
     const leverage = Math.min(spec.maxLeverage, randInt(rng, 3, 16));
 
     const crowdBefore = previous ? previous.crowdCapital : startingCapital;
     const antiBefore = previous ? previous.antiCrowdCapital : startingCapital;
-    // A tie / empty round opens no position (Р-5). BTC's original series never had one; the other
+    // A tie / empty round opens no position (D-5). BTC's original series never had one; the other
     // markets do now and then (a separate seed, so BTC's stream is untouched).
     const tie = spec.id !== "BTC" && chance(rngFor("crowd-tie", roundId), 0.06);
 
@@ -175,7 +175,7 @@ export function crowdAccount(spec: MockMarketSpec, asOfMs: EpochMs): CrowdAccoun
   });
 
   // Each season's return is against the crowd's capital at the end of the PREVIOUS season —
-  // capital itself is never reset (Р-25), only sliced per season for this one figure.
+  // capital itself is never reset (D-25), only sliced per season for this one figure.
   const seasonReturns: SeasonReturnDto[] = [];
   const seasonIds = [...new Set(steps.map((step) => seasonIdOf(step.atMs)))];
   let runningStart = Number(CROWD_STARTING_CAPITAL_USD);

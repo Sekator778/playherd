@@ -968,7 +968,7 @@ test_backup() {
   ok "both files are mode 600 (the archive holds the operator key)" "$?"
   grep -q 'pg_dump -U herd -d herd --clean --if-exists' "${SANDBOX}/docker.log"
   ok "pg_dump runs with --clean --if-exists (a restore replaces what is there)" "$?"
-  # Р-107: the event journal (a Chronicle Queue) is archived next to the dump, with the same stamp, after it
+  # D-107: the event journal (a Chronicle Queue) is archived next to the dump, with the same stamp, after it
   local jr
   jr="$(ls "${bk}"/journal/journal-nightly-*.tar.gz 2>/dev/null | head -n 1)"
   [[ -n "${jr}" && "$(mode_of "${jr}")" == 600 ]] && gzip -t "${jr}" && gzip -dc "${jr}" | tar -tf - | grep -q '20261021F.cq4'
@@ -1041,7 +1041,7 @@ test_backup() {
   [[ ${rc} -ne 0 ]] && [[ "$(grep -c 'start server' "${SANDBOX}/docker.log")" == 1 ]]
   ok "a failing restore: non-zero exit, the server is started again" "$?"
 
-  # Р-107: the journal goes back with the dump
+  # D-107: the journal goes back with the dump
   : >"${SANDBOX}/journal.bytes"
   FAKE_JOURNAL_BYTES="${SANDBOX}/journal.bytes" b restore "${pg}" --yes >/dev/null 2>&1
   rc=$?

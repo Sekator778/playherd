@@ -1,7 +1,7 @@
 package crowdvsmarket.server.geoip;
 
 /**
- * The country a visitor's IP address belongs to (Р-81). Used for one purpose: a feedback message is stored with the
+ * The country a visitor's IP address belongs to (D-81). Used for one purpose: a feedback message is stored with the
  * country of its sender, for statistics — the address itself is not kept.
  *
  * <p>The implementation never throws and never waits for anything outside the process: no network, no DNS. An answer is

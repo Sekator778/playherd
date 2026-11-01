@@ -5,14 +5,14 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 
 /**
- * A calendar-month season, UTC (Р-10, Р-16: "сезоны по месяцу").
+ * A calendar-month season, UTC (D-10, D-16: "сезоны по месяцу").
  *
  * <p><b>Предложение</b> (see docs/research/round_engine_design.md "Sezons"): the sources fix the
  * season length at one calendar month but not which calendar/timezone; UTC is used everywhere
- * else in this engine (Р-19's round boundaries), so a season boundary always lands exactly on an
+ * else in this engine (D-19's round boundaries), so a season boundary always lands exactly on an
  * hourly-round boundary too, and picking anything else would need its own justification.
  *
- * <p>Resets ratings only, never balances (Р-16) — see {@code LedgerBook}, which adds a fresh
+ * <p>Resets ratings only, never balances (D-16) — see {@code LedgerBook}, which adds a fresh
  * starter pack on top of the carried-over balance at the start of each season.
  */
 public record Season(int year, int month) implements Comparable<Season> {

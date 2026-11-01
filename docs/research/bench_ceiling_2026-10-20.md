@@ -1,6 +1,6 @@
 # Потолок приёма ставок после выноса расчёта, F2 и F3 (2026-10-20)
 
-Один прогон лесенки S-A на the bench boxе, чтобы узнать предел нынешнего кода перед шагом F6 (Р-96). Те же условия, что в `bench_step4_2026-10-18.md` §5.2: профиль `tech`, ряды HOURLY, 100 000 засеянных игроков, `synchronous_commit=on`, JFR включён, `tools/bench/step4-ceiling.sh` (`SELFCHECK=0 STEPS="25 50 100 200 400 800 1600" TAG=ceil7`), сервер `herd-bench-server:ed27aa5f55ca` (коммит `ed27aa5`: расчёт вне блокировки, F2, F3, режим «Win or lose», API ботов). Прогон 2026-10-20 13:16–13:25 по часам the bench boxа; результаты — `~/herd-bench/results/ceil7*` на the bench boxе.
+Один прогон лесенки S-A на the bench boxе, чтобы узнать предел нынешнего кода перед шагом F6 (D-96). Те же условия, что в `bench_step4_2026-10-18.md` §5.2: профиль `tech`, ряды HOURLY, 100 000 засеянных игроков, `synchronous_commit=on`, JFR включён, `tools/bench/step4-ceiling.sh` (`SELFCHECK=0 STEPS="25 50 100 200 400 800 1600" TAG=ceil7`), сервер `herd-bench-server:ed27aa5f55ca` (коммит `ed27aa5`: расчёт вне блокировки, F2, F3, режим «Win or lose», API ботов). Прогон 2026-10-20 13:16–13:25 по часам the bench boxа; результаты — `~/herd-bench/results/ceil7*` на the bench boxе.
 
 ## Итог
 

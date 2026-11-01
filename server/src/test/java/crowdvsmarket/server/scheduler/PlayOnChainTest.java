@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-53: real on-chain PLAY withdraw/deposit against chainsvc's FIXED INTERFACE, mocked here exactly
+ * D-53: real on-chain PLAY withdraw/deposit against chainsvc's FIXED INTERFACE, mocked here exactly
  * like {@code GameFlowIntegrationTest}/{@code OracleReconciliationServiceTest} — this class never
  * talks to a real chain service. Drives {@link DepositPollerService}/{@link WithdrawalPollerService}
  * directly by calling their {@code poll()} method (same pattern {@code OraclePublisherServiceTest}/

@@ -6,7 +6,7 @@ import java.util.HashSet;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
-/** Р-106: the shape of a key, its hash and its hint. */
+/** D-106: the shape of a key, its hash and its hint. */
 class ApiKeysTest {
 
     @Test

@@ -7,7 +7,7 @@ import { ApiRequestError, type Api, type LiquidationPreviewDto, type Liquidation
 import { BetSlip } from "./BetSlip";
 import { NOW, bettingRoundOf, market, marketsOf, seriesDto } from "./testFixtures";
 
-/** Economy stage C (Р-92): the slip shows what the bet costs, keeps the leverage within the stake's tier, and guards x100+ behind a question. */
+/** Economy stage C (D-92): the slip shows what the bet costs, keeps the leverage within the stake's tier, and guards x100+ behind a question. */
 
 const CAP = 1200;
 const account = (balance: string): PlayerAccountDto => ({ playerId: TEST_PLAYER.playerId, balance, currentSeason: "2026-10", inPlay: "0.000" });
@@ -157,7 +157,7 @@ describe("BetSlip — leverage up to x100, and 'High leverage' behind a question
 
     fireEvent.change(slider(), { target: { value: "1000" } }); // the end of the track is the cap itself
     await waitFor(() => expect(screen.getByText("x1200", { selector: ".leverage-dial__value" })).toBeInTheDocument());
-    // no 1% cap any more (Р-102): min(20%, 1 bp × 1200 = 12%) of 100 PLAY
+    // no 1% cap any more (D-102): min(20%, 1 bp × 1200 = 12%) of 100 PLAY
     await waitFor(() => expect(screen.getByLabelText("Cost of this bet")).toHaveTextContent("12.000 PLAY (12.00%)"));
     await user.click(screen.getByRole("button", { name: "PLACE BET" }));
     await waitFor(() => expect(placeBet).toHaveBeenCalledWith(expect.objectContaining({ leverage: 1200, stake: "100.000" })));

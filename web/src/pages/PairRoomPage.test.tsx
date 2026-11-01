@@ -81,7 +81,7 @@ function renderRoom(path: string, setup: RoomSetup = {}, signedIn = false) {
 beforeEach(() => {
   window.localStorage.clear();
   // These suites describe the full room: the boost slider, the herd shortcuts, the oracle line, the crowd account, every chart line. That is the
-  // Pro view since Р-98; the default view has its own suite (PairRoomPage.game.test.tsx).
+  // Pro view since D-98; the default view has its own suite (PairRoomPage.game.test.tsx).
   setProMode(true);
   window.sessionStorage.clear();
   reloadFavoritesFromStorage();
@@ -582,7 +582,7 @@ describe("Room — a closed market", () => {
   });
 });
 
-describe("Room — the exchange behind the price, and behind the round (Р-76)", () => {
+describe("Room — the exchange behind the price, and behind the round (D-76)", () => {
   const SPOT = spotCatalogue();
   const spotRunning = (source: RoundRunning["source"], over: Partial<RoundRunning> = {}) => (marketId: string) =>
     runningRoundOf(marketId, SPOT.find((m) => m.id === marketId)!.symbol, { source, ...over });

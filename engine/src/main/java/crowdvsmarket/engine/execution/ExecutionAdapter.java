@@ -27,7 +27,7 @@ import java.util.Optional;
  * depend on) has a genuinely different operational shape: it sends a real order and later polls or
  * receives a real fill/liquidation, rather than replaying an already-known candle path. This
  * interface is deliberately shaped around what a PAPER-TRADING caller (this codebase's only actual
- * caller today, Р-5/Р-14/Р-17/Р-26) needs — {@link #closePosition} takes the price history a
+ * caller today, D-5/D-14/D-17/D-26) needs — {@link #closePosition} takes the price history a
  * deterministic replay needs as its source of truth; a live adapter is free to largely ignore that
  * parameter in favor of a real closing order and a real fill price (see
  * {@code HyperliquidAdapter#closePosition}'s own javadoc for exactly how it does that today).
@@ -37,9 +37,9 @@ public interface ExecutionAdapter {
 
     /** Opens a new position in {@code spec}'s market at {@code entryPrice}, sized from
      *  {@code margin} (PLAY/paper-USD) — mirrors {@link Position#openFromMargin} exactly, since
-     *  every adapter derives {@code liquidationPrice} the same way (Р-7's Hyperliquid-formula
+     *  every adapter derives {@code liquidationPrice} the same way (D-7's Hyperliquid-formula
      *  liquidation price is a property of the position itself, not of which venue executes it);
-     *  the market only contributes its maintenance margin rate (Р-69). */
+     *  the market only contributes its maintenance margin rate (D-69). */
     Position openPosition(MarketSpec spec, String userId, String roundId, Direction direction, Leverage leverage,
             BigDecimal margin, BigDecimal entryPrice);
 
@@ -66,7 +66,7 @@ public interface ExecutionAdapter {
 
     /** Closes {@code position} and returns its outcome. {@code priceHistorySinceOpen} is the
      *  round's own candle path since the position was opened — the deterministic source of truth
-     *  {@link PaperTradingAdapter} needs (Р-8: a round replays byte-identically on restart); a
+     *  {@link PaperTradingAdapter} needs (D-8: a round replays byte-identically on restart); a
      *  live-exchange adapter may ignore it in favor of a real order fill (documented per
      *  implementation). */
     PositionSimulator.Outcome closePosition(Position position, List<Candle> priceHistorySinceOpen);

@@ -120,7 +120,7 @@ fn batch_of_three_records_each_independently_assertable() -> anyhow::Result<()> 
     let manager = derive_wallet_key(&master_sk, 0);
 
     // Launch the oracle singleton, inner puzzle = the manager's standard p2
-    // puzzle (decision Р-11's minimal managed-resolver pattern, same as
+    // puzzle (decision D-11's minimal managed-resolver pattern, same as
     // `c2_cli::builders::oracle::build_oracle_launch`).
     let funding_coin: Coin = sim.new_coin(manager.puzzle_hash, 1);
     let launcher = Launcher::new(funding_coin.coin_id(), 1);

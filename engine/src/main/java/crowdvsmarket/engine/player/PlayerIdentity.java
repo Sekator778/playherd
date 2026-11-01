@@ -1,8 +1,8 @@
 package crowdvsmarket.engine.player;
 
 /**
- * Model-only representation of how a player is shown in the UI (Р-15): nickname (chosen at first
- * login) + shortened wallet address. No DID (Р-15 explicitly rules that out).
+ * Model-only representation of how a player is shown in the UI (D-15): nickname (chosen at first
+ * login) + shortened wallet address. No DID (D-15 explicitly rules that out).
  */
 public record PlayerIdentity(String playerId, String nickname, String walletAddress) {
 

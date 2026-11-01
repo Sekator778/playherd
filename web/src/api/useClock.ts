@@ -5,7 +5,7 @@ import type { EpochMs } from "./contract";
 
 /** `MockApi` plays back a simulated, accelerated clock (`simNowMs`); `RealApi` talks to an
  *  actual server whose round windows already move at real wall-clock speed (accelerated test
- *  durations, Р-46, are the *server's* doing, not the client's) — so in real mode this is just
+ *  durations, D-46, are the *server's* doing, not the client's) — so in real mode this is just
  *  `Date.now()`. Exported (non-hook) for code that has to compare the client clock with a
  *  server timestamp: `useMarkets().serverOffsetMs` is `serverTimeMs` minus this at receipt, so
  *  the server's "now" is `clientNowMs() + serverOffsetMs`. */

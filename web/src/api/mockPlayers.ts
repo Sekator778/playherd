@@ -1,7 +1,7 @@
 /**
  * Deterministically generated NPC players — the "~40 players, a season of history" the task
  * asks for. Every function here is a pure function of a seed, so the same player has the same
- * nickname/address/history on every render and every reload (Р-9 already tells us ratings can be
+ * nickname/address/history on every render and every reload (D-9 already tells us ratings can be
  * gamed in this PLAY MVP, so reproducible-but-fake history is an honest match for that).
  *
  * The signed-in demo player (via mock wallet connect, see `mockApi.ts`) is intentionally NOT one
@@ -162,7 +162,7 @@ export const CURRENT_SEASON: SeasonId = seasonIdOf(SIM_BASE_MS);
 
 /** Shared by NPC and the signed-in demo player: a `SeasonRecordDto` is just a season-bounded
  *  slice of a `ProfileRoundEntryDto[]` history plus the three fields that history alone can't
- *  supply (Р-16/Р-18 — deposits/withdrawals don't come from round outcomes). */
+ *  supply (D-16/D-18 — deposits/withdrawals don't come from round outcomes). */
 export function computeSeasonRecord(
   history: ProfileRoundEntryDto[],
   season: SeasonId,
@@ -204,7 +204,7 @@ export function findNpcIndexByPlayerId(playerId: string): number | null {
 }
 
 // ---------------------------------------------------------------------------
-// Ratings (RatingBook — Р-9, Р-18, Р-28, Р-30)
+// Ratings (RatingBook — D-9, D-18, D-28, D-30)
 // ---------------------------------------------------------------------------
 
 export function richRatings(season: SeasonId): RichEntryDto[] {
@@ -245,8 +245,8 @@ export function prophetRatings(season: SeasonId): ProphetEntryDto[] {
 }
 
 /**
- * The "This week" boards of the NPCs at `nowMs`: the settled rounds from Monday 00:00 UTC to now, the season's minimum of rounds (Р-28),
- * the rich list for winners only (Р-90) - the rule of `WeeklyBoards.java`.
+ * The "This week" boards of the NPCs at `nowMs`: the settled rounds from Monday 00:00 UTC to now, the season's minimum of rounds (D-28),
+ * the rich list for winners only (D-90) - the rule of `WeeklyBoards.java`.
  */
 export function weeklyRatingsAt(nowMs: number): WeeklyRatingsDto {
   const weekStartMs = weekStartOf(nowMs);

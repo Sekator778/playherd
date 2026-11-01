@@ -47,7 +47,7 @@ function renderProfile(p: PublicProfileDto) {
   );
 }
 
-describe("Profile — win streak (Р-71)", () => {
+describe("Profile — win streak (D-71)", () => {
   it("shows the current streak and the best", async () => {
     renderProfile(profile({ streak: { current: 3, best: 7 } }));
     expect(await screen.findByRole("group", { name: "Win streak: 3 in a row now, best 7" })).toBeInTheDocument();
@@ -256,7 +256,7 @@ describe("Profile — a server that is restarting (503 ENGINE_NOT_READY)", () =>
 });
 
 
-describe("Profile — another player's profile shows wins only (Р-90)", () => {
+describe("Profile — another player's profile shows wins only (D-90)", () => {
   const rival = { playerId: "npc-1", nickname: "rival", walletAddress: "txch1rival", displayName: "rival (txch1r…ival)" };
   const record = { season: "2026-10", baselineBalance: "10000.000", deposited: "0.000", withdrawn: "0.000", roundsPlayed: 4, directionEligibleRounds: 4, directionCorrectRounds: 2 };
   const mixed = [

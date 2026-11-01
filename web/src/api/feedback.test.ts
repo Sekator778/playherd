@@ -1,5 +1,5 @@
 /**
- * Feedback (Р-81): the rules that are not drawing — when the strip is shown and what the browser remembers (including a
+ * Feedback (D-81): the rules that are not drawing — when the strip is shown and what the browser remembers (including a
  * browser that remembers nothing), what is sent and how a failure is worded.
  */
 import { act, renderHook } from "@testing-library/react";

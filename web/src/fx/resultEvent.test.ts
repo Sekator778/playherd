@@ -394,7 +394,7 @@ describe("roundHasPlayerStake", () => {
   });
 });
 
-describe("the event names its market (Р-69)", () => {
+describe("the event names its market (D-69)", () => {
   it("a live settlement carries the round's marketId and the market's symbol", () => {
     const curr: RoundSettled = {
       ...makeSettled([makePosition({ roundId: "xyz_NVDA-1h-0", payout: "130.000", directionCorrect: true })], "xyz_NVDA-1h-0"),
@@ -430,7 +430,7 @@ describe("the event names its market (Р-69)", () => {
   });
 });
 
-describe("the event names the exchange the round ran on (RoundBase.source, Р-76)", () => {
+describe("the event names the exchange the round ran on (RoundBase.source, D-76)", () => {
   const settle = (source: RoundSettled["source"]) =>
     detectResultEvent({
       prev: undefined,

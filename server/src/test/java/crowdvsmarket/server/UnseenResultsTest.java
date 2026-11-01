@@ -26,7 +26,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-62's "while you were away" cross-check: a player offline at settlement never otherwise sees the
+ * D-62's "while you were away" cross-check: a player offline at settlement never otherwise sees the
  * result moment ({@code docs/product/design/result-moment.md}) — {@code myUnseenResults}/
  * {@code ackResults} (served over RPC as {@code unseenResults}/{@code acknowledgeResults}, matching
  * contract.ts's already-written {@code Api} methods) let the app catch up on return. Drives

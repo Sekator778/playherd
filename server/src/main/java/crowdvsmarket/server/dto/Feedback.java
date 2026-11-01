@@ -1,7 +1,7 @@
 package crowdvsmarket.server.dto;
 
 /**
- * In-app feedback (Р-81): the {@code submitFeedback} RPC and the operator's listing. Additive, not in {@code contract.ts}
+ * In-app feedback (D-81): the {@code submitFeedback} RPC and the operator's listing. Additive, not in {@code contract.ts}
  * (the same situation as {@code ledgerCorrections}); docs/research/server_design.md §22 has the whole contract.
  */
 public final class Feedback {

@@ -21,7 +21,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
- * The copy of the journal in Postgres (Р-107): a thread tails the journal in seq order and writes, per batch, in ONE transaction
+ * The copy of the journal in Postgres (D-107): a thread tails the journal in seq order and writes, per batch, in ONE transaction
  * <ul>
  *   <li>the {@code game_events} rows with the seq as their id (multi-row {@code INSERT ... ON CONFLICT (id) DO NOTHING}, the payload as
  *       the journal holds it, which the {@code jsonb} column normalises exactly as it always did), and

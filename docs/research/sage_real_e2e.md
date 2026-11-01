@@ -10,7 +10,7 @@
 | Вход в Herd через WalletConnect | «Copy connection link» в Herd → Sage Settings → WalletConnect → вставить → Connect; Sage показал «Sign Message — From Herd» с текстом `Herd sign-in / Domain / Network: testnet11 / Address / Nonce / Issued / Expires` → Approve; сервер проверил подпись через chainsvc | игрок `369ccf81-…` `sage-real`, 10 000 PLAY |
 | Вывод 150 PLAY в Sage | w-14 → CONFIRMED, монета `0xc13d49bb7b7bebcc0bad29e88c7a6e91d569b8aa9477f6867b254b6dee071e9b`, блок 4 738 927; в Sage: «Unknown CAT 150» | БД `withdrawal_requests`, экран Sage |
 | Возврат 100 PLAY из Sage | Sage → Send CAT на адрес пополнения `txch1krsquruar7…s3eq5fqspn`, комиссия 0,0005; засчитано один раз: монета `0x947aecfeb435f9c2e42b3ec6e9ca8c6968132b86d68eef37cbc4b8f881b97078`, блок 4 738 936 | `deposit_confirmations`, 1 событие `DepositConfirmedOnChain`; баланс 9 850 → 9 950 |
-| Выход и повторный вход | новая пара WalletConnect, подпись тем же адресом → тот же игрок, баланс 9 950, одно событие `PlayerRegistered` | Р-57 |
+| Выход и повторный вход | новая пара WalletConnect, подпись тем же адресом → тот же игрок, баланс 9 950, одно событие `PlayerRegistered` | D-57 |
 
 ## Трение для реального игрока (для дизайнера)
 

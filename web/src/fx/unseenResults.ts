@@ -1,6 +1,6 @@
 /**
  * Result moments from `Api.unseenResults()` — the single source for "a round of mine settled" in
- * ANY market (Р-69: a player has positions in many pairs at once, so no per-pair, per-series poll can
+ * ANY market (D-69: a player has positions in many pairs at once, so no per-pair, per-series poll can
  * see them all). `useSettlementWatcher` calls {@link publishUnseenResults} every tick and
  * `useAwayReplay` once at sign-in; both go through here so that:
  *

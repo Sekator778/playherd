@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The stage-A economy rules of a bet (Р-92, docs/product/economy_implementation_plan.md A3-A5), pure functions of
+ * The stage-A economy rules of a bet (D-92, docs/product/economy_implementation_plan.md A3-A5), pure functions of
  * a {@link MarketSpec}, the round length, the leverage and the stake:
  *
  * <ul>
@@ -19,7 +19,7 @@ import java.util.List;
  *       least {@link Leverage#MIN}, never above the cap). {@code cap} is {@link MarketSpec#capFor}.
  *   <li><b>Fees (A4).</b> {@code fee_herd = stake * min(20%, k * r_m * L)}, {@code fee_net = 0.1 PLAY}, both rounded up
  *       to 0.001 PLAY, {@code fee_herd} at least 0.001 PLAY. {@code k} is {@link MarketSpec#feeFactorFor} (1 in the
- *       short round; 2.2 price / 3.0 odds in the long one), the 20% is a guard no market reaches (Р-102).
+ *       short round; 2.2 price / 3.0 odds in the long one), the 20% is a guard no market reaches (D-102).
  *   <li><b>Payout cap (A5).</b> A bet pays at most {@code min(20 * stake, 0.1% of the treasury)}. Until the treasury
  *       account exists (stage B) the treasury is the constant {@link #TREASURY_FALLBACK}, the treasury coin on chain
  *       at the time of the decision; stage B replaces it with the TREASURY balance.
@@ -31,7 +31,7 @@ public final class EconomyRules {
     public static final PlayAmount NETWORK_FEE = new PlayAmount(100);
     /** The smallest herd fee: 0.001 PLAY. */
     public static final PlayAmount MIN_HERD_FEE = new PlayAmount(1);
-    /** The herd fee never exceeds this share of the stake: a guard only, no market reaches it (Р-102; before it 1%). */
+    /** The herd fee never exceeds this share of the stake: a guard only, no market reaches it (D-102; before it 1%). */
     public static final BigDecimal HERD_FEE_MAX_SHARE = new BigDecimal("0.20");
 
     /** Stake-tier upper bounds in whole PLAY: up to 250 -> cap, 500 -> cap/2, 1200 -> cap/5, above -> cap/10. */
@@ -95,7 +95,7 @@ public final class EconomyRules {
         }
     }
 
-    /** The fees of a bet of {@code interval}'s round length (A4, Р-102). */
+    /** The fees of a bet of {@code interval}'s round length (A4, D-102). */
     public static Fees fees(MarketSpec spec, Interval interval, int leverage, PlayAmount stake) {
         BigDecimal share = spec.herdFeeRate().multiply(spec.feeFactorFor(interval)).multiply(BigDecimal.valueOf(leverage))
                 .min(HERD_FEE_MAX_SHARE);
@@ -107,11 +107,11 @@ public final class EconomyRules {
         return new Fees(herdFee, NETWORK_FEE);
     }
 
-    /** The platform fee of a fixed-payout bet (Р-106, docs/product/fixed_payout_rules.md point 3): 3% of the stake. */
+    /** The platform fee of a fixed-payout bet (D-106, docs/product/fixed_payout_rules.md point 3): 3% of the stake. */
     public static final BigDecimal FIXED_PLATFORM_FEE_RATE = new BigDecimal("0.03");
 
     /**
-     * The fees of a fixed-payout bet (Р-106): the platform fee, 3% of the stake rounded up to 0.001 PLAY (kept in {@link Fees#herd()}, the
+     * The fees of a fixed-payout bet (D-106): the platform fee, 3% of the stake rounded up to 0.001 PLAY (kept in {@link Fees#herd()}, the
      * ledger account of the percentage mode's fee), and the same flat network fee of 0.1 PLAY. Charged on top of the stake, kept on every outcome.
      */
     public static Fees fixedFees(PlayAmount stake) {
@@ -119,7 +119,7 @@ public final class EconomyRules {
         return new Fees(PlayAmount.fromMoney(platform), NETWORK_FEE);
     }
 
-    /** What a fixed-payout bet is paid back (Р-106): twice the stake for the right direction, nothing for the wrong one, the stake on a tie ({@code cmp}: close compared to open). */
+    /** What a fixed-payout bet is paid back (D-106): twice the stake for the right direction, nothing for the wrong one, the stake on a tie ({@code cmp}: close compared to open). */
     public static PlayAmount fixedPayout(PlayAmount stake, boolean up, int closeVsOpen) {
         if (closeVsOpen == 0) {
             return stake;

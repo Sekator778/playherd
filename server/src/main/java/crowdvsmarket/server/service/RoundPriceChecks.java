@@ -12,7 +12,7 @@ import java.math.RoundingMode;
  * transaction, fail there and get the whole engine rebuilt from the log, once a second, until the round
  * was cancelled an hour later (or, for an exception that was not a {@code PriceUnavailableException},
  * never). A violation is "no usable price" — {@link PriceUnavailableException}, which the scheduler
- * retries and, an hour after the window's end, cancels with a refund (Р-23).
+ * retries and, an hour after the window's end, cancels with a refund (D-23).
  */
 final class RoundPriceChecks {
 

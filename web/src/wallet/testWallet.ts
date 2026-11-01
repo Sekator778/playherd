@@ -1,5 +1,5 @@
 /**
- * Browser test wallet (Р-45, task item 2): generates a real Chia key in the browser and signs
+ * Browser test wallet (D-45, task item 2): generates a real Chia key in the browser and signs
  * the login challenge exactly the way Sage does (`docs/research/week1_wallet_auth.md` §2) — same
  * BLS scheme, same synthetic-key p2 puzzle, same `("Chia Signed Message", message)` tree-hash
  * wrapping, same hex-vs-utf8 message ambiguity Sage itself resolves — using
@@ -27,7 +27,7 @@
  * window/phone = a different player"): a key is generated once per browser profile and reused
  * after that, so the same browser always signs in as the same test player.
  *
- * Explicitly a TEST-ONLY wallet for the local Docker stand (Р-44) — never a real Sage/
+ * Explicitly a TEST-ONLY wallet for the local Docker stand (D-44) — never a real Sage/
  * WalletConnect wallet, and labelled "Test wallet" everywhere it appears in the UI
  * (`ConnectWalletModal.tsx`) so it's never mistaken for the real thing.
  */
@@ -45,7 +45,7 @@ const DERIVATION_PATH = [12381, 8444, 2, 0];
  *  pair, not the raw message, is what actually gets signed. */
 const SIGNED_MESSAGE_PREFIX = "Chia Signed Message";
 
-/** testnet11's bech32m address prefix (week1_wallet_auth.md §2, Р-44/45's local stand). */
+/** testnet11's bech32m address prefix (week1_wallet_auth.md §2, D-44/45's local stand). */
 const ADDRESS_PREFIX = "txch";
 
 export interface TestWalletIdentity {

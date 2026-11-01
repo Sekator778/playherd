@@ -8,7 +8,7 @@ import { LEVERAGE_MIN, MIN_STAKE_PLAY, type BetDto, type Direction } from "../ap
  *  (contract.ts: `"100.000"`, PLAY's own exact 3-decimal scale) bound straight into the input.
  *  Independent critique, 2026-09-26: a native `<input type="number">` rendered that raw string
  *  locale-dependently — on a comma-decimal system, `"100.000"` reads back as "100,000" (a
- *  thousand-fold misread) even though the interface language is fixed to English (Р-24). The stake
+ *  thousand-fold misread) even though the interface language is fixed to English (D-24). The stake
  *  field is a plain text input we format/parse ourselves instead, so this constant only needs to be a
  *  clean starting number, not a value any browser could reformat. */
 export const DEFAULT_STAKE_DISPLAY = String(Number(MIN_STAKE_PLAY));
@@ -55,7 +55,7 @@ export function trimStake(n: number): string {
 }
 
 /**
- * The stake a percentage chip puts in the field (Polymarket's 25 · 50 · 75 · Max, Р-69): a fraction of
+ * The stake a percentage chip puts in the field (Polymarket's 25 · 50 · 75 · Max, D-69): a fraction of
  * the balance, rounded DOWN to whole PLAY so the number is tidy and can never exceed what the player
  * has; MAX is everything, to the thousandth (PLAY's smallest unit), so nothing is left behind.
  */

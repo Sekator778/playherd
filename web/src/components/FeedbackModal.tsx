@@ -26,7 +26,7 @@ const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
- * The feedback form (Р-81): one box — "What did you like? What didn't work for you?" — and nothing else to fill in. A
+ * The feedback form (D-81): one box — "What did you like? What didn't work for you?" — and nothing else to fill in. A
  * bottom sheet on a phone, a centred card elsewhere, on the app's own modal pattern (`ConnectWalletModal.tsx`: the dialog
  * role, a focus trap, Escape, focus handed back on close, the page behind it locked) — and Android's Back button closes
  * it (`fx/backHandlers.ts`).

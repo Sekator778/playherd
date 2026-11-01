@@ -14,7 +14,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * The "богачи" archive of a past season (Р-10, Р-18) must not move when a player rolls into the
+ * The "богачи" archive of a past season (D-10, D-18) must not move when a player rolls into the
  * next season: {@code RatingBook.richList} used to take the CURRENT balance for every season, so
  * the next season's starter pack, results, deposits and withdrawals all leaked into last
  * season's growth for exactly the players who had already moved on

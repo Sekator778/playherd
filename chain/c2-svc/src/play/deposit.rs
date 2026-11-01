@@ -1,5 +1,5 @@
 //! Deposit-address derivation and the durable registry of every player index
-//! a deposit address has ever been issued for (Р-6, decision Р-53
+//! a deposit address has ever been issued for (D-6, decision D-53
 //! 2026-09-26): `GET /v1/play/deposits` needs to know which CAT puzzle
 //! hashes to scan, and -- unlike the oracle singleton -- there is no on-chain
 //! lineage to walk to rediscover that list from scratch.

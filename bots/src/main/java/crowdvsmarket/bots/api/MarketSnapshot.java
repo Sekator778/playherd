@@ -16,7 +16,7 @@ import java.util.Objects;
  * @param roundId       the id a bet on this round is placed with
  * @param windowStartMs start of the round's window, epoch milliseconds
  * @param windowEndMs   end of the round's window
- * @param odds          the market is an odds market ({@code ODDS}), where the win-or-lose mode is refused (Р-106)
+ * @param odds          the market is an odds market ({@code ODDS}), where the win-or-lose mode is refused (D-106)
  */
 public record MarketSnapshot(MarketSpec spec, Interval interval, String roundId, long windowStartMs, long windowEndMs,
                              boolean open, PlayAmount minStake, boolean odds) {

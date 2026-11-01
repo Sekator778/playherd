@@ -12,7 +12,7 @@ import org.jboss.logging.Logger;
 
 /**
  * Task item 1c — server-side half of FIXED INTERFACE (b)/(c) durable-delivery reconciliation
- * (Р-40/41/47). Every 60s: for every {@code oracle_records} row this server has already handed to
+ * (D-40/41/47). Every 60s: for every {@code oracle_records} row this server has already handed to
  * chainsvc at least once and does not yet know {@code confirmed}
  * ({@link OracleRecordRepository#needsReconciliation()}), polls chainsvc's
  * {@code GET /v1/oracle/records/{seq}} and stores the returned {@code state}/{@code height}/

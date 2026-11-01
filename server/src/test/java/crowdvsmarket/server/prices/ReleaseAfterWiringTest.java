@@ -10,7 +10,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * The waits of Р-79 inside the running application: each {@code herd.prices.<feed>.release-after-ms} key is read, through the
+ * The waits of D-79 inside the running application: each {@code herd.prices.<feed>.release-after-ms} key is read, through the
  * container and the producer, into the wait of its own source — a profile gives every key a value of its own, so a key read into
  * another source's wait, or not read at all, shows. (The environment variable of a key is its upper-cased name with dots and dashes
  * turned into underscores, as for every {@code herd.prices.*} key; what compose passes is listed in the compose files.)

@@ -40,7 +40,7 @@ import java.util.TreeMap;
 import org.jboss.logging.Logger;
 
 /**
- * Р-46: 20 server-side bot players, betting at a random moment of each betting window
+ * D-46: 20 server-side bot players, betting at a random moment of each betting window
  * ({@code RoundSchedulerService} calls {@link #tick} every scheduler tick). Bots are ordinary
  * players from the engine's point of view — they go through the exact same {@code GameService}
  * validated path (min stake, one bet per round, leverage bounds) as a human player, just without
@@ -415,7 +415,7 @@ public class BotService {
             for (RoundWindow window : picks.subList(0, perBot)) {
                 long duration = window.endMs() - window.startMs();
                 // Bug fix (bots stopped betting): betting for `window` is open for the whole PREVIOUS
-                // round's duration (Р-19) — i.e. from window.startMs() - duration (when the currently
+                // round's duration (D-19) — i.e. from window.startMs() - duration (when the currently
                 // running round started) up to window.startMs() (when betting closes and `window`
                 // itself starts running). A fire time computed as window.startMs() + offset would land
                 // AFTER betting had closed and GameService#placeBet would always reject it.
@@ -488,7 +488,7 @@ public class BotService {
                     k -> roundResults.lastMajorityDirection(market.id(), shot.interval())
                             .map(d -> Direction.valueOf(d.name())));
             Direction direction = strategy.chooseDirection(random, previous);
-            // bots follow the same rules as any player (Р-92): the stake is chosen first, because the leverage allowed
+            // bots follow the same rules as any player (D-92): the stake is chosen first, because the leverage allowed
             // depends on it (the market's cap for this round length, lowered by the stake tier)
             BigDecimal stakeAmount = strategy.chooseStake(random);
             int allowed = EconomyRules.maxLeverage(market.spec(), shot.interval(), PlayAmount.fromMoney(stakeAmount));
@@ -511,7 +511,7 @@ public class BotService {
         if (config.mode() != GameMode.LIVE) {
             return true;
         }
-        // the primary exchange's price while it is fresh, else the backup's (Р-76): a market whose primary is down still bets
+        // the primary exchange's price while it is fresh, else the backup's (D-76): a market whose primary is down still bets
         return marketPrices.latest(market).map(quote -> !quote.stale()).orElse(false);
     }
 }

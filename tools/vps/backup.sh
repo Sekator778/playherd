@@ -6,7 +6,7 @@
 #   backup.sh list              what there is
 #   backup.sh restore FILE --yes   put a database dump back: the schema is dropped and recreated from the dump, in one
 #                                  transaction (rewinds the game: see README, "Откат"), and the journal archive with the same stamp
-#                                  back into the journal volume. A dump taken before Р-107 has none: add --empty-journal, and the server
+#                                  back into the journal volume. A dump taken before D-107 has none: add --empty-journal, and the server
 #                                  imports the restored table into a new journal on its start
 #
 # Each run writes two files into ~/backups (mode 600) and keeps the newest HERD_BACKUP_KEEP (7) of each kind:
@@ -14,7 +14,7 @@
 #                                      so that a restore into a database that already has tables replaces them. Checked
 #                                      after writing (gzip -t, and pg_dump's closing line is there); a dump that fails
 #                                      the check is deleted and the run exits non-zero
-#   journal/journal-<kind>-<UTC time>.tar.gz   (Р-107) the event journal, the Chronicle Queue files of the server: the TRUTH of the game, of which
+#   journal/journal-<kind>-<UTC time>.tar.gz   (D-107) the event journal, the Chronicle Queue files of the server: the TRUTH of the game, of which
 #                                      the database is a copy. Taken right AFTER the dump with the same time stamp, so the journal is never
 #                                      behind the dump (a journal ahead of the database is what a crash leaves; the start repairs it; the
 #                                      other way round the server refuses to start). The files only grow at their end and the reader takes a
@@ -167,7 +167,7 @@ cmd_restore() {
   [[ "${yes}" == "--yes" ]] || die "restore replaces the database of the running stand with the one in ${file}: everything played since is gone. Repeat with --yes."
   [[ -z "${empty_journal}" || "${empty_journal}" == "--empty-journal" ]] || die "unknown flag ${empty_journal}"
   gzip -t "${file}" || die "${file} is not a valid gzip file"
-  # Р-107: the journal is the truth and the database a copy of it, so the dump goes back WITH the journal of the same stamp - a dump alone would be
+  # D-107: the journal is the truth and the database a copy of it, so the dump goes back WITH the journal of the same stamp - a dump alone would be
   # filled again with everything played since by the projector. A dump from before the journal existed has none: --empty-journal, and the server
   # imports the restored table into a new journal on its start.
   jbase="$(basename "${file}")"

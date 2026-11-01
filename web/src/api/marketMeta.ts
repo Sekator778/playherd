@@ -1,6 +1,6 @@
 /**
  * Display metadata for markets and categories that the server does not send: the order and titles
- * of the lobby panels (Р-69, Т-1) and a glyph + colour for a symbol when a market has no source
+ * of the lobby panels (D-69, Т-1) and a glyph + colour for a symbol when a market has no source
  * image (`MarketDto.iconUrl === null`, every `PERP`). Pure data and pure functions — nothing here
  * is a source of truth for a market's parameters (those are `MarketDto`'s).
  */
@@ -11,7 +11,7 @@ import { tEn, type TFn } from "../i18n";
  * The lobby panels in display order — Т-1 (`docs/research/markets_architecture.md` §2) lists
  * `crypto`, `politics`, `sports`, `stocks`, `indices`, `commodities`, and §9's category ribbon
  * "All · Crypto · Politics · Sports · Stocks · Indices · Commodities" agrees. (Т-1's prose says the
- * first three follow Alex's words in Р-69, whose order is sports, politics, crypto — the list is
+ * first three follow Alex's words in D-69, whose order is sports, politics, crypto — the list is
  * what is implemented; change the order HERE only.)
  */
 export const CATEGORY_ORDER: readonly CategoryId[] = ["crypto", "politics", "sports", "stocks", "indices", "commodities"];

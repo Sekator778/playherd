@@ -1,6 +1,6 @@
 package crowdvsmarket.server.config;
 
-/** {@code herd.mode} (Р-46): {@code replay} is the default for the local Docker stand. */
+/** {@code herd.mode} (D-46): {@code replay} is the default for the local Docker stand. */
 public enum GameMode {
     LIVE, REPLAY;
 

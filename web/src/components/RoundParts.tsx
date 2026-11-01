@@ -92,7 +92,7 @@ export function LiveStatTile({ label, value, format }: { label: string; value: n
  * Positions as a "stage", split into UP/DOWN camps (`docs/product/design/direction.md` §4
  * "Stage/split-camp"; audit.md's Round section: "толпа раскололась на два лагеря... это
  * отсортированный список транзакций" was the complaint — the fix is two always-visible,
- * color-washed panels, never one merged grey list, even when one side is empty (Р-22).
+ * color-washed panels, never one merged grey list, even when one side is empty (D-22).
  */
 export function PositionsList({
   positions,
@@ -172,7 +172,7 @@ function StagePanel({
                 </Link>
                 <BotBadge isBot={p.player.isBot} />
                 <span className="player-chip__lev mono">{isFixedMode(p) ? t("mode.short") : `x${p.leverage}`}</span>
-                {/* Р-90: the showcase shows winners. The player sees their own result either way; another player's result is shown
+                {/* D-90: the showcase shows winners. The player sees their own result either way; another player's result is shown
                     only when it is a gain — no one else's loss, ruin or liquidation is listed. */}
                 {value !== null && (p.playerId === me?.playerId || (value > 0 && !p.liquidated)) && (
                   <span className={`player-chip__result ${p.liquidated ? "outcome-lost" : outcomeClassName(outcomeFromNet(value))}`}>

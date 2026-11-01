@@ -116,7 +116,7 @@ public class CleanDatabasePerTestClass implements QuarkusTestBeforeEachCallback 
                 db.update(c, REOPEN_BTC_SQL);
                 return null;
             });
-            // Р-107: the journal is the truth and game_events its copy: emptied together
+            // D-107: the journal is the truth and game_events its copy: emptied together
             Arc.container().instance(crowdvsmarket.server.journal.Journal.class).get().resetForTests();
             // Same code path a real restart uses: resets every in-memory singleton (EngineHub with its
             // per-market ComparisonAccounts, BetFeed, RoundProgress, PlayerDirectory, the market

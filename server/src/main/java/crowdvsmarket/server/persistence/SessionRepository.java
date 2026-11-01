@@ -5,7 +5,7 @@ import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Optional;
 
-/** {@code herd_session} cookie backing store (Р-4 §4.g: "выдаём серверную сессию... httpOnly-cookie
+/** {@code herd_session} cookie backing store (D-4 §4.g: "выдаём серверную сессию... httpOnly-cookie
  *  с непрозрачным session id"). */
 @ApplicationScoped
 public class SessionRepository {

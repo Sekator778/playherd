@@ -12,7 +12,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Р-62: an append-only, in-memory "who bet what" activity feed per round, backing the public
+ * D-62: an append-only, in-memory "who bet what" activity feed per round, backing the public
  * {@code betFeed} RPC (visible live during {@code BETTING}, like Twitch Predictions). The single
  * writer is {@code EventApplier}'s {@code BetPlaced} case — exactly like {@link EngineHub}/
  * {@code ComparisonAccounts}, this is rebuilt from scratch by replaying {@code game_events} at
@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class BetFeed {
 
     /** Per-round retention cap (предложение — no source fixes a number) — generous for the 20-bot/
-     *  few-human local stand (Р-46) while still bounding memory for a process that runs for weeks. */
+     *  few-human local stand (D-46) while still bounding memory for a process that runs for weeks. */
     public static final int MAX_ENTRIES_PER_ROUND = 120;
     /** How many rounds' feeds are kept at all — bounds total memory across a long-running process
      *  (settled rounds' feeds are of shrinking interest; {@code round_results}/
@@ -81,7 +81,7 @@ public final class BetFeed {
     }
 
     /** Appends one entry for {@code roundId} — called only from {@code EventApplier}'s
-     *  {@code BetPlaced} case, live or replayed, so a bet edit (Р-13: a new bet by the same player
+     *  {@code BetPlaced} case, live or replayed, so a bet edit (D-13: a new bet by the same player
      *  replacing their still-pending one) shows as a new feed row too, never rewriting/removing the
      *  earlier one. */
     public void record(String roundId, String playerId, String playerDisplayName, boolean isBot,
@@ -89,7 +89,7 @@ public final class BetFeed {
         record(roundId, playerId, playerDisplayName, isBot, direction, stake, leverage, atMs, null);
     }
 
-    /** {@link #record(String, String, String, boolean, Enums.Direction, String, int, long)} with the mode of the bet (Р-106). */
+    /** {@link #record(String, String, String, boolean, Enums.Direction, String, int, long)} with the mode of the bet (D-106). */
     public synchronized void record(String roundId, String playerId, String playerDisplayName, boolean isBot,
                                      Enums.Direction direction, String stake, int leverage, long atMs, Enums.BetMode mode) {
         Deque<Entry> entries = byRound.computeIfAbsent(roundId, r -> new ArrayDeque<>());

@@ -18,7 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Economy stage A (Р-92) and the event log: a {@code BetPlaced} written before the change carries no fee fields and must
+ * Economy stage A (D-92) and the event log: a {@code BetPlaced} written before the change carries no fee fields and must
  * replay exactly as it always did (no fees, the original settlement rules), one written after carries its fees and the
  * replay charges exactly those. Plain objects, no database: the applier and the hub are wired by hand.
  *

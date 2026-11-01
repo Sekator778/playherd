@@ -1,5 +1,5 @@
 /**
- * Hidden "/lab/states" — every designed STATE of the Р-69 screens on one page, drawn by the real components
+ * Hidden "/lab/states" — every designed STATE of the D-69 screens on one page, drawn by the real components
  * from fixed data, so the states that a live stand rarely produces (a stale price, a market with no price
  * yet, a closed one with the server's reason, a game before and after kick-off, a round with no opening price,
  * each way an oracle record can be, a zero win streak, a liquidation pinned off the chart, the mid-round
@@ -87,7 +87,7 @@ const CARDS: Array<{ label: string; market: MarketDto; hot?: boolean; favorite?:
     }),
   },
   {
-    label: "A crypto market on its main exchange, with a backup behind it (Р-76) — nothing to mark while the price is Coinbase's own",
+    label: "A crypto market on its main exchange, with a backup behind it (D-76) — nothing to mark while the price is Coinbase's own",
     market: market("SOL", { title: "Solana", source: "coinbase", backupSource: "kraken", price: { price: "117.84", asOfMs: NOW - 600, change24h: 0.0187, stale: false, venue: null } }),
   },
   {
@@ -138,7 +138,7 @@ const CARDS: Array<{ label: string; market: MarketDto; hot?: boolean; favorite?:
     }),
   },
   {
-    label: "Closed — the market moved to a new price source (Р-76: the server's reason as it sent it; open bets were refunded)",
+    label: "Closed — the market moved to a new price source (D-76: the server's reason as it sent it; open bets were refunded)",
     market: market("XRP", {
       status: "CLOSED",
       title: "XRP",
@@ -426,7 +426,7 @@ export function LabStatesPage() {
       </section>
 
       <section className="lab-section">
-        <h2>The backup exchange (Р-76) — the oracle line, a round that runs on it, and the chart while the main exchange is silent</h2>
+        <h2>The backup exchange (D-76) — the oracle line, a round that runs on it, and the chart while the main exchange is silent</h2>
         <p className="faint">
           A crypto market names its backup in the oracle line. A round runs entirely on one exchange, chosen when it starts — when that was
           the backup, the round says so, running and settled. The chart is the main exchange's ticks alone: while it is silent the line

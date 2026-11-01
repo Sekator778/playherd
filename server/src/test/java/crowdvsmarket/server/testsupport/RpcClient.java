@@ -39,7 +39,7 @@ public final class RpcClient {
         return request.post("/api/rpc/" + method);
     }
 
-    /** Р-106: the call of an API bot - {@code Authorization: Bearer <key>} instead of a session cookie. */
+    /** D-106: the call of an API bot - {@code Authorization: Bearer <key>} instead of a session cookie. */
     public static Response rpcWithKey(String key, String method, Object... args) {
         var request = given().contentType(ContentType.JSON).body(Map.of("args", Arrays.asList(args)));
         if (key != null) {

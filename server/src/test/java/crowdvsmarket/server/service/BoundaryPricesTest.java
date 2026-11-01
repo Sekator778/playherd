@@ -28,7 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-40 in the core ({@link BoundaryPrices}), on plain objects: the rule that a round opens at the close of the
+ * D-40 in the core ({@link BoundaryPrices}), on plain objects: the rule that a round opens at the close of the
  * settled round that ended where it starts, the adjustment of the path it implies, what is read when a state is
  * built, what is added and pruned when a settlement commits, and that replay mode is left alone.
  */
@@ -323,7 +323,7 @@ class BoundaryPricesTest {
     }
 
     // ---------------------------------------------------------------------------------------
-    // venues (Р-76): Р-40 holds within an exchange, and across a switch the open is the new exchange's
+    // venues (D-76): D-40 holds within an exchange, and across a switch the open is the new exchange's
     // ---------------------------------------------------------------------------------------
 
     private static final Market SPOT = new Market("spot_BTC", MarketKind.PERP, "crypto", "BTC", "BTC", null, null,

@@ -13,7 +13,7 @@ export interface PositionLinesInput {
   direction: "UP" | "DOWN";
   leverage: number;
   entryPrice: string;
-  /** Null for a fixed-payout position ("Win or lose", Р-106): it has no wipeout line. */
+  /** Null for a fixed-payout position ("Win or lose", D-106): it has no wipeout line. */
   liquidationPrice: string | null;
   mode?: "PERCENTAGE" | "FIXED" | null;
 }
@@ -33,7 +33,7 @@ const sameLevel = (a: number, b: number) => Math.abs(a - b) <= SAME_PRICE * Math
 const glyph = (direction: "UP" | "DOWN") => (direction === "UP" ? "▲" : "▼");
 
 /**
- * The lines to draw. Every position opens at the round's open price (Р-8), so the open line and the
+ * The lines to draw. Every position opens at the round's open price (D-8), so the open line and the
  * player's entry — and the herd's — are normally one and the same level: drawn once, the label saying
  * what it is for the player. The liquidation lines are the informative ones: the player's own (solid)
  * and the herd's (the same colour, fainter).

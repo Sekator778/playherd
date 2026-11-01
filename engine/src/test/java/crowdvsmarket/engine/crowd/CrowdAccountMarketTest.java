@@ -21,7 +21,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link CrowdAccount} per market (Р-69): it opens its position through the market-aware
+ * {@link CrowdAccount} per market (D-69): it opens its position through the market-aware
  * {@code ExecutionAdapter.openPosition(spec, …)}, with that market's maintenance margin rate, and
  * never exceeds that market's leverage cap.
  */
@@ -119,7 +119,7 @@ class CrowdAccountMarketTest {
     @Test
     void aWeightedLeverageInsideTheCapIsUntouched() {
         CrowdAccount account = new CrowdAccount(CrowdAccount.STARTING_CAPITAL, new PaperTradingAdapter(), ETH);
-        // weighted average (10*300 + 20*100) / 400 = 12.5 -> HALF_UP -> 13, as for BTC (Р-14)
+        // weighted average (10*300 + 20*100) / 400 = 12.5 -> HALF_UP -> 13, as for BTC (D-14)
         List<Bet> bets = List.of(bet("alice", Direction.UP, 10, 300), bet("bob", Direction.UP, 20, 100));
 
         CrowdAccount.RoundResult result = account.processRound("ETH-1h-0", bets, ENTRY,

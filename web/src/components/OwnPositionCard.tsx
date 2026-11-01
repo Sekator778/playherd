@@ -13,7 +13,7 @@ import { liveRead } from "./livePosition";
  * The signed-in player's own RUNNING position, live (live-round.md §2): unrealized P&L rolling with every
  * price tick, the meter of how much room is left before liquidation (pulsing as it closes in), and the
  * prices that matter — entry and liquidation, in the market's own scale. A liquidated position is stated
- * as plainly as a win would be: the whole stake, gone (Р-7).
+ * as plainly as a win would be: the whole stake, gone (D-7).
  */
 export function OwnPositionCard({
   position,
@@ -37,7 +37,7 @@ export function OwnPositionCard({
   const heroClass = hero ? "card--hero" : "";
   const priceText = (price: string) => formatPrice(price, market ?? format ?? FALLBACK);
   if (isFixedMode(position)) {
-    // Р-106, "Win or lose": no liquidation, no live P&L - the bet is won or lost by the close against the open, and told so. Where the price stands
+    // D-106, "Win or lose": no liquidation, no live P&L - the bet is won or lost by the close against the open, and told so. Where the price stands
     // against the open is the one live fact, said in words.
     const stake = Number(positionStakeStr(position));
     const standing = referencePrice ? Math.sign(Number(referencePrice.price) - Number(position.entryPrice)) : null;

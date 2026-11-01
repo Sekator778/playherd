@@ -38,7 +38,7 @@ function CallEntry({ example }: { example: CallExample }) {
 }
 
 /**
- * The developers' page (Р-106, `/developers`): how to get a key, how a request is signed, every call a key may make with a request and a
+ * The developers' page (D-106, `/developers`): how to get a key, how a request is signed, every call a key may make with a request and a
  * response taken from the server's recorded answers, rounds, fees, limits, errors, the place kept for the second payout mode, and a
  * minimal Python bot. The headings and the sentences are translated; the code, the call names and the error table are the reference and
  * stay in English. The same material is `docs/api/bots.md`; `developers/examples.test.ts` keeps both in step with the server.

@@ -8,7 +8,7 @@ import crowdvsmarket.engine.market.MarketSpec;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 
-/** The herd fee {@code stake * min(20%, k * r_m * L)} (Р-102, docs/research/economy_variant_a_rules_2026-10-17.md rules 2a-2g). */
+/** The herd fee {@code stake * min(20%, k * r_m * L)} (D-102, docs/research/economy_variant_a_rules_2026-10-17.md rules 2a-2g). */
 class EconomyRulesFeesTest {
 
     private static final PlayAmount STAKE = PlayAmount.ofWholePlay(1000);

@@ -42,7 +42,7 @@ SEVEN_ELEMENT_ASSET_200_HEX = (
     "ff820479ff846ab75600ff840082a230ffa0abababababababababababababababababababababababababababababababab"
     "ff80ff846ab75601ff8200c880"
 )
-# The very first spend of the real singleton (week 1, before Р-41): (priceCents ts seq), 3 elements.
+# The very first spend of the real singleton (week 1, before D-41): (priceCents ts seq), 3 elements.
 WEEK_ONE_THREE_ELEMENT_HEX = "ff8400801ed4ff846ab6a055ff0180"
 
 LAUNCHER = bytes([0x11] * 32)
@@ -84,7 +84,7 @@ def canonical_json(doc: dict) -> bytes:
 
 class Round:
     """One settled round as a stand serves it: results.json, its hash, the journal row, and the
-    announcement message the chain carries for it. `venue`: the exchange it ran on (Р-76) — a root key
+    announcement message the chain carries for it. `venue`: the exchange it ran on (D-76) — a root key
     of the document, so inside the hash, and a field of the journal row (null when there is none)."""
 
     def __init__(self, seq: int, *, market: str = "BTC", asset: int = 0, price: int = 8_561_200,
@@ -717,7 +717,7 @@ class StandJournalTests(unittest.TestCase):
 
 
 # ======================================================================================
-# Venues (Р-76): the exchange a crypto round ran on, in the hashed document and in the journal
+# Venues (D-76): the exchange a crypto round ran on, in the hashed document and in the journal
 # ======================================================================================
 
 # Byte for byte the documents server/.../util/ResultsHasherTest.java pins (ResultsHasher.build with a venue), so the
@@ -996,7 +996,7 @@ class FallbackTests(unittest.TestCase):
         coinset = chain_of([r.message() for r in rounds])
         stand = self.old_stand([rounds[0], rounds[2]])
         # The stand's round for seq 2's window was cancelled: it has no anchor, and a cancelled
-        # round in the middle of history does not stop the walk (Р-32).
+        # round in the middle of history does not stop the walk (D-32).
         stand.rpc["rounds"][rounds[1].round_id] = {"phase": "CANCELLED"}
         result, code = run(coinset, stand)
         self.assertEqual(result["stand_check"]["unmapped_in_scope"], [2])

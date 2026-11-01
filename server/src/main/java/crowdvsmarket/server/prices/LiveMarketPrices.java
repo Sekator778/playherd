@@ -21,7 +21,7 @@ import org.jboss.logging.Logger;
  *
  * <p><b>Boundary price {@code P(t)}</b> — the last tick with {@code at <= t} that is not older than
  * the feed's {@code staleMs} at {@code t}. {@code open = P(start)}, {@code close = P(end)}, hence the
- * close of one round is the open of the next (Р-40). That equality must survive everything that
+ * close of one round is the open of the next (D-40). That equality must survive everything that
  * happens to the ticks afterwards, so a tick that is fresh at a boundary <i>is</i> the price at that
  * boundary: history is never merged at or before {@code start} when the tick before it is fresh
  * (below), a merge only ever adds ticks, it never replaces one, and a round that settled pins its two
@@ -29,7 +29,7 @@ import org.jboss.logging.Logger;
  * not even a merge for another, longer window can move them — and nothing at all is merged behind the
  * latest boundary pinned for the market ({@link TickStore#pinBoundary}).
  *
- * <p><b>A market with a backup exchange</b> (Р-76, {@link Instruments}) has a ring per venue — its own, and its shadow's
+ * <p><b>A market with a backup exchange</b> (D-76, {@link Instruments}) has a ring per venue — its own, and its shadow's
  * ({@code spot_BTC~kraken}) — and everything above holds per ring unchanged: staleness, holes, pins, the bridge, the quiet
  * carry. What is new is the choice of the venue, made once for each round when it opens ({@link #openRound}; the
  * rule is in {@link #chooseByRings}): the primary if it has a <i>live</i> tick fresh at the round's start, else the backup if
@@ -38,12 +38,12 @@ import org.jboss.logging.Logger;
  * that can price the start later — from history ({@link #healStart}), the primary first — is taken. The choice is written
  * once ({@link RoundVenues}) and never revisited: the round is settled — open,
  * close, path — from its venue's ring alone ({@link #resolve}, {@link #soFar}), and a venue that cannot price it leaves the
- * round to wait, and to be refunded as any round without a price (Р-23, Р-77, Р-79); it is never moved to the
+ * round to wait, and to be refunded as any round without a price (D-23, D-77, D-79); it is never moved to the
  * other venue. The next round starts at the price of whichever venue it opens on, which may differ from the close of
- * this one by the basis between the two venues (Р-40 holds within a venue). For the lobby, {@link #latest(Market)} shows
+ * this one by the basis between the two venues (D-40 holds within a venue). For the lobby, {@link #latest(Market)} shows
  * the primary's live tick while it is fresh and the backup's when it is not, saying which.
  *
- * <p><b>Letting a round go (Р-77).</b> A round that waits for its venue holds its series, because the rounds of a series are
+ * <p><b>Letting a round go (D-77).</b> A round that waits for its venue holds its series, because the rounds of a series are
  * settled in order. When the other venue is alive the scheduler lets such a round go after a while — cancels it with a refund
  * — and asks {@link #otherVenueLive} whether it is: the market's venue that the round was not decided on has a live tick that is
  * fresh now. Nothing is moved to the other venue and nothing is decided here; the next round opens on whichever venue has a
@@ -62,8 +62,8 @@ import org.jboss.logging.Logger;
  * ({@link PriceSource#historyOf}), merges what it returns into the hole — never over a tick that is
  * already there, and never at or before {@code start} when {@code P(start)} is already known — and
  * looks again; a hole that is still there is a {@link PriceUnavailableException}, which the
- * scheduler retries and, when the minutes of the source are over (Р-79; an hour after the round's end at the latest,
- * Р-23), answers by cancelling the round with a refund. History is only fetched for a market once per
+ * scheduler retries and, when the minutes of the source are over (D-79; an hour after the round's end at the latest,
+ * D-23), answers by cancelling the round with a refund. History is only fetched for a market once per
  * {@link PricesConfig#backfillCooldownMs() cooldown}: the scheduler retries every second and a
  * source that is down must not be asked every second.
  *
@@ -102,7 +102,7 @@ import org.jboss.logging.Logger;
  * polls — therefore no longer voids the rounds that were running: when such a round ends, the gap in its ticks is
  * bridged by the candles (one {@code candleSnapshot}), it settles, and a gap across a round boundary does not
  * hurt the round after it. The round stays a hole — it is retried, and cancelled with a refund when the minutes of
- * its source are over (Р-79; an hour after its end at the latest, Р-23) — when the gap is longer than the cap, when a minute of it had no trades (the asset is
+ * its source are over (D-79; an hour after its end at the latest, D-23) — when the gap is longer than the cap, when a minute of it had no trades (the asset is
  * not liquid: BTC, ETH, SOL and HYPE had none missing in 24 hours, TSLA only 60% of the 20-minute stretches were
  * fully traded, §13.5), when a live price is outside the range of its minute by more than the basis, or when the
  * candle of the live tick on the right is not closed yet (it is asked again after the cooldown).
@@ -306,7 +306,7 @@ public class LiveMarketPrices implements MarketPrices {
     }
 
     // ------------------------------------------------------------------------------------------
-    // The exchange of a round (Р-76)
+    // The exchange of a round (D-76)
     // ------------------------------------------------------------------------------------------
 
     /**
@@ -451,7 +451,7 @@ public class LiveMarketPrices implements MarketPrices {
      * an hour ends is settled — its hole around the previous hour's boundary filled from history, with
      * points before that boundary — just before that hour is, after the hour before it already closed on
      * the live tick that was fresh at the boundary: without the pin the next hour would open on a point
-     * of the history (Р-40). A pin is memory only like every merge: a restart rebuilds the boundary price from
+     * of the history (D-40). A pin is memory only like every merge: a restart rebuilds the boundary price from
      * the live ticks, or asks the source for it again — and the core takes the opening price of a round from
      * the persisted close of the previous one.
      */
@@ -595,7 +595,7 @@ public class LiveMarketPrices implements MarketPrices {
      * <p>A tick that is fresh at {@code start} is the price at {@code start}: the gap behind it is
      * measured from {@code start}, not from the tick's own, earlier time, so that a hole — and the
      * history merged into it — can never reach back over the boundary that a neighbouring round
-     * (which ended there) may have settled on already (Р-40).
+     * (which ended there) may have settled on already (D-40).
      */
     private Assessment assess(Market market, RoundWindow window, PriceSource.Feed feed) {
         long start = window.startMs();

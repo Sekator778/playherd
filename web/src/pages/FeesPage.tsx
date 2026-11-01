@@ -9,7 +9,7 @@ import { FEE_TABLE_LEVERAGES, factorOf, feeRows, feeRules, formatFeeShare, type 
 import "./FeesPage.css";
 
 /**
- * "All fees" (Р-102, `docs/research/fee_display_venues_2026-10-18.md` §4): what a bet costs, for every market, round length and boost, in one public
+ * "All fees" (D-102, `docs/research/fee_display_venues_2026-10-18.md` §4): what a bet costs, for every market, round length and boost, in one public
  * table — no sign-in. The numbers are computed from what `markets()` carries per series (`herdFeeBp`, `feeFactor`, `maxLeverage`) with the server's
  * formula (`feesModel.ts`); a fee changed on the server changes this page with no release.
  */

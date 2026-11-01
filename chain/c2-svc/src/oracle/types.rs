@@ -41,7 +41,7 @@ pub struct OracleRecordDto {
     /// Unix seconds.
     pub ts: i64,
     pub price_cents: i64,
-    /// `0x` + 32 bytes hex (a settled/cancelled round's `resultsHash`, Р-41).
+    /// `0x` + 32 bytes hex (a settled/cancelled round's `resultsHash`, D-41).
     pub results_hash: String,
     pub source: Source,
     /// Unix seconds.

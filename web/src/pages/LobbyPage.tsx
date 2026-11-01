@@ -1,7 +1,7 @@
 /**
- * Lobby (`/`) — Р-69: panels of categories → market cards → (in a card) a room with a bet. Navigation
+ * Lobby (`/`) — D-69: panels of categories → market cards → (in a card) a room with a bet. Navigation
  * the way Polymarket's mobile app does it (`docs/product/design/polymarket-mobile-reference.md`), plus
- * what Herd adds on top (Р-71, `docs/product/design/markets-lobby.md`): the live crowd split on every
+ * what Herd adds on top (D-71, `docs/product/design/markets-lobby.md`): the live crowd split on every
  * card, "herd" return per market, one-tap direction, favourites kept on the device.
  *
  * - A horizontally scrollable ribbon "All · Crypto · Politics · …" with counts, sticky under the header.
@@ -63,7 +63,7 @@ const SORT_NOTE = {
  *  first screen said what the app is or what the money is — that came after eighteen cards). A signed-in player knows,
  *  and a session still being read is not guessed at: no flash of it for a returning player.
  *
- *  OFF: `LobbyPage`'s `intro` flag defaults to false. Р-63 took lines of this kind off the screens on Alex's word, so whether the
+ *  OFF: `LobbyPage`'s `intro` flag defaults to false. D-63 took lines of this kind off the screens on Alex's word, so whether the
  *  lobby gets one back is his decision, not a defect fix — the component, its style (`.lobby-intro`) and its tests are kept so that
  *  turning it on is `<LobbyPage intro />` in `App.tsx` and nothing else. */
 function LobbyIntro() {

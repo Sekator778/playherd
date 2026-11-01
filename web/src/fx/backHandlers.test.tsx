@@ -1,5 +1,5 @@
 /**
- * Who answers Android's hardware Back first (Р-81: the feedback sheet closes on Back, on every screen).
+ * Who answers Android's hardware Back first (D-81: the feedback sheet closes on Back, on every screen).
  */
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";

@@ -5,7 +5,7 @@ import java.util.Optional;
 
 /**
  * The {@code round_venues} table (V9): the exchange each round of a market with a backup runs on, chosen once when the
- * round opens (Р-76; {@link RoundVenues}). An interface so that the choice can be exercised without a database;
+ * round opens (D-76; {@link RoundVenues}). An interface so that the choice can be exercised without a database;
  * {@link JdbcRoundVenueStore} is the real one.
  */
 public interface RoundVenueStore {

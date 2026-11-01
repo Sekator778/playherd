@@ -173,7 +173,7 @@ export function RoundPage() {
           })()
         ) : (
           // RUNNING: live unrealized P&L, the room left before liquidation (pulsing as it closes in); a
-          // liquidated position (running or settled) reads as the whole stake gone (Р-7).
+          // liquidated position (running or settled) reads as the whole stake gone (D-7).
           <OwnPositionCard
             position={ownPosition}
             referencePrice={referencePrice}
@@ -207,9 +207,9 @@ export function RoundPage() {
           {round.phase === "BETTING" && (
             <>
               <p>{t("round.voted", { count: round.participantCount })}</p>
-              {/* Р-62 (replaces Р-22): the crowd split is now live during betting, not just at
+              {/* D-62 (replaces D-22): the crowd split is now live during betting, not just at
                *  round start — optional fields, so this line simply doesn't render against a
-               *  `RealApi` build that predates Р-62. */}
+               *  `RealApi` build that predates D-62. */}
               {round.upStake !== undefined && round.downStake !== undefined && (Number(round.upStake) > 0 || Number(round.downStake) > 0) && (
                 <p className="mono muted">
                   {Math.round((Number(round.upStake) / (Number(round.upStake) + Number(round.downStake))) * 100)}% UP ·{" "}
@@ -235,7 +235,7 @@ export function RoundPage() {
             <div className="stack reveal-flip-in" style={{ gap: 16 }}>
               {round.openPrice !== null && <p className="mono">{t("round.openPrice", { price: priceText(round.openPrice) })}</p>}
               <OracleDisclosureLine source={source} />
-              {/* A round runs entirely on one exchange (Р-76): when it ran on the market's backup, it says so. */}
+              {/* A round runs entirely on one exchange (D-76): when it ran on the market's backup, it says so. */}
               <RoundVenueNote source={round.source} market={market} phase={round.phase} />
               {round.phase === "SETTLED" && (
                 <AnchorLine

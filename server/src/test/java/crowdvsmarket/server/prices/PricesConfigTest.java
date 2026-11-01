@@ -76,7 +76,7 @@ class PricesConfigTest {
         assertThat(off.withVenueReleaseAfterMs(5).disabledVenues()).containsExactly("coinbase");
     }
 
-    // ------------------------------------------------------------------ the release of a round from a silent exchange (Р-77)
+    // ------------------------------------------------------------------ the release of a round from a silent exchange (D-77)
 
     @Test
     void aRoundIsLetGoFromASilentExchangeAfterTwoMinutesByDefault() {
@@ -122,7 +122,7 @@ class PricesConfigTest {
         assertThat(before.disabledVenues()).containsExactly("kraken");
     }
 
-    // ------------------------------------------------------------------ the release of a round whose source gives no price (Р-79)
+    // ------------------------------------------------------------------ the release of a round whose source gives no price (D-79)
 
     private static final PricesConfig.ReleaseAfter DISTINCT_WAITS =
             new PricesConfig.ReleaseAfter(1_000L, 2_000L, 3_000L, 4_000L, 5_000L, 6_000L);
@@ -199,7 +199,7 @@ class PricesConfigTest {
         assertThat(DISTINCT_WAITS.forFeed("kraken")).isEqualTo(4_000L);
         assertThat(DISTINCT_WAITS.forFeed("polymarket")).isEqualTo(5_000L);
         assertThat(DISTINCT_WAITS.forFeed("synthetic")).isEqualTo(6_000L);
-        assertThat(DISTINCT_WAITS.forFeed("unknown")).as("a feed nobody knows is no wait: the hour of Р-23").isZero();
+        assertThat(DISTINCT_WAITS.forFeed("unknown")).as("a feed nobody knows is no wait: the hour of D-23").isZero();
     }
 
     @Test

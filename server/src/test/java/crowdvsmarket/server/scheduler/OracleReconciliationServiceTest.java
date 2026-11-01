@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Task item 1c — FIXED INTERFACE (b)/(c) durable-delivery reconciliation (Р-40/41/47). Every
+ * Task item 1c — FIXED INTERFACE (b)/(c) durable-delivery reconciliation (D-40/41/47). Every
  * {@code seq} used here comes from {@link ServerMetaRepository#reserveOracleSeqRange} so it can
  * never collide with a real one another test (or this app's own background bots/scheduler) is
  * concurrently generating against the same shared Dev Services Postgres.

@@ -52,7 +52,7 @@ class MonthLongHourlySimulationTest {
     private static final int CONTRARIAN_COUNT = 5;
     private static final int FOLLOW_CROWD_COUNT = 5;
     private static final int PLAYER_COUNT = 50; // remaining 35 are general seeded random players
-    private static final double MODIFY_PROBABILITY = 0.10; // exercises Р-13's modify-before-start path
+    private static final double MODIFY_PROBABILITY = 0.10; // exercises D-13's modify-before-start path
     private static final long SEED_BASE = 20260401L;
 
     // --- strategies ---
@@ -138,7 +138,7 @@ class MonthLongHourlySimulationTest {
         }
     }
 
-    /** Independently recomputes Р-5/Р-14's crowd formula from the round's actual resolved bets
+    /** Independently recomputes D-5/D-14's crowd formula from the round's actual resolved bets
      * (as reported back by the engine) and cross-checks it against {@link CrowdAccount}'s own
      * result — a second implementation of the same formula, not a call into the production one. */
     private static void assertCrowdMathMatchesIndependentRecomputation(RoundReport report) {
@@ -213,7 +213,7 @@ class MonthLongHourlySimulationTest {
             RoundReport report = engine.runRound(window, prices);
 
             assertThat(seenRoundIds.add(report.window().roundId())).as("round id must be unique").isTrue();
-            // One position per player per round (Р-13), independent of BetBook's own guarantee.
+            // One position per player per round (D-13), independent of BetBook's own guarantee.
             assertThat(report.playerOutcomes()).extracting(PlayerRoundOutcome::playerId).doesNotHaveDuplicates();
 
             for (PlayerRoundOutcome outcome : report.playerOutcomes()) {
@@ -259,7 +259,7 @@ class MonthLongHourlySimulationTest {
         }
 
         // --- invariant: conservation, replay #2 -- the house mints starter packs and net round
-        // winnings, and burns net round losses (including a full loss on liquidation, Р-7);
+        // winnings, and burns net round losses (including a full loss on liquidation, D-7);
         // nothing else creates or destroys PLAY. totalNetFromReports was accumulated independently
         // above, from the engine's per-round reports rather than from the ledger's own entries.
         PlayAmount totalPacks = PlayAmount.ZERO;
@@ -270,7 +270,7 @@ class MonthLongHourlySimulationTest {
         }
         assertThat(totalBalance).as("total PLAY = packs minted + net round winnings/losses").isEqualTo(totalPacks.plus(totalNetFromReports));
 
-        // --- invariant: rating thresholds (Р-9/Р-18) ---
+        // --- invariant: rating thresholds (D-9/D-18) ---
         Season season = Season.of(Instant.ofEpochMilli(APRIL_START_MS));
         RatingBook ratings = new RatingBook(engine.ledger(), RatingBook.DEFAULT_ROUNDS_THRESHOLD);
         Map<String, PlayerIdentity> identities = new LinkedHashMap<>();

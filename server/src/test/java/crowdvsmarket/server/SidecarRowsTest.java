@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Р-107: the row of a withdrawal request, and its terminal state, are written by the caller once the event is durable in the journal - never
+ * D-107: the row of a withdrawal request, and its terminal state, are written by the caller once the event is durable in the journal - never
  * in the writer's turn. A failure of that write leaves the request recorded (the journal is the truth, the PLAY is escrowed): the rebuild
  * writes any row the table lacks from the engine, and a poller that offers a confirmation or a failure again finds the event recorded and
  * brings the row up to date.

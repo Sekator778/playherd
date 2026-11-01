@@ -1,5 +1,5 @@
 /**
- * The fixed-payout mode ("Win or lose", Р-106, `docs/product/fixed_payout_rules.md`): the pure rules the bet sheet and the result screens share.
+ * The fixed-payout mode ("Win or lose", D-106, `docs/product/fixed_payout_rules.md`): the pure rules the bet sheet and the result screens share.
  * A right guess pays 2 x the stake, a wrong one nothing, a tie (close equal to open) gives the stake back; the platform fee (3 % of the stake,
  * rounded UP to 0.001 PLAY) and the network fee (0.1 PLAY) are charged on top of the stake and kept on every outcome. The server computes them;
  * the quote here is the same arithmetic, shown before the player confirms.

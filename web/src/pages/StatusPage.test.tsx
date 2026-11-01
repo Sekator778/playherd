@@ -170,7 +170,7 @@ describe("Status — every market, its source and how old its price is", () => {
     expect(screen.queryByText(/Betting stays open meanwhile/)).toBeNull(); // it does not: the round that waits for a price holds the betting round
   });
 
-  it("says plainly that a round without a price holds up the rounds after it and pauses betting, for how long and counted from when, and that an empty one is skipped (Р-77, Р-79)", async () => {
+  it("says plainly that a round without a price holds up the rounds after it and pauses betting, for how long and counted from when, and that an empty one is skipped (D-77, D-79)", async () => {
     renderStatus({ markets: [priced("A")] });
     const note = (await screen.findByText(/A price is stale when its source has sent nothing newer within its limit/)).textContent ?? "";
     expect(note).toContain("A round that ends with no reliable price holds up the rounds after it");
@@ -201,7 +201,7 @@ describe("Status — every market, its source and how old its price is", () => {
   });
 });
 
-describe("Status — a crypto market's backup exchange, and the sources behind the prices (Р-76)", () => {
+describe("Status — a crypto market's backup exchange, and the sources behind the prices (D-76)", () => {
   const rowsOf = () => Array.from(document.querySelectorAll<HTMLElement>(".status-market"));
   /** The new catalogue plus a stock and an odds market — every kind of source on one page. */
   const mixed = () => [...spotCatalogue(), ...catalogue().filter((m) => m.id === "xyz_NVDA" || m.id === "PM900101")];

@@ -7,7 +7,7 @@ export const LAST_RESULTS = 5;
 export type RoundResult = "won" | "lost" | "flat";
 
 /**
- * One settled round as the streak reads it (`PublicProfileDto.streak`, Р-71): a win paid out more than the stake,
+ * One settled round as the streak reads it (`PublicProfileDto.streak`, D-71): a win paid out more than the stake,
  * a loss paid out less (a liquidation pays 0, so it is a loss), a flat round gave the stake back.
  */
 export function classifyRound(entry: Pick<ProfileRoundEntryDto, "payout" | "stake">): RoundResult {

@@ -21,7 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The instruments of Р-76: a market with a backup exchange is two things to the price pipeline, itself at its own venue and
+ * The instruments of D-76: a market with a backup exchange is two things to the price pipeline, itself at its own venue and
  * a shadow of it at the backup's, keyed {@code spot_BTC~kraken}. The shadow is polled on the backup's feed, kept in its own
  * ring, written to {@code price_snapshots} under its own key, restored from there at start, and seeded with history like
  * any market — and it is nothing else: not in the registry, no id a market can have.
@@ -341,7 +341,7 @@ class InstrumentsTest {
         assertThat(PriceSources.venueOf(SyntheticPriceSource.class)).isEmpty();
     }
 
-    // ---------------------------------------------------------------------- the instrument a round runs on, and its feed (Р-79)
+    // ---------------------------------------------------------------------- the instrument a round runs on, and its feed (D-79)
 
     @Test
     void aRoundRunsOnTheShadowOnlyWhenItWasDecidedOnTheBackupExchange() {

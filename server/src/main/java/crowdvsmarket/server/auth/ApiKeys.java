@@ -8,7 +8,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 
 /**
- * Р-106: the keys of API bots. A key is {@value #PREFIX} and 43 URL-safe characters (256 random bits); the server stores only its
+ * D-106: the keys of API bots. A key is {@value #PREFIX} and 43 URL-safe characters (256 random bits); the server stores only its
  * SHA-256 (hex), looked up by that hash, so a copy of the database opens nothing. The prefix makes a key recognisable to a secret
  * scanner and to its owner; a header value that does not have the shape is refused before any lookup.
  */

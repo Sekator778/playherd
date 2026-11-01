@@ -173,7 +173,7 @@ class GapBridgeRoundsTest {
         assertThat(candleRequests()).hasSize(1);
         RoundPriceData b = prices.resolve(btc, second);
 
-        assertThat(b.open()).isEqualByComparingTo(a.close()); // Р-40
+        assertThat(b.open()).isEqualByComparingTo(a.close()); // D-40
         assertThat(candleRequests()).as("the second round finds the gap filled: no request of its own").hasSize(1);
         // the price at the boundary is the close of the minute before it, one millisecond old
         assertThat(a.close()).isEqualByComparingTo(tape.markPrice(END - 1));

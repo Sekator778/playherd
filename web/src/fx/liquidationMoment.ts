@@ -1,8 +1,8 @@
 /**
- * The mid-round LIQUIDATION moment (Р-50: "ликвидация — сразу в середине раунда, «трещина» и штамп
+ * The mid-round LIQUIDATION moment (D-50: "ликвидация — сразу в середине раунда, «трещина» и штамп
  * LIQUIDATED"). The moment fires the first time `myPositions()` reports a RUNNING position as liquidated
  * (`useLiquidationWatcher.ts`) — not when its round settles, which can be many minutes later — and says what is
- * true at that point: the stake is gone (Р-7) and the round is still running.
+ * true at that point: the stake is gone (D-7) and the round is still running.
  *
  * "Once" has to hold across reloads and tabs, so the fact that a round's liquidation was announced is kept in
  * `localStorage` (a key per player and round, pruned after a week). A claim is taken ATOMICALLY across tabs where the
@@ -17,7 +17,7 @@
  * been told, the settlement is a quiet one-line summary ({@link quietSummaryOf}) instead of a second flash,
  * stamp and shake for the same loss.
  *
- * And when the round is instead CANCELLED, every bet in it comes back — liquidated ones too (Р-23) — which contradicts
+ * And when the round is instead CANCELLED, every bet in it comes back — liquidated ones too (D-23) — which contradicts
  * what the moment said ("your whole stake is lost… unless the round is cancelled"). Cancelled rounds create no
  * history row, so `unseenResults()` never lists them: the watcher follows up every announced liquidation whose
  * position has left `myPositions()` ({@link pendingFollowUps}), asks the round what became of it, and — when it was
@@ -240,7 +240,7 @@ export function liquidationInfoOf(position: MyPositionDto): LiquidationInfo {
 
 /**
  * The event of a position liquidated mid-round. The stake left the balance at `placeBet` and a liquidation pays
- * nothing back (Р-7), so the headline is `−stake`, and the card prints no balance for it: `balanceBefore` and
+ * nothing back (D-7), so the headline is `−stake`, and the card prints no balance for it: `balanceBefore` and
  * `balanceAfter` are 0 here instead of a guess (no request is made to learn them — the moment must not wait).
  */
 export function liquidationMomentEvent(position: MyPositionDto, playerId: string, nowMs: number): ResultEvent {
@@ -270,7 +270,7 @@ export function quietSummaryOf(event: ResultEvent): ResultEvent {
 }
 
 /**
- * The quiet note for a liquidated bet whose round was CANCELLED: the stake is back (Р-23). `info` is what the claim
+ * The quiet note for a liquidated bet whose round was CANCELLED: the stake is back (D-23). `info` is what the claim
  * remembered of the position — absent for a claim an older build wrote, and the note then names the round without a
  * stake rather than inventing one. `asset`/`durationSec` come from the cancelled round itself.
  */

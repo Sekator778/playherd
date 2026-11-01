@@ -19,7 +19,7 @@ import java.util.List;
  * live ticks the price feed already delivers ({@code TickStore}, {@code MinuteBars}), kept for three hours per market in a
  * fixed ring: a request is a copy of at most {@link #MAX_MINUTES} bars from memory, never the engine's lock.
  *
- * <p><b>Exchanges (Р-76).</b> Like {@code priceSeries}, the candles of a market with a backup exchange are those of its
+ * <p><b>Exchanges (D-76).</b> Like {@code priceSeries}, the candles of a market with a backup exchange are those of its
  * <i>primary</i> exchange only; while the primary is silent there are holes, not the backup's bars stitched in.
  *
  * <p><b>Only finished minutes.</b> The minute in progress is not in the answer; a minute without a tick has no candle (the

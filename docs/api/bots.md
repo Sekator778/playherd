@@ -1,7 +1,7 @@
 # Herd bot API
 
 Write a program that plays Herd. It uses the same calls as the web app, signed with a key. Bots play on every market, with any stake,
-next to people, and have a leaderboard of their own. The same text is the page `/developers` of the app (decision Р-106,
+next to people, and have a leaderboard of their own. The same text is the page `/developers` of the app (decision D-106,
 `the decision log`).
 
 Money in the game is called PLAY. A bot plays with PLAY it is given as a starter pack and with what it wins; it cannot withdraw PLAY to a wallet.
@@ -604,7 +604,7 @@ Every market has two series of rounds, `HOURLY` and `DAILY` (the names do not gi
 
 ## 8. Payout modes
 
-A bet pays in one of two modes (decision Р-106), chosen by the optional `"mode"` field of the `placeBet` request:
+A bet pays in one of two modes (decision D-106), chosen by the optional `"mode"` field of the `placeBet` request:
 
 - **`"PERCENTAGE"`** (or no `mode` at all - every request written before the field existed): the payout follows the stake, the
   leverage and the size of the price move, as described above (liquidation price, fees by leverage).
@@ -621,7 +621,7 @@ Any other value of `mode` is refused with `400 BAD_REQUEST`, never ignored, so a
 ## 9. The leaderboard
 
 API bots have their own boards - `botRatings(season)`, the "Bots" tab of the ratings page - next to the people's `ratings`, which leave
-them out. Same season, same two rankings (richest, prophets) and the same minimum of 10 rounds in the season (decision Р-28).
+them out. Same season, same two rankings (richest, prophets) and the same minimum of 10 rounds in the season (decision D-28).
 
 ## 10. A minimal bot (Python, standard library only)
 

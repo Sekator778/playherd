@@ -104,7 +104,7 @@ function ledgerIcon(entry: LedgerEntryDto, net: number | undefined): ReactNode {
  *  same `RollingDigits` the result-moment card and header balance pill use, and flashes its
  *  border win/loss-colored for one cycle when it moves (`value-flash-up`/`-down`, fx.css) — the
  *  same treatment `live-round.md` §5 gives the Crowd page's stat tiles. Doubles as the "live"
- *  feedback for an incoming deposit (Р-53, `ux_spec.md` §8): once `usePoll` below picks up the
+ *  feedback for an incoming deposit (D-53, `ux_spec.md` §8): once `usePoll` below picks up the
  *  resulting `DEPOSIT` ledger entry, the balance rolls and flashes on its own, no separate
  *  "deposit arrived" mechanism needed. */
 function BalanceCard({ balance, withdrawable }: { balance: string; withdrawable?: string }) {
@@ -140,7 +140,7 @@ function BalanceCard({ balance, withdrawable }: { balance: string; withdrawable?
 }
 
 /**
- * Real on-chain deposit (Р-53): the player's own dedicated address (task's FIXED INTERFACE,
+ * Real on-chain deposit (D-53): the player's own dedicated address (task's FIXED INTERFACE,
  * chainsvc `POST /v1/play/deposit-address`, proxied by the server as `myDepositAddress`) — they
  * send PLAY to it themselves from Sage; there is nothing to submit here. Replaces the old
  * self-reported "amount you sent" form entirely (`contract.ts`'s `DepositAddressDto` doc —
@@ -265,8 +265,8 @@ function WithdrawalStatusRow({ w }: { w: WithdrawalRequestDto }) {
 }
 
 /**
- * Real on-chain withdrawal (Р-53): destination is always the player's own registered address
- * (Р-57) — shown, never editable, so there's no risk of a typo sending PLAY somewhere unrecoverable.
+ * Real on-chain withdrawal (D-53): destination is always the player's own registered address
+ * (D-57) — shown, never editable, so there's no risk of a typo sending PLAY somewhere unrecoverable.
  * Polls `Api.withdrawal(requestId)` (task's FIXED INTERFACE state machine, mirrored 1:1 by
  * `WithdrawalState`) until it reaches `CONFIRMED`/`FAILED`, same polling shape as the rest of this
  * app (`usePoll`), just started per-request rather than on a fixed screen-level interval.
@@ -489,7 +489,7 @@ export function WalletContent() {
 
   // Polls while this tab is visible (`usePoll`'s own contract) so an incoming deposit's `DEPOSIT`
   // ledger entry — credited automatically by the server once chainsvc reports it confirmed,
-  // there's no push/subscription mechanism for it — shows up without a manual refresh (Р-53:
+  // there's no push/subscription mechanism for it — shows up without a manual refresh (D-53:
   // "live status of incoming deposits").
   usePoll(load, 5000, []);
 
@@ -607,12 +607,12 @@ export function WalletPage() {
   return (
     <div>
       <h1>{t("wallet.title")}</h1>
-      {/* Р-63: the sticky top DEMO banner is gone from every screen — this is where that fact
+      {/* D-63: the sticky top DEMO banner is gone from every screen — this is where that fact
        *  still lives, as plain text, on the screen where balances/deposits/withdrawals actually
        *  happen (task: "keep factual labels where they matter... in the wallet/How it works
        *  page"). */}
       <p className="disclaimer-line">{t("wallet.disclaimer")}</p>
-      {/* Р-63: same fact `ServerInfoBanner` used to show as a sticky top strip on every screen —
+      {/* D-63: same fact `ServerInfoBanner` used to show as a sticky top strip on every screen —
        *  renders nothing at all against `MockApi` (no `serverInfo()`, `Common.tsx`'s own doc
        *  comment) or a live (non-replay) `RealApi` build; only ever appears in test/replay mode. */}
       <ServerInfoBanner />

@@ -1,5 +1,5 @@
 /**
- * The bet sheet (Р-98): a tap on UP or DOWN opens it; stake chips, three risk levels clamped to what the market and the stake allow, the
+ * The bet sheet (D-98): a tap on UP or DOWN opens it; stake chips, three risk levels clamped to what the market and the stake allow, the
  * plain-words example, ONE button. Signed out, the first step is inside the sheet and the choice survives the sign-in.
  */
 import { StrictMode } from "react";
@@ -90,7 +90,7 @@ const pressed = (el: HTMLElement) => el.getAttribute("aria-pressed") === "true";
 beforeEach(() => {
   forgetBetAttempts();
   window.localStorage.clear();
-  // the sheet opens on "Win or lose" for a player who never chose (Р-106); these tests are about the "%" mode, so that is the choice made
+  // the sheet opens on "Win or lose" for a player who never chose (D-106); these tests are about the "%" mode, so that is the choice made
   window.localStorage.setItem("herd.betMode", "PERCENTAGE");
   setProMode(false);
 });
@@ -99,7 +99,7 @@ afterEach(() => {
   clearBetDraft();
 });
 
-describe("the sheet, fees (Р-102, fee_display_venues §4)", () => {
+describe("the sheet, fees (D-102, fee_display_venues §4)", () => {
   it("opens the breakdown with the server's numbers and says where the money goes: the HERD account", async () => {
     const { open, user } = setup();
     open("DOWN");
@@ -350,7 +350,7 @@ describe("signed out: the first step is in the sheet, and the choice survives th
   });
 });
 
-describe("the sheet, Win or lose (Р-106)", () => {
+describe("the sheet, Win or lose (D-106)", () => {
   beforeEach(() => {
     window.localStorage.removeItem("herd.betMode"); // a player who never chose
   });

@@ -9,7 +9,7 @@ import { loadBetMode } from "./betModeModel";
 import { closeBetSheet, useBetSheetRequest } from "./betSheetState";
 import { NOW, bettingRoundOf, market, marketsOf, seriesDto } from "./testFixtures";
 
-/** Р-106: the Pro slip pays in the percentage mode; its "Win or lose" chip hands the bet over to the bet sheet in the fixed mode. */
+/** D-106: the Pro slip pays in the percentage mode; its "Win or lose" chip hands the bet over to the bet sheet in the fixed mode. */
 
 const account: PlayerAccountDto = { playerId: TEST_PLAYER.playerId, balance: "5000.000", currentSeason: "2026-10", inPlay: "0.000" };
 
@@ -47,7 +47,7 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe("BetSlip — the payout mode switch (Р-106)", () => {
+describe("BetSlip — the payout mode switch (D-106)", () => {
   it("shows Win or lose next to %, and Win or lose opens the bet sheet in the fixed mode for this round", async () => {
     window.localStorage.setItem("herd.betMode", "PERCENTAGE");
     renderSlip("PERP");

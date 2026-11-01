@@ -1,5 +1,5 @@
-//! Queueing-logic unit tests for the PLAY withdrawal publisher (Р-6,
-//! decision Р-53 2026-09-26) -- no network, no simulator, just
+//! Queueing-logic unit tests for the PLAY withdrawal publisher (D-6,
+//! decision D-53 2026-09-26) -- no network, no simulator, just
 //! `WithdrawalPublisher::{enqueue, tick}` against `FakePlayChainClient`
 //! (`tests/play_common/mod.rs`) and a temp data dir. Mirrors
 //! `tests/oracle_queue.rs`'s own approach for the oracle publisher. Exercises
@@ -331,7 +331,7 @@ fn external_spend_of(treasury: Cat, owner: &c2_cli::keys::WalletKey) -> Result<(
     Ok((draft.coin_spends[0].clone(), draft.next_coin))
 }
 
-/// Task requirement (decision Р-53 follow-up, `docs/research/
+/// Task requirement (decision D-53 follow-up, `docs/research/
 /// chain_service.md` §13): "stale cached coin -> adopts the live one". The
 /// cached treasury coin (A) is spent by something this publisher never
 /// tracked as its own in-flight batch (simulating e.g. a manual `c2

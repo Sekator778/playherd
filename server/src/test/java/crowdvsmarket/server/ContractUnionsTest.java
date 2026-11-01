@@ -92,7 +92,7 @@ class ContractUnionsTest {
             new LinkedHashSet<>(List.of(HyperliquidPriceSource.NAME, CoinbasePriceSource.NAME, KrakenPriceSource.NAME,
                     PolymarketPriceSource.NAME, SyntheticPriceSource.NAME)), Set.of());
 
-    /** The exchanges a round can run on besides a market's primary (Р-76): the venues a backup may be. */
+    /** The exchanges a round can run on besides a market's primary (D-76): the venues a backup may be. */
     private static final Side BACKUP_VENUES = new Side("server.markets.catalog.CatalogConfig.BACKUP_VENUES",
             new LinkedHashSet<>(new TreeSet<>(CatalogConfig.BACKUP_VENUES)), Set.of());
 
@@ -102,7 +102,7 @@ class ContractUnionsTest {
             new LinkedHashSet<>(List.of(HyperliquidPriceSource.NAME, CoinbasePriceSource.NAME, KrakenPriceSource.NAME)),
             Set.of());
 
-    /** The clients a feedback message may name (Р-81): what the server keeps in {@code feedback.client}. */
+    /** The clients a feedback message may name (D-81): what the server keeps in {@code feedback.client}. */
     private static final Side FEEDBACK_CLIENTS = new Side("server.service.FeedbackService.CLIENTS",
             new LinkedHashSet<>(new TreeSet<>(FeedbackService.CLIENTS)), Set.of());
 

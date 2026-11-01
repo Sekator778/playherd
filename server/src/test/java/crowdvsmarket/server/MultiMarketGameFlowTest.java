@@ -28,7 +28,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * The multi-market game end to end (Р-69, docs/research/markets_architecture.md): one PLAY balance
+ * The multi-market game end to end (D-69, docs/research/markets_architecture.md): one PLAY balance
  * behind bets on BTC, a 25x perpetual and a 10x probability market in the very same window, each
  * settled in its own units by its own engines and crowd account, with every price leaving the server as
  * the market's raw string. Time and prices are the test's: the scheduler is off and
@@ -92,7 +92,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         gameService.placeBet(p1, bet(oddsBet, Enums.Direction.UP, 10, "200.000"), nowMs);
         gameService.placeBet(p2, bet(btcBet, Enums.Direction.DOWN, 5, "100.000"), nowMs);
         // 10 000 - 1000 staked - fees: BTC 500 * 5 * 0.92 bp = 0.23 + 0.1, ETH 300 * 20 * 1.05 bp = 0.63 + 0.1,
-        // odds 200 * 10 * 2.5 bp = 0.5 + 0.1 (economy stage A, Р-102)
+        // odds 200 * 10 * 2.5 bp = 0.5 + 0.1 (economy stage A, D-102)
         assertThat(gameService.account(p1).balance()).isEqualTo("8998.340");
         assertThat(gameService.account(p1).inPlay()).isEqualTo("1000.000");
 
@@ -623,7 +623,7 @@ class MultiMarketGameFlowTest extends LiveGameTestBase {
         gameService.placeBet(p, bet(betting, Enums.Direction.UP, 2, "100.000"), betting.startMs() - 1);
         long btcBefore = roundProgress.next("BTC", HOURLY).startMs();
 
-        // the running window ends, its price cannot be read, and nobody bet on it (Р-79): it is skipped at once, with no
+        // the running window ends, its price cannot be read, and nobody bet on it (D-79): it is skipped at once, with no
         // result — and another market (BTC) is not held up by it
         scheduler.tick(running.endMs() + 1);
         assertThat(roundResults.exists(running.roundId())).isFalse();

@@ -14,7 +14,7 @@ import java.util.function.LongSupplier;
 import org.jboss.logging.Logger;
 
 /**
- * The exchange each round of a market with a backup runs on — what Р-76 ("a round runs entirely on one exchange") fixes:
+ * The exchange each round of a market with a backup runs on — what D-76 ("a round runs entirely on one exchange") fixes:
  * decided <b>once</b>, when the round opens, and never changed.
  *
  * <p>This class holds the decisions and writes them; {@link LiveMarketPrices} makes them (it has the tick rings the choice

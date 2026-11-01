@@ -165,7 +165,7 @@ export function betPlanFor(market) {
   return BET_PLAN.map((bet) => ({ ...bet, leverage: clampLeverage(bet.leverage, maxLeverageForStake(cap, Number(bet.stake))) }));
 }
 
-/** The shortest series of the market, the one of the 3-minute rounds on the stand (`interval` `HOURLY`, Р-46). */
+/** The shortest series of the market, the one of the 3-minute rounds on the stand (`interval` `HOURLY`, D-46). */
 export function hourlySeries(market) {
   return (market.series ?? []).find((s) => s.interval === "HOURLY") ?? null;
 }
@@ -173,7 +173,7 @@ export function hourlySeries(market) {
 /**
  * What keeps `market` from being played now — `null` when nothing does (a `problem`, see above). Not played: a market that
  * is closed, that has no price yet or whose price is stale (no live source behind it; the stand then settles nothing for it,
- * Р-77/Р-79), whose series is not running or has no round open for bets, whose underlying event is about to end (its rounds
+ * D-77/D-79), whose series is not running or has no round open for bets, whose underlying event is about to end (its rounds
  * would be cancelled), or that allows no leverage. `serverTimeMs` is the stand's own clock (`MarketsDto.serverTimeMs`).
  */
 export function unplayable(market, { serverTimeMs }) {

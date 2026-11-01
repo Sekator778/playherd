@@ -301,7 +301,7 @@ class TradePriceHistoryTest {
         now.set(END + 180_000L + 61_000L);
         RoundPriceData second = prices.resolve(nvda, new RoundWindow(nvda.id(), Interval.HOURLY, END, END + 180_000L));
 
-        assertThat(second.open()).isEqualByComparingTo(first.close()); // Р-40
+        assertThat(second.open()).isEqualByComparingTo(first.close()); // D-40
         assertThat(second.close()).isEqualByComparingTo("121300.00");
         assertThat(second.sourceTsMs()).isEqualTo(START + 360_000L); // a real tick again
         assertThat(source.requests).hasSize(2);

@@ -110,7 +110,7 @@ public record CatalogConfig(
                 spotMaxLeverage, spotBackup, venues);
     }
 
-    /** The venues a backup may be: where a round can run besides the primary (Р-76). */
+    /** The venues a backup may be: where a round can run besides the primary (D-76). */
     public static final Set<String> BACKUP_VENUES = Set.of("coinbase", "kraken");
     /** What {@code herd.markets.spot.backup} says for a symbol that has no backup. */
     public static final String NO_BACKUP = "none";
@@ -131,7 +131,7 @@ public record CatalogConfig(
     /** The caps the six markets had on Hyperliquid's perpetuals (hl_multi_asset_live.md §2.1: BTC 40x, ETH 25x, SOL 20x, XRP 20x, DOGE 10x, HYPE 10x). */
     public static final String DEFAULT_SPOT_MAX_LEVERAGE = "BTC:40,ETH:25,SOL:20,XRP:20,DOGE:10,HYPE:10";
     /**
-     * Backup exchange per symbol (Р-76): Kraken's spot market behind Coinbase's for the five coins Coinbase prices, Coinbase's
+     * Backup exchange per symbol (D-76): Kraken's spot market behind Coinbase's for the five coins Coinbase prices, Coinbase's
      * HYPE-USD behind Hyperliquid's own HYPE/USDC. Where Kraken's pair is named {@code <SYMBOL>/USD} and Coinbase's
      * {@code <SYMBOL>-USD} — the names of both venues' streams ({@code SpotCatalog#backupRef}).
      */

@@ -13,7 +13,7 @@
 # compile C/assembly through the `cc` crate, so a plain `rustup target add`
 # is not enough when cross-compiling -- a target-matching cross gcc plus
 # `CC_<triple>`/`AR_<triple>`/`CARGO_TARGET_<TRIPLE>_LINKER` are needed too
-# (see the builder `RUN` below). On this Mac (arm64, decision Р-44) and in
+# (see the builder `RUN` below). On this Mac (arm64, decision D-44) and in
 # any single-platform local build where `TARGETPLATFORM == BUILDPLATFORM`,
 # this is a native build as before, just via an explicit `--target`.
 #
@@ -31,7 +31,7 @@
 # (a multi-platform build needs `--push`; for a local image build one
 # platform at a time with `--load`, e.g. `--platform linux/arm64 --load`)
 #
-# `docker-compose.yml` (project "herd", Р-44) is expected to set this
+# `docker-compose.yml` (project "herd", D-44) is expected to set this
 # service's `build.context` to `./chain` and `build.dockerfile` to
 # `c2-svc/Dockerfile` accordingly (week-3 integration work, not this crate).
 # It does not set `platform:`, so its build stays on the native path

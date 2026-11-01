@@ -17,7 +17,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 /**
  * Append-only persistence for {@link GameEvent} — see that interface's javadoc for what this log is (and is not) used for.
  *
- * <p>Since Р-107 the events live in the {@link Journal} (a Chronicle Queue on disk); {@code game_events} is a copy that the
+ * <p>Since D-107 the events live in the {@link Journal} (a Chronicle Queue on disk); {@code game_events} is a copy that the
  * {@link JournalProjector} fills after it. Everything that used to read or write the table goes through here and now reads or writes
  * the journal: an event is accepted when {@link #appendAll} has returned (its excerpt is synced to disk), and the rebuild of the engine
  * reads the journal, never the table.

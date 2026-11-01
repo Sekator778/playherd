@@ -7,7 +7,7 @@
  * for field, formula for formula, so the bet slip's client-side preview can never diverge from
  * what the server (built on the Java engine) will actually enforce.
  *
- * Per market (Р-69, `docs/research/markets_architecture.md` §8): every function takes the market's
+ * Per market (D-69, `docs/research/markets_architecture.md` §8): every function takes the market's
  * `{ maxLeverage, priceDecimals }` as its last argument (default: BTC, 40 and 2 — the old
  * behaviour). A price handed to a function is the RAW price of the market (what every DTO carries,
  * `priceDecimals` fractional digits); the engine works on the LOT price instead
@@ -192,7 +192,7 @@ export function payoutAtRoundClose(
 }
 
 /**
- * `LiquidationCalculator.payoutOnLiquidation`: always `0.00` — product decision Р-7
+ * `LiquidationCalculator.payoutOnLiquidation`: always `0.00` — product decision D-7
  * (`the decision log`): on liquidation the player loses the entire stake. The
  * liquidation *price* itself is unaffected and still follows Hyperliquid's formula exactly.
  */
@@ -232,7 +232,7 @@ export function isLiquidatedInRange(
 }
 
 /** Convenience: `%` adverse move from `entryPriceUsed` to `liquidationPrice` — the "% move to
- *  liquidation" figure shown before a bet is placed (Р-33, `LiquidationPreviewDto.percentToLiquidation`,
+ *  liquidation" figure shown before a bet is placed (D-33, `LiquidationPreviewDto.percentToLiquidation`,
  *  contract.ts — a plain `number`, e.g. `0.025` = 2.5%, not itself money-scaled; a ratio of two
  *  prices of the same market, so the lot scale cancels). */
 export function percentToLiquidation(entryPriceUsed: Decimal.Value, liqPrice: Decimal.Value): number {

@@ -228,7 +228,7 @@ describe("ohlcFor — a round's open, close and extremes", () => {
     }
   });
 
-  it("close(N) = open(N+1): consecutive rounds of a series meet at the same price (Р-40)", () => {
+  it("close(N) = open(N+1): consecutive rounds of a series meet at the same price (D-40)", () => {
     for (const m of [mockMarketById("ETH")!, mockMarketById("PM900105")!]) {
       const w1 = windowFor("HOURLY", SIM_BASE_MS - 5 * HOUR_MS);
       const w2 = windowFor("HOURLY", w1.endMs);

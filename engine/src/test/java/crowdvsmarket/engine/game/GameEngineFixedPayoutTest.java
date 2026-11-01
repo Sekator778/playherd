@@ -24,7 +24,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-106, docs/product/fixed_payout_rules.md: the fixed-payout mode through {@link GameEngine}. A right direction pays 2 x stake, a wrong
+ * D-106, docs/product/fixed_payout_rules.md: the fixed-payout mode through {@link GameEngine}. A right direction pays 2 x stake, a wrong
  * one 0, a tie (close equal to open) the stake; the platform fee (3% of the stake, rounded up to 0.001 PLAY) and the network fee (0.1 PLAY)
  * are charged on top of the stake and kept on every outcome. Amounts are exact mojos.
  */

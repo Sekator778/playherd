@@ -1,7 +1,7 @@
 package crowdvsmarket.engine.round;
 
 /**
- * How a bet is paid (Р-106, docs/product/fixed_payout_rules.md). {@link #PERCENTAGE} is the original mode: the payout follows
+ * How a bet is paid (D-106, docs/product/fixed_payout_rules.md). {@link #PERCENTAGE} is the original mode: the payout follows
  * stake x leverage x the price move, with liquidation. {@link #FIXED} has no leverage and no liquidation: a correct direction pays
  * twice the stake, a wrong one pays nothing, a tie (close equal to open) gives the stake back.
  */

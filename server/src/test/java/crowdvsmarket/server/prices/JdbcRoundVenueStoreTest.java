@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@code round_venues} (V9) over the real database: a round's row is written once and whoever wrote first decided, the
- * other callers read that row back, and the rows of the last retention are what the server loads at start (Р-76).
+ * other callers read that row back, and the rows of the last retention are what the server loads at start (D-76).
  */
 @QuarkusTest
 class JdbcRoundVenueStoreTest {

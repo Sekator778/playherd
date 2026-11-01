@@ -1,4 +1,4 @@
-# Task runner (Р-66): one entry point over the native build tools — Maven (engine + server),
+# Task runner (D-66): one entry point over the native build tools — Maven (engine + server),
 # Cargo (chain/), npm (web/). Mirrors the CI gates in .github/workflows/ci.yml so a green
 # `make check` locally means the same checks CI runs. `make` or `make help` lists the targets.
 #
@@ -94,7 +94,7 @@ apk: web-deps ## Android debug APK (Capacitor); HERD_APP_URL=https://host points
 
 # Tests of the stand script and of the end-to-end runs that need neither docker nor a network: a fake `docker` for
 # tools/stand.sh, a fake stand on localhost with rounds of a fraction of a second for tools/e2e, a fake server on localhost for
-# `tools/herd-operator.sh feedback` (Р-81). Not part of `check`: no CI job runs them.
+# `tools/herd-operator.sh feedback` (D-81). Not part of `check`: no CI job runs them.
 test-tools: ## tests of tools/stand.sh, of the tools/e2e runs (a fake stand) and of herd-operator.sh feedback; no docker, no network
 	bash tools/test-stand.sh
 	node --test tools/e2e/*.test.mjs tools/operator.test.mjs
@@ -156,5 +156,5 @@ $(ORACLE_STAMP): tools/verify-oracle/requirements.txt
 verify-oracle: $(ORACLE_STAMP) ## public oracle verifier (testnet11) in its own venv, cross-checked against WEB_URL (WEB_URL= for chain only)
 	$(ORACLE_VENV)/bin/python tools/verify-oracle/verify_oracle.py $(ORACLE_LAUNCHER) $(if $(WEB_URL),--stand-url $(WEB_URL),)
 
-# --- public repository  (Р-54) ---
+# --- public repository  (D-54) ---
 

@@ -129,7 +129,7 @@ describe("the details that broke before", () => {
       const market = markets.find((m) => m.id === round.marketId);
       for (const field of ["kind", "priceDecimals", "source"] as const) {
         if (round[field] === undefined || round[field] === null) problems.push(`${name}.${field} is missing`);
-        // A round runs entirely on one exchange, chosen when it starts (Р-76): its main one, or — when that had no price — its backup.
+        // A round runs entirely on one exchange, chosen when it starts (D-76): its main one, or — when that had no price — its backup.
         else if (field === "source" && market && (round.source === market.source || (market.backupSource != null && round.source === market.backupSource))) continue;
         else if (market && market[field] !== round[field]) problems.push(`${name}.${field} is ${String(round[field])} but market ${market.id} says ${String(market[field])}`);
       }
@@ -137,7 +137,7 @@ describe("the details that broke before", () => {
     expect(problems).toEqual([]);
   });
 
-  it("a market's backup exchange is another source than its own, and a price's venue is one of the two (Р-76)", () => {
+  it("a market's backup exchange is another source than its own, and a price's venue is one of the two (D-76)", () => {
     const markets = wireResponse<{
       markets: Array<{ id: string; source: string; backupSource?: string | null; price: { venue?: string | null } | null }>;
     }>("markets").markets;

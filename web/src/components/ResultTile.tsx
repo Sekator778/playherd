@@ -47,7 +47,7 @@ export function ResultTile({
   mode,
 }: {
   roundId: RoundId;
-  /** The market's ticker ("BTC", "NVDA", "GER") — which market the round was played in (Р-69). */
+  /** The market's ticker ("BTC", "NVDA", "GER") — which market the round was played in (D-69). */
   symbol?: string;
   /** The series' real length ("3 MIN"), when known: from the history row's own `durationSec`, or — for a
    *  server that predates it — the market list; without either the tile simply leaves it out (never
@@ -72,7 +72,7 @@ export function ResultTile({
   payout?: string;
   /** The fees paid on this bet (herd + network), PLAY, when the caller knows them: a small "fees 1.07" under the line. `ProfileRoundEntryDto` carries none yet. */
   fees?: number | null;
-  /** Р-106: how the bet was paid; "FIXED" shows "Win or lose" in place of the boost and words a tie as "Tie — stake back". */
+  /** D-106: how the bet was paid; "FIXED" shows "Win or lose" in place of the boost and words a tie as "Tie — stake back". */
   mode?: BetMode | null;
 }) {
   const t = useT();

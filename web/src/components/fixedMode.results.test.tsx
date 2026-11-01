@@ -1,5 +1,5 @@
 /**
- * What a "Win or lose" (fixed-payout, Р-106) bet shows after it is placed: the dock and the own-position card while the round runs, the
+ * What a "Win or lose" (fixed-payout, D-106) bet shows after it is placed: the dock and the own-position card while the round runs, the
  * result tile and the result moment when it settles ("+S", "−S", "Tie — stake back"), and the wire of the mock. No boost, no wipeout line.
  */
 import { render, screen, within } from "@testing-library/react";

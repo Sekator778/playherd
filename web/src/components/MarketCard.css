@@ -1,4 +1,4 @@
-/* Market cards (lobby, Р-69) and the round badge shared with the room / positions strip. Tokens come
+/* Market cards (lobby, D-69) and the round badge shared with the room / positions strip. Tokens come
    from index.css / direction.md — no new colour values here, only mixes of the existing ones.
    `--mk` is the market's own badge colour (`api/marketMeta.ts`), set inline per card.
 
@@ -191,7 +191,7 @@
 .mk-card--stale .mk-card__price-num {
   color: var(--text-muted);
 }
-/* The number is the BACKUP exchange's (Р-76): a plain muted mark, the reason is its hover text — not a warning. */
+/* The number is the BACKUP exchange's (D-76): a plain muted mark, the reason is its hover text — not a warning. */
 .mk-card__venue {
   font-size: 11px;
   font-weight: 700;

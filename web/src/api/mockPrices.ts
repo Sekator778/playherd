@@ -12,7 +12,7 @@
  * leave 0.10–0.90 for the starting levels in the catalog. Numbers are demo-grade, not calibrated
  * to any real feed; nothing here is a Coinbase, Kraken, Hyperliquid or Polymarket reading.
  *
- * A round's extremes (the liquidation check, Р-7) are the lowest/highest price on a fixed grid
+ * A round's extremes (the liquidation check, D-7) are the lowest/highest price on a fixed grid
  * inside the window (every simulated minute for an hourly round, every 15 minutes for a daily one)
  * — the same grid whether the round is running ("so far") or settled, so a position that has been
  * liquidated on the path so far can never become un-liquidated at settlement.

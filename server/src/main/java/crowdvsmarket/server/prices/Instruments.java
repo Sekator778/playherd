@@ -8,7 +8,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * What the price pipeline prices for a market: the <b>instruments</b> of Р-76 ("a round runs entirely on one exchange"). A
+ * What the price pipeline prices for a market: the <b>instruments</b> of D-76 ("a round runs entirely on one exchange"). A
  * market that has a backup exchange — its {@code sourceMeta} says {@code {"backup":{"source":"kraken","ref":"BTC/USD"}}}
  * — has two: itself, priced by its own {@code source} and {@code sourceRef} (the primary venue), and a <b>shadow</b>, a copy
  * of the market with {@code id = "<marketId>~<backupSource>"} ({@code spot_BTC~kraken}), {@code source} the backup venue and
@@ -92,7 +92,7 @@ public final class Instruments {
     }
 
     /**
-     * The instrument a round that was decided on {@code venue} runs on (Р-76): the shadow when that is the market's backup
+     * The instrument a round that was decided on {@code venue} runs on (D-76): the shadow when that is the market's backup
      * exchange, the market itself for its own exchange, for a round with no decision and for a market without a backup.
      */
     public static Market runningOn(Market market, Optional<String> venue) {

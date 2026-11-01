@@ -74,11 +74,11 @@ public final class ApiException extends RuntimeException {
         return new ApiException(Enums.ApiErrorCode.INVALID_AMOUNT, 400, message);
     }
 
-    /** Р-53 update: {@code requestDeposit} (the pre-Р-53 self-report RPC) is now PERMANENTLY
+    /** D-53 update: {@code requestDeposit} (the pre-D-53 self-report RPC) is now PERMANENTLY
      *  retired, unconditionally — not merely gated by {@code herd.deposit.enabled} the way it was
      *  under the original task item 1 fix this method dates from. Self-reporting an amount and
      *  auto-crediting it was exactly the fraud vector that fix closed (live-reproduced: 5,000,000
-     *  fake PLAY minted in ten seconds); real on-chain deposits (Р-53) are detected and credited
+     *  fake PLAY minted in ten seconds); real on-chain deposits (D-53) are detected and credited
      *  automatically by the deposit poller once a player sends PLAY to {@code myDepositAddress()}
      *  — there is no legitimate reason for this RPC to ever credit anything again, flag or no
      *  flag. Same {@link Enums.ApiErrorCode#DEPOSIT_VERIFICATION_UNAVAILABLE}/503 as before (no
@@ -93,21 +93,21 @@ public final class ApiException extends RuntimeException {
 
     /** Same task item, same reasoning, for {@code requestWithdrawal} — unlike {@link
      *  #depositVerificationUnavailable()}, still gated by {@code herd.withdrawal.enabled}
-     *  (Р-53: once enabled, {@code requestWithdrawal} performs the real on-chain flow). */
+     *  (D-53: once enabled, {@code requestWithdrawal} performs the real on-chain flow). */
     public static ApiException withdrawalUnavailable() {
         return new ApiException(Enums.ApiErrorCode.WITHDRAWAL_UNAVAILABLE, 503,
                 "withdrawals are not available yet — this server is not configured to send PLAY "
                         + "on-chain as a real CAT; nothing was debited");
     }
 
-    /** Р-53: {@code requestWithdrawal} rejects an amount below the minimum (предложение,
+    /** D-53: {@code requestWithdrawal} rejects an amount below the minimum (предложение,
      *  {@code GameService.MIN_WITHDRAWAL}), distinct from {@link #invalidAmount(String)} (which
      *  covers "not positive at all") so a client can tell the two apart. */
     public static ApiException withdrawalBelowMinimum(String message) {
         return new ApiException(Enums.ApiErrorCode.WITHDRAWAL_BELOW_MINIMUM, 422, message);
     }
 
-    /** Р-53: {@code myDepositAddress} could not reach chainsvc to derive a brand-new player's
+    /** D-53: {@code myDepositAddress} could not reach chainsvc to derive a brand-new player's
      *  deposit address (never thrown once a player's address is already cached). */
     public static ApiException chainServiceUnavailable() {
         return new ApiException(Enums.ApiErrorCode.CHAIN_SERVICE_UNAVAILABLE, 503,
@@ -157,23 +157,23 @@ public final class ApiException extends RuntimeException {
                 "the game engine is recovering — nothing was changed, please try again in a moment");
     }
 
-    /** Р-106: the API key sent as {@code Authorization: Bearer} is unknown, malformed or revoked. */
+    /** D-106: the API key sent as {@code Authorization: Bearer} is unknown, malformed or revoked. */
     public static ApiException apiKeyInvalid() {
         return new ApiException(Enums.ApiErrorCode.API_KEY_INVALID, 401, "the API key is not valid (unknown, malformed or revoked)");
     }
 
-    /** Р-106: a call an API key may not make; {@code method} is the RPC name the client asked for. */
+    /** D-106: a call an API key may not make; {@code method} is the RPC name the client asked for. */
     public static ApiException apiCallNotAllowed(String method) {
         return new ApiException(Enums.ApiErrorCode.API_CALL_NOT_ALLOWED, 403,
                 "the call " + method + " is not available with an API key - it is for a signed-in person");
     }
 
-    /** Р-106: the owner has the most API bots already; {@code message} names the number. */
+    /** D-106: the owner has the most API bots already; {@code message} names the number. */
     public static ApiException botLimitReached(String message) {
         return new ApiException(Enums.ApiErrorCode.BOT_LIMIT_REACHED, 409, message);
     }
 
-    /** Р-106: an API bot asks (or is asked) to withdraw PLAY to a wallet. */
+    /** D-106: an API bot asks (or is asked) to withdraw PLAY to a wallet. */
     public static ApiException botWithdrawalNotAllowed() {
         return new ApiException(Enums.ApiErrorCode.BOT_WITHDRAWAL_NOT_ALLOWED, 403,
                 "an API bot cannot withdraw PLAY to a wallet - its balance stays in the game");

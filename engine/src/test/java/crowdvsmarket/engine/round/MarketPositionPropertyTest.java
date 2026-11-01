@@ -13,7 +13,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * Property test for the per-market maintenance margin rate (Р-69): for every market cap from 40
+ * Property test for the per-market maintenance margin rate (D-69): for every market cap from 40
  * down to 3, every leverage the market allows, random stakes (100.00..5000.00, 2dp) and prices
  * (1.00..200 000.00, 2dp — "lot prices" far from BTC's, since the engine's price is whatever
  * scale-2 number the caller hands it) it asserts
@@ -98,7 +98,7 @@ class MarketPositionPropertyTest {
 
     /**
      * A three-candle path: quiet, {@code middle}, quiet — so the touch has to be found mid-path, and
-     * the liquidation must be attributed to the middle candle (and cost the whole stake, Р-7).
+     * the liquidation must be attributed to the middle candle (and cost the whole stake, D-7).
      */
     private static PositionSimulator.Outcome simulate(Position position, Candle middle) {
         Candle quietBefore = candle(0L, middle.open(), middle.open(), middle.open(), middle.open());

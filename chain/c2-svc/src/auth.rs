@@ -1,6 +1,6 @@
 //! `POST /v1/auth/verify` (FIXED INTERFACE (3)): verifies a Sage
 //! `chia_signMessageByAddress`-shaped signature
-//! (`docs/research/week1_wallet_auth.md` §2-4, decision Р-4/Р-45).
+//! (`docs/research/week1_wallet_auth.md` §2-4, decision D-4/D-45).
 //!
 //! ## Scheme (sources: `docs/research/week1_wallet_auth.md` §2, quoting
 //! `xch-dev/sage` `crates/sage/src/endpoints/wallet_connect.rs` and

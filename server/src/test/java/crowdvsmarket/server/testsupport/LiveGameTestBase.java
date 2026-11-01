@@ -61,7 +61,7 @@ public abstract class LiveGameTestBase {
     protected void resetScriptAndMockChain() {
         prices.reset();
         scheduler.forgetFailedAttempts();   // what one test's clock left behind must not hold a window back in another
-        scheduler.startedAt(0L);            // no restart to remember: a test that simulates one (Р-79) must not leave it to another
+        scheduler.startedAt(0L);            // no restart to remember: a test that simulates one (D-79) must not leave it to another
         startBtcSeriesPastWhatIsSettled();
         org.mockito.Mockito.when(chainSvcClient.oracleRecords(org.mockito.ArgumentMatchers.anyList()))
                 .thenAnswer(inv -> {
@@ -96,7 +96,7 @@ public abstract class LiveGameTestBase {
     }
 
     /**
-     * A market that has a backup exchange (Р-76): its {@code sourceMeta} says so, the way the spot catalog lists it, so
+     * A market that has a backup exchange (D-76): its {@code sourceMeta} says so, the way the spot catalog lists it, so
      * {@code Instruments.backupOf} finds it. The primary is called {@code coinbase} (the market's {@code source}).
      */
     protected Market listWithBackup(String id, String symbol, String backupSource, String backupRef) {

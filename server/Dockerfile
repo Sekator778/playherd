@@ -1,4 +1,4 @@
-# Multi-stage build for the Herd Quarkus server (engine + bots + server), Р-44/Р-20.
+# Multi-stage build for the Herd Quarkus server (engine + bots + server), D-44/D-20.
 #
 # Build context MUST be the repo root (so this stage can see both engine/ and server/):
 #   docker build -f server/Dockerfile -t herd-server .
@@ -42,7 +42,7 @@ WORKDIR /deployments
 # Non-root runtime user, standard Quarkus container convention.
 RUN useradd --system --create-home --shell /bin/bash herd
 RUN chown herd:herd /deployments
-# Р-107: the event journal (a Chronicle Queue) lives here; docker-compose.yml mounts a named volume on it. The directory is made and owned
+# D-107: the event journal (a Chronicle Queue) lives here; docker-compose.yml mounts a named volume on it. The directory is made and owned
 # by herd in the image so that a new, empty volume mounted on it is writable by the server.
 RUN mkdir -p /var/lib/herd/journal && chown -R herd:herd /var/lib/herd
 USER herd

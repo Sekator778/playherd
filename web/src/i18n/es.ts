@@ -14,7 +14,7 @@ export const es: Dict = {
     off: "Desactivado",
     loadMore: "Cargar más",
     botBadge: "BOT",
-    botBadgeTitle: "Juega un bot del modo de prueba (Р-46)",
+    botBadgeTitle: "Juega un bot del modo de prueba (D-46)",
     liqShort: "liq.",
     demoBanner: "PLAY es un token real (un CAT de Chia) emitido en Chia testnet11.",
     replay: "Repetición: precios de BTC de {from}–{to}, velocidad {speedup}×",

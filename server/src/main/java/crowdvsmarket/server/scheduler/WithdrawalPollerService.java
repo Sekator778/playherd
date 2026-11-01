@@ -13,7 +13,7 @@ import java.util.List;
 import org.jboss.logging.Logger;
 
 /**
- * Р-53: the two background halves of the real on-chain withdrawal flow that
+ * D-53: the two background halves of the real on-chain withdrawal flow that
  * {@code GameService#requestWithdrawal} does not do synchronously — reused pattern from {@code
  * OraclePublisherService}/{@code OracleReconciliationService} (task: "reuse its patterns"), same
  * "never block the game, degrade gracefully on a chainsvc outage" discipline. Every {@link

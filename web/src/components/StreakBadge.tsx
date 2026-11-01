@@ -3,7 +3,7 @@ import { FlameIcon } from "./icons";
 import "./StreakBadge.css";
 
 /**
- * A player's win streak (Р-71, `PublicProfileDto.streak`): the wins in a row over settled rounds, and the
+ * A player's win streak (D-71, `PublicProfileDto.streak`): the wins in a row over settled rounds, and the
  * best the player has had. A win is a round that paid out more than the stake; a flat round neither adds to
  * the streak nor ends it; any loss — a liquidation included — resets it to zero. Said plainly, without
  * urging: no countdown to "keep it alive", no "don't lose it" — a streak is a record, not a leash.

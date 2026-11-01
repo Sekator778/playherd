@@ -1,5 +1,5 @@
 /**
- * `Api` implementation backed entirely by seeded/deterministic local data (Р-35) — no network
+ * `Api` implementation backed entirely by seeded/deterministic local data (D-35) — no network
  * calls. A single instance (`mockApi`, exported at the bottom) holds the only real mutable state
  * in the whole mock: the signed-in demo player's identity, balance, ledger and own bets (the
  * feedback messages of `submitFeedback` are kept beside it in module state, `mockFeedbackMessages()`: they
@@ -8,7 +8,7 @@
  * and a seed (`mockMarkets.ts`, `mockPrices.ts`, `mockPlayers.ts`, `mockRounds.ts`,
  * `mockCrowdHistory.ts`).
  *
- * The world is 19 markets in 6 categories (Р-69) — see `mockMarkets.ts` — each with its own price
+ * The world is 19 markets in 6 categories (D-69) — see `mockMarkets.ts` — each with its own price
  * path, two round series (the mock's 1 h and 1 d), bots, crowd account, and the risk parameters the
  * real server would derive (leverage cap, price scale; `liquidation.ts` does the math per market).
  * One `ODDS` market closes 90 simulated minutes into a session (`MOCK_CLOSING_AT_MS`): from then on
@@ -137,12 +137,12 @@ import {
 const MOCK_PLAYER_ID = "me";
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
-/** One fixed, always-reachable cancelled round (Р-23/Р-32) — a real past hourly window, a day
+/** One fixed, always-reachable cancelled round (D-23/D-32) — a real past hourly window, a day
  *  before the demo anchor, so it is always in the past regardless of how long the session runs. */
 const CANCELLED_WINDOW = windowFor("HOURLY", Date.UTC(2026, 8, 24, 9, 0, 0));
 const CANCELLED_ROUND_ID = roundIdForWindow(MOCK_BTC.id, CANCELLED_WINDOW);
 const CANCELLED_REASON =
-  "Automatic cancellation: no reliable Coinbase price could be read within 5 minutes of this round's close, so it could not be settled (Р-79). All bets were refunded.";
+  "Automatic cancellation: no reliable Coinbase price could be read within 5 minutes of this round's close, so it could not be settled (D-79). All bets were refunded.";
 const CANCELLED_AT_MS = CANCELLED_WINDOW.endMs + 5 * 60 * 1000;
 const CANCELLED_REFUNDED_COUNT = 19;
 
@@ -150,7 +150,7 @@ const CANCELLED_REFUNDED_COUNT = 19;
 const MARKET_CLOSED_REASON =
   "Market closed: the underlying market ended or was withdrawn by its source, so this round was cancelled and every bet refunded.";
 
-/** Why a round that never had an opening price ends cancelled (the mock's rule, in the spirit of Р-23). */
+/** Why a round that never had an opening price ends cancelled (the mock's rule, in the spirit of D-23). */
 const NO_OPENING_PRICE_REASON =
   "No opening price: this market was listed after the round started, so the round could not open. Any bet in it was refunded.";
 
@@ -161,11 +161,11 @@ const PRICE_SERIES_MAX_POINTS = 600;
 const INTERVALS: readonly Interval[] = ["HOURLY", "DAILY"];
 
 /** Economy plan A4: the mock's herd-fee rate `r_m` in basis points of the notional (every mock market), the flat network fee, and
- *  the guard on the herd fee (20 % of the stake, Р-102),
+ *  the guard on the herd fee (20 % of the stake, D-102),
  *  and `k`, the herd-fee factor of the long (DAILY, 15-minute) round of a price market (the short round has k = 1). */
 const MOCK_HERD_FEE_BP = "1.0";
 const MOCK_NETWORK_FEE = 0.1;
-/** Р-106: the platform fee of a fixed-payout bet, percent of the stake. */
+/** D-106: the platform fee of a fixed-payout bet, percent of the stake. */
 const MOCK_FIXED_FEE_PERCENT = 3;
 const MOCK_HERD_FEE_CAP = 0.2;
 const MOCK_LONG_ROUND_FEE_FACTOR = 2.2;
@@ -180,7 +180,7 @@ function mockFeeFactor(spec: MockMarketSpec, interval: Interval): number {
 
 type WithdrawalRecord = WithdrawalRequestDto;
 
-/** A feedback message as the mock keeps it (Р-81): what `submitFeedback` was given (the message trimmed, as the server
+/** A feedback message as the mock keeps it (D-81): what `submitFeedback` was given (the message trimmed, as the server
  *  stores it), the id it answered with, and the player id when someone was signed in. Not part of any session: it
  *  outlives `signOut`, as a stored message outlives the visit. */
 export interface MockFeedbackEntry extends FeedbackRequest {
@@ -231,7 +231,7 @@ export class MockApi implements Api {
       const window = windowFor(parsed.interval, parsed.startMs);
       if (isCancelledByClose(spec, window, now)) {
         // The market closed while this round was still open or running: the round is cancelled
-        // and the bet refunded in full (Т-10; Р-23: liquidation-proof — everything comes back).
+        // and the bet refunded in full (Т-10; D-23: liquidation-proof — everything comes back).
         this.refundBet(bet, roundId);
         this.settledRoundIds.add(roundId);
         this.refundedRoundIds.add(roundId);
@@ -324,7 +324,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Sign-in (Р-4; week1_wallet_auth.md §4)
+  // Sign-in (D-4; week1_wallet_auth.md §4)
   // -------------------------------------------------------------------------
 
   async authChallenge(req: AuthChallengeRequest): Promise<AuthChallengeDto> {
@@ -388,7 +388,7 @@ export class MockApi implements Api {
     return { code: this.inviteCodeOf(player.playerId), referredCount: this.invitedCount + fromUrl };
   }
 
-  // --- bots of outside developers (Р-106): kept in memory for the signed-in mock player; the key is shown once, as on the server ---
+  // --- bots of outside developers (D-106): kept in memory for the signed-in mock player; the key is shown once, as on the server ---
 
   private bots: ApiBotDto[] = [];
   private botKeyCounter = 0;
@@ -496,7 +496,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Markets (Р-69, Р-70; docs/research/markets_architecture.md §8)
+  // Markets (D-69, D-70; docs/research/markets_architecture.md §8)
   // -------------------------------------------------------------------------
 
   async markets(): Promise<MarketsDto> {
@@ -667,7 +667,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Rounds (Р-8, Р-13, Р-19, Р-22, Р-23, Р-32)
+  // Rounds (D-8, D-13, D-19, D-22, D-23, D-32)
   // -------------------------------------------------------------------------
 
   async rounds(interval: Interval, marketId: MarketId = MOCK_BTC.id): Promise<RoundsPairDto> {
@@ -825,7 +825,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Player account / ledger (Р-2, Р-3, Р-6, Р-12, Р-16)
+  // Player account / ledger (D-2, D-3, D-6, D-12, D-16)
   // -------------------------------------------------------------------------
 
   async myAccount(): Promise<PlayerAccountDto> {
@@ -861,8 +861,8 @@ export class MockApi implements Api {
     return paginate(this.ledger, params, (e) => e.atMs);
   }
 
-  /** Real on-chain withdrawal (Р-53) — `toAddress` is always the signed-in player's own
-   *  registered address (Р-57), never a parameter (mirrors `Api.requestWithdrawal`'s doc). Field
+  /** Real on-chain withdrawal (D-53) — `toAddress` is always the signed-in player's own
+   *  registered address (D-57), never a parameter (mirrors `Api.requestWithdrawal`'s doc). Field
    *  shape (`state`+`chainState` kept separate, `failureReason` not `reason`) matches `server/`'s
    *  real `Ledger.WithdrawalRequestDto` — see `contract.ts`'s doc comment on `WithdrawalState`/
    *  `WithdrawalChainState` for why. */
@@ -955,7 +955,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Crowd account (Р-5, Р-14, Р-17, Р-25, Р-26; one per market, Т-6)
+  // Crowd account (D-5, D-14, D-17, D-25, D-26; one per market, Т-6)
   // -------------------------------------------------------------------------
 
   async crowdAccount(marketId: MarketId = MOCK_BTC.id): Promise<CrowdAccountDto> {
@@ -991,7 +991,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Ratings (Р-9, Р-18, Р-28, Р-30)
+  // Ratings (D-9, D-18, D-28, D-30)
   // -------------------------------------------------------------------------
 
   async ratings(season?: SeasonId): Promise<RatingsDto> {
@@ -1009,7 +1009,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Profiles (Р-15, Р-29)
+  // Profiles (D-15, D-29)
   // -------------------------------------------------------------------------
 
   async publicProfile(playerId: string): Promise<PublicProfileDto> {
@@ -1046,7 +1046,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Cancellations log (Р-23, Р-32)
+  // Cancellations log (D-23, D-32)
   // -------------------------------------------------------------------------
 
   async cancellations(params?: PageParams): Promise<Page<CancellationDto>> {
@@ -1077,7 +1077,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Home aggregate (Р-34) — describes BTC (markets_architecture.md §8: "`home` остаётся и описывает BTC")
+  // Home aggregate (D-34) — describes BTC (markets_architecture.md §8: "`home` остаётся и описывает BTC")
   // -------------------------------------------------------------------------
 
   async home(): Promise<HomeSummaryDto> {
@@ -1111,7 +1111,7 @@ export class MockApi implements Api {
   }
 
   // -------------------------------------------------------------------------
-  // Feedback (Р-81) — open to everyone, session or not; kept in memory, nobody reads it
+  // Feedback (D-81) — open to everyone, session or not; kept in memory, nobody reads it
   // -------------------------------------------------------------------------
 
   async submitFeedback(req: FeedbackRequest): Promise<FeedbackReceiptDto> {
@@ -1160,7 +1160,7 @@ function requireLeverageForStake(leverage: number, stake: string, spec: MockMark
   }
 }
 
-/** Plan A4, Р-102: `fee_herd = stake * min(20 %, k * r_m * L)` (k = 1 in the HOURLY round, 2.2 in the DAILY one) and the flat network fee, each rounded UP to 0.001 PLAY (herd fee at least 0.001). */
+/** Plan A4, D-102: `fee_herd = stake * min(20 %, k * r_m * L)` (k = 1 in the HOURLY round, 2.2 in the DAILY one) and the flat network fee, each rounded UP to 0.001 PLAY (herd fee at least 0.001). */
 function mockCosts(stake: string, leverage: number, spec: MockMarketSpec, interval: Interval) {
   const up = (x: number) => Math.ceil(Math.round(x * 1e6) / 1e3) / 1e3;
   const k = mockFeeFactor(spec, interval);
@@ -1174,7 +1174,7 @@ function mockCosts(stake: string, leverage: number, spec: MockMarketSpec, interv
   };
 }
 
-/** Р-106: the fees of a fixed-payout bet - 3 % of the stake rounded UP to 0.001 PLAY, and the flat network fee; no leverage, so no leverage limit. */
+/** D-106: the fees of a fixed-payout bet - 3 % of the stake rounded UP to 0.001 PLAY, and the flat network fee; no leverage, so no leverage limit. */
 function mockFixedCosts(stake: string) {
   const mojos = Math.round(Number(stake) * 1000);
   const herd = Math.ceil((mojos * MOCK_FIXED_FEE_PERCENT) / 100) / 1000;
@@ -1194,7 +1194,7 @@ function isCancelledByClose(spec: MockMarketSpec, window: RoundWindowDto, now: E
 }
 
 /** `PublicProfileDto.streak` over a newest-first history: a win is `payout > stake`, a flat round
- *  neither extends nor breaks a streak (Р-71). */
+ *  neither extends nor breaks a streak (D-71). */
 function winStreak(history: ProfileRoundEntryDto[]): { current: number; best: number } {
   let current = 0;
   let best = 0;

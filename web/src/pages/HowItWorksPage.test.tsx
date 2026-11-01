@@ -11,7 +11,7 @@ function renderPage() {
   );
 }
 
-describe("How it works — where the prices come from (Р-74, Р-76)", () => {
+describe("How it works — where the prices come from (D-74, D-76)", () => {
   it("names every source: a line for Coinbase, Kraken, Hyperliquid and Polymarket, each with our key", () => {
     renderPage();
     for (const origin of ["Price from Coinbase", "Price from Kraken", "Price from Hyperliquid", "Odds from Polymarket"]) {
@@ -44,7 +44,7 @@ describe("How it works — where the prices come from (Р-74, Р-76)", () => {
     expect(screen.getByText(/There is no decentralized price oracle here/)).toBeInTheDocument();
   });
 
-  it("says plainly that a round without a price holds up the rounds after it and pauses betting — for how long, counted from when — and what still gets the hour (Р-77, Р-79)", () => {
+  it("says plainly that a round without a price holds up the rounds after it and pauses betting — for how long, counted from when — and what still gets the hour (D-77, D-79)", () => {
     renderPage();
     const source = screen.getByRole("heading", { name: "Where the price comes from" }).closest("section")!;
     expect(source).toHaveTextContent("A round that has no reliable price holds up the rounds after it");

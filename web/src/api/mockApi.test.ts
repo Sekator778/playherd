@@ -1,5 +1,5 @@
 /**
- * The mock's multi-market world (Р-69, `docs/research/markets_architecture.md` §8), driven through
+ * The mock's multi-market world (D-69, `docs/research/markets_architecture.md` §8), driven through
  * the `Api` interface exactly as the screens drive it. Timing tests use fake timers: the simulated
  * clock is `performance.now() × 60` (`clock.ts`), which Vitest's fake timers control.
  */
@@ -112,7 +112,7 @@ describe("markets() — the lobby in one call", () => {
     }
   });
 
-  it("the sources are the server's (Р-76): crypto on an exchange with a backup behind it, stocks, indices and commodities on Hyperliquid, odds on Polymarket", async () => {
+  it("the sources are the server's (D-76): crypto on an exchange with a backup behind it, stocks, indices and commodities on Hyperliquid, odds on Polymarket", async () => {
     const { markets } = await mockApi.markets();
     const sources = Object.fromEntries(markets.map((m) => [m.id, [m.source, m.backupSource ?? null]]));
     expect(sources).toMatchObject({
@@ -440,7 +440,7 @@ describe("placeBet and the player's positions across markets", () => {
     await signIn();
   });
 
-  it("a Win or lose bet (Р-106): no leverage check, fees 3 % up to 0.001 + 0.1, mode FIXED in the bet and the positions; refused on an odds market", async () => {
+  it("a Win or lose bet (D-106): no leverage check, fees 3 % up to 0.001 + 0.1, mode FIXED in the bet and the positions; refused on an odds market", async () => {
     const eth = await bettingRoundOf("ETH");
     const bet = await mockApi.placeBet({ roundId: eth.roundId, direction: "UP", leverage: 0, stake: "133.333", mode: "FIXED" });
     expect(bet).toMatchObject({ mode: "FIXED", leverage: 2, stake: "133.333", feeHerd: "4.000", feeNetwork: "0.100", maxLeverageForStake: null });
@@ -1091,7 +1091,7 @@ describe("the contract's round fields: every round carries its market's kind, pr
     for (const row of (await mockApi.cancellations({ limit: 50 })).items) expect(row.asset).toBeTruthy();
   });
 
-  it("the fixed cancelled BTC round says it was cancelled after five minutes without a price, as the server does (Р-79), not after an hour", async () => {
+  it("the fixed cancelled BTC round says it was cancelled after five minutes without a price, as the server does (D-79), not after an hour", async () => {
     const btc = (await mockApi.cancellations({ limit: 50 })).items.find((c) => c.reason.startsWith("Automatic cancellation"))!;
     expect(btc.reason).toContain("within 5 minutes of this round's close");
     expect(btc.reason).not.toMatch(/1 hour/);
@@ -1144,7 +1144,7 @@ describe("the crowd's last outcome: a flat round is FLAT, not a loss (MarketCrow
   });
 });
 
-describe("submitFeedback (Р-81) — open to everyone, kept in memory", () => {
+describe("submitFeedback (D-81) — open to everyone, kept in memory", () => {
   // The mock is one shared instance and the tests above leave a player signed in: these start from a visitor.
   beforeEach(async () => {
     await mockApi.signOut();

@@ -1,5 +1,5 @@
 /**
- * The player's favourite markets (the lobby's "Favorites" chip, Р-69): a per-viewer convenience,
+ * The player's favourite markets (the lobby's "Favorites" chip, D-69): a per-viewer convenience,
  * kept in this browser's `localStorage` under `herd.favorites` as a JSON array of market ids — it
  * never reaches the server and does not follow the player to another device. Every storage access
  * is guarded (private windows, blocked site data and the like throw or come back empty): the

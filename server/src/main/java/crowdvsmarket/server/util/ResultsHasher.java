@@ -26,18 +26,18 @@ import java.util.TreeMap;
  * <p><b>Предложение</b> (not spelled out by the task): {@code outcome} is {@code "SETTLED"},
  * {@code "LIQUIDATED"} or {@code "CANCELLED"}; a cancelled round's canonical JSON has
  * {@code openPriceCents}/{@code closePriceCents}/{@code crowd} all {@code null} and each
- * position's {@code payoutMojos == stakeMojos} (a full refund, Р-23/Р-32) with
- * {@code outcome="CANCELLED"} — Р-41 only fixes that settled rounds are hashed; extending the
+ * position's {@code payoutMojos == stakeMojos} (a full refund, D-23/D-32) with
+ * {@code outcome="CANCELLED"} — D-41 only fixes that settled rounds are hashed; extending the
  * same shape to a cancelled round is this server's own choice, so every round (never just settled
  * ones) has a {@code resultsHash} to publish and to serve at
  * {@code GET /api/rounds/{roundId}/results.json}.
  *
- * <p><b>Markets (Р-69, docs/research/markets_architecture.md §6):</b> for BTC the JSON is exactly
+ * <p><b>Markets (D-69, docs/research/markets_architecture.md §6):</b> for BTC the JSON is exactly
  * what it was before markets existed — byte for byte, so every published hash stays verifiable
  * (the BTC overload of {@link #build} is unchanged and pinned by {@code ResultsHasherTest}). For any
  * other market a root key {@code "market"} (the market id) is added; the price fields are the
  * market's ENGINE (lot) prices times 100, the unit {@code round_results} stores. A stored
- * {@code canonical_json} is never recomputed. <b>Venues (Р-76):</b> a round of a market that has a backup exchange
+ * {@code canonical_json} is never recomputed. <b>Venues (D-76):</b> a round of a market that has a backup exchange
  * also carries the root key {@code "venue"}, the exchange it ran on; a round of any other market does not.
  */
 public final class ResultsHasher {
@@ -48,7 +48,7 @@ public final class ResultsHasher {
     }
 
     /**
-     * {@code mode} (Р-106): {@code "FIXED"} for a fixed-payout position, which adds the key {@code "mode"} to its entry; {@code null}
+     * {@code mode} (D-106): {@code "FIXED"} for a fixed-payout position, which adds the key {@code "mode"} to its entry; {@code null}
      * (the percentage mode) leaves it out, so the entry of any other position is the same bytes it always was.
      */
     public record PositionEntry(String playerId, String direction, int leverage, long stakeMojos, String outcome,
@@ -81,7 +81,7 @@ public final class ResultsHasher {
     }
 
     /**
-     * The same, for a round of a market that has venues (Р-76): {@code venue} — the exchange the round ran on,
+     * The same, for a round of a market that has venues (D-76): {@code venue} — the exchange the round ran on,
      * {@code "coinbase"}, {@code "kraken"} or {@code "hyperliquid"} — is a root key of its own, after
      * {@code "status"} in the sorted order. {@code null} leaves the key out, and the JSON is then exactly what the
      * overloads above give: no existing shape changes, so every published hash stays verifiable.

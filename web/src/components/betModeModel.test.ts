@@ -8,7 +8,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("fixed-payout quote (Р-106): 3 % of the stake rounded UP to 0.001 PLAY, plus 0.1 PLAY, on top of the stake", () => {
+describe("fixed-payout quote (D-106): 3 % of the stake rounded UP to 0.001 PLAY, plus 0.1 PLAY, on top of the stake", () => {
   it("is exact on round stakes", () => {
     expect(fixedQuote(100, null)).toEqual({ win: 100, lose: -100, platformFee: 3, networkFee: 0.1, fee: 3.1, totalDebit: 103.1 });
     expect(fixedQuote(250.5, null)?.platformFee).toBe(7.515);

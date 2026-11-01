@@ -10,7 +10,7 @@ import org.jboss.logging.Logger;
 
 /**
  * The rows of the database that are derived from events of the journal and are written after the batch that holds the events is durable,
- * by a thread of their own - not by the core writer, whose turn never touches the database (Р-107, docs/research/lmax_roadmap.md step 3).
+ * by a thread of their own - not by the core writer, whose turn never touches the database (D-107, docs/research/lmax_roadmap.md step 3).
  * Today that is the result row of a cancelled round ({@link RoundCancellations#cancel}).
  *
  * <p>Jobs run one at a time in the order they were queued. A job is idempotent (it leaves a row that is there already alone): the rebuild

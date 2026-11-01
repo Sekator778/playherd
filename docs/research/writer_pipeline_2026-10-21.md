@@ -1,6 +1,6 @@
 # Конвейер писателя: логика не ждёт диск
 
-Дата: 2026-10-21. Основание — Р-95, Р-96, Р-107; вопрос Алекса 2026-10-21 «как мы реализуем LMAX, где скорость — это память». Метод — `docs/kb/topics/methods.md`, «Конвейер писателя». Код — `server/.../core/` (`CoreWriter`, `JournalStage`, `OutputStage`, `WriterBatch`, `WriterSlot`), `ReadViews.prepareBatch/publish`.
+Дата: 2026-10-21. Основание — D-95, D-96, D-107; вопрос Алекса 2026-10-21 «как мы реализуем LMAX, где скорость — это память». Метод — `docs/kb/topics/methods.md`, «Конвейер писателя». Код — `server/.../core/` (`CoreWriter`, `JournalStage`, `OutputStage`, `WriterBatch`, `WriterSlot`), `ReadViews.prepareBatch/publish`.
 
 ## 1. Что было
 

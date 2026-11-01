@@ -1,7 +1,7 @@
 package crowdvsmarket.server.journal;
 
 /**
- * One event of the journal as it is stored: the columns of {@code game_events} (Р-107). {@code payload} is the event's JSON as the
+ * One event of the journal as it is stored: the columns of {@code game_events} (D-107). {@code payload} is the event's JSON as the
  * database stores it; the journal never looks into it.
  *
  * @param seq           the place of the event in the journal ({@code game_events.id}); strictly increasing, gaps allowed (a journal imported

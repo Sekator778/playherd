@@ -55,7 +55,7 @@ class BotsOnSeveralMarketsTest extends LiveGameTestBase {
 
     /** The markets' running window, {@code stepsAhead} windows after BTC's — a window of its own per test,
      *  since the bots plan each betting window only once. Never 0: BTC has no price here, so a tick that goes
-     *  ahead of it steps over the empty rounds it cannot price (Р-79) and leaves its cursor at the window that test
+     *  ahead of it steps over the empty rounds it cannot price (D-79) and leaves its cursor at the window that test
      *  ran in — where the bots have planned already. */
     private RoundWindow alignAll(List<Market> markets, int stepsAhead) {
         RoundWindow like = roundProgress.next("BTC", HOURLY);

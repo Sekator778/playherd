@@ -60,7 +60,7 @@ export function crowdSplitOf(round: { upStake?: string; downStake?: string }): C
 }
 
 /** The side the herd is on: the majority by stake, `null` for a tie or an empty round (the same rule the
- *  crowd account trades by, Р-5/Р-14). Takes the server's own `majorityDirection` when it sends one. */
+ *  crowd account trades by, D-5/D-14). Takes the server's own `majorityDirection` when it sends one. */
 export function herdSideOf(round: { majorityDirection?: Direction | null; upStake?: string; downStake?: string }): Direction | null {
   if (round.majorityDirection !== undefined) return round.majorityDirection;
   const up = Number(round.upStake ?? "0");
@@ -161,7 +161,7 @@ export function subtitleParts(
 }
 
 // ---------------------------------------------------------------------------
-// Where a number comes from (Р-74, Р-76)
+// Where a number comes from (D-74, D-76)
 // ---------------------------------------------------------------------------
 
 /** What a market, a round or a price can name as its source: an exchange, Polymarket, or `synthetic` (no live source). */
@@ -193,7 +193,7 @@ export function sourceName(source: string | null | undefined, t: TFn = tEn): str
 }
 
 /**
- * What a number really comes from, in the words of the disclosure lines (Р-33): "Price from Coinbase", "Price from
+ * What a number really comes from, in the words of the disclosure lines (D-33): "Price from Coinbase", "Price from
  * Kraken", "Price from Hyperliquid", "Odds from Polymarket", "Simulated demo prices (no live source)"; `null` for a
  * source nobody names.
  */
@@ -213,7 +213,7 @@ export function oddsMarketPhrase(source: string | null | undefined, t: TFn = tEn
   return name ? t("source.oddsMarketNamed", { name }) : t("source.oddsMarket");
 }
 
-/** A shown price that is the BACKUP exchange's (Р-76): which one, and whose it stands in for. */
+/** A shown price that is the BACKUP exchange's (D-76): which one, and whose it stands in for. */
 export interface BackupPrice {
   /** The exchange the number is from: "Kraken". */
   name: string;
@@ -239,7 +239,7 @@ export function backupPriceNote(backup: BackupPrice, t: TFn = tEn): string {
   return t("source.backupPrice", { primary: backup.primaryName ?? t("source.mainExchangeCap"), name: backup.name });
 }
 
-/** A round on the backup exchange (Р-76): which one, and the main exchange that could not price its start. */
+/** A round on the backup exchange (D-76): which one, and the main exchange that could not price its start. */
 export interface BackupRound {
   /** The exchange the round runs on: "Kraken". */
   name: string;

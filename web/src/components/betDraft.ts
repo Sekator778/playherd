@@ -18,10 +18,10 @@ export interface BetDraft {
   /** The leverage actually in use (what is sent), and the total debit the preview named for it, if it had one. */
   leverage: number;
   totalDebit: string | null;
-  /** Set by the bet sheet (Р-98): it can be opened from the lobby, where there is no room whose path would tell the sign-in dialog the draft is
+  /** Set by the bet sheet (D-98): it can be opened from the lobby, where there is no room whose path would tell the sign-in dialog the draft is
    *  the player's to place. */
   fromSheet?: boolean;
-  /** `FIXED` for a "Win or lose" bet from the sheet (Р-106): no leverage then (`leverage` is the placeholder). Absent: the percentage mode. */
+  /** `FIXED` for a "Win or lose" bet from the sheet (D-106): no leverage then (`leverage` is the placeholder). Absent: the percentage mode. */
   mode?: BetMode;
 }
 

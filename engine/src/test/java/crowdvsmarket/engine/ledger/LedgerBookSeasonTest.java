@@ -12,8 +12,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The two season-boundary rules of {@link LedgerBook}: {@link LedgerBook#seasonEndBalance} (what a
- * past season's "богачи" archive is computed from, Р-10/Р-18) and the season a settled round's
- * counters are filed under (Р-9/Р-18's rounds-played threshold and the "пророки" ratio) — plus the
+ * past season's "богачи" archive is computed from, D-10/D-18) and the season a settled round's
+ * counters are filed under (D-9/D-18's rounds-played threshold and the "пророки" ratio) — plus the
  * restatement that ties them together: a movement booked after the player rolled on, but dated in
  * an earlier season (a late settlement, an operator reversal), is added to the later seasons'
  * baselines, so the archive of its own season includes it and no later season's growth does.

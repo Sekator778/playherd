@@ -201,7 +201,7 @@ class AtomicSettlementTest extends LiveGameTestBase {
     }
 
     /**
-     * Р-107: the cancellation is the event in the journal; the result row is written after it is durable. A failure of the row does not undo
+     * D-107: the cancellation is the event in the journal; the result row is written after it is durable. A failure of the row does not undo
      * the cancellation (the journal is the truth, its callers are answered), it leaves the round without a row, and the next rebuild
      * writes the row from the event.
      */

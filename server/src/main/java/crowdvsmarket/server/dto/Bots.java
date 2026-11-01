@@ -1,6 +1,6 @@
 package crowdvsmarket.server.dto;
 
-/** Р-106: the bots of outside developers, played through the API with a key. contract.ts §"API bots". */
+/** D-106: the bots of outside developers, played through the API with a key. contract.ts §"API bots". */
 public final class Bots {
     private Bots() {
     }

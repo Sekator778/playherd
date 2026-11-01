@@ -315,7 +315,7 @@ class ChainSvcContractFixturesTest {
         assertThat(status.pendingRecords()).isEqualTo(4);
     }
 
-    // --- PLAY withdrawals and deposits (Р-53, /v1/play/*) ---
+    // --- PLAY withdrawals and deposits (D-53, /v1/play/*) ---
 
     @Test
     void withdrawalRequestFixtureRoundTrips() throws IOException {

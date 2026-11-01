@@ -1,5 +1,5 @@
 // Node port of web/src/wallet/testWallet.ts — same key derivation, same message wrapping, same
-// signing scheme (Р-45: "та же схема и проверка подписи, что для Sage"), reusing the identical
+// signing scheme (D-45: "та же схема и проверка подписи, что для Sage"), reusing the identical
 // `chia-wallet-sdk-wasm` package the browser test wallet uses (imported straight from
 // `web/node_modules` — no separate install, per the task's "no global installs").
 //

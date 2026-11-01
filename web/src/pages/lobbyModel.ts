@@ -1,5 +1,5 @@
 /**
- * What the lobby shows for a given ribbon / chip / search state (Р-69): pure functions over the
+ * What the lobby shows for a given ribbon / chip / search state (D-69): pure functions over the
  * `markets()` list, so the filtering rules can be tested without rendering anything. The state itself
  * lives in the URL (`?c=sports&sort=hot&fav=1&q=ger` — `parseLobbyParams`/`lobbyParams`), so a Back from a
  * room lands on the same panel, and a link can open the lobby on a panel.

@@ -97,7 +97,7 @@ public final class BotBrain {
         }
         Signal s = signal.get();
         Sizing z = sizing.get();
-        // Р-106: the bot's preferred mode, except where the market refuses it (odds markets play the percentage mode only)
+        // D-106: the bot's preferred mode, except where the market refuses it (odds markets play the percentage mode only)
         BetMode mode = profile.preferredMode() == BetMode.FIXED && !market.odds() ? BetMode.FIXED : BetMode.PERCENTAGE;
         return Optional.of(new BetIntent(profile.botId(), market.marketId(), market.roundId(), s.direction(), z.stake(),
                 z.leverage(), s.confidence(), fallback, mode));

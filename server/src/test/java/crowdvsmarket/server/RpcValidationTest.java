@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test;
  * behavior) — this class needs its own {@link WithdrawalDepositEnabledProfile} to re-enable
  * {@code requestWithdrawal}, so its amount-validation tests below (negative/zero/positive/below-
  * minimum) keep exercising exactly what they always tested: the input validation itself,
- * independent of whether the feature is currently turned on. Р-53 update: {@code requestDeposit}
+ * independent of whether the feature is currently turned on. D-53 update: {@code requestDeposit}
  * itself is now PERMANENTLY retired regardless of this profile's {@code herd.deposit.enabled=true}
  * — see {@code requestDepositIsPermanentlyRetiredEvenWhenDepositEnabledIsTrue} below and {@code
  * GameService#requestDeposit}'s javadoc.
@@ -256,7 +256,7 @@ class RpcValidationTest {
 
     @Test
     void requestWithdrawalStillAcceptsAPositiveAmount() {
-        // Р-53 update: requestWithdrawal now escrows-and-submits-for-real rather than
+        // D-53 update: requestWithdrawal now escrows-and-submits-for-real rather than
         // auto-confirming — chainSvcClient.submitPlayWithdrawal(...) is unstubbed here (returns
         // null, Mockito's default for a record-returning method), which GameService treats exactly
         // like a chainsvc outage (leaves the request REQUESTED for WithdrawalPollerService to
@@ -271,7 +271,7 @@ class RpcValidationTest {
 
     @Test
     void requestWithdrawalRejectsBelowMinimum() {
-        // Р-53: minimum withdrawal (предложение, GameService.MIN_WITHDRAWAL) — checked after the
+        // D-53: minimum withdrawal (предложение, GameService.MIN_WITHDRAWAL) — checked after the
         // positive-amount check, before the balance check.
         String session = signIn("txch1wd-below-min-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         Response resp = rpc(session, "requestWithdrawal", "50.000");
@@ -281,7 +281,7 @@ class RpcValidationTest {
         assertThat(balanceAfter).as("nothing must be debited for a rejected withdrawal").isEqualTo("10000.000");
     }
 
-    // --- Р-53: requestDeposit (the pre-Р-53 self-report RPC) is now PERMANENTLY retired —
+    // --- D-53: requestDeposit (the pre-D-53 self-report RPC) is now PERMANENTLY retired —
     // unconditionally, even under this class's own herd.deposit.enabled=true profile (see
     // GameService#requestDeposit's javadoc for why turning the real on-chain deposit path on must
     // never also reopen the self-report fraud vector task item 1 closed). This single test replaces

@@ -38,28 +38,28 @@ import org.jboss.logging.Logger;
  * <p>A failure in one series (a price that cannot be read, an exception) never stops the others: each
  * (market, interval) is its own try block.
  *
- * <p><b>Opening the rounds (Р-76).</b> Every tick, before anything is settled, each running round of a market that has a
+ * <p><b>Opening the rounds (D-76).</b> Every tick, before anything is settled, each running round of a market that has a
  * backup exchange which has started and has no exchange yet is given one ({@link GameService#openRounds}): the
  * primary if it has a live price at the round's start, else the backup, else the round waits. The settlement
  * of a round then asks that exchange alone for its prices — and if it cannot be priced the round waits and is
  * refunded an hour after its end as any round without a price (below), never moved to the other exchange — unless it
  * is let go sooner (next paragraph).
  *
- * <p><b>Letting a round go (Р-77).</b> The rounds of a series are settled in order, so a round that waits for its
+ * <p><b>Letting a round go (D-77).</b> The rounds of a series are settled in order, so a round that waits for its
  * exchange holds the whole series, however well the market's other exchange is doing. A round of a market that has a
  * backup exchange, with an exchange decided for it, that cannot be settled for want of a price ({@link
  * PriceUnavailableException}) is therefore cancelled with a refund — reason {@link #VENUE_RELEASE_REASON}, its exchange
  * kept in the result — as soon as {@code herd.prices.venue-release-after-ms} (two minutes; 0 switches the rule off)
  * have passed since its end <i>or since the start of the server, whichever is later</i> (a restart, or the wake of a host that
- * slept, gives the round its two minutes again, as for Р-79 below) and the market's <i>other</i> exchange has a live tick fresh
+ * slept, gives the round its two minutes again, as for D-79 below) and the market's <i>other</i> exchange has a live tick fresh
  * now ({@link GameService#otherVenueLive}); the series goes on, and the next round opens on whichever exchange has a live tick
  * at its start. A round whose exchange comes back first is settled as always; with the other exchange silent too nothing
  * changes — the round waits, is healed from the candles for up to 30 minutes and is refunded an hour after its end
- * (Р-23) — and a market without a backup is not touched. The backoff of the failed attempts is cut at the release
+ * (D-23) — and a market without a backup is not touched. The backoff of the failed attempts is cut at the release
  * instant ({@link SettlementBackoff}), so a round is let go when its two minutes are over, not up to a minute later.
  *
- * <p><b>Letting a round go after its minutes, on every market (Р-79).</b> A round that cannot be priced holds its series whatever the
- * market: one without a backup exchange has no other exchange to wait for, and with both exchanges silent Р-77 does not apply. So a
+ * <p><b>Letting a round go after its minutes, on every market (D-79).</b> A round that cannot be priced holds its series whatever the
+ * market: one without a backup exchange has no other exchange to wait for, and with both exchanges silent D-77 does not apply. So a
  * round that cannot be settled for want of a price ({@link PriceUnavailableException}) is cancelled with a refund — reason {@link
  * #SOURCE_RELEASE_REASON} — as soon as the minutes of its source ({@link PricesConfig.ReleaseAfter}: five for an exchange and for the
  * synthetic walk, fifteen for Polymarket; 0 switches a source off) have passed since the end of the round <i>or since the start of this
@@ -67,12 +67,12 @@ import org.jboss.logging.Logger;
  * go. A pause of the whole process is a start as well — a host that slept wakes up in the same JVM, with the feeds reconnecting and every
  * round that ended meanwhile overdue ({@link #startAfterAPause}: the scheduled pass that begins more than {@link #PAUSE_MS} after the
  * previous one ended, or is the first, sets the start). The source is the one of the exchange the round was decided on, else the market's
- * own ({@link GameService#instrumentOf}). Р-77 comes first — a market whose other exchange is alive lets the round go after two minutes —
- * and the hour of Р-23 stays the upper bound: no round waits longer than an hour after its end, and every failure that is not "no price"
+ * own ({@link GameService#instrumentOf}). D-77 comes first — a market whose other exchange is alive lets the round go after two minutes —
+ * and the hour of D-23 stays the upper bound: no round waits longer than an hour after its end, and every failure that is not "no price"
  * (the database, the oracle's gate) keeps the hour. The backoff is cut at the earliest of the release instants that are still to come, as
- * for Р-77.
+ * for D-77.
  *
- * <p><b>A round nobody bet on</b> that cannot be priced is not worth a minute of its series' time (Р-79): it is stepped over at once, like
+ * <p><b>A round nobody bet on</b> that cannot be priced is not worth a minute of its series' time (D-79): it is stepped over at once, like
  * an overdue empty window — no result, no event, no oracle record, one log line. The bet of a bot is a bet: only a round with none at all
  * is skipped, and an empty round that can be priced is settled as ever.
  * <b>The skip lives in memory only</b> — the cursor moves, nothing is written. A restart, or any rebuild of the engine, seeds a series
@@ -100,10 +100,10 @@ import org.jboss.logging.Logger;
  * <p><b>Catch-up (§4 п.5):</b> a window with bets is always resolved or cancelled, however late; an
  * EMPTY window that is overdue by more than one step is not resolved at all — the series jumps to the
  * window that contains "now", with no event, no result and no oracle record (one log line per jump).
- * <b>No price (Р-23):</b> a failed attempt to settle — {@link PriceUnavailableException}, any other
+ * <b>No price (D-23):</b> a failed attempt to settle — {@link PriceUnavailableException}, any other
  * failure of the price source, a price that cannot be settled on, a settlement transaction that
  * failed — means "try again": one hour after the window's end the round is cancelled with a
- * refund (sooner when it is let go, Р-77 and Р-79, above). <b>The retry backs off</b> ({@link
+ * refund (sooner when it is let go, D-77 and D-79, above). <b>The retry backs off</b> ({@link
  * SettlementBackoff}): after the k-th failed attempt of a window the next one is made {@code min(60 s, 2^k s)} later,
  * the refund an hour after the end is not delayed by it, and the failure is logged with its stack trace once per
  * window, then one line a minute.
@@ -117,16 +117,16 @@ public class RoundSchedulerService {
     /**
      * More than this between the end of one scheduled pass and the start of the next is a pause of the whole process, not a busy second
      * (the passes are one second apart; a stop-the-world collection or a database that answers late is seconds, not this) — a start
-     * for the minutes that a round that cannot be priced is given (Р-79). Предложение: no measurement, a host's sleep is minutes.
+     * for the minutes that a round that cannot be priced is given (D-79). Предложение: no measurement, a host's sleep is minutes.
      */
     static final long PAUSE_MS = 15_000L;
-    /** Р-23: "если за 1 час цену получить не удалось — раунд отменяется целиком". The upper bound of every wait: Р-77 and Р-79 let a round go sooner. */
+    /** D-23: "если за 1 час цену получить не удалось — раунд отменяется целиком". The upper bound of every wait: D-77 and D-79 let a round go sooner. */
     private static final long PRICE_GRACE_MS = 3_600_000L;
     private static final String NO_PRICE_REASON = "no oracle price available within 1 hour of round close";
     private static final String SETTLEMENT_FAILED_REASON = "settlement failed within 1 hour of round close";
-    /** Р-77: the reason of a round let go from an exchange that stopped sending prices; players read it as it is. */
+    /** D-77: the reason of a round let go from an exchange that stopped sending prices; players read it as it is. */
     static final String VENUE_RELEASE_REASON = "The exchange of this round stopped sending prices; stakes returned";
-    /** Р-79: the reason of a round let go after the minutes of its source, with no other exchange to blame; players read it as it is. */
+    /** D-79: the reason of a round let go after the minutes of its source, with no other exchange to blame; players read it as it is. */
     static final String SOURCE_RELEASE_REASON = "No price from the source; stakes returned";
 
     @Inject
@@ -158,7 +158,7 @@ public class RoundSchedulerService {
     private final LogThrottle venueLog = new LogThrottle(60_000L);
     /**
      * When this server started or last woke from a pause — what a round that cannot be priced is given its minutes from, if that is
-     * later than its end (Р-79). Set by the scheduled pass ({@link #tick()}) that is the first of all or begins after a pause
+     * later than its end (D-79). Set by the scheduled pass ({@link #tick()}) that is the first of all or begins after a pause
      * ({@link #PAUSE_MS}); 0, the beginning of time, until then: the minutes count from the end of the round alone.
      */
     volatile long startedAtMs;
@@ -169,7 +169,7 @@ public class RoundSchedulerService {
 
     /**
      * For tests that drive their own clock: pretends that the server started at {@code atMs}, as after a restart — the rounds that cannot be
-     * priced are given their minutes (Р-79) from then at the earliest.
+     * priced are given their minutes (D-79) from then at the earliest.
      */
     public void startedAt(long atMs) {
         startedAtMs = atMs;
@@ -191,7 +191,7 @@ public class RoundSchedulerService {
     }
 
     /**
-     * The minutes that a round that cannot be priced is given (Р-79) count from the end of the round or from the start of the server,
+     * The minutes that a round that cannot be priced is given (D-79) count from the end of the round or from the start of the server,
      * whichever is later: a start leaves a gap in the prices, which the candles close in the next minutes, and the rounds that were in
      * flight must be given those minutes instead of being let go at their first failed attempt. A restart is a start — and so is the
      * wake of a host that slept: the JVM and its containers survive the sleep (the internal notes §2), but the feeds reconnect and every
@@ -209,10 +209,10 @@ public class RoundSchedulerService {
         }
         startedAtMs = now;
         if (endedAt == NEVER) {
-            LOG.infof("the first scheduled pass: a round that cannot be priced gets its minutes counted from now at the earliest (Р-79)");
+            LOG.infof("the first scheduled pass: a round that cannot be priced gets its minutes counted from now at the earliest (D-79)");
         } else {
             LOG.infof("the previous scheduled pass ended %d s ago — the process was paused (a host that slept?): a round that cannot "
-                    + "be priced gets its minutes counted from now at the earliest (Р-79)", (now - endedAt) / 1000L);
+                    + "be priced gets its minutes counted from now at the earliest (D-79)", (now - endedAt) / 1000L);
         }
     }
 
@@ -237,7 +237,7 @@ public class RoundSchedulerService {
         for (Market market : markets) {
             seedMissingSeries(market, now);
         }
-        gameService.openRounds(now); // the exchange each round that has started runs on (Р-76); never throws
+        gameService.openRounds(now); // the exchange each round that has started runs on (D-76); never throws
         try {
             botService.tick(now);
         } catch (Exception e) {
@@ -367,15 +367,15 @@ public class RoundSchedulerService {
      * One failed attempt to settle {@code window} — no price, a price the source gave that cannot be
      * settled on, any other failure of the source, a settlement transaction that failed (and had the
      * engine rebuilt behind it, when it had touched it). The round is tried again later ({@link
-     * SettlementBackoff}), until an hour after its end (Р-23): then it is cancelled, with a refund. A round that has no
+     * SettlementBackoff}), until an hour after its end (D-23): then it is cancelled, with a refund. A round that has no
      * price is let go sooner (the class comment), and only a failure to find a price counts for that, not any other failure:
      * <ul>
-     *   <li>a round nobody bet on is skipped at once (Р-79);
+     *   <li>a round nobody bet on is skipped at once (D-79);
      *   <li>a round of a market with a backup exchange is cancelled with a refund as soon as {@code
      *       herd.prices.venue-release-after-ms} have passed since its end or since the start of the server and the market's
-     *       other exchange is alive (Р-77);
+     *       other exchange is alive (D-77);
      *   <li>any other round, as soon as the minutes of its source have passed since its end or since the start of the server
-     *       (Р-79).
+     *       (D-79).
      * </ul>
      *
      * @return {@code true} when the round has been cancelled or skipped (the series moves on), {@code false}
@@ -429,7 +429,7 @@ public class RoundSchedulerService {
     }
 
     /**
-     * A round nobody bet on whose price cannot be had (Р-79): not worth a minute of its series' time, it is stepped over like an
+     * A round nobody bet on whose price cannot be had (D-79): not worth a minute of its series' time, it is stepped over like an
      * overdue empty window ({@code GameService#firstWindowToResolve}) — no result, no event, no oracle record — and the caller
      * moves the cursor on. Nothing but the cursor remembers it: after a restart or a rebuild of the engine the window can be walked
      * again (the class comment).
@@ -446,7 +446,7 @@ public class RoundSchedulerService {
      * The instant from which the round of {@code market} that cannot be priced is let go, if the market's other exchange
      * is alive: {@code herd.prices.venue-release-after-ms} after the later of its end and the start of the server — a restart
      * or the wake of a host that slept ({@link #startAfterAPause}) gives the round its two minutes again, as it gives the minutes
-     * of its source (Р-79): the exchange that stopped may be only a feed that is reconnecting. {@link Long#MAX_VALUE} — never —
+     * of its source (D-79): the exchange that stopped may be only a feed that is reconnecting. {@link Long#MAX_VALUE} — never —
      * for a market without a backup exchange and while the rule is switched off (0).
      */
     private long venueReleaseAt(Market market, RoundWindow window) {
@@ -458,7 +458,7 @@ public class RoundSchedulerService {
     }
 
     /**
-     * The instant from which the round of {@code market} that cannot be priced is let go whatever the other exchange does (Р-79):
+     * The instant from which the round of {@code market} that cannot be priced is let go whatever the other exchange does (D-79):
      * the minutes of the source that prices it ({@link PricesConfig#releaseAfterMs}), counted from the later of the end of the
      * round and the start of the server. {@link Long#MAX_VALUE} — never — while the rule is switched off (0) for that source.
      */
@@ -488,7 +488,7 @@ public class RoundSchedulerService {
 
     /**
      * {@link GameService#otherVenueLive} for a pass that must not fail on it: the table of the round's exchange not
-     * answering, say, is "not now" — the next attempt asks again, and the hour of Р-23 does not depend on any of it.
+     * answering, say, is "not now" — the next attempt asks again, and the hour of D-23 does not depend on any of it.
      */
     private boolean otherVenueLive(Market market, RoundWindow window, long now) {
         try {
@@ -503,8 +503,8 @@ public class RoundSchedulerService {
     }
 
     /**
-     * Cancels {@code window} with a refund: an hour after its end (Р-23), or earlier, when the round is let go from an
-     * exchange that stopped sending prices (Р-77) or from a source that gives no price (Р-79). A refund that fails is an
+     * Cancels {@code window} with a refund: an hour after its end (D-23), or earlier, when the round is let go from an
+     * exchange that stopped sending prices (D-77) or from a source that gives no price (D-79). A refund that fails is an
      * attempt that failed like any other (backed off, logged once per window with its trace, then a line a minute), not an
      * exception out of the pass.
      *

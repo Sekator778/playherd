@@ -21,7 +21,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Economy stage B (Р-92) and the event log, on plain objects (no database): the cutover is an event, so a log that crosses it replays to
+ * Economy stage B (D-92) and the event log, on plain objects (no database): the cutover is an event, so a log that crosses it replays to
  * exactly the same books, the three new events replay, and a bet is settled with the liquidation parameters stored in its {@code BetPlaced}
  * - not with the market's row of the day of the replay.
  *

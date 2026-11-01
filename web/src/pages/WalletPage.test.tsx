@@ -35,7 +35,7 @@ function renderWallet() {
   );
 }
 
-describe("Deposit from wallet (Р-53: real deposit address, no self-report form)", () => {
+describe("Deposit from wallet (D-53: real deposit address, no self-report form)", () => {
   it("shows the player's own deposit address with a QR code and a copy button", async () => {
     renderWallet();
     await screen.findByText("Deposit from wallet");
@@ -61,7 +61,7 @@ describe("Deposit from wallet (Р-53: real deposit address, no self-report form)
   });
 });
 
-describe("Withdraw to wallet — form and validation (Р-53/Р-57)", () => {
+describe("Withdraw to wallet — form and validation (D-53/D-57)", () => {
   it("shows the registered address as the (non-editable) destination", async () => {
     renderWallet();
     await screen.findByText("Withdraw to wallet");

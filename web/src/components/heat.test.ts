@@ -10,7 +10,7 @@ function absoluteTier(leverage: number): number {
   return 5;
 }
 
-describe("leverageHeatTier — relative to the market's own maximum (Р-69)", () => {
+describe("leverageHeatTier — relative to the market's own maximum (D-69)", () => {
   it("at the platform maximum (x40) it is exactly the original table, x2 through x40", () => {
     for (let leverage = 2; leverage <= 40; leverage++) {
       expect(leverageHeatTier(leverage, 40), `x${leverage}`).toBe(absoluteTier(leverage));

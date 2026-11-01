@@ -18,7 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-76, "a round runs entirely on one exchange", in the price pipeline: a market with a backup exchange has a ring per
+ * D-76, "a round runs entirely on one exchange", in the price pipeline: a market with a backup exchange has a ring per
  * venue; the venue of a round is chosen once, when it opens — the primary if it has a <i>live</i> tick fresh at the
  * round's start, else the backup, else the round waits for history to heal a start — written once, never changed, and the
  * round is settled from its venue's ring alone. Scripted sources and a scripted clock: nothing here touches a network or
@@ -643,7 +643,7 @@ class LiveMarketPricesVenuesTest {
         assertThat(two.open()).as("Coinbase's price at the boundary").isEqualByComparingTo("100.00");
         assertThat(two.open()).as("not the close of the round before it, on another exchange")
                 .isNotEqualByComparingTo(one.close());
-        assertThat(three.open()).as("Р-40 holds within a venue").isEqualByComparingTo(two.close());
+        assertThat(three.open()).as("D-40 holds within a venue").isEqualByComparingTo(two.close());
     }
 
     // ------------------------------------------------------------------ a venue that is off

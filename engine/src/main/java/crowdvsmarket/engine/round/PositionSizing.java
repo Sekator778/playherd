@@ -7,7 +7,7 @@ import java.math.RoundingMode;
 
 /**
  * Derives a position size (BTC for the BTC market, the market's own lot otherwise — the price is
- * whatever scale-2 number the caller hands the engine, Р-69/Р-70) from a PLAY margin so that the
+ * whatever scale-2 number the caller hands the engine, D-69/D-70) from a PLAY margin so that the
  * margin IS the position's initial margin exactly: {@code round2(size * price / leverage) ==
  * margin} for any margin already at money scale (2dp or coarser) — proved for realistic BTC
  * prices/stakes/leverages by {@code PositionSizingPropertyTest}, and for prices from 1.00 to

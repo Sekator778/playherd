@@ -230,7 +230,7 @@ class MarketLifecycleConcurrencyTest extends LiveGameTestBase {
 
         CountDownLatch inSettlement = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        doAnswer(inv -> {                                   // inside the append of the settlement's batch to the journal (Р-107)
+        doAnswer(inv -> {                                   // inside the append of the settlement's batch to the journal (D-107)
             List<EventStore.Pending> batch = inv.getArgument(0);
             if (batch.stream().anyMatch(p -> p.event() instanceof GameEvent.RoundResolved)) {
                 inSettlement.countDown();

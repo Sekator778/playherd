@@ -1,8 +1,8 @@
 package crowdvsmarket.engine.ledger;
 
 /**
- * The seam between this pure off-chain ledger and the actual testnet11 CAT transfer (Р-6). A real
- * implementation (in the future Quarkus service, Р-20) submits the chain transaction for a
+ * The seam between this pure off-chain ledger and the actual testnet11 CAT transfer (D-6). A real
+ * implementation (in the future Quarkus service, D-20) submits the chain transaction for a
  * {@link WithdrawalRequest}/{@link DepositRequest} and, once it resolves, calls back into
  * {@code LedgerBook.confirmWithdrawal}/{@code failWithdrawal} (or the deposit equivalents) to
  * drive the request's state machine. No such implementation exists in this module — deliberately

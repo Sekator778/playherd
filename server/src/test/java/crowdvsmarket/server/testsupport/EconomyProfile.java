@@ -4,7 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * {@link LiveMarketsProfile} with the economy of stage B switched ON (Р-92): the game starts with the cutover, TREASURY opens with 1 000 000
+ * {@link LiveMarketsProfile} with the economy of stage B switched ON (D-92): the game starts with the cutover, TREASURY opens with 1 000 000
  * PLAY (a small treasury, so that the exposure limits of 0.25% / 1% are reachable by a handful of bets), at most 3 new players per IP address a
  * day, withdrawals on. No bots, no scheduler (the test drives the clock). Every other test keeps the old rules ({@code application.properties}:
  * {@code %test.herd.economy.treasury-opening-play=0}).

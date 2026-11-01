@@ -14,7 +14,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-106: an API key has a budget of its own ({@code herd.ratelimit.bot.*}), apart from the per-address one
+ * D-106: an API key has a budget of its own ({@code herd.ratelimit.bot.*}), apart from the per-address one
  * ({@code herd.ratelimit.*}). A tiny, no-refill bucket for both makes it deterministic in a handful of calls (and gives this
  * class its own application and its own {@code RateLimiter}, so no other test's traffic is in the buckets).
  */

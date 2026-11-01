@@ -1,6 +1,6 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
-// Android WebView build (Р-48 — see CONTRIBUTING.md "Android emulators").
+// Android WebView build (D-48 — see CONTRIBUTING.md "Android emulators").
 //
 // This config points the WebView straight at a running server instead of bundling `dist/`.
 // `server.url` comes from the HERD_APP_URL environment variable at build time — `make apk
@@ -10,7 +10,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 // the stand's real pages from http://10.0.2.2:8480. That address does not exist for a physical
 // phone — an APK for testers needs HERD_APP_URL (the VPS's https URL, or the Mac's LAN address for
 // a stand on the same Wi-Fi). Either way the WebView treats the URL as its own origin, which is what
-// makes the stand's `/api/rpc` session cookie valid (Р-45 test-wallet flow works unchanged — no
+// makes the stand's `/api/rpc` session cookie valid (D-45 test-wallet flow works unchanged — no
 // separate mobile auth path needed for this build).
 //
 // `cleartext` is true only for an http:// URL: Android blocks plain-http traffic from API 28 on
@@ -22,7 +22,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 // `webDir: 'dist'`) and talks to a real deployed backend over an API base URL, which means
 // swapping the cookie-based session for token auth (the cookie is only ever valid for the origin
 // that set it — file://.../capacitor:// asset origin can't hold it; the client has no API base URL
-// yet, `src/api/realApi.ts`). Left open per Р-48; a tester APK only needs HERD_APP_URL
+// yet, `src/api/realApi.ts`). Left open per D-48; a tester APK only needs HERD_APP_URL
 // (an internal status review §3.5).
 // When that build happens: build with `npm run build:capacitor`, not plain `npm run build` —
 // `vite.config.ts`'s `base` is absolute ("/") by default (polish item 4, 2026-09-26), which

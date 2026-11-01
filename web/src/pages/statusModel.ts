@@ -131,7 +131,7 @@ const SOURCE_ORDER: readonly SourceId[] = ["coinbase", "kraken", "hyperliquid", 
 /**
  * One source on the Status page — an exchange, Polymarket or the simulation — as the open markets say it. The public
  * API has no list of price feeds (the operator's `/api/admin/status` has, behind a key), so what the page can tell of a
- * source is what its markets show: which it is the main source of, which it stands behind as a backup (Р-76), whose
+ * source is what its markets show: which it is the main source of, which it stands behind as a backup (D-76), whose
  * shown price is its own although it is only their backup (the main exchange has no fresh price), and how the prices
  * of its main markets are doing.
  */

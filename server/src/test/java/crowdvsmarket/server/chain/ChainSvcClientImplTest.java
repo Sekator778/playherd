@@ -196,7 +196,7 @@ class ChainSvcClientImplTest {
         assertThat(legacy.maxKnownSeq()).isNull();
     }
 
-    // --- Р-53: real on-chain PLAY withdraw/deposit ---
+    // --- D-53: real on-chain PLAY withdraw/deposit ---
 
     @Test
     void submitPlayWithdrawalSendsBearerTokenAndMapsAccepted() {

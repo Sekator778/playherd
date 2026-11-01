@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 /**
- * Several markets on one {@link LedgerBook} (Р-69): one {@link GameEngine} — with its own
+ * Several markets on one {@link LedgerBook} (D-69): one {@link GameEngine} — with its own
  * {@link CrowdAccount} — per market, all sharing the ledger, so one player's PLAY balance backs
  * bets on every pair. Here: BTC (40x, {@code l = 0.0125}) and a made-up "ETH" (25x,
  * {@code l = 0.02}) priced like ETH — the engine's price is whatever scale-2 number the caller

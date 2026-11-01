@@ -1,4 +1,4 @@
-/* "Win or lose" / "%" (Р-106): the switch at the top of the sheet, and the quote line that replaces the boost example. */
+/* "Win or lose" / "%" (D-106): the switch at the top of the sheet, and the quote line that replaces the boost example. */
 .bet-sheet__mode .bet-sheet__chips {
   display: flex;
   gap: 8px;
@@ -17,7 +17,7 @@
   margin: 4px 0 0;
 }
 
-/* The bet sheet (`BetSheet.tsx`, Р-98): a tap on UP or DOWN opens it over the screen. A bottom sheet on a phone, a centred card on a wide screen.
+/* The bet sheet (`BetSheet.tsx`, D-98): a tap on UP or DOWN opens it over the screen. A bottom sheet on a phone, a centred card on a wide screen.
    Under the sign-in dialog (z 200, index.css) and over the tab bar, the pinned card and the feedback strip. The tokens are the app's. Zones are at
    least 48 px high, for a thumb; the BET button is the one solid-filled control on the sheet. */
 

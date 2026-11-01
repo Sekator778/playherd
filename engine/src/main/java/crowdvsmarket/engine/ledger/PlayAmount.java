@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /**
- * An exact integer amount of PLAY, the game's off-chain currency (Р-2,
+ * An exact integer amount of PLAY, the game's off-chain currency (D-2,
  * the decision log), stored the way a CAT2 balance is stored on-chain: as an integer
  * count of the smallest unit ("mojos"), never as a floating-point number.
  *
@@ -69,7 +69,7 @@ public record PlayAmount(long mojos) implements Comparable<PlayAmount> {
     }
 
     /**
-     * Guards every money-moving entry point (stake, withdrawal, deposit — Р-6, Р-8): throws unless
+     * Guards every money-moving entry point (stake, withdrawal, deposit — D-6, D-8): throws unless
      * this amount is strictly positive. Wave-2 security fix: a zero or negative amount here is not
      * merely "nothing happens" — {@link LedgerBook}'s debit/credit primitives negate a debit amount
      * before applying it, so a negative "withdrawal" of {@code -5000} silently becomes a {@code

@@ -32,7 +32,7 @@ describe("share card content", () => {
     expect(card.shareText).toBe("My Herd round: BTC UP, +25 PLAY (+25.0%).");
   });
 
-  it("a lost percentage bet is worded as plainly as a win, with a real minus sign (Р-51)", () => {
+  it("a lost percentage bet is worded as plainly as a win, with a real minus sign (D-51)", () => {
     const card = buildShareCard(input({ direction: "DOWN", net: -40 }), t);
     expect(card.outcome).toBe("lost");
     expect(card.resultText).toBe("−40 PLAY");

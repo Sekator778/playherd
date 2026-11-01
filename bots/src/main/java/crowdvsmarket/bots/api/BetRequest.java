@@ -8,7 +8,7 @@ import java.util.Objects;
 /**
  * A bet a bot asks to place: one bet per bot per round of a market.
  *
- * @param mode {@link BetMode#FIXED} for a win-or-lose bet (Р-106: no leverage, the adapter sends the mode to the game); {@code null}
+ * @param mode {@link BetMode#FIXED} for a win-or-lose bet (D-106: no leverage, the adapter sends the mode to the game); {@code null}
  *             leaves the field out, which the game reads as the percentage mode
  */
 public record BetRequest(String botId, String marketId, String roundId, Direction direction, PlayAmount stake, int leverage,

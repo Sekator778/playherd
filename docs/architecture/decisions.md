@@ -1,6 +1,6 @@
 # Design decisions
 
-The decisions that shaped the system, with the evidence behind each one. Tags such as `Р-96` in code comments point to entries of a private decision log.
+The decisions that shaped the system, with the evidence behind each one. Tags such as `D-96` in code comments point to entries of a private decision log.
 
 ## 1. One writer thread with no I/O in the logic
 

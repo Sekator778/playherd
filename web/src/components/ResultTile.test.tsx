@@ -33,7 +33,7 @@ describe("ResultTile — the odds tag names whose odds they are only when the ti
   });
 });
 
-describe("ResultTile — staked → returned, fees below (Р-98 step 3, fee_display_venues §4)", () => {
+describe("ResultTile — staked → returned, fees below (D-98 step 3, fee_display_venues §4)", () => {
   it("says what was staked and what came back, next to the net that excludes the fees", () => {
     tile({ stake: "100.000", payout: "109.200", net: 9.2 });
     expect(screen.getByRole("link")).toHaveTextContent("Staked 100 → returned 109.2");

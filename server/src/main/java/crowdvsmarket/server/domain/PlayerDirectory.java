@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The {@code players} dimension table (wallet address, nickname, bot flag/strategy) plus an
- * in-memory cache of it. Since architecture plan F4 the table is a projection of the journal, and since Р-107 it is written by the
+ * in-memory cache of it. Since architecture plan F4 the table is a projection of the journal, and since D-107 it is written by the
  * journal projector after the event is durable ({@link #projectEvents}), and a rebuild repairs it from the journal
  * ({@link #repairFromJournal}) before the cache is read. Not in the journal, by design: the API key of an API bot and the referral
  * columns, which live in {@code player_sidecar} (written before the command) and are copied into the row by the projector.
@@ -39,10 +39,10 @@ public final class PlayerDirectory {
     private static final class Maps {
         final Map<String, Row> byId = new ConcurrentHashMap<>();
         final Map<String, String> idByWallet = new ConcurrentHashMap<>();
-        /** Р-53: reverse lookup for the deposit poller — chainsvc's {@code GET /v1/play/deposits}
+        /** D-53: reverse lookup for the deposit poller — chainsvc's {@code GET /v1/play/deposits}
          *  reports each coin's {@code playerIndex}, never a {@code playerId}. */
         final Map<Integer, String> idByPlayerIndex = new ConcurrentHashMap<>();
-        /** Р-106: the live API keys, by the SHA-256 of the key. */
+        /** D-106: the live API keys, by the SHA-256 of the key. */
         final Map<String, String> idByKeyHash = new ConcurrentHashMap<>();
 
         void put(Row row) {
@@ -63,14 +63,14 @@ public final class PlayerDirectory {
     /** What kind of player a row is (column {@code kind}, V17). {@code is_bot} stays what it was: the house's own bots only. */
     public static final String KIND_HUMAN = "HUMAN";
     public static final String KIND_HOUSE_BOT = "HOUSE_BOT";
-    /** Р-106: a bot of an outside developer, owned by a person and played through the API with a key. */
+    /** D-106: a bot of an outside developer, owned by a person and played through the API with a key. */
     public static final String KIND_API_BOT = "API_BOT";
 
     /**
      * {@code retiredAtMs}: when a bot retired (economy stage B4), {@code null} for everyone else; {@code replaced}: a new bot has taken
      * the place of a retired one. A retired bot is in no list.
      *
-     * <p>{@code kind}, {@code ownerId}, {@code keyHash}, {@code keyHint} (Р-106): only an API bot has an owner and a key; {@code keyHash}
+     * <p>{@code kind}, {@code ownerId}, {@code keyHash}, {@code keyHint} (D-106): only an API bot has an owner and a key; {@code keyHash}
      * is {@code null} for a bot whose key was revoked and never leaves the server (the DTOs carry {@code keyHint} only).
      */
     public record Row(String playerId, String walletAddress, String nickname, boolean isBot, String botStrategy,
@@ -163,20 +163,20 @@ public final class PlayerDirectory {
         return Optional.ofNullable(maps.idByWallet.get(walletAddress));
     }
 
-    /** Р-53: resolves a chainsvc-reported {@code playerIndex} (deposit poller) back to a
+    /** D-53: resolves a chainsvc-reported {@code playerIndex} (deposit poller) back to a
      *  {@code playerId} — {@link Optional#empty()} if unknown (defensive; should not happen for a
      *  coin chainsvc itself derived from an index this server handed out). */
     public Optional<String> playerIdForIndex(int playerIndex) {
         return Optional.ofNullable(maps.idByPlayerIndex.get(playerIndex));
     }
 
-    /** Р-106: the API bot a live key belongs to, by the SHA-256 (hex) of the key; empty for an unknown or revoked key. */
+    /** D-106: the API bot a live key belongs to, by the SHA-256 (hex) of the key; empty for an unknown or revoked key. */
     public Optional<Row> byKeyHash(String keyHash) {
         String id = maps.idByKeyHash.get(keyHash);
         return id == null ? Optional.empty() : byId(id);
     }
 
-    /** Р-106: the API bots a person owns (revoked keys included: a bot is never deleted), oldest first. */
+    /** D-106: the API bots a person owns (revoked keys included: a bot is never deleted), oldest first. */
     public List<Row> apiBotsOf(String ownerId) {
         return maps.byId.values().stream().filter(r -> r.isApiBot() && ownerId.equals(r.ownerId()))
                 .sorted(java.util.Comparator.comparingLong(Row::createdAtMs).thenComparing(Row::playerId)).toList();
@@ -191,7 +191,7 @@ public final class PlayerDirectory {
     }
 
     /** Inserts a brand-new player row within the caller's transaction and returns it; the cache is not touched. Not used by the game any
-     *  more (Р-107: the projector writes the rows, {@link #projectEvents}); the directory's own test builds its fixtures with it. */
+     *  more (D-107: the projector writes the rows, {@link #projectEvents}); the directory's own test builds its fixtures with it. */
     public Row insert(Connection c, String playerId, String walletAddress, String nickname, boolean isBot,
                         String botStrategy, int playerIndex, long atMs) throws SQLException {
         db.update(c, "INSERT INTO players (player_id, wallet_address, nickname, is_bot, bot_strategy, "
@@ -312,7 +312,7 @@ public final class PlayerDirectory {
     }
 
     /**
-     * Р-107: writes the {@code players} rows that the journal's events describe, in the projector's transaction: a registration inserts
+     * D-107: writes the {@code players} rows that the journal's events describe, in the projector's transaction: a registration inserts
      * the row (and takes the invite columns and the key from {@code player_sidecar}), a nickname, a strategy or a retirement updates it.
      * Idempotent: a row that exists is left as it is by the insert, the updates write what the journal says. Events of other types are
      * ignored. Does not touch the cache (the commands that made the events did).

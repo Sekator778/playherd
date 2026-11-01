@@ -24,7 +24,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Economy stage A (Р-92, docs/product/economy_implementation_plan.md A1-A5) through {@link GameEngine}: a test market "TST"
+ * Economy stage A (D-92, docs/product/economy_implementation_plan.md A1-A5) through {@link GameEngine}: a test market "TST"
  * priced at 1000.00 with caps 100 (short round, {@code HOURLY}) / 40 (long round, {@code DAILY}), {@code κ = 0.1}, so
  * {@code l = 0.001} on the short round. Numbers worked by hand:
  *

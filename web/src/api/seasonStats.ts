@@ -39,7 +39,7 @@ export function bestSingleRound(history: ProfileRoundEntryDto[], season: SeasonI
 }
 
 /** The biggest single-round win that landed right after a loss (or a liquidation, which is
- *  always a loss of the whole stake, Р-7) — `history` is newest-first, so the round
+ *  always a loss of the whole stake, D-7) — `history` is newest-first, so the round
  *  chronologically right before `rounds[i]` is `rounds[i + 1]`. `null` when this season has no
  *  such pair (including "not enough rounds yet" and "never lost, so never came back either"). */
 export function biggestComeback(history: ProfileRoundEntryDto[], season: SeasonId): SeasonHighlight | null {

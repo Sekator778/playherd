@@ -17,7 +17,7 @@ export interface LiquidationPreviewResult extends LiquidationPreviewState {
 }
 
 /**
- * The liquidation preview of the bet being composed (Р-7, Р-33: shown BEFORE the bet), with the economy's numbers when it names the
+ * The liquidation preview of the bet being composed (D-7, D-33: shown BEFORE the bet), with the economy's numbers when it names the
  * round length (`interval`): the fees, the total debit and the highest leverage for this stake (economy stage C, C1). Debounced, and
  * an answer that arrives after a newer question was asked is dropped, not shown.
  *

@@ -18,7 +18,7 @@ export const HEAT_VAR: Record<HeatTier, string> = {
 };
 
 /**
- * live-round.md §1's zone table, RELATIVE to the market's own maximum (Р-69): the zones are fractions of
+ * live-round.md §1's zone table, RELATIVE to the market's own maximum (D-69): the zones are fractions of
  * the cap — Calm up to 20 %, Warm up to 37.5 %, Hot up to 60 %, Danger up to 82.5 %, Flame above — so
  * "all-in on the dial" is Flame on every market. At a cap of x40 that is exactly the
  * table's x8 / x15 / x24 / x33 thresholds; on a market capped at x10 (an odds market) x2 is Calm and

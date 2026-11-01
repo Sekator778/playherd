@@ -6,7 +6,7 @@
  * no vibration; it sits above the tab bar and blocks nothing; the next bet is one tap away.
  *
  * The same quiet line also tells a liquidated bet's other possible end: its round was CANCELLED, so the stake is
- * refunded (`ResultEvent.refunded`, Р-23) — the moment said the stake was lost, and a refund must not arrive unsaid.
+ * refunded (`ResultEvent.refunded`, D-23) — the moment said the stake was lost, and a refund must not arrive unsaid.
  */
 import { useEffect } from "react";
 import { Link } from "react-router-dom";

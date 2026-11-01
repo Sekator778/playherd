@@ -125,7 +125,7 @@ export function LabPage() {
             </button>
           ))}
         </div>
-        <h3>LIQUIDATION in the middle of the round (Р-50 — the round is still running)</h3>
+        <h3>LIQUIDATION in the middle of the round (D-50 — the round is still running)</h3>
         <div className="lab-grid">
           {TIERS.map((tier) => (
             <button

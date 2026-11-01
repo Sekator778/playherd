@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
         retain_confirmed: config.oracle_retain_confirmed,
     });
 
-    // PLAY withdraw/deposit (Р-6, decision Р-53 2026-09-26): a separate
+    // PLAY withdraw/deposit (D-6, decision D-53 2026-09-26): a separate
     // `WithdrawalPublisher`/`DepositService`, each with their own
     // `CoinsetChainClient` (cheap to construct again -- same pattern as the
     // oracle `Publisher` above; no shared mutable state between them besides
@@ -153,7 +153,7 @@ async fn main() -> Result<()> {
         "startup chain-lineage bootstrap complete"
     );
 
-    // PLAY treasury self-heal (decision Р-53 follow-up, `docs/research/
+    // PLAY treasury self-heal (decision D-53 follow-up, `docs/research/
     // chain_service.md` §13): same "before accepting or publishing
     // anything" precedent as the oracle bootstrap just above -- reconcile
     // the cached treasury PLAY CAT coin against the chain before the

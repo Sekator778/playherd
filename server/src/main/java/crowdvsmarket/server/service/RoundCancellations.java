@@ -88,7 +88,7 @@ public class RoundCancellations {
 
     /**
      * The result row of a cancelled round whose {@code RoundCancelled} event is in the journal and whose row was never written (the process
-     * stopped between the two, Р-107: the row is written after the event is durable). Written from the event; {@code refundedBetCount} is
+     * stopped between the two, D-107: the row is written after the event is durable). Written from the event; {@code refundedBetCount} is
      * the number of bets the round held when the event was applied (the replay counts it).
      */
     public void repairRow(Market market, GameEvent.RoundCancelled event, int refundedBetCount) {
@@ -153,7 +153,7 @@ public class RoundCancellations {
         int refundedBetCount = hub.engine(market.id(), window.interval()).betBook().count(window.roundId());
         GameEvent.RoundCancelled event = new GameEvent.RoundCancelled(window.interval(), window.startMs(),
                 window.endMs(), reason, nowMs, market.id());
-        // the exchange the round had been decided to run on, if it had (Р-76): the cancelled round says so too
+        // the exchange the round had been decided to run on, if it had (D-76): the cancelled round says so too
         String venue = Instruments.hasBackup(market) ? venues.venueOfRound(window.roundId()).orElse(null) : null;
         var canonical = ResultsHasher.build(market.id(), window.roundId(), window.interval().name(), "CANCELLED",
                 null, null, List.of(), null, venue);

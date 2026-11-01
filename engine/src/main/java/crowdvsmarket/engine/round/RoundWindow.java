@@ -6,10 +6,10 @@ import java.util.Objects;
 
 /**
  * One round's fixed time window {@code [startMs, endMs)} of one market, UTC-aligned to
- * {@code interval} (Р-19). Carries no price data — {@link RoundPrices} resolves open/close/path for
+ * {@code interval} (D-19). Carries no price data — {@link RoundPrices} resolves open/close/path for
  * a window once it is known. Construct via {@link RoundClock}, which guarantees UTC alignment.
  *
- * <p>{@code market} is a {@link MarketSpec} id (Р-69, a round belongs to one pair). The
+ * <p>{@code market} is a {@link MarketSpec} id (D-69, a round belongs to one pair). The
  * three-argument constructor builds a {@link MarketSpec#BTC_ID BTC} window, so every pre-markets
  * call site keeps compiling and behaving exactly as before.
  */

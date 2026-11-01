@@ -1,5 +1,5 @@
 /**
- * The pinned "My bet" card's pure rules (Р-98): which of the player's open bets it shows, and what state that bet is in. Everything is read from
+ * The pinned "My bet" card's pure rules (D-98): which of the player's open bets it shows, and what state that bet is in. Everything is read from
  * what `myPositions()` and the market list already carry — no new data.
  */
 import type { MyPositionDto } from "../api/contract";
@@ -47,7 +47,7 @@ export type MyBetState =
   | { kind: "waitingOpen" }
   | { kind: "wiped" }
   | { kind: "noPrice" }
-  /** Р-106, "Win or lose": no live P&L and no wipeout line - only where the price stands against the open (`null`: no price yet). */
+  /** D-106, "Win or lose": no live P&L and no wipeout line - only where the price stands against the open (`null`: no price yet). */
   | { kind: "fixed"; standing: "ahead" | "behind" | "level" | null }
   | { kind: "live"; read: LiveRead; mood: "winning" | "losing" | "even"; near: boolean };
 

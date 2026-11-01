@@ -14,7 +14,7 @@ export const zh: Dict = {
     off: "关",
     loadMore: "加载更多",
     botBadge: "机器人",
-    botBadgeTitle: "由测试模式机器人下注（Р-46）",
+    botBadgeTitle: "由测试模式机器人下注（D-46）",
     liqShort: "强平",
     demoBanner: "PLAY 是在 Chia testnet11 上发行的真实代币（Chia CAT）。",
     replay: "回放：{from}–{to} 的 BTC 价格，{speedup}× 速度",

@@ -14,7 +14,7 @@ export const uk: Dict = {
     off: "Вимк.",
     loadMore: "Завантажити ще",
     botBadge: "БОТ",
-    botBadgeTitle: "Грає тестовий бот (Р-46)",
+    botBadgeTitle: "Грає тестовий бот (D-46)",
     liqShort: "ліквід.",
     demoBanner: "PLAY — справжній токен (CAT у Chia), випущений у Chia testnet11.",
     replay: "Повтор: ціни BTC за {from}–{to}, швидкість {speedup}×",

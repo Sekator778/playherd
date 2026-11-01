@@ -12,7 +12,7 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * Event compatibility for the economy fees (Р-92, plan A4): {@code BetPlaced} has two more optional trailing fields,
+ * Event compatibility for the economy fees (D-92, plan A4): {@code BetPlaced} has two more optional trailing fields,
  * {@code feeHerdMojos} and {@code feeNetMojos}.
  * <ul>
  *   <li>the fixtures committed before the change ({@code events/golden}, {@code events/golden-markets}) have no fee keys and

@@ -1,4 +1,4 @@
-# PROVENANCE — `btc_1m.csv` (replay price source, Р-46 test mode)
+# PROVENANCE — `btc_1m.csv` (replay price source, D-46 test mode)
 
 Fetched **2026-09-25, ~17:18 UTC**, by a one-off script (same request shape and CSV layout
 as [`tools/fetch_hl_candles.py`](../../../../../tools/fetch_hl_candles.py), extended to the
@@ -43,9 +43,9 @@ strings written exactly as the API returned them (no float round-trip), ascendin
 
 ## How the server uses this file (предложение — see `docs/research/server_design.md`)
 
-`mode=replay` (default for the local stand, Р-46) walks this 5129-candle series at
+`mode=replay` (default for the local stand, D-46) walks this 5129-candle series at
 **20× speed** (one source minute of real BTC history per 3 wall-clock seconds — chosen so
-that a Р-46 test-mode HOURLY round, 180 s wall clock, replays exactly 60 source minutes,
+that a D-46 test-mode HOURLY round, 180 s wall clock, replays exactly 60 source minutes,
 i.e. one real historical hour), looping back to the first row once the series is
 exhausted. The mapping is by **array index**, not by absolute timestamp, so the 0-gap
 property above is a nice-to-have, not a correctness requirement — see

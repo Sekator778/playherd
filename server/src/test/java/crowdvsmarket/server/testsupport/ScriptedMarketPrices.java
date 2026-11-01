@@ -82,14 +82,14 @@ public class ScriptedMarketPrices implements MarketPrices {
         latest.put(market.id(), new PriceQuote(new BigDecimal(raw), asOfMs, change24h, stale));
     }
 
-    /** The market's latest tick as {@link #setQuote} has it, and from {@code venue}: the backup exchange's, shown because the primary has none fresh (Р-76). */
+    /** The market's latest tick as {@link #setQuote} has it, and from {@code venue}: the backup exchange's, shown because the primary has none fresh (D-76). */
     public void setQuote(Market market, String raw, long asOfMs, Double change24h, boolean stale, String venue) {
         defaults.put(market.id(), new BigDecimal(raw));
         latest.put(market.id(), new PriceQuote(new BigDecimal(raw), asOfMs, change24h, stale, venue));
     }
 
     /**
-     * Every round of the market runs on {@code venue} (Р-76): {@link #decidedVenue} says so, and what {@link #resolve} and
+     * Every round of the market runs on {@code venue} (D-76): {@link #decidedVenue} says so, and what {@link #resolve} and
      * {@link #soFar} hand over says it too. {@code null} takes it back: a market of one exchange, whose rounds have none.
      */
     public void setVenue(Market market, String venue) {
@@ -161,7 +161,7 @@ public class ScriptedMarketPrices implements MarketPrices {
 
     /**
      * What {@link #otherVenueLive} answers for the market, until {@link #reset}: whether the exchange its round was not
-     * decided on has a live tick now (Р-77). Not scripted means it has none.
+     * decided on has a live tick now (D-77). Not scripted means it has none.
      */
     public void setOtherVenueLive(Market market, boolean live) {
         if (live) {

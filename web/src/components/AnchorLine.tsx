@@ -5,7 +5,7 @@ import { AnchorIcon } from "./icons";
 import "./AnchorLine.css";
 
 /**
- * "Anchored on Chia" on a settled round (Р-40/Р-41, `RoundSettled.oracleAnchor` + `resultsHash`): where the
+ * "Anchored on Chia" on a settled round (D-40/D-41, `RoundSettled.oracleAnchor` + `resultsHash`): where the
  * round's oracle record is on the chain, in words that match what chainsvc really reports — confirmed,
  * sent, queued, not queued yet, or in conflict — then the results hash and the link to the public
  * `results.json` it commits to, so anyone can check the round was not rewritten afterwards. The line

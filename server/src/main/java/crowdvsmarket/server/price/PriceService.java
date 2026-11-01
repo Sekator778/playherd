@@ -13,10 +13,10 @@ import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.util.List;
 
-/** The price source of {@code herd.mode=replay} (Р-46): the accelerated replay of
+/** The price source of {@code herd.mode=replay} (D-46): the accelerated replay of
  *  {@code replay/btc_1m.csv}, BTC only, kept for tests and for working without a network
  *  (docs/research/markets_architecture.md §3.2 п.7, Т-12). In {@code herd.mode=live} the prices come
- *  from {@code crowdvsmarket.server.prices.MarketPrices} (Р-70) and this class is not used. */
+ *  from {@code crowdvsmarket.server.prices.MarketPrices} (D-70) and this class is not used. */
 @ApplicationScoped
 public class PriceService {
 

@@ -1,4 +1,4 @@
-// Offline tests of `tools/herd-operator.sh feedback` (`make test-tools`, Р-81): the script against a fake server on localhost —
+// Offline tests of `tools/herd-operator.sh feedback` (`make test-tools`, D-81): the script against a fake server on localhost —
 // what it asks for (the bearer token, `sinceMs`, `limit`), what it prints (the table, the count by country, the raw answer for
 // --json), what it does with a visitor's text (control characters never reach the operator's terminal) and what it refuses.
 // The table is made with jq: the tests that read it are skipped on a machine without jq (`--json` and the refusals do not need it).

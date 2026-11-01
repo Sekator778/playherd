@@ -25,7 +25,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-76 in the core — "a round runs entirely on one exchange" — as it is settled, stored and shown, over the real
+ * D-76 in the core — "a round runs entirely on one exchange" — as it is settled, stored and shown, over the real
  * database: a market that has a backup exchange settles a round from the exchange the round was decided on, and says which
  * in the result row ({@code round_results.venue}), in the canonical results JSON that is hashed and anchored on chain
  * (root key {@code "venue"}), in the {@code RoundResolved} event the engine replays, in the oracle journal and in the
@@ -242,8 +242,8 @@ class VenueRoundsTest extends LiveGameTestBase {
         gameService.placeBet(player, bet(betting, Enums.Direction.UP, 2, "300.000"), betting.startMs() - 1);
         venues.decide(betting.roundId(), market.id(), betting.startMs(), "kraken", betting.startMs());
         prices.setVenue(market, "kraken"); // what the pipeline answers for a round decided on Kraken: its exchange, and so its minutes
-        // Kraken cannot price it, and the round does not move to Coinbase: it waits for the five minutes of its exchange (Р-79; the
-        // other exchange is not alive here, so the two minutes of Р-77 do not apply) and is then cancelled with a refund
+        // Kraken cannot price it, and the round does not move to Coinbase: it waits for the five minutes of its exchange (D-79; the
+        // other exchange is not alive here, so the two minutes of D-77 do not apply) and is then cancelled with a refund
         prices.failAllResolves(market, new crowdvsmarket.server.prices.PriceUnavailableException("no price on kraken"));
         scheduler.tick(running.endMs());
         scheduler.tick(betting.endMs() + 1);
@@ -268,7 +268,7 @@ class VenueRoundsTest extends LiveGameTestBase {
     }
 
     // ------------------------------------------------------------------------------------------
-    // Р-40 within an exchange, and across a switch
+    // D-40 within an exchange, and across a switch
     // ------------------------------------------------------------------------------------------
 
     @Test
@@ -297,7 +297,7 @@ class VenueRoundsTest extends LiveGameTestBase {
         assertThat(openCents(w1.roundId())).as("Kraken's own price at the boundary, not Coinbase's close of 105.00")
                 .isEqualTo(10_530L);
         assertThat(venueColumn(w1.roundId())).isEqualTo("kraken");
-        assertThat(openCents(w2.roundId())).as("within Kraken: the close of w1, not the pipeline's 106.40 (Р-40)")
+        assertThat(openCents(w2.roundId())).as("within Kraken: the close of w1, not the pipeline's 106.40 (D-40)")
                 .isEqualTo(10_600L);
         assertThat(venueColumn(w2.roundId())).isEqualTo("kraken");
         assertThat(openCents(w3.roundId())).as("back on Coinbase, whose last close was not at this boundary")

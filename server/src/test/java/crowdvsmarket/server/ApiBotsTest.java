@@ -26,7 +26,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-106: bots of outside developers. A person creates them (three at most), each is its own player with a starter pack
+ * D-106: bots of outside developers. A person creates them (three at most), each is its own player with a starter pack
  * and a key; the key opens the bot through the same {@code /api/rpc} calls, but only the calls a bot needs; the bot cannot
  * withdraw; the bots have a board of their own; the key survives a rebuild of the engine and is not in the journal.
  */
@@ -349,7 +349,7 @@ class ApiBotsTest extends LiveRpcTestBase {
         Market market = market("T_AB_BOARD");
         String botId = botIdOf(createBot(signIn("board"), "Board Bot"));
         String personId = signUp("boardperson");
-        // the same rules as a person's: ten rounds in the season to be listed at all (Р-28)
+        // the same rules as a person's: ten rounds in the season to be listed at all (D-28)
         for (int i = 0; i < 9; i++) {
             play(market, botId, "2510.000", "2500.000", "2510.000");
             play(market, personId, "2510.000", "2500.000", "2510.000");
@@ -370,7 +370,7 @@ class ApiBotsTest extends LiveRpcTestBase {
     }
 
     // ---------------------------------------------------------------------------------------
-    // the bet's "mode" (Р-106): absent is today's percentage mode, anything unknown is refused
+    // the bet's "mode" (D-106): absent is today's percentage mode, anything unknown is refused
     // ---------------------------------------------------------------------------------------
 
     @Test

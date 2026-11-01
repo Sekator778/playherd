@@ -73,7 +73,7 @@ type BoardData = Pick<RatingsDto, "roundsThreshold" | "rich" | "prophets">;
 /** What the bots' tab shows when the server cannot give the boards (older server, or none answered): no one has qualified. */
 const EMPTY_BOT_RATINGS: RatingsDto = { season: "", roundsThreshold: RATING_ROUNDS_THRESHOLD, rich: [], prophets: [] };
 
-/** Two rankings, one under the other, with a line saying what they cover: the API bots' boards (Р-106) and the "This week" boards. */
+/** Two rankings, one under the other, with a line saying what they cover: the API bots' boards (D-106) and the "This week" boards. */
 function Boards({ ratings, note, empty, t }: { ratings: BoardData | null; note: string; empty: string; t: TFn }) {
   if (!ratings) return <Skeleton height={200} />;
   return (
@@ -120,7 +120,7 @@ export function RatingsPage() {
   const current = currentSeasonId();
   const [season, setSeason] = useState<SeasonId>(current);
   const [ratings, setRatings] = useState<RatingsDto | null>(null);
-  // Р-106: the API bots' own boards, fetched when their tab is opened (and again for another season).
+  // D-106: the API bots' own boards, fetched when their tab is opened (and again for another season).
   const [botRatings, setBotRatings] = useState<RatingsDto | null>(null);
   // "This week" (Monday 00:00 UTC to now): the people's boards, and the bots' when their tab is set to the week.
   const [weekly, setWeekly] = useState<WeeklyRatingsDto | null>(null);
@@ -128,7 +128,7 @@ export function RatingsPage() {
   const [botPeriod, setBotPeriod] = useState<"SEASON" | "WEEK">("SEASON");
   const [error, setError] = useState(false);
   const [myRoundsPlayed, setMyRoundsPlayed] = useState<number | null>(null);
-  // The full season archive (Р-10) — same source CrowdPage's season-returns table uses, not a
+  // The full season archive (D-10) — same source CrowdPage's season-returns table uses, not a
   // hardcoded current+previous pair, so every past season the crowd account has data for is
   // reachable here too. Kept in full (not just the season ids) for the highlight strip below —
   // one fetch already happening here, no new endpoint.

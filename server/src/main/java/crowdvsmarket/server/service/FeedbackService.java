@@ -13,7 +13,7 @@ import java.util.Set;
 import org.jboss.logging.Logger;
 
 /**
- * Р-81: the feedback a visitor leaves in the app — one message, no name, no e-mail — stored with what the server could
+ * D-81: the feedback a visitor leaves in the app — one message, no name, no e-mail — stored with what the server could
  * learn about the sender on the way in: the country of the IP address (derived and then forgotten: the address is neither
  * stored nor logged nor returned), the browser's time zone and language the client sends, and the player's id when the
  * sender is signed in. Docs: docs/research/server_design.md §22.

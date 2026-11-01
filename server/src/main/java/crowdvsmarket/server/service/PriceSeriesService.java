@@ -24,7 +24,7 @@ import java.util.List;
  * ({@link PriceThinning}). Memory only (the price buffer, {@link MarketPrices#series}); needs no engine, so
  * it is answered during a recovery too.
  *
- * <p><b>Exchanges (Р-76).</b> The chart of a market with a backup exchange is the ticks of its <i>primary</i> exchange only.
+ * <p><b>Exchanges (D-76).</b> The chart of a market with a backup exchange is the ticks of its <i>primary</i> exchange only.
  * The series has no field to say which exchange a tick is from (and changing {@code contract.ts} for it is not worth it),
  * and a line stitched from two exchanges would draw the basis between them as a jump that never happened on either.
  * While the primary is silent the chart has a gap, and the market's price ({@code markets}) is the backup's, saying so

@@ -1,5 +1,5 @@
 //! Deposit-address derivation and deposit-scanning tests for the PLAY
-//! withdraw/deposit endpoints (Р-6, decision Р-53 2026-09-26) -- no network,
+//! withdraw/deposit endpoints (D-6, decision D-53 2026-09-26) -- no network,
 //! `DepositService` against `FakePlayChainClient` (`tests/play_common/
 //! mod.rs`) and a temp data dir. Exercises the task's explicit requirements:
 //! "deposit detection for 2 players", "wrong-asset coin at a deposit address

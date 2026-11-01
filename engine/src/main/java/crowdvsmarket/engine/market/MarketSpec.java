@@ -8,8 +8,8 @@ import java.util.regex.Pattern;
 /**
  * The risk parameters of one tradable market (pair): its id, its leverage cap and its maintenance
  * margin rate {@code l} (docs/research/hl_liquidation_math.md section 2.2). The engine started as
- * a single-market (BTC) calculator; Р-69 (category panels, then pairs, then a bet with leverage
- * inside a pair — the Р-59/Р-61 lobby of pairs, extended) makes the two things that used to be
+ * a single-market (BTC) calculator; D-69 (category panels, then pairs, then a bet with leverage
+ * inside a pair — the D-59/D-61 lobby of pairs, extended) makes the two things that used to be
  * BTC constants — the leverage cap and {@code l} — per-market values carried by this record.
  * Round ids become market-aware too, see {@code RoundWindow#roundId()}.
  *
@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  * power of ten before it reaches the engine, so {@code Candle}, {@code PositionSizing} and the
  * liquidation formulas stay exactly as they were for BTC (see engine/README.md, "Markets").
  *
- * <p><b>Economy, stage A (Р-92, docs/product/economy_implementation_plan.md):</b> besides the original
+ * <p><b>Economy, stage A (D-92, docs/product/economy_implementation_plan.md):</b> besides the original
  * single-cap fields (which are what every bet placed before the economy change keeps being settled
  * with, so a replayed history is unchanged), a spec carries the new per-round-length caps
  * ({@link #capFor}, {@code HOURLY} = the short round, 3 min in the server's configuration, {@code DAILY}
@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
  * {@link #maintenanceRateFor}) and the herd-fee rate {@code r_m} as a fraction of notional
  * ({@link #herdFeeRate}, 1 bp = 0.0001). {@link #forInterval} is the spec a bet of one round length is
  * simulated with. The three-argument constructor keeps both caps at {@code maxLeverage} and the defaults
- * {@code κ = 0.1}, {@code r_m = 1 bp}. The herd fee is {@code stake * min(20%, k * r_m * L)} (Р-102), {@code k} =
+ * {@code κ = 0.1}, {@code r_m = 1 bp}. The herd fee is {@code stake * min(20%, k * r_m * L)} (D-102), {@code k} =
  * {@link #feeFactorFor}: 1 in the short round, {@link #longRoundFeeFactor} in the long one (2.2 price markets, 3.0 odds).
  */
 public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMarginRate,
@@ -63,7 +63,7 @@ public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMargi
 
     /**
      * Default {@code k} of the long (15-minute) round: 2.2, the median sigma(15 min) / sigma(3 min) of the price markets
-     * (docs/research/economy_variant_a_rules_2026-10-17.md, rule 2b, Р-102). An odds market takes 3.0 (rule 2g).
+     * (docs/research/economy_variant_a_rules_2026-10-17.md, rule 2b, D-102). An odds market takes 3.0 (rule 2g).
      */
     public static final BigDecimal DEFAULT_LONG_ROUND_FEE_FACTOR = new BigDecimal("2.2");
 
@@ -194,7 +194,7 @@ public record MarketSpec(String id, int maxLeverage, BigDecimal maintenanceMargi
         return new Leverage(value);
     }
 
-    /** {@code value} pulled into {@code [Leverage.MIN, maxLeverage]} — e.g. the crowd account's weighted leverage (Р-14). */
+    /** {@code value} pulled into {@code [Leverage.MIN, maxLeverage]} — e.g. the crowd account's weighted leverage (D-14). */
     public int clampLeverage(int value) {
         return Math.max(Leverage.MIN, Math.min(maxLeverage, value));
     }

@@ -339,7 +339,7 @@ describe("Round page — prices and source from the ROUND's own fields: the mark
   });
 });
 
-describe("Round page — the exchange a round ran on (RoundBase.source, Р-76: one round, one exchange)", () => {
+describe("Round page — the exchange a round ran on (RoundBase.source, D-76: one round, one exchange)", () => {
   // `spot_BTC` is priced by Coinbase with Kraken behind it (the new catalogue); a round carries the exchange it runs on.
   const onSpot = (source: RoundSettled["source"], over: Partial<RoundSettled> = {}) =>
     settled({ roundId: "spot_BTC-1h-0", marketId: "spot_BTC", asset: "BTC", priceDecimals: 2, source, openPrice: "84000.00", closePrice: "84100.00", ...over });

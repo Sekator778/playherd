@@ -18,7 +18,7 @@ import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-40 under everything the pipeline does to a ring. Two windows that meet at a boundary read the
+ * D-40 under everything the pipeline does to a ring. Two windows that meet at a boundary read the
  * same price there — {@code close(A) == open(B)} for the neighbours A = [S, S+W] and B = [S+W, S+2W];
  * {@code close(D) == close(B)} for D = [S−W, S+2W], a longer window that ends where B ends (the other
  * series of a market: the scheduler settles the DAILY series before the HOURLY one in every pass, and

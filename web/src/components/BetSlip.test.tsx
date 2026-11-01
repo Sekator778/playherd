@@ -132,7 +132,7 @@ describe("BetSlip client-side validation (ux_spec.md §11)", () => {
   });
 });
 
-describe("BetSlip is market-aware (Р-69)", () => {
+describe("BetSlip is market-aware (D-69)", () => {
   async function renderFor(marketId: string) {
     const pair = await mockApi.rounds("HOURLY", marketId);
     if (pair.betting.phase !== "BETTING") throw new Error("expected an open betting round");
@@ -177,7 +177,7 @@ describe("BetSlip is market-aware (Р-69)", () => {
   });
 });
 
-describe("«With the herd» / «Against the herd» (Р-71)", () => {
+describe("«With the herd» / «Against the herd» (D-71)", () => {
   /** The real open round of the mock, with the live split set by hand. */
   function round(over: Partial<RoundBetting>): RoundBetting {
     return { ...bettingRound, ...over };

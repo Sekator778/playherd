@@ -1,7 +1,7 @@
 # Crowd vs Market — фронтенд
 
 Vite + React + TypeScript (strict) + react-router. Собран против `src/api/contract.ts`
-(TS-зеркало Quarkus API, Р-20/Р-35; контракт — зафиксированный интерфейс, этот пакет его не меняет).
+(TS-зеркало Quarkus API, D-20/D-35; контракт — зафиксированный интерфейс, этот пакет его не меняет).
 Два `Api`: `MockApi` (`src/api/mockApi.ts`, детерминированные тестовые данные, без сети) и `RealApi`
 (`src/api/realApi.ts`, HTTP поверх FIXED INTERFACE (1) — `POST /api/rpc/<method>`). Выбор —
 переменной сборки `VITE_API_MODE` (`src/api/apiMode.ts`): `mock` по умолчанию (`npm run dev`), `real`
@@ -9,17 +9,17 @@ Vite + React + TypeScript (strict) + react-router. Собран против `sr
 контракта) — все читают через `useApi()`/`ApiContext.tsx`; мок обязан следовать контракту так же, как
 сервер (его поля, `null`-ы и порядок), иначе экраны, построенные на нём, соврут про настоящий сервер.
 
-Источники: `the decision log` (Р-1…Р-71), `docs/product/ux_spec.md`,
+Источники: `the decision log` (D-1…D-71), `docs/product/ux_spec.md`,
 `docs/product/design/markets-lobby.md`, `docs/research/markets_architecture.md`,
 `docs/research/hl_liquidation_math.md`, `docs/research/round_engine_design.md`,
-`docs/research/week1_wallet_auth.md`. UI-копирайт — на английском (Р-24), этот файл — на
+`docs/research/week1_wallet_auth.md`. UI-копирайт — на английском (D-24), этот файл — на
 русском, код и комментарии — на английском.
 
 ## Стек и почему
 
 Vite/React/TS(strict)/react-router заданы условием задачи. Остальной выбор — ниже, зависимостей
 по минимуму; лицензии в основном MIT/Apache-2.0, кроме `@walletconnect/sign-client` (см. ниже —
-собственная лицензия Reown, не OSI, использована как есть, наш код остаётся Apache-2.0, Р-36):
+собственная лицензия Reown, не OSI, использована как есть, наш код остаётся Apache-2.0, D-36):
 
 - **decimal.js** (MIT) — BigDecimal-эквивалент. `src/api/liquidation.ts` — точный TS-порт
   `LiquidationCalculator.java`/`PositionSizing.java`, формула в формулу, с той же схемой
@@ -38,7 +38,7 @@ Vite/React/TS(strict)/react-router заданы условием задачи. �
   экраны без графика не платили за его вес.
 - **Стилизация — обычный CSS**, без библиотек: один `src/index.css` с CSS-переменными
   (токены цвета/радиуса/тени). **Предложение**: ноль зависимостей, полный контроль над
-  контрастом (WCAG AA, см. ниже) и над «игровым» стилем Р-33 (крупные UP/DOWN, таймер, яркие,
+  контрастом (WCAG AA, см. ниже) и над «игровым» стилем D-33 (крупные UP/DOWN, таймер, яркие,
   но проверенные на контраст цвета — тёмная тема в духе Twitch Predictions, светлой темы нет:
   ни один источник её не требует, а для «игрового» экрана одна выверенная тема читается лучше
   переключателя).
@@ -50,7 +50,7 @@ Vite/React/TS(strict)/react-router заданы условием задачи. �
   рендера, не в эффекте»; «обновление рефа — в собственном безусловном эффекте, не во время
   рендера»).
 - **chia-wallet-sdk-wasm** (Apache-2.0, официальный `xch-dev/chia-wallet-sdk`) — браузерный
-  тестовый кошелёк (Р-45, `src/wallet/testWallet.ts`): настоящий BLS-ключ и подпись прямо в
+  тестовый кошелёк (D-45, `src/wallet/testWallet.ts`): настоящий BLS-ключ и подпись прямо в
   браузере, той же схемой, что использует Sage (`docs/research/week1_wallet_auth.md` §2).
   Экспорты проверены чтением `.d.ts` пакета (не документацией) — `SecretKey.sign`,
   `deriveUnhardenedPath`/`deriveSynthetic`, `standardPuzzleHash`, `Address`,
@@ -65,19 +65,19 @@ Vite/React/TS(strict)/react-router заданы условием задачи. �
   из внутреннего SWC re-print шага); не понадобилась — вывод Rolldown уже поддерживает
   top-level await нативно, `npm run build` тому доказательство.
 - **@walletconnect/sign-client** (`2.25.0`, проверено 2026-09-25/26) — реальный вход через Sage
-  (Р-55, `src/wallet/walletConnect.ts`): пейринг-сессия WalletConnect v2, `chia_getAddress`/
+  (D-55, `src/wallet/walletConnect.ts`): пейринг-сессия WalletConnect v2, `chia_getAddress`/
   `chia_signMessageByAddress` (`docs/research/week1_wallet_auth.md` §1.1, «Реализация»).
   **Лицензия — НЕ MIT/Apache-2.0**: собственная «WalletConnect Community License Agreement»
   Reown, Inc. (`github.com/WalletConnect/walletconnect-monorepo`,
   `packages/sign-client/LICENSE.md`, «Release Date: 20 August 2025», прочитано `gh api` 2026-09-26)
-  — бесплатно ниже 2 500 000 RPC/мес или 500 MAU/мес (закрытая альфа Р-42, 5–10 тестеров, далеко
+  — бесплатно ниже 2 500 000 RPC/мес или 500 MAU/мес (закрытая альфа D-42, 5–10 тестеров, далеко
   ниже порога), обязательно подключение к сети реле Reown (не self-hosted — ровно то, что делает
   этот модуль), обязательная строка атрибуции (см. ниже). Наш собственный код остаётся
-  Apache-2.0 (Р-36) — это чужая зависимость на её собственных условиях, не наш код.
+  Apache-2.0 (D-36) — это чужая зависимость на её собственных условиях, не наш код.
   **Portions © 2025 Reown, Inc. All Rights Reserved.** Подгружается лениво (`import()` внутри
   `wallet/walletConnect.ts`, ~2,7 МБ unpacked по данным `npm view`) — не в главном чанке.
 - **qrcode-generator** (`2.0.4`, MIT, ~15 КБ, без своих зависимостей) — QR-код адреса депозита
-  (Р-53) и QR-код WalletConnect-пейринга (Р-55), `src/wallet/QrCode.tsx`: рисует обычными SVG
+  (D-53) и QR-код WalletConnect-пейринга (D-55), `src/wallet/QrCode.tsx`: рисует обычными SVG
   `<rect>`/`<path>` по сетке модулей библиотеки, не её собственным `createSvgTag()`. Достаточно
   маленький, чтобы не выносить в отдельный ленивый чанк — в отличие от двух пакетов выше.
 
@@ -85,15 +85,15 @@ Vite/React/TS(strict)/react-router заданы условием задачи. �
 добавился только `@capacitor/app`, обработка кнопки «Назад» на Android — `src/fx/useAndroidBackButton.ts`).
 График цены комнаты (`src/components/PriceChart.tsx`) — собственный SVG без библиотеки; recharts остаётся
 только для графика счёта толпы. `contract.ts` растёт аддитивно: `serverInfo()` (+ `walletConnectProjectId?`),
-`PlayerSummaryDto.isBot?`, `resultsHash?` и `oracleAnchor?` у раундов, `myDepositAddress()` (Р-53) — со стороны
+`PlayerSummaryDto.isBot?`, `resultsHash?` и `oracleAnchor?` у раундов, `myDepositAddress()` (D-53) — со стороны
 старого самоотчётного `requestDeposit(amount)` ничего не осталось (эксплойт критики 2026-09-26, назад не
-вернётся); рынки и категории (Р-69, Р-70: `markets()`, `priceSeries()`, `myPositions()`, `crowdOverview()`) и
+вернётся); рынки и категории (D-69, D-70: `markets()`, `priceSeries()`, `myPositions()`, `crowdOverview()`) и
 дополнения 2026-10-02 (`RoundRunning.openPrice` может быть `null`, `MyPositionDto.durationSec`/`size`,
 `ProfileRoundEntryDto.durationSec`, `MarketDto.eventStartsAtMs`/`closedAtMs`/`closeReason`/`oracleIndex`,
 `title` и `status` в строках `CrowdOverviewDto`, `ServerInfoDto.playAssetId`/`testWallet`, точная формулировка
 `priceSeries(sinceMs)`) и ночные дополнения 2026-10-02 (`RoundBase.kind`/`priceDecimals`/`source` — цены раунда печатаются по нему,
 а не по списку рынков; `CancellationDto.marketId`/`asset`; `lastOutcome: "FLAT"`; коды `ENGINE_NOT_READY`, `NOT_FOUND`, `INVALID_NICKNAME`;
-`LedgerEntryType.OPERATOR_CORRECTION`; `ServerInfoDto.engineReady`; `ProfileRoundEntryDto.kind`) и отзыв в приложении (Р-81, 2026-10-11:
+`LedgerEntryType.OPERATOR_CORRECTION`; `ServerInfoDto.engineReady`; `ProfileRoundEntryDto.kind`) и отзыв в приложении (D-81, 2026-10-11:
 `submitFeedback(FeedbackRequest): FeedbackReceiptDto`, `FEEDBACK_MAX_LENGTH`).
 
 ## Архитектура
@@ -122,13 +122,13 @@ src/api/
                               гоняют по ним `RealApi` и все экраны (см. «Тест-стык» ниже)
   liquidation.ts              — точный TS-порт LiquidationCalculator/PositionSizing + золотые векторы
   inPlay.ts, outcome.ts, favorites.ts, marketMeta.ts, amountInput.ts, seasonStats.ts
-  feedback.ts                 — отзыв в приложении (Р-81): что уходит в `submitFeedback` (текст, пояс, язык, путь без query,
+  feedback.ts                 — отзыв в приложении (D-81): что уходит в `submitFeedback` (текст, пояс, язык, путь без query,
                                 `web`/`app`/`pwa`), как называется сбой (429 — «слишком много», остальное — «не отправилось»),
                                 что помнит браузер (`herd.feedback.dismissed`, `herd.feedback.sent`; хранилище недоступно —
                                 полоска просто показывается), открыта ли форма
 src/components/               — общие компоненты и «модели» без React рядом с ними (`*Model.ts`,
                                 `livePosition.ts`, `heat.ts`: у каждого файла тест); `FeedbackStrip` (закрываемая полоска
-                                над нижней панелью) и `FeedbackModal` (форма отзыва, на телефоне нижний лист) — Р-81, ux_spec §2
+                                над нижней панелью) и `FeedbackModal` (форма отзыва, на телефоне нижний лист) — D-81, ux_spec §2
 src/fx/                       — момент итога раунда (глобальный): шина событий, очередь, карточка, частицы,
                                 звук, вибрация; наблюдатели (`useSettlementWatcher`, `useLiquidationWatcher`,
                                 `useAwayReplay`), тихая сводка расчёта (`QuietNotes`); `backHandlers` — кто отвечает на
@@ -179,7 +179,7 @@ src/test/setup.ts             — настройка vitest/jsdom
 - Остальные состояния рынков мока: спортивный матч (`eventStartsAtMs`: «Starts in …» → «LIVE», затем рынок
   `PM900104` закрывается через 90 секунд после загрузки страницы со словами источника «The source market ended» — `closeReason`),
   у каждого рынка есть `oracleIndex`.
-- **Источники мока — как у сервера (Р-74, Р-76).** BTC, ETH, SOL, XRP, DOGE: `source: "coinbase"`, `backupSource: "kraken"`;
+- **Источники мока — как у сервера (D-74, D-76).** BTC, ETH, SOL, XRP, DOGE: `source: "coinbase"`, `backupSource: "kraken"`;
   HYPE: `hyperliquid` с запасной `coinbase`; акции, индексы, сырьё — `hyperliquid`; шансы — `polymarket` (`mockMarkets.ts`).
   Запасная биржа в моке не включается — нет биржи, которая может замолчать: ни одной цены с `venue`, ни одного раунда на
   запасной. Эти состояния (цена запасной биржи, раунд на ней, подпись графика) нарисованы в `/lab/states` из фиксированных данных.
@@ -233,7 +233,7 @@ node scripts/check-header-width.mjs http://127.0.0.1:5173   # ширина ша�
 экрана и элементы не наползают друг на друга; код выхода 1 — если какой-то не прошёл. Правила CSS, на которых это держится, закреплены в
 `src/headerLayout.test.ts` (ник уступает место, остальное не сжимается).
 
-Состояние на 2026-10-03 (источники без посредников, Р-74/Р-76): typecheck без ошибок; lint — 0 ошибок и 10 некритичных
+Состояние на 2026-10-03 (источники без посредников, D-74/D-76): typecheck без ошибок; lint — 0 ошибок и 10 некритичных
 предупреждений fast-refresh (файлы с несколькими экспортами — контекст или константы рядом с компонентом);
 `npm test -- --run` — 72 файла, 1722 теста, из них **101 (два файла: `api/wireContract.test.ts`, `wirePages.test.tsx`) читают
 `src/api/wire/*.json` и падают с именем недостающего файла, пока серверные тесты их не записали**; остальные 1621 зелёные.
@@ -241,7 +241,7 @@ node scripts/check-header-width.mjs http://127.0.0.1:5173   # ширина ша�
 не перепроверялся — проверки биржи у рынка с запасной пропускаются, если в ответах такого рынка нет. Сборка — несколько чанков.
 Самые большие (gzip): `chia_wallet_sdk_wasm` (~2,0 МБ, тестовый кошелёк) и WalletConnect — оба вынесены отдельно и грузятся только
 при реальном открытии окна входа; график счёта толпы (recharts, ~116 КБ gzip) — ленивый чанк; главный чанк `index-*.js` ~179 КБ gzip
-(~177 КБ до Р-76: названия источников, запасные биржи и страница Status добавили ~2,5 КБ gzip).
+(~177 КБ до D-76: названия источников, запасные биржи и страница Status добавили ~2,5 КБ gzip).
 
 ## Тест-стык с настоящим сервером (`src/api/wire/`)
 
@@ -261,9 +261,9 @@ node scripts/check-header-width.mjs http://127.0.0.1:5173   # ширина ша�
 UP/DOWN всегда парой иконка+текст, ни одного чисто цветового сигнала (тексты "Won"/"Lost"/
 "Liquidated" тоже, не только цвет); формы — с `<label>`; модалка входа — `role="dialog"`,
 `aria-modal`, возврат фокуса при закрытии, закрытие по Esc. Публичные страницы проверены на
-375px (Р-31).
+375px (D-31).
 
-## Android (Capacitor, Р-48)
+## Android (Capacitor, D-48)
 
 `android/` — нативный Android-проект, добавленный Capacitor'ом (`@capacitor/core`/`@capacitor/cli`/
 `@capacitor/android`, MIT). Это сборка **под локальный стенд**, не под магазин: `capacitor.config.ts`
@@ -286,7 +286,7 @@ npm run android:debug # sync + ./gradlew assembleDebug → android/app/build/out
 WebView remote debugging (`chrome://inspect`) включён только в debug-сборке
 (`MainActivity.java`, `BuildConfig.DEBUG`).
 
-## Откуда цена и на какой бирже раунд (Р-74, Р-76)
+## Откуда цена и на какой бирже раунд (D-74, D-76)
 
 Каждый источник назван словами игрока одним помощником (`components/marketModel.ts`: `sourceName`, `originPhrase`):
 «Price from Coinbase», «Price from Kraken», «Price from Hyperliquid» (спот и перпы), «Odds from Polymarket»; источник,
@@ -310,7 +310,7 @@ WebView remote debugging (`chrome://inspect`) включён только в deb
 
 ## Честность демо
 
-Верхняя полоса DEMO и строка режима replay с игровых экранов убраны (Р-63); факт «PLAY — тестовые токены,
+Верхняя полоса DEMO и строка режима replay с игровых экранов убраны (D-63); факт «PLAY — тестовые токены,
 ничего здесь не настоящие деньги» стоит обычным текстом там, где его читают: онбординг, Wallet, How it works
 (`ux_spec.md` §2). Режим и источник цены (живые, симулированные, повтор) — на странице Status и в баннере
 Wallet; боты помечены **BOT** везде, где показан игрок, и отмечены строкой в лобби; в моковой сборке Status

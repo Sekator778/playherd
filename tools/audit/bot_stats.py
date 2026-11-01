@@ -4,9 +4,9 @@
 Read-only (ssh + psql inside a READ ONLY transaction, same mechanism and .local/vps.env as settlement_audit.py).
 Python 3 standard library only.
 
-Everything is split by payout mode (Р-106): FIXED ("Win or lose") and PERCENTAGE, each with its own tables, its own `coin` control
+Everything is split by payout mode (D-106): FIXED ("Win or lose") and PERCENTAGE, each with its own tables, its own `coin` control
 and the same Wilson / Newcombe columns. The mode is `player_round_history.mode` (V18). In FIXED there is no leverage and no
-liquidation, so those two columns are blank there. The split is internal (Р-105 п. 3), not shown to players.
+liquidation, so those two columns are blank there. The split is internal (D-105 п. 3), not shown to players.
 
 Per strategy family (bollinger, rsi, ema, coin, donchian, momentum, crowd-follow, crowd-contrarian, legacy names) and per
 full strategy name, per round length (3 min = HOURLY, 15 min = DAILY) and for both together:
@@ -188,7 +188,7 @@ def markdown(outs, meta):
                  "[вывод: ставки одного бота повторяют его правило, а не независимые испытания].")
     lines.append("Строк с вердиктом — десятки; при уровне 95 % часть «отличима» выпадает случайно [вывод: 5 % от числа проверок]; "
                  "вердикт читать вместе с числом ставок и повторяемостью на другом периоде.")
-    lines.append("В режиме FIXED нет плеча и ликвидации: столбцы «Ликвидаций» и «Ср. плечо» пусты. Статистика внутренняя (Р-105 п. 3).")
+    lines.append("В режиме FIXED нет плеча и ликвидации: столбцы «Ликвидаций» и «Ср. плечо» пусты. Статистика внутренняя (D-105 п. 3).")
     miss = sum(r["nofee"] for out in outs.values() for r in out if r["level"] == "family" and r["iv"] == "ALL")
     if miss:
         lines.append("Ставок без события `BetPlaced` (комиссия принята за 0): %d." % miss)

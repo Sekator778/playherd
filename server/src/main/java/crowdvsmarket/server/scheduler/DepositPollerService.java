@@ -13,7 +13,7 @@ import java.util.Optional;
 import org.jboss.logging.Logger;
 
 /**
- * Р-53: detects real, chain-confirmed PLAY CAT deposits (chainsvc's {@code GET
+ * D-53: detects real, chain-confirmed PLAY CAT deposits (chainsvc's {@code GET
  * /v1/play/deposits?sinceHeight=N}) and credits them automatically — the counterpart of a player
  * sending PLAY to their own {@code myDepositAddress()}, with no RPC needed on their end at all.
  * Every 30s tick: reads the {@code sinceHeight} cursor ({@link ServerMetaRepository}), asks

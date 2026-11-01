@@ -81,7 +81,7 @@ export function ResultsHashLine({ roundId, resultsHash }: { roundId: string; res
   );
 }
 
-/** Honest labelling of the crowd (Р-46: "bots are labelled"): the player counts and the UP/DOWN split on the
+/** Honest labelling of the crowd (D-46: "bots are labelled"): the player counts and the UP/DOWN split on the
  *  lobby cards cannot tell a bot from a person, so where a server reports test bots (`ServerInfoDto.bots`) the
  *  page says so. Renders nothing for a server that reports none and for the mock (no `serverInfo()` — there
  *  is no server to ask, like the other lines of this family). */
@@ -146,12 +146,12 @@ export function OracleStatusLine() {
   );
 }
 
-/** Р-33/§2 ("Про управляемый оракул"): shown wherever the outcome depends on the oracle. The first half names where the
+/** D-33/§2 ("Про управляемый оракул"): shown wherever the outcome depends on the oracle. The first half names where the
  *  number really comes from — "Price from Coinbase", "Price from Kraken", "Price from Hyperliquid", "Odds from
- *  Polymarket" (`originPhrase`); a Polymarket odds market is not "a price from Hyperliquid" (Р-69); the second half is the
+ *  Polymarket" (`originPhrase`); a Polymarket odds market is not "a price from Hyperliquid" (D-69); the second half is the
  *  same for every source: it is OUR key that publishes it. A caller that does not know the source passes none and the
  *  line says nothing about it — it never assumes one (a round of a market that has left `markets()` once claimed
- *  "Price from Hyperliquid" for an odds round). A market that has a backup exchange (Р-76) says so after it: which one,
+ *  "Price from Hyperliquid" for an odds round). A market that has a backup exchange (D-76) says so after it: which one,
  *  and that a round runs on it only when the main exchange has no price at the round's start. */
 export function OracleDisclosureLine({ source, backup }: { source?: MarketDto["source"]; backup?: MarketDto["backupSource"] }) {
   const t = useT();
@@ -173,7 +173,7 @@ export function OracleDisclosureLine({ source, backup }: { source?: MarketDto["s
 }
 
 /**
- * A round that runs (or ran) on its market's backup exchange says so (Р-76: a round runs entirely on one exchange,
+ * A round that runs (or ran) on its market's backup exchange says so (D-76: a round runs entirely on one exchange,
  * chosen when it starts), where the page prints its prices — a quiet boxed note, nothing is wrong. Nothing for a round on
  * the main exchange, nor when the market (which says which exchange is the main one) is not on the list.
  */

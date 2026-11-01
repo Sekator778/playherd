@@ -122,7 +122,7 @@ class WireFixturesTest extends LiveRpcTestBase {
      * One step of the clock: the round that is running settles now. It is scripted to run from {@code open} to
      * {@code close} (low and high as given), the price of the market stands at {@code close} from here on — the
      * unscripted window of the other series that ends at the same boundary closes at it too, so that both series
-     * agree on the boundary (Р-40) — and the scheduler ticks at the end of the round: every series of every market
+     * agree on the boundary (D-40) — and the scheduler ticks at the end of the round: every series of every market
      * is brought to the next window, and the round that was open for betting is now the running one.
      */
     private void settleRunning(Market market, String open, String close, String low, String high) {
@@ -145,7 +145,7 @@ class WireFixturesTest extends LiveRpcTestBase {
                 .atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
         long start = Math.max(now - 20 * 60_000L, monthStart + 60_000L);
         Market btc = registry.require("BTC");
-        // priced by Coinbase, with Kraken behind it (Р-76): the wire shows a market that has a backup exchange
+        // priced by Coinbase, with Kraken behind it (D-76): the wire shows a market that has a backup exchange
         Market perp = registry.list(new NewMarket("T_WIRE_PERP", MarketKind.PERP, Category.CRYPTO, "WPR", "Wirecoin",
                 null, null, "coinbase", "WPR-USD", "{\"backup\":{\"source\":\"kraken\",\"ref\":\"WPR/USD\"}}", 25, 1,
                 null), now);
@@ -290,7 +290,7 @@ class WireFixturesTest extends LiveRpcTestBase {
         capture("crowdOverview", null, "crowdOverview");
         capture("ratings", null, "ratings", (Object) null);
         capture("weeklyRatings", null, "weeklyRatings");
-        capture("publicProfile", alice, "publicProfile", story.aliceId()); // as herself: the complete view; anyone else sees only the wins (Р-90)
+        capture("publicProfile", alice, "publicProfile", story.aliceId()); // as herself: the complete view; anyone else sees only the wins (D-90)
         capture("cancellations", null, "cancellations", (Object) null);
         capture("unseenResults", alice, "unseenResults");
         capture("priceSeries", null, "priceSeries", story.perp().id(), null);
@@ -308,7 +308,7 @@ class WireFixturesTest extends LiveRpcTestBase {
         RpcClient.SignIn signIn = RpcClient.signInWithAnswer(chainSvcClient, CAROL);
         keep(new Taken("authVerify", "authVerify", List.of(signIn.request()), 200, signIn.answer()));
 
-        // Р-106: API bots - the owner's calls, the bots' board, and the two refusals a key meets
+        // D-106: API bots - the owner's calls, the bots' board, and the two refusals a key meets
         Session botOwner = RpcClient.signIn(chainSvcClient, "wirebots");
         captureWithKey("createBot", botOwner, "createBot", "Wire Bot");
         capture("myBots", botOwner, "myBots");

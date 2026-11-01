@@ -14,7 +14,7 @@ import java.math.RoundingMode;
  * leverage the trader chose and independent of notional. The overloads without a rate use the BTC
  * constant {@link #MAINTENANCE_MARGIN_RATE} ({@code 0.0125}, BTC tier0, {@code 1/(2*40)}); the
  * overloads that take the rate explicitly serve every other market, whose rate is
- * {@code 1/(2*maxLeverage)} ({@code MarketSpec}, doc section 1.4, Р-69) — same formulas, same
+ * {@code 1/(2*maxLeverage)} ({@code MarketSpec}, doc section 1.4, D-69) — same formulas, same
  * rounding, and for BTC the same results bit for bit. Tier1 (notional {@literal >} 150M USDC) is
  * deliberately not implemented, since no demo position approaches that size (doc section 2.1,
  * section 6 open question).
@@ -57,7 +57,7 @@ public final class LiquidationCalculator {
         return maintenanceMarginRequired(size, entryPrice, MAINTENANCE_MARGIN_RATE);
     }
 
-    /** {@code maintenance_margin_required = round2( Q * P0 * l )} with an explicit rate {@code l} (Р-69, per-market). */
+    /** {@code maintenance_margin_required = round2( Q * P0 * l )} with an explicit rate {@code l} (D-69, per-market). */
     public static BigDecimal maintenanceMarginRequired(
             BigDecimal size, BigDecimal entryPrice, BigDecimal maintenanceMarginRate) {
         BigDecimal raw = size.multiply(entryPrice).multiply(maintenanceMarginRate, MC);
@@ -74,7 +74,7 @@ public final class LiquidationCalculator {
         return liquidationPrice(size, entryPrice, leverage, side, MAINTENANCE_MARGIN_RATE);
     }
 
-    /** {@link #liquidationPrice(BigDecimal, BigDecimal, Leverage, Side)} with an explicit rate {@code l} (Р-69, per-market). */
+    /** {@link #liquidationPrice(BigDecimal, BigDecimal, Leverage, Side)} with an explicit rate {@code l} (D-69, per-market). */
     public static BigDecimal liquidationPrice(
             BigDecimal size, BigDecimal entryPrice, Leverage leverage, Side side, BigDecimal maintenanceMarginRate) {
         BigDecimal isolatedMargin = initialMargin(size, entryPrice, leverage);
@@ -115,11 +115,11 @@ public final class LiquidationCalculator {
 
     /**
      * {@code payout_on_liquidation = 0}: on liquidation the player loses the entire stake (the
-     * whole isolated margin) — product decision <b>Р-7</b> ({@code the decision log},
-     * Р-7, 2026-09-25), which overrides the spec's earlier maintenance-margin-cushion proposal
+     * whole isolated margin) — product decision <b>D-7</b> ({@code the decision log},
+     * D-7, 2026-09-25), which overrides the spec's earlier maintenance-margin-cushion proposal
      * (doc section 2.2). {@code size}/{@code entryPrice} are accepted only to keep the same call
      * shape as the other payout methods; the result does not depend on them. The liquidation
-     * <b>price</b> itself is unaffected by Р-7 and still follows Hyperliquid's formula exactly
+     * <b>price</b> itself is unaffected by D-7 and still follows Hyperliquid's formula exactly
      * (doc section 1.6/2.2, {@link #liquidationPrice}).
      */
     public static BigDecimal payoutOnLiquidation(BigDecimal size, BigDecimal entryPrice) {
@@ -127,7 +127,7 @@ public final class LiquidationCalculator {
     }
 
     /**
-     * Economy stage A (Р-92, plan A1), replacing {@link #payoutOnLiquidation} for bets placed under the new rules: the
+     * Economy stage A (D-92, plan A1), replacing {@link #payoutOnLiquidation} for bets placed under the new rules: the
      * liquidated position is paid its remainder at the extreme of the candle on which the liquidation triggered —
      * {@code round2( max(0, isolated_margin + side * Q * (P_ext - P0)) )}, {@code P_ext} being that candle's low for a
      * long and its high for a short. A gap through the margin (the extreme beyond the point where the margin is gone)
@@ -148,7 +148,7 @@ public final class LiquidationCalculator {
         return marginRatio(size, entryPrice, leverage, side, price, MAINTENANCE_MARGIN_RATE);
     }
 
-    /** {@link #marginRatio(BigDecimal, BigDecimal, Leverage, Side, BigDecimal)} with an explicit rate {@code l} (Р-69, per-market). */
+    /** {@link #marginRatio(BigDecimal, BigDecimal, Leverage, Side, BigDecimal)} with an explicit rate {@code l} (D-69, per-market). */
     public static BigDecimal marginRatio(
             BigDecimal size, BigDecimal entryPrice, Leverage leverage, Side side, BigDecimal price,
             BigDecimal maintenanceMarginRate) {

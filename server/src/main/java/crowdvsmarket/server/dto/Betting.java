@@ -20,7 +20,7 @@ public final class Betting {
     }
 
     /**
-     * {@code feeHerd}, {@code feeNetwork}, {@code totalDebit}, {@code maxLeverageForStake}: economy stage A (Р-92), present
+     * {@code feeHerd}, {@code feeNetwork}, {@code totalDebit}, {@code maxLeverageForStake}: economy stage A (D-92), present
      * only when the request named an {@code interval} (the rules depend on the round length): the fees the bet would be
      * charged, stake plus both fees (what leaves the balance), and the highest leverage allowed for this stake. With an
      * interval the preview also uses the maintenance rate {@code κ / cap} of that round length and rejects a leverage above
@@ -36,7 +36,7 @@ public final class Betting {
     }
 
     /**
-     * {@code mode} (Р-106): absent or {@code PERCENTAGE} - the original bet with a leverage; {@code FIXED} - win 2 x stake, lose the
+     * {@code mode} (D-106): absent or {@code PERCENTAGE} - the original bet with a leverage; {@code FIXED} - win 2 x stake, lose the
      * stake, a tie gives it back: no leverage ({@code leverage} is ignored), refused on {@code ODDS} markets.
      *
      * <p>{@code clientRequestId} (optional, 1-{@value #MAX_REQUEST_ID_LENGTH} characters of {@code A-Z a-z 0-9 - _}, a UUID in the web

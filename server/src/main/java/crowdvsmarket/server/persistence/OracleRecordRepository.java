@@ -7,7 +7,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Optional;
 
-/** Log of every oracle record ever queued to chainsvc (Р-40/41/47) — {@code chainsvc_queued}
+/** Log of every oracle record ever queued to chainsvc (D-40/41/47) — {@code chainsvc_queued}
  *  tracks whether the best-effort POST to chainsvc actually succeeded; a {@code false} row is
  *  retried on the next scheduler tick ({@code OraclePublisherService}), so a chainsvc outage never
  *  loses a record (and never blocks the game, per the task's "never block the game on chain

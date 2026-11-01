@@ -14,7 +14,7 @@ import java.util.Set;
 import org.jboss.logging.Logger;
 
 /**
- * What the database holds beside the journal and must agree with it (Р-107): the journal is the truth and is durable first; the rows
+ * What the database holds beside the journal and must agree with it (D-107): the journal is the truth and is durable first; the rows
  * below are written a moment later (or, for a deposit coin, a moment earlier), so a crash in between leaves them disagreeing. Run by every
  * rebuild of the engine, which is what a restart and every recovery from a failure are.
  * <ul>

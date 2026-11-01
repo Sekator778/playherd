@@ -325,7 +325,7 @@ unrealized_pnl(P) = round2( side * Q * (P - P0) )
 
 payout_at_round_close(P_close) = round2( max(0, isolated_margin + unrealized_pnl(P_close)) )
 
-payout_on_liquidation = 0                                           # продуктовое решение Р-7
+payout_on_liquidation = 0                                           # продуктовое решение D-7
 ```
 
 **Вывод `liquidation_price`** (что это формула HL из §1.6, а не наша отдельная):
@@ -340,7 +340,7 @@ maintenance margin) — то есть оба прочтения формулы H
 (проверено алгебраически и численно в скрипте §3). Значит наша формула не приближение, а точная
 реализация формулы HL при отсутствии пересечения тиров.
 
-**`payout_on_liquidation = 0`** — продуктовое решение **Р-7** (`the decision log`, Р-7,
+**`payout_on_liquidation = 0`** — продуктовое решение **D-7** (`the decision log`, D-7,
 2026-09-25, Алекс): при ликвидации игрок теряет всю ставку (всю изолированную маржу), повторно
 токены не выдаются. Это решение задаёт именно *payout*, не *цену* ликвидации — `liquidation_price`
 остаётся точной реализацией формулы Hyperliquid (вывод выше) без изменений. Оно осознанно
@@ -349,7 +349,7 @@ maintenance margin) — то есть оба прочтения формулы H
 the trader» — на цене ровно `liquidation_price` equity по построению равно
 `maintenance_margin_required`, то есть реальный трейдер на HL обычно получает обратно эту сумму, не
 теряет всё); наш движок этот остаток трейдеру не возвращает. HL-модель backstop-ликвидации (equity
-< 2/3 maintenance margin — полная потеря, §1.7) по-прежнему не моделируется отдельно — Р-7 просто
+< 2/3 maintenance margin — полная потеря, §1.7) по-прежнему не моделируется отдельно — D-7 просто
 делает потерю полной во всех случаях ликвидации, а не только в backstop-случае.
 
 ### 2.3 Определение ликвидации по OHLC-свечам
@@ -448,7 +448,7 @@ This mirrors, field for field, what the Java engine is expected to implement:
     rounded to 2dp HALF_UP
   - unrealized_pnl(P) = side * size * (P - entry_price), rounded 2dp HALF_UP
   - payout_at_round_close(P) = max(0, isolated_margin + unrealized_pnl(P)), rounded 2dp
-  - payout_on_liquidation = 0 (product decision Р-7, the decision log: the player loses
+  - payout_on_liquidation = 0 (product decision D-7, the decision log: the player loses
     the entire stake on liquidation), see doc section 2.2
   - long liquidated in a candle iff candle.low <= liq_price_long
   - short liquidated in a candle iff candle.high >= liq_price_short
@@ -499,13 +499,13 @@ def maintenance_margin_required(size: Decimal, entry_price: Decimal) -> Decimal:
 
 
 def payout_on_liquidation(size: Decimal, entry_price: Decimal) -> Decimal:
-    """Product decision Р-7 (the decision log, Р-7, 2026-09-25, Алекс): on
+    """Product decision D-7 (the decision log, D-7, 2026-09-25, Алекс): on
     liquidation the player loses the entire stake (the whole isolated margin) —
     payout is always 0, regardless of size/entry_price. This diverges from what HL
     itself does at a clean order-book liquidation (any remaining collateral stays
     with the trader there, see doc section 1.7/2.2) — an explicit product choice,
     not a further approximation of HL's math. liquidation_price itself is unaffected."""
-    del size, entry_price  # unused: payout is a flat 0 under Р-7, not a function of them
+    del size, entry_price  # unused: payout is a flat 0 under D-7, not a function of them
     return Decimal("0.00")
 
 
@@ -656,7 +656,7 @@ if __name__ == "__main__":
 Вывод (golden vectors, 20 строк — long/short × leverage {2,3,10,25,40} × entry price
 {83451.00 (последняя реальная дневная close-цена из `hl_btc_1d.csv`), 50000.00 (круглое число для
 ручной проверки)}, `size_btc=0.10000` для всех строк). `payout_on_liquidation_usd` — 0.00 для всех
-строк (продуктовое решение Р-7, см. §2.2). `close_price` — стейтед гипотетическая цена закрытия
+строк (продуктовое решение D-7, см. §2.2). `close_price` — стейтед гипотетическая цена закрытия
 раунда (не факт HL, а параметр этой таблицы, взят per entry_price: 90000.00 для группы 83451.00,
 45000.00 для группы 50000.00, чтобы показать оба случая `payout_at_round_close` — и положительный, и
 обнулённый `max(0, ...)`); `unrealized_pnl_usd`/`payout_at_round_close_usd` посчитаны на этой цене:

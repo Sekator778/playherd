@@ -1,11 +1,11 @@
 /**
- * Integration-level tests of the global result moment (Р-50, "видно с любой страницы"): the REAL
+ * Integration-level tests of the global result moment (D-50, "видно с любой страницы"): the REAL
  * `useSettlementWatcher` (+ `useAwayReplay`) + `resultEventBus` + `ResultMomentHost` wiring — no
  * mocked hook — against a fake `Api` and fake timers.
  *
  * Two paths, both covered:
  *
- * 1. The market-agnostic one (Р-69): an `Api` that has `unseenResults()`/`acknowledgeResults()` is
+ * 1. The market-agnostic one (D-69): an `Api` that has `unseenResults()`/`acknowledgeResults()` is
  *    the single source — a moment fires for every newly settled round of the player in ANY market,
  *    exactly once, acked so it never repeats on a reload.
  * 2. The legacy fallback for an `Api` without them: the `home()`-based BTC detector, including the

@@ -16,7 +16,7 @@ export interface ResultEvent {
   id: string;
   kind: ResultKind;
   roundId: RoundId;
-  /** The market the round was played in (Р-69) — `symbol` is its card ticker ("BTC", "NVDA",
+  /** The market the round was played in (D-69) — `symbol` is its card ticker ("BTC", "NVDA",
    *  "GER") as the server reported it at settlement, for any text that names the market. */
   marketId: MarketId;
   symbol: string;
@@ -25,7 +25,7 @@ export interface ResultEvent {
   marketKind?: MarketKind;
   /** The exchange the round ran on (`RoundBase.source`), when the event comes from a round (a live settlement) — a history
    *  row of `unseenResults()` carries none. With the market's backup (`MarketDto.backupSource`) the card can say that the
-   *  round settled on the backup exchange (Р-76). */
+   *  round settled on the backup exchange (D-76). */
   venue?: RoundDto["source"];
   interval: Interval;
   /** The real length of the round in seconds (`ProfileRoundEntryDto.durationSec`, or the live round's own window):
@@ -41,14 +41,14 @@ export interface ResultEvent {
    *  Absent for a round recorded without them: no fees line. */
   feesPlay?: number;
   leverage: number;
-  /** Р-106: a "Win or lose" bet - the card names no boost, and words a tie as "Tie — stake back". Absent for the percentage mode. */
+  /** D-106: a "Win or lose" bet - the card names no boost, and words a tie as "Tie — stake back". Absent for the percentage mode. */
   fixed?: true;
   balanceBefore: number;
   balanceAfter: number;
   atMs: number;
   tier: Tier;
   /** LIQUIDATION only: told the moment `myPositions()` first reported the position liquidated, while its round is
-   *  STILL RUNNING (Р-50: "ликвидация — сразу в середине раунда"). The card says so: the stake is lost, the
+   *  STILL RUNNING (D-50: "ликвидация — сразу в середине раунда"). The card says so: the stake is lost, the
    *  round is not over. */
   midRound?: boolean;
   /** The settlement of a round whose liquidation the player has ALREADY been shown (`midRound`): there is
@@ -56,7 +56,7 @@ export interface ResultEvent {
    *  no sound, no vibration — and it still says the loss, signed. */
   quiet?: boolean;
   /** A quiet note for a liquidated bet whose round was CANCELLED after the player was told it was lost: every bet in a
-   *  cancelled round is refunded, liquidated ones too (Р-23), so the stake is back (`stakePlay`; 0 when this build does
+   *  cancelled round is refunded, liquidated ones too (D-23), so the stake is back (`stakePlay`; 0 when this build does
    *  not know it). Never a win or a loss — `netPlay` is 0. */
   refunded?: boolean;
 }

@@ -24,7 +24,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Letting a round go (Р-77) over the real database: a round of a market with a backup exchange that cannot be settled for want of
+ * Letting a round go (D-77) over the real database: a round of a market with a backup exchange that cannot be settled for want of
  * a price holds its series (the rounds of a series are settled in order), so two minutes after its end — while the market's
  * other exchange is alive — it is cancelled with a refund, and the series goes on. What is written is what any
  * cancellation writes, and the round keeps the exchange it was decided on: the reason players read, the refund, the
@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Test;
  * gives no price, the other one is alive or not) and the rounds are real. The test profile's rounds are a minute long, so
  * the round that is let go carries a bet — an empty overdue window is jumped over by the catch-up rule before two minutes
  * are up, as it always was. Where the other exchange is silent too, and for a market with one exchange only, the two minutes
- * do not apply: the five minutes of the source do (Р-79, {@code SourceReleaseTest}).
+ * do not apply: the five minutes of the source do (D-79, {@code SourceReleaseTest}).
  */
 @QuarkusTest
 @TestProfile(LiveMarketsProfile.class)
@@ -45,7 +45,7 @@ class VenueReleaseTest extends LiveGameTestBase {
     private static final long TWO_MINUTES = 120_000L;
     private static final long FIVE_MINUTES = 300_000L;
     private static final String REASON = "The exchange of this round stopped sending prices; stakes returned";
-    /** Р-79: where no exchange is alive to blame, or there is only one exchange: the minutes of the source. */
+    /** D-79: where no exchange is alive to blame, or there is only one exchange: the minutes of the source. */
     private static final String SOURCE_REASON = "No price from the source; stakes returned";
 
     @Inject
@@ -302,7 +302,7 @@ class VenueReleaseTest extends LiveGameTestBase {
         assertThat(gameService.account(f.player()).inPlay()).isEqualTo("300.000");
         assertThat(prices.otherVenueLiveAsked()).as("it was asked, and said no").contains(f.stuck().roundId());
 
-        scheduler.tick(end + FIVE_MINUTES); // Р-79: the minutes of the source apply whatever the other exchange does
+        scheduler.tick(end + FIVE_MINUTES); // D-79: the minutes of the source apply whatever the other exchange does
 
         Rounds.RoundCancelled round = cancelled(f.stuck().roundId());
         assertThat(round.cancellation().reason()).as("not the words of the exchange: the other one is silent too")
@@ -317,7 +317,7 @@ class VenueReleaseTest extends LiveGameTestBase {
         Fixture f = marketWithAStuckRound(listBackupMarket("T_VR_LATER", "VRT"), "coinbase", "vrlater");
         long end = f.stuck().endMs();
         for (long at = end; at < end + 4 * 60_000L; at += 10_000L) {
-            scheduler.tick(at); // both exchanges silent for four minutes: short of the five of Р-79
+            scheduler.tick(at); // both exchanges silent for four minutes: short of the five of D-79
         }
         assertThat(roundResults.exists(f.stuck().roundId())).isFalse();
         assertThat(roundProgress.next(f.market().id(), HOURLY)).isEqualTo(f.stuck());
@@ -370,7 +370,7 @@ class VenueReleaseTest extends LiveGameTestBase {
         assertThat(prices.otherVenueLiveAsked()).as("a market with one exchange has no other one to ask about").isEmpty();
         assertThat(gameService.account(f.player()).inPlay()).isEqualTo("300.000");
 
-        scheduler.tick(end + FIVE_MINUTES); // its own five minutes (Р-79), as on every market
+        scheduler.tick(end + FIVE_MINUTES); // its own five minutes (D-79), as on every market
 
         assertThat(cancelled(f.stuck().roundId()).cancellation().reason()).isEqualTo(SOURCE_REASON);
         assertThat(venueColumn(f.stuck().roundId())).isNull();

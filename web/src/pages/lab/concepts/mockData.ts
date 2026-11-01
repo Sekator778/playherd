@@ -1,5 +1,5 @@
 /**
- * Shared mock data for the three /lab/concepts/{a,b,c} prototypes (Р-59 follow-up task — "Build
+ * Shared mock data for the three /lab/concepts/{a,b,c} prototypes (D-59 follow-up task — "Build
  * THREE distinct, clickable concept prototypes... mock data only, no server changes"). Every
  * number here is invented for the prototype, not read through `Api`/`useApi()` — these routes
  * stay independent of whichever `Api` implementation the surrounding stand happens to be built
@@ -28,7 +28,7 @@ export interface PairMeta {
   name: string;
   status: PairStatus;
   /** Only meaningful for `status: "live"` — a placeholder tile never shows a player count
-   *  (Р-22 is about revealed direction/amounts, but an invented count for a pair that doesn't
+   *  (D-22 is about revealed direction/amounts, but an invented count for a pair that doesn't
    *  exist yet would itself be a fabricated number, not covered by any decision). */
   players?: number;
   hot?: boolean;
@@ -45,7 +45,7 @@ export function pairById(id: string | undefined): PairMeta {
 }
 
 // ---------------------------------------------------------------------------
-// A single mock round for the pair room — test-mode round lengths (Р-46: hourly=3min in test
+// A single mock round for the pair room — test-mode round lengths (D-46: hourly=3min in test
 // mode) reused here purely so the on-screen countdown feels like the real thing, not a made-up
 // duration.
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ export function pairById(id: string | undefined): PairMeta {
 export type RoomPhase = "BETTING" | "RUNNING" | "SETTLED";
 
 export const MOCK_ENTRY_PRICE = 83451.0; // same reference price LabPage.tsx already previews with
-export const ROUND_MS = 3 * 60_000; // test-mode hourly round length (Р-46)
+export const ROUND_MS = 3 * 60_000; // test-mode hourly round length (D-46)
 
 export interface MockPosition {
   nickname: string;

@@ -13,7 +13,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Golden vectors for the explicit-rate overloads of {@link LiquidationCalculator} (Р-69): markets
+ * Golden vectors for the explicit-rate overloads of {@link LiquidationCalculator} (D-69): markets
  * whose leverage cap is 25, 20 and 10 have maintenance margin rates {@code l} 0.02, 0.025 and 0.05
  * ({@code l = 1/(2*maxLeverage)}, docs/research/hl_liquidation_math.md section 1.4), at prices of
  * very different magnitude (2694.40, 150.12, 5230.00), both sides, leverage 2 / mid / max, plus

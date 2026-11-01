@@ -318,7 +318,7 @@ class LiveMarketPricesTest {
                 .hasMessageContaining("engine");
     }
 
-    // ------------------------------------------------ boundary continuity: close(N) == open(N+1) (Р-40)
+    // ------------------------------------------------ boundary continuity: close(N) == open(N+1) (D-40)
 
     private RoundWindow nextWindow() {
         return new RoundWindow(btc.id(), Interval.HOURLY, END, END + 180_000L);
@@ -420,7 +420,7 @@ class LiveMarketPricesTest {
         RoundPriceData hourB = prices.resolve(btc, nextWindow());
 
         assertThat(hourA.close()).isEqualByComparingTo("100.00");
-        assertThat(hourB.open()).isEqualByComparingTo(hourA.close()); // Р-40
+        assertThat(hourB.open()).isEqualByComparingTo(hourA.close()); // D-40
         assertThat(day.close()).isEqualByComparingTo(hourB.close()); // two windows that end together agree
         assertThat(source.historyRequests).hasSize(1); // the day asked; neither hour needed to
     }

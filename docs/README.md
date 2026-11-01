@@ -19,4 +19,4 @@ The project was built with its notes in Russian. They are kept as written, becau
 | [`kb/topics/`](kb/topics) | Methods, liquidation math, fees |
 | [`product/`](product) | Game rules, payout rules, interface specification |
 
-Tags such as `Р-96` point to entries of a private decision log. Those that shaped the system are explained in [Design decisions](architecture/decisions.md).
+Tags such as `D-96` point to entries of a private decision log. Those that shaped the system are explained in [Design decisions](architecture/decisions.md).

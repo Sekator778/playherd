@@ -44,12 +44,12 @@ import java.util.Set;
  *                          with a backup exchange that its own exchange cannot price waits, while the market's other
  *                          exchange is alive, before it is cancelled with a refund so that the series goes on (the venue
  *                          release, see {@code RoundSchedulerService}); default 2 minutes; 0 switches the release off — the
- *                          round then waits for its exchange for the hour of Р-23
+ *                          round then waits for its exchange for the hour of D-23
  * @param releaseAfter      {@code herd.prices.<feed>.release-after-ms}: how long after its end — or after the start of the
  *                          server, if that is later — a round that its price source cannot price waits, on any market, before
- *                          it is cancelled with a refund so that the series goes on (Р-79, {@link ReleaseAfter}); the minutes
+ *                          it is cancelled with a refund so that the series goes on (D-79, {@link ReleaseAfter}); the minutes
  *                          are the source's own, 0 for a source switches the release off for it — its rounds then wait for the
- *                          hour of Р-23
+ *                          hour of D-23
  */
 public record PricesConfig(
         boolean liveMode,
@@ -192,8 +192,8 @@ public record PricesConfig(
 
     /**
      * How long after its end a round that its price source cannot price waits, on any market, before it is cancelled with a refund so
-     * that its series goes on (Р-79; the rounds of a series are settled in order, so a round without a price holds the series). One
-     * wait per source, in milliseconds. {@code 0} switches the release off for a source: its rounds then wait for the hour of Р-23,
+     * that its series goes on (D-79; the rounds of a series are settled in order, so a round without a price holds the series). One
+     * wait per source, in milliseconds. {@code 0} switches the release off for a source: its rounds then wait for the hour of D-23,
      * as before.
      *
      * @param hyperliquidMs     {@code herd.prices.hyperliquid.release-after-ms}: the perpetuals of both dexes, the feeds
@@ -230,7 +230,7 @@ public record PricesConfig(
                     Long.parseLong(DEFAULT_POLYMARKET_RELEASE_AFTER_MS), fiveMinutes);
         }
 
-        /** No source is let go from: every round that cannot be priced waits for the hour of Р-23. */
+        /** No source is let go from: every round that cannot be priced waits for the hour of D-23. */
         public static ReleaseAfter off() {
             return new ReleaseAfter(0, 0, 0, 0, 0, 0);
         }
@@ -288,15 +288,15 @@ public record PricesConfig(
     public static final String DEFAULT_HYPERLIQUID_MAX_HEAL_MS = "1800000";
     /**
      * Two minutes — Alex's choice of 2026-10-03 among the ways to end the stall of a series behind a round whose exchange went
-     * silent (the decision log, open question 8, variant б; recorded as Р-77): long enough for the first retries and
+     * silent (the decision log, open question 8, variant б; recorded as D-77): long enough for the first retries and
      * one backfill of the candles (a minute apart, {@link #DEFAULT_BACKFILL_COOLDOWN_MS}) to heal a short gap, short enough that
-     * a series does not stand for the hour that Р-23 gives a round without a price.
+     * a series does not stand for the hour that D-23 gives a round without a price.
      */
     public static final String DEFAULT_VENUE_RELEASE_AFTER_MS = "120000";
     /**
-     * Five minutes — "about 5 minutes for the candle sources" of the analysis behind Р-79 (the decision log; variant A of
+     * Five minutes — "about 5 minutes for the candle sources" of the analysis behind D-79 (the decision log; variant A of
      * docs/research/series_blocking.md §3, a proposal and no measurement): longer than the first retries and one backfill of the
-     * candles need to heal a short gap (a minute apart, {@link #DEFAULT_BACKFILL_COOLDOWN_MS}), far shorter than the hour of Р-23.
+     * candles need to heal a short gap (a minute apart, {@link #DEFAULT_BACKFILL_COOLDOWN_MS}), far shorter than the hour of D-23.
      * The wait of Hyperliquid, Coinbase, Kraken and the synthetic walk.
      */
     public static final String DEFAULT_RELEASE_AFTER_MS = "300000";
@@ -404,7 +404,7 @@ public record PricesConfig(
                 hyperliquidMaxBasis, hyperliquidMaxHealMs, disabledVenues, afterMs, releaseAfter);
     }
 
-    /** The same settings with other waits before a round that its source cannot price is let go (Р-79). */
+    /** The same settings with other waits before a round that its source cannot price is let go (D-79). */
     public PricesConfig withReleaseAfter(ReleaseAfter waits) {
         return new PricesConfig(liveMode, source, dailyRoundMs, hyperliquidUrl, polymarketClobUrl, polymarketGammaUrl,
                 polymarketDataUrl, hyperliquidStaleMs, hyperliquidXyzStaleMs, hyperliquidMaxGapMs, polymarketStaleMs,
@@ -415,9 +415,9 @@ public record PricesConfig(
 
     /**
      * How long after its end a round priced on {@code instrument} — a market, or the shadow of one ({@link Instruments}) — waits when
-     * it cannot be priced, before it is cancelled with a refund (Р-79): the wait of the feed that prices the instrument
+     * it cannot be priced, before it is cancelled with a refund (D-79): the wait of the feed that prices the instrument
      * ({@link ReleaseAfter}), or of the synthetic walk when that prices everything ({@code herd.prices.source=synthetic}). 0 — never,
-     * the hour of Р-23 — when the rule is off for the source, when no feed prices the instrument, and in replay mode, which has no
+     * the hour of D-23 — when the rule is off for the source, when no feed prices the instrument, and in replay mode, which has no
      * exchange to wait for.
      */
     public long releaseAfterMs(Market instrument) {

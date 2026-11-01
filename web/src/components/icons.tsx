@@ -353,7 +353,7 @@ export function AnchorIcon({ className = "" }: { className?: string }) {
   );
 }
 
-/** A speech bubble with two lines of text — the feedback strip (`FeedbackStrip.tsx`, Р-81). */
+/** A speech bubble with two lines of text — the feedback strip (`FeedbackStrip.tsx`, D-81). */
 export function FeedbackIcon({ className = "" }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">

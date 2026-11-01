@@ -11,13 +11,13 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Task item 2 (wave-1 security finding): "add a simple per-IP rate limit on
  * authChallenge/authVerify/placeBet (in-memory token bucket, generous limits, 429
- * RATE_LIMITED) — note in docs it is a stand-in for the VPS (Р-38)". See
+ * RATE_LIMITED) — note in docs it is a stand-in for the VPS (D-38)". See
  * docs/research/server_design.md for that note and the chosen defaults.
  *
  * <p>One token bucket per caller-supplied {@code key} — {@code RpcResource} keys it
  * {@code "<ip>:<method>"}, so each of the three rate-limited methods gets its own budget per IP
  * (one noisy method never starves another). The budget is the shared one of {@code herd.ratelimit.*} unless the
- * caller names its own capacity and refill rate ({@link #tryAcquire(String, int, double)}; Р-81:
+ * caller names its own capacity and refill rate ({@link #tryAcquire(String, int, double)}; D-81:
  * {@code submitFeedback}).
  *
  * <p>Memory is bounded (security review 2026-10-22, M2): a bucket idle for longer than it needs to refill to full is the same as
@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>In-memory only — предложение, explicitly a stand-in:
  * it resets on every server restart and does not share state across multiple server instances,
- * which is fine for this project's single-process local stand/demo VPS (Р-38) and not meant to
+ * which is fine for this project's single-process local stand/demo VPS (D-38) and not meant to
  * survive a real multi-instance deployment.
  */
 @ApplicationScoped
@@ -91,7 +91,7 @@ public class RateLimiter {
 
     /**
      * {@link #tryAcquire(String)} with a budget of its own: the bucket of {@code key} holds {@code capacity} tokens at most,
-     * starts full, and gets {@code refillPerSecond} back every second (0 = never). Р-81 uses it for {@code submitFeedback},
+     * starts full, and gets {@code refillPerSecond} back every second (0 = never). D-81 uses it for {@code submitFeedback},
      * which is limited far more strictly than the shared budget. A key must always be asked with the same budget — the
      * bucket is made by the first call with it; the keys are {@code "<ip>:<method>"}, so each method has its own.
      */

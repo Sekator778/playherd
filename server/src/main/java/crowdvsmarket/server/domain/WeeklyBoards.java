@@ -12,9 +12,9 @@ import java.util.List;
  * The "This week" boards of the ratings (docs/research/features_growth_2026-10-18.md §3 item 3): the same two rankings as the
  * season's, over the settled rounds of the window Monday 00:00 UTC to now.
  * <ul>
- *   <li>the same minimum of rounds as the season (Р-28): fewer settled rounds in the window and the player is in no list;
+ *   <li>the same minimum of rounds as the season (D-28): fewer settled rounds in the window and the player is in no list;
  *   <li>"богачи": the week's result is the sum of {@code payout - stake - fees} of the player's settled rounds, and only a player
- *       above zero is listed (Р-90: the showcase shows winners, a loss is seen by its owner only);
+ *       above zero is listed (D-90: the showcase shows winners, a loss is seen by its owner only);
  *   <li>"пророки": the share of direction calls that were right among the rounds that were not flat, as in the season; a player
  *       whose rounds were all flat has no ratio and is not listed.
  * </ul>

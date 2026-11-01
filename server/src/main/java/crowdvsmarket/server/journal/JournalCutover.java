@@ -12,7 +12,7 @@ import java.util.function.Consumer;
 import org.jboss.logging.Logger;
 
 /**
- * The one-time move of the journal from the table to the queue (Р-107): on the first start with an empty journal directory every row of
+ * The one-time move of the journal from the table to the queue (D-107): on the first start with an empty journal directory every row of
  * {@code game_events} is copied, in id order, with the same id and the payload as the table stores it ({@code payload::text}), into the
  * queue; then the count and a SHA-256 over every column of every row are checked against what the queue reads back. Only after that does the
  * queue count as the journal ({@link Journal} deletes its "import in progress" marker). The table is not changed.

@@ -1,5 +1,5 @@
 /**
- * Feedback in the whole app (Р-81): the strip on every main screen, the entry points that outlive it (the footer, the
+ * Feedback in the whole app (D-81): the strip on every main screen, the entry points that outlive it (the footer, the
  * profile menu), and a message sent end to end through the mock — the real `Layout`, the real routes, the real form.
  */
 import { render, screen, waitFor, within } from "@testing-library/react";

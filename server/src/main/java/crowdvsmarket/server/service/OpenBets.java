@@ -17,11 +17,11 @@ import java.util.Optional;
 
 /**
  * Every bet of one player that has not settled yet — the ONE walk over the running series that both
- * {@code myPositions} (the player's open bets and positions, Р-71) and {@code PlayerAccountDto.inPlay} (the
+ * {@code myPositions} (the player's open bets and positions, D-71) and {@code PlayerAccountDto.inPlay} (the
  * stake sitting in them) are made of, so that the second is the sum of the first by construction.
  *
  * <p>A series (market + interval) has at most two rounds with bets in the engine (docs/research/
- * markets_architecture.md Т-5: one position per player per round of a market, Р-19: one running and one open
+ * markets_architecture.md Т-5: one position per player per round of a market, D-19: one running and one open
  * for betting): the round {@link RoundProgress} points at is {@code RUNNING} — its bets stay in the {@code
  * BetBook} until the settlement clears them, there is no stored "running" state in the engine — and the one
  * after it is {@code BETTING}. A series that is not seeded (a closed market, replay mode's other markets) has

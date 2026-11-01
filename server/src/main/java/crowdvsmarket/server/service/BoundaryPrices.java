@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
 import org.jboss.logging.Logger;
 
 /**
- * Р-40 in the core: the close of a round is the open of the next one, and both series of a market share
+ * D-40 in the core: the close of a round is the open of the next one, and both series of a market share
  * their boundaries — whatever the price pipeline still remembers. The pipeline's boundary price is a fact of
  * its memory ({@code TickStore}: ticks, and history merged into holes), and after a restart a later merge can
  * give a boundary a price other than the one a round already closed on, settled, and anchored on chain. The
@@ -39,17 +39,17 @@ import org.jboss.logging.Logger;
  *       first candle of the path opens there (low and high widened to include it) ({@link #forSettlement}).
  *   <li><b>A round that is running</b> shows the same open in every DTO — {@code rounds}, {@code round},
  *       {@code myPositions} ({@link #forRunning}) — even when the pipeline does not know the open at all (a
- *       restart whose tick buffer is still empty): the previous close is the open, that is what Р-40 says.
+ *       restart whose tick buffer is still empty): the previous close is the open, that is what D-40 says.
  *   <li>A previous round that was CANCELLED has no close: nothing overrides, the pipeline's open is used.
  *   <li>Where two settled rows of the market, one of each series, end at the same boundary and disagree on the
  *       close — the pipeline gives one price per boundary, so only data from before this rule can — the first
  *       one that was settled counts: the longer series' row, the one the scheduler settles first.
  * </ul>
  *
- * <p><b>Venues (Р-76).</b> A market with a backup exchange has a price per exchange, so "the close of the round that
+ * <p><b>Venues (D-76).</b> A market with a backup exchange has a price per exchange, so "the close of the round that
  * ended where this one starts" is a close <i>on the exchange this round runs on</i>: a round that opens on Kraken
  * after one that closed on Coinbase opens at Kraken's price at that boundary — the pipeline's — and not at Coinbase's
- * close, which would put another exchange's number into a round that is settled from Kraken's ticks alone. Р-40 holds
+ * close, which would put another exchange's number into a round that is settled from Kraken's ticks alone. D-40 holds
  * within an exchange; across a switch the open differs from the close before it by the basis between the two
  * (measured 2026-10-03: 0.4–1.2 bp on average, at most 5 bp). Two rounds of the two series that end together may have
  * run on different exchanges (each chose its own when it opened), so the closes are kept per exchange; a market with no

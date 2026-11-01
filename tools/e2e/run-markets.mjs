@@ -3,7 +3,7 @@
 // market only, this one plays ONE market of each family the stand lists — spot crypto (Coinbase, Hyperliquid spot), an
 // xyz market (Hyperliquid dex `xyz`: stocks, indices, commodities) and an odds market (Polymarket) — all in the same
 // pass: the markets are played side by side, so a run takes about as long as one round (3 minutes of betting window and
-// 3 of round on the stand, Р-46), not three. Run with:
+// 3 of round on the stand, D-46), not three. Run with:
 //
 //   node --experimental-wasm-modules tools/e2e/run-markets.mjs [baseUrl] [--ci]
 //
@@ -11,7 +11,7 @@
 //
 // Per market, with four players of its own (their own keys and sign-ins, bets of mixed directions and leverage, cut to
 // the market's ceiling — odds go up to x10), it checks what the BTC run checks: sign-in, the live crowd split and bet
-// feed during betting (Р-62), positions visible once the round runs, the round settled, every balance equal to the
+// feed during betting (D-62), positions visible once the round runs, the round settled, every balance equal to the
 // balance before minus the stake plus the payout, `resultsHash` equal to the sha256 of the exact bytes of
 // `GET /api/rounds/{id}/results.json` (and that document canonical, about this round and market), and the oracle record —
 // here the very record of the round: the row of the public journal `GET /api/oracle/records` for the `seq` the round names
@@ -233,7 +233,7 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
       c.fail("fetch HOURLY rounds pair", e);
       return outcome("failed", "no rounds pair");
     }
-    // betting for a round closes where the round starts (Р-19: the bets go on the NEXT round): its window's start
+    // betting for a round closes where the round starts (D-19: the bets go on the NEXT round): its window's start
     const left = pair.betting.window.startMs - serverNow();
     if (pair.betting.phase === "BETTING" && left >= minBettingMs) break;
     if (Date.now() > windowDeadline) {
@@ -278,12 +278,12 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
   }
   if (placed.length === 0) return outcome("failed", "no bet was taken");
 
-  // --- 5. the live crowd split and bet feed during betting (Р-62), while the window is open ---
+  // --- 5. the live crowd split and bet feed during betting (D-62), while the window is open ---
   try {
     const betting = await players[0].rpc("round", roundId);
     if (betting.phase === "BETTING") {
       const hasLiveAggregate = "upStake" in betting && "downStake" in betting && "upCount" in betting && "downCount" in betting;
-      c.check("live split pre-start: BETTING DTO carries upStake/downStake/upCount/downCount (Р-62)", hasLiveAggregate, JSON.stringify(Object.keys(betting)));
+      c.check("live split pre-start: BETTING DTO carries upStake/downStake/upCount/downCount (D-62)", hasLiveAggregate, JSON.stringify(Object.keys(betting)));
       c.check(
         `live split pre-start: upCount + downCount >= ${placed.length} (this run's bets counted)`,
         betting.upCount + betting.downCount >= placed.length,
@@ -292,7 +292,7 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
       c.check(`live split pre-start: participantCount >= ${placed.length} (this run's bets counted)`, betting.participantCount >= placed.length, `participantCount=${betting.participantCount}`);
       const feedHasOurBets =
         Array.isArray(betting.recentBets) && players.some((p) => betting.recentBets.some((b) => b.player.playerId === p.playerId));
-      c.check("live feed pre-start: recentBets includes at least one of this run's bets (Р-62)", feedHasOurBets, `recentBets.length=${betting.recentBets?.length}`);
+      c.check("live feed pre-start: recentBets includes at least one of this run's bets (D-62)", feedHasOurBets, `recentBets.length=${betting.recentBets?.length}`);
     } else {
       log(`[${market.id}] the betting window closed before the live split could be read (phase ${betting.phase}) — those checks are left out`);
     }
@@ -301,7 +301,7 @@ async function playMarket({ baseUrl, family, market, series, createWallet, regis
   }
   try {
     const otherView = await players[1 % players.length].rpc("publicProfile", players[0].playerId);
-    c.check("publicProfile still never lists the still-open round (Р-29, unaffected by Р-62)", !otherView.history.some((h) => h.roundId === roundId));
+    c.check("publicProfile still never lists the still-open round (D-29, unaffected by D-62)", !otherView.history.some((h) => h.roundId === roundId));
   } catch (e) {
     c.fail("publicProfile cross-check", e);
   }

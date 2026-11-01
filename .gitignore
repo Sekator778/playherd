@@ -2,7 +2,7 @@
 target/
 *.class
 
-# The event journal of a server started from the repository directory (Р-107; herd.journal.dir, default ./journal)
+# The event journal of a server started from the repository directory (D-107; herd.journal.dir, default ./journal)
 /journal/
 /server/journal/
 *.importing
@@ -32,7 +32,7 @@ web/dist/
 *.jks
 *.keystore
 
-# Local-only notes with home-network/identifying details (Р-39 redaction, 2026-09-26)
+# Local-only notes with home-network/identifying details (D-39 redaction, 2026-09-26)
 .local/
 
 # Android / Capacitor

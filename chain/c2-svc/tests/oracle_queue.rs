@@ -2030,7 +2030,7 @@ async fn lineage_decodes_the_golden_six_element_announcement() -> Result<()> {
     Ok(())
 }
 
-/// The very first announcement on the real singleton (week 1, before Р-41:
+/// The very first announcement on the real singleton (week 1, before D-41:
 /// `(priceCents ts seq)`, three elements, `docs/research/oracle_verification.md`
 /// §5) is not an oracle record. It must be reported as a warning and skipped,
 /// never misread as a record with shifted fields -- and the walk goes on.

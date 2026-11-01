@@ -22,7 +22,7 @@ export function outcomeFromNet(net: number): NetOutcome {
 
 /** CSS class for the net headline's color — `outcome-liquidated` is deliberately not covered
  *  here: a liquidation is always a loss (net = -stake), but callers show the "· liquidated"
- *  qualifier themselves (Р-7's "always the whole stake" is worth saying explicitly). */
+ *  qualifier themselves (D-7's "always the whole stake" is worth saying explicitly). */
 export function outcomeClassName(outcome: NetOutcome): string {
   if (outcome === "won") return "outcome-won";
   if (outcome === "lost") return "outcome-lost";

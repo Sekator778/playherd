@@ -74,7 +74,7 @@ class PositionSimulatorMultiCandleTest {
         assertThat(liquidated.candleOpenTimeMs()).isNotEqualTo(path.get(path.size() - 1).openTimeMs());
         assertThat(liquidated.candleOpenTimeMs()).isEqualTo(EXPECTED_BREACH_CANDLE_OPEN_MS);
 
-        // Р-7: payout_on_liquidation = 0, so the loss is the full initial margin.
+        // D-7: payout_on_liquidation = 0, so the loss is the full initial margin.
         assertThat(liquidated.loss()).isEqualByComparingTo("505.65");
     }
 
@@ -132,7 +132,7 @@ class PositionSimulatorMultiCandleTest {
         assertThat(outcome).isInstanceOf(PositionSimulator.Outcome.Liquidated.class);
         PositionSimulator.Outcome.Liquidated liquidated = (PositionSimulator.Outcome.Liquidated) outcome;
         assertThat(liquidated.candleOpenTimeMs()).isEqualTo(3_000L);
-        assertThat(liquidated.loss()).isEqualByComparingTo("500.00"); // Р-7: full initial margin
+        assertThat(liquidated.loss()).isEqualByComparingTo("500.00"); // D-7: full initial margin
     }
 
     @Test
@@ -170,6 +170,6 @@ class PositionSimulatorMultiCandleTest {
         assertThat(outcome).isInstanceOf(PositionSimulator.Outcome.Liquidated.class);
         PositionSimulator.Outcome.Liquidated liquidated = (PositionSimulator.Outcome.Liquidated) outcome;
         assertThat(liquidated.candleOpenTimeMs()).isEqualTo(3_000L);
-        assertThat(liquidated.loss()).isEqualByComparingTo("500.00"); // Р-7: full initial margin
+        assertThat(liquidated.loss()).isEqualByComparingTo("500.00"); // D-7: full initial margin
     }
 }

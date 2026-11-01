@@ -5,7 +5,7 @@ import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
 import { PositionsList } from "./RoundParts";
 import { OTHER_PLAYER, publicPosition } from "./testFixtures";
 
-/** Р-90: the showcase shows winners — another player's loss, ruin or liquidation is not listed; the player's own result is. */
+/** D-90: the showcase shows winners — another player's loss, ruin or liquidation is not listed; the player's own result is. */
 
 function renderList(positions: ReturnType<typeof publicPosition>[], signedIn = true) {
   return render(
@@ -19,7 +19,7 @@ function renderList(positions: ReturnType<typeof publicPosition>[], signedIn = t
 const rival = (over: Parameters<typeof publicPosition>[0]) =>
   publicPosition({ player: { ...OTHER_PLAYER, nickname: "rival", displayName: "rival" }, playerId: "npc-1", ...over });
 
-describe("PositionsList — only winners of other players (Р-90)", () => {
+describe("PositionsList — only winners of other players (D-90)", () => {
   it("another player's gain is shown", () => {
     renderList([rival({ payout: "130.000", stake: "100.000" })]);
     expect(screen.getByText("+30")).toBeInTheDocument();

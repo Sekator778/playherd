@@ -20,7 +20,7 @@ public final class Enums {
     }
 
     /**
-     * contract.ts `BetMode` (Р-106) - mirrors {@code crowdvsmarket.engine.round.BetMode}. {@code PERCENTAGE}: the payout follows
+     * contract.ts `BetMode` (D-106) - mirrors {@code crowdvsmarket.engine.round.BetMode}. {@code PERCENTAGE}: the payout follows
      * stake x leverage x the price move; {@code FIXED}: a right direction pays twice the stake, a wrong one nothing, a tie gives the stake back.
      */
     public enum BetMode {
@@ -116,7 +116,7 @@ public final class Enums {
          *  message. 400. */
         INVALID_NICKNAME,
         /** предложение (task item 2: per-IP rate limit on authChallenge/authVerify/placeBet,
-         *  Р-38 VPS stand-in) — same "additive, not in contract.ts" situation as above. */
+         *  D-38 VPS stand-in) — same "additive, not in contract.ts" situation as above. */
         RATE_LIMITED,
         /** предложение (wave-2 security fix) — {@code requestWithdrawal}/{@code requestDeposit}'s
          *  dedicated rejection for a zero/negative/otherwise non-positive amount, kept distinct
@@ -124,7 +124,7 @@ public final class Enums {
          *  apart from "a number, but not a valid one here". Same "additive" situation as above. */
         INVALID_AMOUNT,
         /** Task item 1 (BLOCKER security fix): {@code requestDeposit} — no real on-chain
-         *  CAT-deposit verifier exists yet (Р-6 decision pending with Alex), so deposits are
+         *  CAT-deposit verifier exists yet (D-6 decision pending with Alex), so deposits are
          *  rejected outright rather than crediting an unverified self-reported amount. Same
          *  "additive" situation as the values above. */
         DEPOSIT_VERIFICATION_UNAVAILABLE,
@@ -132,16 +132,16 @@ public final class Enums {
          *  disabling withdrawal too" guidance — it auto-confirms with no chain call, which would
          *  otherwise falsely claim a CAT left the game). */
         WITHDRAWAL_UNAVAILABLE,
-        /** Р-53: {@code requestWithdrawal} rejects an amount below the (предложение, documented in
+        /** D-53: {@code requestWithdrawal} rejects an amount below the (предложение, documented in
          *  {@code GameService}) minimum withdrawal — additive, same situation as {@code
          *  INVALID_AMOUNT} above. */
         WITHDRAWAL_BELOW_MINIMUM,
-        /** Р-53: {@code myDepositAddress} could not reach chainsvc to derive/cache a brand-new
+        /** D-53: {@code myDepositAddress} could not reach chainsvc to derive/cache a brand-new
          *  player's deposit address (never thrown once already cached — see {@code
          *  PlayerDepositAddressRepository}). 503, like {@code DEPOSIT_VERIFICATION_UNAVAILABLE}/
          *  {@code WITHDRAWAL_UNAVAILABLE} above — additive. */
         CHAIN_SERVICE_UNAVAILABLE,
-        /** docs/research/markets_architecture.md §8 (Р-69): a market id, or a round id that names
+        /** docs/research/markets_architecture.md §8 (D-69): a market id, or a round id that names
          *  one, that this server never listed. 404. */
         MARKET_NOT_FOUND,
         /** The market is {@code CLOSED} and takes no new bets. 409. */
@@ -158,14 +158,14 @@ public final class Enums {
         /** Economy stage B (plan B5): the bet would take the open notional of its (market, side, round), or of the crypto bucket,
          *  over the treasury limit; the message names the room that is left. 422. Additive, like {@link #REGISTRATION_LIMIT}. */
         EXPOSURE_LIMIT_EXCEEDED,
-        /** Р-106: the {@code Authorization: Bearer} key is unknown, malformed or revoked. 401. (Named by contract.ts' union, like the
+        /** D-106: the {@code Authorization: Bearer} key is unknown, malformed or revoked. 401. (Named by contract.ts' union, like the
          *  three below; the developers' page lists them.) */
         API_KEY_INVALID,
-        /** Р-106: the call is not one an API key may make (creating bots, withdrawals, profile changes, ...). 403. */
+        /** D-106: the call is not one an API key may make (creating bots, withdrawals, profile changes, ...). 403. */
         API_CALL_NOT_ALLOWED,
-        /** Р-106: the person already owns the most API bots allowed. 409. */
+        /** D-106: the person already owns the most API bots allowed. 409. */
         BOT_LIMIT_REACHED,
-        /** Р-106: an API bot's PLAY cannot be withdrawn to a wallet. 403. */
+        /** D-106: an API bot's PLAY cannot be withdrawn to a wallet. 403. */
         BOT_WITHDRAWAL_NOT_ALLOWED
     }
 }

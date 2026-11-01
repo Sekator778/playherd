@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
  * cursor and the window after it are), and every later restart seeded the same way. Now no series is
  * seeded later than the earliest window that still holds a bet and has no result row, and the
  * scheduler resolves — or, without a price, refunds — it: five minutes after the restart, the minutes of
- * the source of the market (Р-79).
+ * the source of the market (D-79).
  *
  * <p>Time is the test's: the scheduler is off, a "restart" is {@code rebuild(now)} with a chosen
  * {@code now} (and {@code startedAt(now)}, for the scheduler's own memory of it), and the windows are
@@ -38,7 +38,7 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
 
     private static final Interval HOURLY = Interval.HOURLY;
     private static final long STEP = 60_000L;
-    /** The wait of the synthetic feed that prices the markets listed here (Р-79). */
+    /** The wait of the synthetic feed that prices the markets listed here (D-79). */
     private static final long FIVE_MINUTES = 300_000L;
 
     private Rounds.RoundSettled settled(String roundId) {
@@ -118,7 +118,7 @@ class SeedingKeepsPendingBetsTest extends LiveGameTestBase {
 
         long restartAt = w1.endMs() + 5_000L;
         rebuild.rebuild(restartAt);
-        scheduler.startedAt(restartAt); // the server has started just now: the minutes of a round without a price count from it (Р-79)
+        scheduler.startedAt(restartAt); // the server has started just now: the minutes of a round without a price count from it (D-79)
         scheduler.tick(restartAt);
 
         assertThat(roundResults.exists(w1.roundId())).as("no price yet: retried, not cancelled").isFalse();

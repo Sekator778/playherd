@@ -144,7 +144,7 @@ impl CoinsetChainClient {
 
     /// Exposes the underlying `chia_sdk_coinset::CoinsetClient` for
     /// extension traits in other modules (`play::chain_client::
-    /// PlayChainClient`, Р-6) that need RPC calls this trait doesn't wrap
+    /// PlayChainClient`, D-6) that need RPC calls this trait doesn't wrap
     /// (batched puzzle-hash coin scans, blockchain tip height) -- purely
     /// additive, doesn't change this trait or its existing callers at all.
     pub(crate) fn client(&self) -> &CoinsetClient {

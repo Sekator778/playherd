@@ -27,7 +27,7 @@ import net.openhft.chronicle.queue.TailerDirection;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
 
 /**
- * The event journal on disk (Р-107): an append-only Chronicle Queue (Apache-2.0, https://github.com/OpenHFT/Chronicle-Queue) that holds,
+ * The event journal on disk (D-107): an append-only Chronicle Queue (Apache-2.0, https://github.com/OpenHFT/Chronicle-Queue) that holds,
  * for every event the game has accepted, the columns of the {@code game_events} row. The queue is the source of truth; the table is a
  * copy filled after it ({@code JournalProjector}).
  *

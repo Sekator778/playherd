@@ -1,5 +1,5 @@
 /* Herd — global styles.
-   Style direction: Р-33 ("game", like Twitch Predictions) — dark background, big bright
+   Style direction: D-33 ("game", like Twitch Predictions) — dark background, big bright
    UP/DOWN buttons, visible countdown, minimal jargon. Fixed dark theme only (предложение — no
    source asks for a light mode, and a betting-odds "game" screen reads better with one
    deliberate theme than a toggle); colors below are chosen for WCAG AA contrast against the
@@ -50,7 +50,7 @@
 
   --header-height: 60px;
   /* Bottom tab bar (task IA: Lobby/Stats/Profile, `Layout.tsx`'s `BottomTabBar`) — replaces the
-     old top nav row; the header no longer sticks below a banner (Р-63 removed the DEMO/replay
+     old top nav row; the header no longer sticks below a banner (D-63 removed the DEMO/replay
      banners from every screen the header wraps), so `--banner-height` is gone too. */
   --tabbar-height: 64px;
 
@@ -66,7 +66,7 @@
   --header-offset: calc(var(--header-height) + var(--safe-top));
   --header-gutter: 16px;
 
-  /* The feedback strip's tokens (`--feedback-strip-height`, `-gap`, `-space`, Р-81) live with the strip, in components/Feedback.css. */
+  /* The feedback strip's tokens (`--feedback-strip-height`, `-gap`, `-space`, D-81) live with the strip, in components/Feedback.css. */
 
   font-family:
     "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -369,7 +369,7 @@ ol {
   margin: 8px 0 0;
 }
 
-/* A round that runs on its market's backup exchange (Р-76) says so where its prices are printed: a neutral boxed note
+/* A round that runs on its market's backup exchange (D-76) says so where its prices are printed: a neutral boxed note
    like the odds note of the room — nothing is wrong, the round just prices on the other exchange. */
 .venue-note {
   margin: 0;
@@ -508,7 +508,7 @@ ol {
 
 @media (max-width: 720px) {
   /* Nav links move into the hamburger menu on mobile (Layout.tsx's `.mobile-nav`) — but the
-   * balance pill and CONNECT WALLET/profile menu stay visible (Р-48 replaces Р-31: sign-in and
+   * balance pill and CONNECT WALLET/profile menu stay visible (D-48 replaces D-31: sign-in and
    * betting both work on a phone now), just shrunk a bit so logo + balance + wallet button + the
    * hamburger button all fit at 375px without wrapping or causing horizontal scroll. */
   .app-header {
@@ -849,7 +849,7 @@ ol {
   font-size: 18px;
 }
 
-/* Direction buttons (Р-33) — big, bright, icon + text (never color-only). audit.md's Bet slip
+/* Direction buttons (D-33) — big, bright, icon + text (never color-only). audit.md's Bet slip
    finding: the unselected side used to be the same neutral grey as any secondary button — "two
    opposing market sides looked like an on/off toggle". Fix (direction.md §4 "Stage/split-camp"):
    BOTH sides always carry their own color at every state, idle just "cooler"/lower-contrast than
@@ -1168,7 +1168,7 @@ ol {
   border-color: var(--accent-strong);
 }
 
-/* Stake field (Р-69, Polymarket's amount sheet with Herd's own touches): the number IS the input,
+/* Stake field (D-69, Polymarket's amount sheet with Herd's own touches): the number IS the input,
    centred and big, between a − and a + that move it by the minimum stake; "Available" under it, then
    25 / 50 / 75 / MAX of the balance. All targets are ≥ 44 px for a thumb. */
 .stake-field > label {
@@ -1253,7 +1253,7 @@ ol {
   box-shadow: none;
 }
 
-/* «With the herd» / «Against the herd» (Р-71) — two equal-weight shortcuts that name the side they pick. */
+/* «With the herd» / «Against the herd» (D-71) — two equal-weight shortcuts that name the side they pick. */
 .herd-picker {
   display: flex;
   flex-direction: column;
@@ -1628,7 +1628,7 @@ ol {
   white-space: nowrap;
 }
 
-/* QR code (Р-53 deposit address, Р-55 WalletConnect pairing — `wallet/QrCode.tsx`) --------------
+/* QR code (D-53 deposit address, D-55 WalletConnect pairing — `wallet/QrCode.tsx`) --------------
    Deliberately hardcoded black-on-white rather than themed with `--text`/`--bg-elevated-2`: a
    camera-scanned QR code needs the highest contrast it can get regardless of the app's own dark
    theme (`index.css`'s whole palette is dark-only, no light-mode variant to match anyway), so it
@@ -1652,7 +1652,7 @@ ol {
   font-size: 13px;
 }
 
-/* Live-status dot (Р-53 "live status of incoming deposits") — a small steady pulse, same
+/* Live-status dot (D-53 "live status of incoming deposits") — a small steady pulse, same
    reduced-motion guard as `.badge--live`/`.skeleton` above. */
 .live-dot {
   display: inline-block;
@@ -1864,7 +1864,7 @@ ol {
   gap: 28px;
 }
 
-/* Р-48 replaces Р-31: betting and the wallet work on mobile too, so Home no longer reorders its
+/* D-48 replaces D-31: betting and the wallet work on mobile too, so Home no longer reorders its
  * sections for a no-wallet phone layout — natural document order (round → chart → ratings) is
  * the same at every width, one-handed-usable bet slip and all (task item 3). */
 
@@ -1959,7 +1959,7 @@ footer.app-footer a,
 footer.app-footer .footer-link {
   color: var(--text-faint);
 }
-/* A button that reads as one of the footer's links (Feedback, Р-81): it opens a form, it does not go anywhere. The padding is
+/* A button that reads as one of the footer's links (Feedback, D-81): it opens a form, it does not go anywhere. The padding is
    a bigger thumb target, taken back by the negative margin so the line does not grow. */
 footer.app-footer .footer-link {
   padding: 8px 4px;

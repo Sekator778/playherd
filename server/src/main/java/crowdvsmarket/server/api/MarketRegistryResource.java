@@ -31,7 +31,7 @@ public class MarketRegistryResource {
     @Inject
     MarketRegistry registry;
 
-    /** The backup exchange of a market (Р-76): the venue's name and what that venue calls the pair. */
+    /** The backup exchange of a market (D-76): the venue's name and what that venue calls the pair. */
     public record Backup(String source, String ref) {
     }
 

@@ -213,7 +213,7 @@ function ProfileMenu() {
             </NavLink>
           </li>
           <li role="none">
-            {/* Feedback (Р-81): the strip may be gone for good (closed, or a message sent) — this entry, and the footer's, never are. */}
+            {/* Feedback (D-81): the strip may be gone for good (closed, or a message sent) — this entry, and the footer's, never are. */}
             <button
               type="button"
               role="menuitem"
@@ -247,7 +247,7 @@ function ProfileMenu() {
  * Header — now just logo, sound/vibration, balance and sign-in/profile: the primary nav row
  * (Home/Crowd/Ratings/How it works) moved to {@link BottomTabBar} (task IA), and the honest
  * DEMO/replay banners that used to sit above this header are gone from every screen this header
- * wraps (Р-63 — "removed"; the same facts now live as plain text on Wallet/How it works and in
+ * wraps (D-63 — "removed"; the same facts now live as plain text on Wallet/How it works and in
  * the connect-wallet onboarding, not a sticky top plaque).
  */
 function Header() {
@@ -315,7 +315,7 @@ export function Layout() {
   // Global settlement-event watcher (implementation-plan.md §3) — runs regardless of which page
   // is mounted below, so a result moment fires "видно с любой страницы" (game-designer.md).
   useSettlementWatcher();
-  // The mid-round LIQUIDATION moment (Р-50): `myPositions()` says a running position is liquidated long before
+  // The mid-round LIQUIDATION moment (D-50): `myPositions()` says a running position is liquidated long before
   // its round settles, so this fires then — once, remembered across reloads and tabs.
   useLiquidationWatcher();
   // "While you were away" one-shot catch-up (task item) — same reasoning: lives at the layout
@@ -324,9 +324,9 @@ export function Layout() {
   // Android hardware Back (player review fix item 4) — native-only no-op on web, see the hook's
   // own doc comment.
   useAndroidBackButton();
-  // Feedback strip (Р-81): while it is up, the page keeps room for it under its content (`Feedback.css`).
+  // Feedback strip (D-81): while it is up, the page keeps room for it under its content (`Feedback.css`).
   const feedbackStripUp = useFeedbackStripVisible();
-  // The pinned "My bet" card (Р-98) sits over the page above the tab bar: the page keeps room for it. The Pro view keeps the older strip instead.
+  // The pinned "My bet" card (D-98) sits over the page above the tab bar: the page keeps room for it. The Pro view keeps the older strip instead.
   const dockUp = useMyBetDockVisible();
   const pro = useProMode();
 
@@ -342,8 +342,8 @@ export function Layout() {
           {/* The server rebuilding its state (503 `ENGINE_NOT_READY`) — a notice, not an error: the screens below keep
            *  what they show and load again by themselves. */}
           <EngineBanner />
-          {/* "Your bets" across every market (Р-71) — in the page flow, never fixed to the screen. The Pro view's: the default view pins
-           *  "My bet" above the tab bar instead (Р-98). */}
+          {/* "Your bets" across every market (D-71) — in the page flow, never fixed to the screen. The Pro view's: the default view pins
+           *  "My bet" above the tab bar instead (D-98). */}
           {pro && <PositionsStrip />}
           <Outlet />
         </div>
@@ -368,7 +368,7 @@ export function Layout() {
       </footer>
       <MyBetDock />
       <BottomTabBar />
-      {/* The invitation to leave feedback, above the tab bar (Р-81) — a quiet bar, closable for good; the form it opens (and the
+      {/* The invitation to leave feedback, above the tab bar (D-81) — a quiet bar, closable for good; the form it opens (and the
        *  footer's and the profile menu's entries open) is the sheet next to it. */}
       <FeedbackStrip />
       <BetSheetHost />

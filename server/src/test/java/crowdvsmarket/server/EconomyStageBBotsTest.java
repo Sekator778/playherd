@@ -27,7 +27,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Economy stage B4 (Р-92) through the service, with three bots ({@link EconomyWithBotsProfile}): a bot pays for its pack from TREASURY, a bot
+ * Economy stage B4 (D-92) through the service, with three bots ({@link EconomyWithBotsProfile}): a bot pays for its pack from TREASURY, a bot
  * that ran out of PLAY retires without a trace in any list, an hour later a bot with a new generated name takes its place and gets a pack, and
  * once a day the fees the bots paid - and only those - move from HERD to TREASURY. The log replays to the same books.
  */

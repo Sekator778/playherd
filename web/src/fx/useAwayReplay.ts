@@ -7,7 +7,7 @@
  * talking to a server that predates them — rather than guessing which rounds were "away" from
  * client-only state.
  *
- * Since Р-69 the watcher polls the very same source for every market, so this one-shot is only the
+ * Since D-69 the watcher polls the very same source for every market, so this one-shot is only the
  * fast first pass at sign-in (it does not wait for the watcher's first tick) and the two share
  * their dedupe set and their in-flight call (`unseenResults.ts`): whichever gets there first shows
  * the moments, the other finds nothing left to show.

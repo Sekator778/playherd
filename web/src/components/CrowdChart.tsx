@@ -58,13 +58,13 @@ interface CrowdChartProps {
    *  full = the dedicated Crowd page (range tabs, season-boundary markers). */
   variant?: "compact" | "full";
   /** The market's ticker, for the "hold" line's legend ("Hold BTC", "Hold NVDA"): the line is a plain
-   *  buy-and-hold of THAT market (Р-26, per market — Т-6). Without one the legend says "Hold the asset" — it
+   *  buy-and-hold of THAT market (D-26, per market — Т-6). Without one the legend says "Hold the asset" — it
    *  never assumes BTC. */
   symbol?: string;
 }
 
 /**
- * Crowd account vs hold vs anti-crowd for one market (Р-17, Р-25, Р-26, Т-6). The horizontal axis is a real
+ * Crowd account vs hold vs anti-crowd for one market (D-17, D-25, D-26, Т-6). The horizontal axis is a real
  * time axis, and follows how much history there is (`crowdModel.ts`): over a few hours (a stand with
  * 3-minute rounds) it ticks with the time of day (UTC, named under the chart) and the range chips are 1H · 6H · 1D · All; over
  * months it ticks with dates and keeps 1M · 3M · 1Y · All — the open critique item "the chart's x axis must

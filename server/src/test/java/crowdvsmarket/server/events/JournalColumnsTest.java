@@ -108,7 +108,7 @@ class JournalColumnsTest {
             assertThat(rows.get(2).market()).isNull();
             assertThat(rows.get(3).player()).isEqualTo("jc-bot");
         } finally {
-            // Р-107: the events are in the journal, which cannot be trimmed; this class starts with an empty journal and table
+            // D-107: the events are in the journal, which cannot be trimmed; this class starts with an empty journal and table
             // (CleanDatabasePerTestClass) and leaves both empty, so no later rebuild replays a bet of a player nobody registered
             journal.resetForTests();
             db.tx(c -> db.update(c, "DELETE FROM game_events"));

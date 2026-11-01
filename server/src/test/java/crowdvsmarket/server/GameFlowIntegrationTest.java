@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Order;
  * The task's integration test: "runs 3 fast rounds with bots and 2 signed-in players (mock the
  * chainsvc client) and checks balances, reveal rules, results.json hash, and restart recovery."
  * chainsvc is mocked via {@link InjectMock} — this test never talks to a real chain service; both
- * "players" sign in with the local test-wallet flow (Р-45), i.e. any address/publicKey/signature,
+ * "players" sign in with the local test-wallet flow (D-45), i.e. any address/publicKey/signature,
  * since the mock accepts every {@code authVerify} call as valid — signature verification itself is
  * chainsvc's job (FIXED INTERFACE 3), not this server's.
  */
@@ -149,7 +149,7 @@ class GameFlowIntegrationTest {
                         0, null, "10000000000", null, List.of()));
         org.mockito.Mockito.when(chainSvcClient.health()).thenReturn(true);
 
-        // --- sign in two players (Р-45 local test wallet) ---
+        // --- sign in two players (D-45 local test wallet) ---
         Session player1 = signIn("txch1player1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         Session player2 = signIn("txch1player2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         assertThat(player1.playerId()).isNotEqualTo(player2.playerId());
@@ -179,7 +179,7 @@ class GameFlowIntegrationTest {
         assertThat(new java.math.BigDecimal(myAccountWhileBetting.path("inPlay").asText()))
                 .isEqualByComparingTo("500.000");
 
-        // --- Р-62 (replaces Р-22): the crowd split and live bet feed are visible during BETTING
+        // --- D-62 (replaces D-22): the crowd split and live bet feed are visible during BETTING
         // itself, even to a caller with no session at all — not just the headcount. ---
         JsonNode duringBetting = rpc(null, "round", bettingRoundId);
         assertThat(duringBetting.path("phase").asText()).isEqualTo("BETTING");
@@ -211,7 +211,7 @@ class GameFlowIntegrationTest {
                 && !duringBetting.path("majorityLeverage").isNull();
         assertThat(hasMajorityDirection).isEqualTo(hasMajorityLeverage);
 
-        // --- Р-62's live bet feed (betFeed RPC): both known bets show up, oldest-first by seq,
+        // --- D-62's live bet feed (betFeed RPC): both known bets show up, oldest-first by seq,
         // with the correct nickname/direction/stake/leverage — public, no session required. ---
         JsonNode feed = rpc(null, "betFeed", bettingRoundId);
         assertThat(feed.path("roundId").asText()).isEqualTo(bettingRoundId);
@@ -286,7 +286,7 @@ class GameFlowIntegrationTest {
         // bug fix: the bet settled, so it's no longer "in play".
         assertThat(new java.math.BigDecimal(myAccountAfter.path("inPlay").asText())).isEqualByComparingTo("0.000");
 
-        // --- results.json byte-for-byte hashes to resultsHash (Р-41) ---
+        // --- results.json byte-for-byte hashes to resultsHash (D-41) ---
         String resultsHash = settled.path("resultsHash").asText();
         assertThat(resultsHash).startsWith("0x");
         Response resultsJson = given().get("/api/rounds/" + bettingRoundId + "/results.json");

@@ -68,7 +68,7 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
   const [otherOpen, setOtherOpen] = useState(false);
   const [riskChoice, setRiskChoice] = useState<RiskId | null>(null);
   const [feesOpen, setFeesOpen] = useState(false);
-  // "Win or lose" (Р-106, fixed payout) or "%" (the boost): the first sheet a new player sees is "Win or lose"; the last choice is kept.
+  // "Win or lose" (D-106, fixed payout) or "%" (the boost): the first sheet a new player sees is "Win or lose"; the last choice is kept.
   // Odds markets take the percentage mode only, and the switch is not shown there.
   const { economy } = useMarkets();
   const [chosenMode, setChosenMode] = useState<BetMode>(() => loadBetMode());
@@ -438,7 +438,7 @@ function BetSheet({ request }: { request: BetSheetRequest }) {
   );
 }
 
-/** The plain-words example under the choice: what a small move for the bet and against it does, and the price at which most or all of the bet is lost (Р-93: the remainder at the candle's extreme comes back, 0 on a gap). */
+/** The plain-words example under the choice: what a small move for the bet and against it does, and the price at which most or all of the bet is lost (D-93: the remainder at the candle's extreme comes back, 0 on a gap). */
 function Example({
   market,
   symbol,

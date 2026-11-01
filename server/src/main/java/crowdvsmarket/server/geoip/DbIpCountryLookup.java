@@ -15,7 +15,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
- * {@link CountryLookup} over DB-IP's "IP to Country Lite" database (Р-81; docs/research/server_design.md §22).
+ * {@link CountryLookup} over DB-IP's "IP to Country Lite" database (D-81; docs/research/server_design.md §22).
  *
  * <p><b>Nothing waits for it.</b> The database is not there at start: a virtual thread ({@code geoip-refresh}) loads it
  * — downloads the file of the month, or reads the pre-placed one — and looks again about every 7 days ({@link

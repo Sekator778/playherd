@@ -47,7 +47,7 @@ public class RoundResultRepository {
      *  #settledCloses} hands to {@code BoundaryPrices}. {@code closeCents} is the engine (lot) price
      *  times 100, like the column it comes from. {@code venue}: the exchange the round ran on (V9), {@code
      *  null} for a round of a market without a backup — the next round opens at the close of a round on the
-     *  same venue only (Р-76). */
+     *  same venue only (D-76). */
     public record SettledClose(long windowEndMs, long closeCents, String venue) {
 
         /** A round that ran on no particular venue. */
@@ -60,7 +60,7 @@ public class RoundResultRepository {
      * The closing prices of the SETTLED rounds of one series whose window starts at or after {@code
      * fromStartMs}, oldest end first (cancelled rounds have no close and are not listed). {@code
      * BoundaryPrices} reads them when a state is built: the open of a round is the close of the round that
-     * ended where it starts (Р-40), and that must not depend on what the price pipeline still remembers.
+     * ended where it starts (D-40), and that must not depend on what the price pipeline still remembers.
      * Answered from the {@code (market, interval, window_start_ms)} index.
      */
     public List<SettledClose> settledCloses(String marketId, Interval interval, long fromStartMs) {
@@ -162,7 +162,7 @@ public class RoundResultRepository {
     }
 
     /** The previous settled round's crowd-majority direction for the series — used by the
-     *  {@code CONTRARIAN}/{@code FOLLOW_MAJORITY} bot strategies (Р-46), per market (Т-8). Empty if
+     *  {@code CONTRARIAN}/{@code FOLLOW_MAJORITY} bot strategies (D-46), per market (Т-8). Empty if
      *  no settled round exists yet, or the most recent one was a tie/no-bets (crowd did not
      *  trade). */
     public Optional<Enums.Direction> lastMajorityDirection(String marketId, Interval interval) {
@@ -194,7 +194,7 @@ public class RoundResultRepository {
         return new Paging.Page<>(hasMore ? items.subList(0, limit) : items, hasMore);
     }
 
-    /** Р-62 "while you were away": this player's own settled positions not yet acknowledged
+    /** D-62 "while you were away": this player's own settled positions not yet acknowledged
      *  ({@link #ackResults}) — newest first, same convention as {@link #playerHistory} and as
      *  contract.ts's own doc comment on {@code Api.unseenResults} already fixes it (the client,
      *  {@code fx/useAwayReplay.ts}, reverses the list itself to actually PLAY the result moments
@@ -247,7 +247,7 @@ public class RoundResultRepository {
     }
 
     /**
-     * The win streak of {@code playerId} over ALL their settled rounds, newest first (Р-71, {@link
+     * The win streak of {@code playerId} over ALL their settled rounds, newest first (D-71, {@link
      * WinStreak} has the rule): one pass over two columns, the newest round first — the order within one
      * instant (rounds of several markets end together) is fixed by market and round id, so that the answer
      * does not change from call to call. Flat rounds are left out in SQL: they are transparent to a streak.

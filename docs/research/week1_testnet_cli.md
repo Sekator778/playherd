@@ -1,6 +1,6 @@
 # Неделя 1, день 1-2 — `c2`: Rust CLI для testnet11 (chain/c2-cli)
 
-Дата — **2026-09-25**. Источники: `docs/research/week1_chain_access.md` (маршрут доступа к сети), `chain/sim-spike/` (доказанные офлайн-паттерны сборки спендов), `the decision log` Р-1…Р-21, `chain/c2-cli/` (код этого прохода — все факты о деривации ключей и формате `offer1...` ниже читаны из исходников зависимостей в `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/`, версии как в `chain/c2-cli/Cargo.toml`).
+Дата — **2026-09-25**. Источники: `docs/research/week1_chain_access.md` (маршрут доступа к сети), `chain/sim-spike/` (доказанные офлайн-паттерны сборки спендов), `the decision log` D-1…D-21, `chain/c2-cli/` (код этого прохода — все факты о деривации ключей и формате `offer1...` ниже читаны из исходников зависимостей в `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/`, версии как в `chain/c2-cli/Cargo.toml`).
 
 Код: новый крейт `chain/c2-cli` (бинарник `c2`), добавлен в `chain/Cargo.toml` `[workspace] members`. `chain/sim-spike` не менялся.
 
@@ -18,7 +18,7 @@
 | `c2 issue-play --name <n> --amount <mojo> [--fee <mojo>]` | Чеканит PLAY CAT (genesis-by-coin-id, single-issuance) | dry-run / `--push` |
 | `c2 offer-make --name <n> --requested-mojos <mojo>` | Оффер «весь закешированный PLAY → TXCH», печатает `offer1...` | никогда (см. §4) |
 | `c2 offer-take --name <n> --offer <offer1...>` | Принимает оффер (платит TXCH, получает PLAY) | dry-run / `--push` |
-| `c2 oracle-launch --name <n> [--fee <mojo>]` | Запускает синглтон-оракул (Р-11), manager-ключ — этот кошелёк | dry-run / `--push` |
+| `c2 oracle-launch --name <n> [--fee <mojo>]` | Запускает синглтон-оракул (D-11), manager-ключ — этот кошелёк | dry-run / `--push` |
 | `c2 oracle-publish --name <n> --price <i64> --ts <i64>` | Пересоздаёт синглтон + announcement (price, ts, sequence) | dry-run / `--push` |
 
 Каждая спендящая команда по умолчанию **dry-run**: строит + подписывает + валидирует локально (`chia_consensus::spendbundle_conditions::run_spendbundle`, тот же алгоритм, что `chia-sdk-test::Simulator` использует перед принятием бандла — см. `chain/c2-cli/src/cost.rs`, портировано из `chain/sim-spike/src/lib.rs`), печатает JSON тела `push_tx` (`chain/c2-cli/src/spend_json.rs`, та же форма, что `chia-sdk-coinset::push_tx` реально отправит) и разбивку CLVM-cost (`total/byte/execution/condition`) + `fee`. Пушит только с явным `--push`. **В этом проходе `--push` нигде не использован** (по прямому указанию задачи).
@@ -93,11 +93,11 @@ c2 balance --name counterparty
 ## 7. Точные следующие шаги (день 2-3)
 
 1. **Пополнить оба кошелька TXCH.** Вручную, через `https://testnet11-faucet.chia.net/` (капча — форма непригодна для автоматизации, подтверждено `docs/research/week1_chain_access.md` §5; агент площадку не трогал, по прямому запрету этой задачи «never request faucet coins»). Адрес получателя — **Receive Address**, не Master Public Key (`week1_chain_access.md` §5): вставить адреса из §6 (`operator`, `counterparty`) по одному разу каждый.
-   - Сколько TXCH нужно технически: `issue-play`/`oracle-launch` чеканят/блокируют мохо 1:1 (CAT-монета — это те же мохо, просто «покрашенные» TAIL'ом, см. комментарий в `chain/c2-cli/src/builders/issue.rs`) — старт-пакет 10 000 PLAY (Р-12) = 10 000 мохо = 0.00000000001 TXCH, плюс произвольная комиссия (`--fee`, тоже в мохо). То есть технический минимум — исчезающе малая доля 1 TXCH; реальное ограничение — что кошелёк вообще не может потратить НИЧЕГО, имея баланс 0, так что каждому кошельку нужна хотя бы одна ненулевая монета. Точный размер выдачи фаусета — **UNVERIFIED** (страница не дергалась, `week1_chain_access.md` тоже это не проверял) — практически любая выдача фаусета этого достаточна с большим запасом.
+   - Сколько TXCH нужно технически: `issue-play`/`oracle-launch` чеканят/блокируют мохо 1:1 (CAT-монета — это те же мохо, просто «покрашенные» TAIL'ом, см. комментарий в `chain/c2-cli/src/builders/issue.rs`) — старт-пакет 10 000 PLAY (D-12) = 10 000 мохо = 0.00000000001 TXCH, плюс произвольная комиссия (`--fee`, тоже в мохо). То есть технический минимум — исчезающе малая доля 1 TXCH; реальное ограничение — что кошелёк вообще не может потратить НИЧЕГО, имея баланс 0, так что каждому кошельку нужна хотя бы одна ненулевая монета. Точный размер выдачи фаусета — **UNVERIFIED** (страница не дергалась, `week1_chain_access.md` тоже это не проверял) — практически любая выдача фаусета этого достаточна с большим запасом.
 2. `c2 balance --name operator` / `--name counterparty` — дождаться ненулевого баланса (подтверждение в testnet11, несколько блоков).
 3. `c2 issue-play --name operator --amount 10000 --fee <мохо>` — сначала dry-run (проверить JSON/cost/fee), затем повторить с `--push`.
 4. `c2 oracle-launch --name operator --fee <мохо>` — dry-run, затем `--push`.
-5. `c2 offer-make --name operator --requested-mojos 100` (100 — как минимальная ставка Р-12, для демо-цены) → получить `offer1...`.
+5. `c2 offer-make --name operator --requested-mojos 100` (100 — как минимальная ставка D-12, для демо-цены) → получить `offer1...`.
 6. `c2 offer-take --name counterparty --offer "<offer1...>"` — dry-run (проверить, что `counterparty` получает PLAY, платит запрошенные mojo), затем `--push`.
 7. `c2 oracle-publish --name operator --price <цена> --ts <unix-время>` — dry-run, затем `--push`; повторять по кругу для каждого следующего раунда (номер `sequence` CLI ведёт сам в `~/.c2/testnet11/operator.oracle.json`).
 8. `c2 balance --name operator` / `--name counterparty` после каждого `--push` — сверить ожидаемое изменение баланса.

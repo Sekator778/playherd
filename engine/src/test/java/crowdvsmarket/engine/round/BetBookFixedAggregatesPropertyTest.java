@@ -14,7 +14,7 @@ import java.util.Random;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-106 on top of F2 ({@link BetBookAggregatesPropertyTest}): in rounds that hold fixed-payout and percentage bets together the book's
+ * D-106 on top of F2 ({@link BetBookAggregatesPropertyTest}): in rounds that hold fixed-payout and percentage bets together the book's
  * aggregates still equal a brute-force recomputation after every step of long random sequences - the open notional counts the
  * percentage-mode bets only (a fixed bet has no leverage), the open fixed stake counts the fixed bets only.
  */

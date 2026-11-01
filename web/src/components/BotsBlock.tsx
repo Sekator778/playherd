@@ -8,7 +8,7 @@ import { CopyButton } from "./Common";
 import "./BotsBlock.css";
 
 /**
- * Own profile only (Р-106): the person's API bots - create one (a name and "Create bot key"), see them, revoke or regenerate a key.
+ * Own profile only (D-106): the person's API bots - create one (a name and "Create bot key"), see them, revoke or regenerate a key.
  * A key is shown once, right after it is made, in a box of its own that stays until the person says they saved it; it is held in this
  * component's state only (never in storage, never in the list) and gone when the box is closed or the page is left. A failed load shows
  * nothing, like the invite block: a server that predates the feature simply has no such section.

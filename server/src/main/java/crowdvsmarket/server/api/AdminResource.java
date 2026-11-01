@@ -29,9 +29,9 @@ import java.util.List;
 import org.jboss.logging.Logger;
 
 /**
- * Р-43: operator admin endpoints, protected by a bearer token from {@code HERD_OPERATOR_TOKEN}
+ * D-43: operator admin endpoints, protected by a bearer token from {@code HERD_OPERATOR_TOKEN}
  * (predложение stand-in — "the token is a stand-in until operator-key signing", see
- * docs/research/server_design.md). No web admin UI (Р-43: "Веб-админки нет") — this plus
+ * docs/research/server_design.md). No web admin UI (D-43: "Веб-админки нет") — this plus
  * {@code tools/herd-operator.sh} is the whole operator surface.
  */
 @Path("/api/admin")
@@ -88,7 +88,7 @@ public class AdminResource {
     public record ReverseWithdrawalRequest(String reason) {
     }
 
-    /** Wave-2 security fix (Р-32/Р-43 pattern): reverses a withdrawal request's already-recorded
+    /** Wave-2 security fix (D-32/D-43 pattern): reverses a withdrawal request's already-recorded
      *  balance/season effect (e.g. the {@code requestWithdrawal("-5000.000")} exploit) without
      *  altering or deleting the original event — {@code reason} is mandatory and becomes part of
      *  the public, replayable {@code LedgerCorrection} record ({@code GameService#reverseWithdrawal}
@@ -152,7 +152,7 @@ public class AdminResource {
             LOG.warnf(e, "the operator status could not list the cancellations");
         }
         // Wave-2 security fix: same "journal of exceptional operator actions" pattern as
-        // recentCancellations, for ledger corrections (Р-32/Р-43).
+        // recentCancellations, for ledger corrections (D-32/D-43).
         java.util.List<Ledger.LedgerCorrectionDto> corrections = null;
         try {
             corrections = gameService.ledgerCorrections(new Paging.PageParams(20, null)).items();
@@ -190,7 +190,7 @@ public class AdminResource {
     /**
      * Economy stage B (plan B7): the books against the chain - what was issued (100 000 000 PLAY), the PLAY treasury coin on chain, TREASURY,
      * HERD, what the players hold, what was withdrawn - and whether they agree ({@code booksBalanced}, {@code chainConsistent}); a mismatch is
-     * also a WARN in the log. Operator only: it shows HERD, the platform's revenue, which no public screen does (Р-90).
+     * also a WARN in the log. Operator only: it shows HERD, the platform's revenue, which no public screen does (D-90).
      */
     @GET
     @Path("/reconciliation")
@@ -201,7 +201,7 @@ public class AdminResource {
     }
 
     /**
-     * Р-81: the feedback visitors left in the app, newest first — the operator's way to read it (no web admin UI, Р-43;
+     * D-81: the feedback visitors left in the app, newest first — the operator's way to read it (no web admin UI, D-43;
      * {@code tools/herd-operator.sh feedback}). {@code sinceMs}: only messages received at or after that epoch-ms
      * (default: all); {@code limit}: at most that many, default {@value FeedbackService#DEFAULT_LIST_LIMIT}, at most
      * {@value FeedbackService#MAX_LIST_LIMIT}. Each item: {@code id}, {@code receivedAtMs}, {@code message}, {@code
@@ -262,7 +262,7 @@ public class AdminResource {
 
     /** {@code recentCancellations} is {@code null} while the database does not answer, {@code
      *  recentLedgerCorrections} while the engine is not ready ({@code server.engineReady} is {@code false}).
-     *  {@code priceFeeds}: one row per price feed (Р-76) — {@code feed}, {@code venue}, {@code mode} ({@code poll} or
+     *  {@code priceFeeds}: one row per price feed (D-76) — {@code feed}, {@code venue}, {@code mode} ({@code poll} or
      *  {@code stream}), {@code state} ({@code polling}; for a stream {@code connected}, {@code silent},
      *  {@code rest-fallback}, {@code idle}; {@code disabled} for a venue in {@code herd.prices.disabled-venues};
      *  {@code synthetic}), {@code lastMessageAtMs} and {@code restReads} (how many markets the last poll read over REST
@@ -276,7 +276,7 @@ public class AdminResource {
      *  that failed, since when ({@code sinceMs}) and why ({@code lastError}). {@code snapshots} (F5): whether snapshots are on, how many are
      *  stored, the newest one's journal row ({@code lastSeq}) and time, the journal's last row, the last write error and
      *  {@code lastCheck}, the nightly comparison of a replay from zero with the newest snapshot ({@code ok} false is a mismatch; also an
-     *  ERROR in the log); {@code null} while the database does not answer. {@code journal} (Р-107): the journal's directory and last seq,
+     *  ERROR in the log); {@code null} while the database does not answer. {@code journal} (D-107): the journal's directory and last seq,
      *  what the first start imported from {@code game_events} ({@code importedFromTable}: rows, last id, sha256), and the projector that
      *  copies it into {@code game_events}: {@code projector.lag} (events the copy is behind), {@code failures} in a row, {@code lastError},
      *  the last batch. {@code derivedRows}: the rows written after a batch by a thread of their own (the result row of a cancelled

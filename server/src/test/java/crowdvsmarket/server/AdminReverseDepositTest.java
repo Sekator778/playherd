@@ -38,7 +38,7 @@ import org.junit.jupiter.api.Test;
  * LedgerCorrection}/{@code relatedRequestId} shape, see that class and {@code
  * crowdvsmarket.engine.ledger.LedgerBook#reverseDepositEffect}'s javadoc).
  *
- * <p>Р-53 update: {@code gameService.requestDeposit} (the self-report RPC this reversal mechanism
+ * <p>D-53 update: {@code gameService.requestDeposit} (the self-report RPC this reversal mechanism
  * was originally built to clean up after) is now PERMANENTLY retired — see its own javadoc — so
  * this class's fixtures can no longer be created through it. {@link #legacySelfReportedDeposit}
  * reconstructs exactly the same historical event shape ({@code DepositRequested} +

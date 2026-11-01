@@ -16,7 +16,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * The season leaderboards ("богачи" and "пророки", Р-18) of every season, kept sorted as part of the read views (architecture plan F8):
+ * The season leaderboards ("богачи" and "пророки", D-18) of every season, kept sorted as part of the read views (architecture plan F8):
  * what {@link RatingBook} computes by walking the whole ledger on each call is here a sorted array per season and board, and a
  * batch moves only the rows of the players it touched ({@link #with}: one pass over each array that changes, not a new sort). A
  * value of this class never changes; {@link #with} and {@link #of} build the next one.

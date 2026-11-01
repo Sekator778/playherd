@@ -1,5 +1,5 @@
 /**
- * Concept A — "Arcade" (Р-59 follow-up task, direction "A: arcade/neon lobby with big tiles").
+ * Concept A — "Arcade" (D-59 follow-up task, direction "A: arcade/neon lobby with big tiles").
  * Big, saturated, game-cabinet tiles in the lobby; the room is a full-bleed two-color arena with
  * one dominant UP/DOWN action, borrowing the crash-game "one graph, one clear action, nothing
  * else on screen" reading (`docs/product/design/research-game-ux.md` §2) — the arena hides the

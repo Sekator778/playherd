@@ -43,7 +43,7 @@ export interface PriceChartProps {
 }
 
 /**
- * The room's live price chart (Р-70, Р-71): the market's ticks drawn in the chosen look (`chart/renderers`), with a
+ * The room's live price chart (D-70, D-71): the market's ticks drawn in the chosen look (`chart/renderers`), with a
  * pulsing end point and the current price in a bubble, range chips for what the data covers, and — over it — the
  * lines that make it a betting chart rather than a finance one: the round's open price, the player's entry and
  * liquidation levels, and the herd's fainter pair. A liquidation price too far from the price to share its scale is

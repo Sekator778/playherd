@@ -105,7 +105,7 @@ function playerFor(playerId: string, own?: OwnBetInfo | null): PlayerSummaryDto 
   return { playerId, nickname: playerId, walletAddress: "", displayName: playerId };
 }
 
-/** Р-106: what a fixed-payout bet is paid back at the close of its round: twice the stake for the right direction, nothing for the wrong one, the stake on a tie. */
+/** D-106: what a fixed-payout bet is paid back at the close of its round: twice the stake for the right direction, nothing for the wrong one, the stake on a tie. */
 export function fixedPayout(bet: BetDto, ohlc: RoundOhlc): number {
   const stake = Number(bet.stake);
   const open = Number(ohlc.open);
@@ -193,7 +193,7 @@ export function majorityDirection(bets: BetDto[]): Direction | null {
   return majority ? (majority.side === LONG ? "UP" : "DOWN") : null;
 }
 
-/** Р-14: stake-weighted average leverage of the majority side, HALF_UP, clamped to 2..the market's cap. */
+/** D-14: stake-weighted average leverage of the majority side, HALF_UP, clamped to 2..the market's cap. */
 function crowdLeverage(majority: BetDto[], spec: MockMarketSpec): number {
   const totalStake = majority.reduce((sum, b) => sum + Number(b.stake), 0);
   const weighted = majority.reduce((sum, b) => sum + b.leverage * Number(b.stake), 0) / totalStake;
@@ -267,12 +267,12 @@ function crowdSettledResult(
   };
 }
 
-/** Р-62's live bet feed cap — a demo-only number (no source fixes it), generous enough to feel
+/** D-62's live bet feed cap — a demo-only number (no source fixes it), generous enough to feel
  *  "live" without listing every one of the round's ~12-32 NPC bets at once. */
 const LIVE_FEED_LIMIT = 14;
 
 /** When each bet of a round was placed, newest first: the NPCs' at seeded points of the betting
- *  period (the window BEFORE `window`, Р-19: "ставки принимаются в течение всего предыдущего
+ *  period (the window BEFORE `window`, D-19: "ставки принимаются в течение всего предыдущего
  *  раунда"), the player's own always "just now". Seeded by the round id, so a given round's feed
  *  order is stable across polls. */
 function timedBets(

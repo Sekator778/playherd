@@ -14,7 +14,7 @@ const INTERVALS: Interval[] = ["HOURLY", "DAILY"];
  * whichever page is mounted, so a moment fires "видно с любой страницы" (`game-designer.md`) even
  * from `/wallet` or `/ratings`.
  *
- * Market-agnostic since Р-69: a player has bets in many pairs at once, so the watcher no longer
+ * Market-agnostic since D-69: a player has bets in many pairs at once, so the watcher no longer
  * reads `home()`/`rounds()` of one pair. It polls `Api.unseenResults()` — the player's settled
  * positions in ANY market that no result moment has been shown for yet — publishes a moment for
  * each (the event carries the market's symbol), and acknowledges them (`acknowledgeResults`), which

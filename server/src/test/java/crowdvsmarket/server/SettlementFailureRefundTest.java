@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Р-23 — "если за 1 час цену получить не удалось — раунд отменяется целиком" — for every way a
+ * D-23 — "если за 1 час цену получить не удалось — раунд отменяется целиком" — for every way a
  * settlement can fail, not only for {@code PriceUnavailableException} (review of the multi-market
  * core, finding 3). The scheduler used to retry any other exception every second for ever and never
  * refund the bets of that window: an HTTP error out of the price source, a price the engine cannot take
@@ -41,7 +41,7 @@ import org.mockito.Mockito;
  * settlement transaction, fail there and get the whole engine rebuilt from the log, once a second.
  *
  * <p>The hour is for the failures that are not "no price". A round without a usable price is let go after the
- * minutes of its source, with the source's words (Р-79) — five for the synthetic feed of these markets — so the
+ * minutes of its source, with the source's words (D-79) — five for the synthetic feed of these markets — so the
  * tests of "no usable price" below pin that: not a millisecond before the five minutes, the refund at them.
  */
 @QuarkusTest
@@ -50,7 +50,7 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
 
     private static final Interval HOURLY = Interval.HOURLY;
     private static final long HOUR = 3_600_000L;
-    /** The wait of the synthetic feed that prices the markets listed here (Р-79). */
+    /** The wait of the synthetic feed that prices the markets listed here (D-79). */
     private static final long FIVE_MINUTES = 300_000L;
     private static final String SETTLEMENT_FAILED = "settlement failed within 1 hour of round close";
     private static final String NO_PRICE_FROM_THE_SOURCE = "No price from the source; stakes returned";
@@ -158,7 +158,7 @@ class SettlementFailureRefundTest extends LiveGameTestBase {
     /**
      * Data of the source that cannot be used is "no price": nothing is written for the window and the engine is not rebuilt behind
      * it, the round waits, and when the minutes of its source are over — to the millisecond — it is cancelled with the source's
-     * words and every stake is refunded (Р-79).
+     * words and every stake is refunded (D-79).
      */
     private void assertUnusableDataIsNoPriceAndLetGoAfterTheMinutes(String id, String symbol,
                                                                     Function<RoundWindow, RoundPriceData> odd) {

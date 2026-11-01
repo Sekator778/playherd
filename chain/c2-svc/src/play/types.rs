@@ -1,5 +1,5 @@
 //! DTOs (and the validated internal withdrawal-request type) for the PLAY
-//! withdraw/deposit FIXED INTERFACE (Р-6, decision Р-53 2026-09-26):
+//! withdraw/deposit FIXED INTERFACE (D-6, decision D-53 2026-09-26):
 //! `POST /v1/play/withdrawals`, `GET /v1/play/withdrawals/{requestId}`,
 //! `POST /v1/play/deposit-address`, `GET /v1/play/deposits`. See
 //! `docs/research/chain_service.md` §13.

@@ -29,7 +29,7 @@ describe("/lab/states — the designed states are all drawn", () => {
     expect(within(card("GER")).getByRole("note")).toHaveTextContent("Closed — open bets refunded. This market takes no more bets.");
   });
 
-  it("the backup exchange (Р-76): a card whose price is Kraken's says so, one on its own exchange does not, and the market a new source replaced is closed with its reason", () => {
+  it("the backup exchange (D-76): a card whose price is Kraken's says so, one on its own exchange does not, and the market a new source replaced is closed with its reason", () => {
     renderLab();
     const card = (symbol: string) => screen.getAllByRole("article").find((a) => within(a).queryByRole("heading", { level: 3, name: new RegExp(`^${symbol}\\b`) }))!;
     expect(within(card("ETH")).getByText("Kraken price")).toBeInTheDocument();

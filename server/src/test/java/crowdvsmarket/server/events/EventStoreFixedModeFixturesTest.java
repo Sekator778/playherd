@@ -14,7 +14,7 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * Event compatibility for the fixed-payout mode (Р-106): {@code BetPlaced} has one more optional trailing field, {@code mode}, written
+ * Event compatibility for the fixed-payout mode (D-106): {@code BetPlaced} has one more optional trailing field, {@code mode}, written
  * only as {@code "FIXED"}. An event of any other bet is the same bytes it always was, and every fixture committed before the field
  * (all the other {@code events/golden*} folders) decodes to a percentage-mode bet.
  */

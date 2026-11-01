@@ -26,7 +26,7 @@ public final class EconomyLimits {
     /** Share of TREASURY one side of one round of all crypto markets together may put at risk at their stress moves: 1%. */
     public static final BigDecimal CRYPTO_BUCKET_SHARE = new BigDecimal("0.01");
     /**
-     * Fixed-payout mode (Р-106, docs/product/fixed_payout_rules.md point 5): the worst outcome of a fixed bet for the treasury is its
+     * Fixed-payout mode (D-106, docs/product/fixed_payout_rules.md point 5): the worst outcome of a fixed bet for the treasury is its
      * stake, so the sum of the stakes on one side of one round of one market may not exceed 0.1% of TREASURY (what one percentage-mode
      * bet may win at most, {@code min(20 x stake, 0.1% of the treasury)}).
      */
@@ -67,7 +67,7 @@ public final class EconomyLimits {
     }
 
     /**
-     * The check of a fixed-payout bet (Р-106): the stakes already open on this side, without the bet being replaced, plus the new stake
+     * The check of a fixed-payout bet (D-106): the stakes already open on this side, without the bet being replaced, plus the new stake
      * stay within {@link #FIXED_MARKET_SHARE} of the treasury, and (a crypto market, {@code bucketOpen} not {@code null}) the stakes of
      * this side over all crypto markets, this one included, within {@link #FIXED_CRYPTO_BUCKET_SHARE}. All amounts in PLAY.
      *

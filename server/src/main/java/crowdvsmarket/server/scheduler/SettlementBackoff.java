@@ -16,7 +16,7 @@ import java.util.Map;
  * <p>One entry per series: the scheduler works on one window of a series at a time (the one its cursor
  * points at), so an entry for any other window is stale — the round was settled, cancelled by the operator or
  * jumped over, or the cursor was re-seeded by a rebuild — and is simply not there any more. The map therefore
- * never holds more than one window per series. The one-hour refund ({@code RoundSchedulerService}, Р-23) is
+ * never holds more than one window per series. The one-hour refund ({@code RoundSchedulerService}, D-23) is
  * not postponed by a backoff: when an hour has passed since the window's end, the refund is tried at once
  * ({@link #waiting}), and if it fails too it is backed off like any other attempt. A scheduler tick is one
  * thread ({@code concurrentExecution = SKIP}), the methods are synchronized for a test that calls {@code
@@ -24,7 +24,7 @@ import java.util.Map;
  * a step back must not hold a window until the clock catches up.
  *
  * <p>The backoff never waits past an instant from which a round that cannot be priced is let go ({@code
- * RoundSchedulerService}: Р-77, a round of a market with a backup exchange from a silent exchange; Р-79, any round from a
+ * RoundSchedulerService}: D-77, a round of a market with a backup exchange from a silent exchange; D-79, any round from a
  * source that gives no price): the attempt after a failure is made at the first of them still to come at the latest.
  */
 final class SettlementBackoff {
@@ -68,7 +68,7 @@ final class SettlementBackoff {
 
     /**
      * {@link #failed(RoundProgress.SeriesKey, RoundWindow, long, boolean)} for a window that has an instant of its own
-     * to be tried at ({@code notLaterThanMs}: a release, Р-77 or Р-79, from which a round that cannot be priced is let
+     * to be tried at ({@code notLaterThanMs}: a release, D-77 or D-79, from which a round that cannot be priced is let
      * go): the next attempt is made at that instant, not after it, even when the backoff would have waited past it
      * — a round that is to be released two minutes after its end is released then, not up to a minute later. An instant that
      * is not in the future ({@code <= nowMs}) holds nothing back.

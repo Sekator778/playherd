@@ -1,6 +1,6 @@
 # verify-oracle
 
-A standalone public verifier for Herd's price oracle singleton (Р-11/Р-40/Р-41/Р-47 in
+A standalone public verifier for Herd's price oracle singleton (D-11/D-40/D-41/D-47 in
 [`the decision log`](../../the decision log)). Anyone can run it — it
 needs none of our keys, none of our servers except (optionally) one stand's own public
 API, and it never sends a spend, a signature, or any other mutating request. Full design
@@ -34,7 +34,7 @@ reference for an outside auditor.
    `closePriceCents == priceCents`, and that the asset on chain is the asset the stand gives
    the round (and that the stand's `GET /api/markets/registry.json` maps it to the round's
    market).
-5. For a crypto market that has a backup exchange, also the **venue** of each round (Р-76): a
+5. For a crypto market that has a backup exchange, also the **venue** of each round (D-76): a
    round opens on the market's main exchange or on its backup and runs on that one exchange to
    the end. The round names it in a root key `"venue"` of its `results.json` — inside the
    hash the chain anchored, and `priceCents` is the close on that exchange — and the journal
@@ -127,7 +127,7 @@ without the journal, the smallest `seq` it maps), and the whole chain when there
     on that network or was never spent. A network or HTTP failure is always `2` with a message
     on stderr — never a traceback, never the `1` that means "found a problem".
 - One early announcement on this project's own singleton (the very first spend, `seq`
-  effectively `1`, week 1 before Р-41) used a since-superseded 3-field schema (no
+  effectively `1`, week 1 before D-41) used a since-superseded 3-field schema (no
   `resultsHash` yet) — the tool reports it under `Unparsed announcement-shaped
   conditions` rather than misreading it as a seq collision. That is expected history,
   not a finding.
@@ -157,7 +157,7 @@ is the same in the hashed document and in the journal and is one the registry li
 
 **Not** verified by this tool: that a published price was itself an honest price
 (trust in the operator key + the price source — Hyperliquid, Coinbase, Kraken or Polymarket —
-is a deliberate, documented tradeoff — Р-11, `the project plan` §2; the venue only tells you which
+is a deliberate, documented tradeoff — D-11, `the project plan` §2; the venue only tells you which
 exchange to compare the price with); that a round's payouts were computed correctly by
 the game engine (covered by `engine/`'s own unit tests, a different concern); AGG_SIG_ME
 signatures on each spend (the public chain already rejected any spend that failed that check

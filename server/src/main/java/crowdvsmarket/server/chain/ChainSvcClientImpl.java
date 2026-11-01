@@ -84,7 +84,7 @@ public class ChainSvcClientImpl implements ChainSvcClient {
         }
     }
 
-    // --- Р-53: real on-chain PLAY withdraw/deposit ---
+    // --- D-53: real on-chain PLAY withdraw/deposit ---
 
     @Override
     public PlayWithdrawalSubmitResult submitPlayWithdrawal(String requestId, String toAddress, long amountMojos) {

@@ -68,7 +68,7 @@ class PositionSizingPropertyTest {
     }
 
     private static BigDecimal randomMargin(Random random) {
-        // 100.00 .. 100000.00, 2dp — spans the min stake (Р-12) up to well past the starter pack.
+        // 100.00 .. 100000.00, 2dp — spans the min stake (D-12) up to well past the starter pack.
         long cents = 100_00L + (long) (random.nextDouble() * (100_000_00L - 100_00L));
         return BigDecimal.valueOf(cents, 2).setScale(2, RoundingMode.UNNECESSARY);
     }

@@ -16,7 +16,7 @@ What is checked for every settled position (bots included), mirroring the engine
                                              then capped at min(20*S, 0.1 % of the treasury) (not for legacy bets)
   fees                                     - herd = ceil3(S * min(guard, k*r_m*L)) (at least 0.001), network = 0.1, with the
                                              rate history of the herd fee (before / after the switch of 2026-10-18 ~07:53 UTC)
-  fixed-payout bets (BetPlaced "mode":"FIXED", Р-106)
+  fixed-payout bets (BetPlaced "mode":"FIXED", D-106)
                                            - no size / liquidation / tier; payout 2*S when the close is on the bet's side of the
                                              open, 0 on the other side, S when close = open; fee ceil3(3 % of S) + 0.1 PLAY
   bet                                      - leverage inside the stake tier (cap, cap/2, cap/5, cap/10), placed before the round
@@ -46,7 +46,7 @@ CENT = D("0.01")
 ONE = D(1)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-# V13 / Р-102: the migration ran at 07:50:47 UTC, but the server kept charging the old fees until its restart: in the stored bets
+# V13 / D-102: the migration ran at 07:50:47 UTC, but the server kept charging the old fees until its restart: in the stored bets
 # the last old-rule fee is at 07:53:00.009 and the first new-rule fee at 07:53:27.000. A bet inside that gap may carry either set.
 FEE_DEPLOY_MS = int(datetime(2026, 10, 18, 7, 53, 27, tzinfo=timezone.utc).timestamp() * 1000)
 FEE_OLD_UNTIL_MS = int(datetime(2026, 10, 18, 7, 53, 0, tzinfo=timezone.utc).timestamp() * 1000)
@@ -169,7 +169,7 @@ def expected_fees(market, interval, lev, stake_play, bet_at_ms):
     return int(herd * 1000), NETWORK_FEE_MOJOS
 
 
-FIXED_FEE_RATE = D("0.03")   # Р-106: the platform fee of a fixed-payout bet, 3 % of the stake
+FIXED_FEE_RATE = D("0.03")   # D-106: the platform fee of a fixed-payout bet, 3 % of the stake
 FIXED_LEVERAGE = 2           # the placeholder leverage of a fixed-payout bet (Leverage.MIN)
 
 
@@ -180,7 +180,7 @@ def expected_fixed_fees(stake_play):
 
 
 def expected_fixed_payout(stake_play, side, lot_open, lot_close):
-    """Р-106: 2 x stake for the right direction, 0 for the wrong one, the stake back when the close equals the open."""
+    """D-106: 2 x stake for the right direction, 0 for the wrong one, the stake back when the close equals the open."""
     if lot_close == lot_open:
         return stake_play
     return stake_play * 2 if (lot_close > lot_open) == (side == 1) else D(0)

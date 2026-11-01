@@ -1,5 +1,5 @@
 /**
- * The content of the developers' page (Р-106): the calls an API key may make, one example each, the error codes, and a minimal bot.
+ * The content of the developers' page (D-106): the calls an API key may make, one example each, the error codes, and a minimal bot.
  * The same material is `docs/api/bots.md`. Two tests keep it honest (`examples.test.ts`): the list of calls is the server's own
  * (`RpcResource.API_KEY_METHODS`), and every response here is an EXCERPT of an answer the server's tests really recorded
  * (`api/wire/<fixture>.json`, optionally at a path inside it) - the same keys with values of the same kind, nothing written from

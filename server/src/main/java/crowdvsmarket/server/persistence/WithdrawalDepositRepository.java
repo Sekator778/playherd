@@ -10,7 +10,7 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
 
-/** Read model mirror of {@code LedgerBook}'s withdrawal/deposit request state machines (Р-6) —
+/** Read model mirror of {@code LedgerBook}'s withdrawal/deposit request state machines (D-6) —
  *  written alongside the matching {@code GameEvent}, read directly by the API (never replayed;
  *  the in-memory state of record is {@code LedgerBook} itself, rebuilt from events). */
 @ApplicationScoped
@@ -19,7 +19,7 @@ public class WithdrawalDepositRepository {
     @Inject
     Db db;
 
-    /** Р-53: {@code toAddress} is the on-chain destination this withdrawal was submitted to
+    /** D-53: {@code toAddress} is the on-chain destination this withdrawal was submitted to
      *  (the player's own registered wallet address — see {@code GameService#requestWithdrawal}'s
      *  javadoc for why there is no separate "withdraw to a different address" input). */
     public void insertWithdrawal(Connection c, String requestId, String playerId, long amountMojos,
@@ -30,7 +30,7 @@ public class WithdrawalDepositRepository {
     }
 
     /** {@link #insertWithdrawal} in a transaction of its own that leaves an existing row alone: the row of a request whose event is in the
-     *  journal and whose staged write after it failed (Р-107), written by the caller that needs it. */
+     *  journal and whose staged write after it failed (D-107), written by the caller that needs it. */
     public void ensureWithdrawal(String requestId, String playerId, long amountMojos, String toAddress, long atMs) {
         db.tx(c -> db.update(c, "INSERT INTO withdrawal_requests "
                 + "(request_id, player_id, amount_mojos, state, to_address, requested_at_ms) "
@@ -43,7 +43,7 @@ public class WithdrawalDepositRepository {
         db.update(c, "UPDATE withdrawal_requests SET state = ? WHERE request_id = ?", state.name(), requestId);
     }
 
-    /** Р-53: records that this request's {@code POST /v1/play/withdrawals} call was accepted —
+    /** D-53: records that this request's {@code POST /v1/play/withdrawals} call was accepted —
      *  {@code WithdrawalPollerService} only polls status for (and only ever retries submission for
      *  the absence of) rows this has touched. Its own small transaction, like every other
      *  read-model write in this class — never carries an engine-state effect, so it needs no
@@ -53,7 +53,7 @@ public class WithdrawalDepositRepository {
                 + "WHERE request_id = ?", atMs, Enums.WithdrawalChainState.SUBMITTED.wire(), requestId));
     }
 
-    /** Р-53: a non-terminal chain-state refresh from {@code GET /v1/play/withdrawals/{requestId}}
+    /** D-53: a non-terminal chain-state refresh from {@code GET /v1/play/withdrawals/{requestId}}
      *  ({@code "queued"}/{@code "in_flight"}) — read-model bookkeeping only, no engine effect
      *  (confirmed/failed go through {@code GameService#confirmWithdrawalOnChain}/
      *  {@code #failWithdrawalOnChain} instead, which also persist a {@code GameEvent}). */
@@ -63,7 +63,7 @@ public class WithdrawalDepositRepository {
                 + "last_checked_at_ms = ? WHERE request_id = ?", chainState, coinId, height, atMs, requestId));
     }
 
-    /** Р-53: the real on-chain confirmation — {@code coinId}/{@code height} become public in the
+    /** D-53: the real on-chain confirmation — {@code coinId}/{@code height} become public in the
      *  requesting player's own withdrawal-request view ({@code GameService#withdrawal}). Called
      *  from within the same {@code db.tx} as the matching {@code WithdrawalConfirmedOnChain}
      *  event's append (see {@code GameService#confirmWithdrawalOnChain}). */
@@ -81,7 +81,7 @@ public class WithdrawalDepositRepository {
                 Enums.WithdrawalChainState.CONFIRMED.wire(), coinId, height, atMs, requestId);
     }
 
-    /** Р-53: the real on-chain failure — mirrors {@link #markWithdrawalConfirmedOnChain}, called
+    /** D-53: the real on-chain failure — mirrors {@link #markWithdrawalConfirmedOnChain}, called
      *  from within the same {@code db.tx} as the matching {@code WithdrawalFailed} event's append
      *  (see {@code GameService#failWithdrawalOnChain}); the balance refund itself is the event's
      *  engine-side effect, not something this read-model write does. */

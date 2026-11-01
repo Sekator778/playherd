@@ -178,7 +178,7 @@ async function rpc<T>(method: string, args: unknown[]): Promise<T> {
 }
 
 class RealApi implements Api {
-  // --- sign-in (Р-4/Р-45) ---
+  // --- sign-in (D-4/D-45) ---
   authChallenge(req: AuthChallengeRequest): Promise<AuthChallengeDto> {
     return rpc("authChallenge", [req]);
   }
@@ -198,7 +198,7 @@ class RealApi implements Api {
     return rpc("myInvite", []);
   }
 
-  // --- bots of outside developers (Р-106) ---
+  // --- bots of outside developers (D-106) ---
   myBots(): Promise<ApiBotDto[]> {
     return rpc("myBots", []);
   }
@@ -218,7 +218,7 @@ class RealApi implements Api {
     return rpc("botWeeklyRatings", []);
   }
 
-  // --- markets (Р-69, Р-70) ---
+  // --- markets (D-69, D-70) ---
   markets(): Promise<MarketsDto> {
     return rpc("markets", []);
   }
@@ -322,7 +322,7 @@ class RealApi implements Api {
     return rpc("supply", []);
   }
 
-  // --- feedback (Р-81): open to everyone, no session needed; a 429 is RATE_LIMITED like any other call's ---
+  // --- feedback (D-81): open to everyone, no session needed; a 429 is RATE_LIMITED like any other call's ---
   submitFeedback(req: FeedbackRequest): Promise<FeedbackReceiptDto> {
     return rpc("submitFeedback", [req]);
   }

@@ -53,7 +53,7 @@ import org.jboss.logging.Logger;
  * symbol (the caps the six markets had as perpetuals), at most 40; the lot exponent is {@link Market#lotExpFor} of the
  * first price read, fixed from then on (Т-3).
  *
- * <p><b>The backup exchange</b> (Р-76: a round runs entirely on one exchange, chosen when it opens): the listing records
+ * <p><b>The backup exchange</b> (D-76: a round runs entirely on one exchange, chosen when it opens): the listing records
  * in {@code sourceMeta} the exchange a round moves to when the primary cannot price its start, from
  * {@code herd.markets.spot.backup} — Kraken ({@code "backup":{"source":"kraken","ref":"BTC/USD"}}) behind Coinbase for BTC, ETH,
  * SOL, XRP and DOGE, Coinbase ({@code {"source":"coinbase","ref":"HYPE-USD"}}) behind Hyperliquid's spot market for HYPE. Like
@@ -80,7 +80,7 @@ import org.jboss.logging.Logger;
  * {@link HyperliquidCatalog}.
  *
  * <p><b>Not here (UNVERIFIED, a later iteration):</b> a market whose product Coinbase delists simply goes stale — its
- * rounds are refunded an hour after their end (Р-23) — there is no watcher like {@link HyperliquidCatalog#watch}.
+ * rounds are refunded an hour after their end (D-23) — there is no watcher like {@link HyperliquidCatalog#watch}.
  *
  * <p><b>Locks.</b> Neither {@link #sync} nor anything it calls holds a lock or monitor while it calls
  * {@code registry.closeReplaced} / {@code registry.list}: the registry's listener (the game service) takes the engine's

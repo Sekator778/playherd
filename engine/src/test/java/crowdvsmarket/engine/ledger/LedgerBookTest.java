@@ -50,7 +50,7 @@ class LedgerBookTest {
         Optional<SeasonRecord> may = ledger.seasonRecord("alice", Season.of(MAY));
         assertThat(may).isPresent();
         assertThat(may.get().baselineBalance()).isEqualTo(balanceBeforeMay);
-        // April's record is kept, not discarded (Р-10: archive).
+        // April's record is kept, not discarded (D-10: archive).
         assertThat(ledger.seasonRecord("alice", Season.of(APRIL))).isPresent();
     }
 
@@ -175,7 +175,7 @@ class LedgerBookTest {
 
     @Test
     void creditOnChainDepositCreditsImmediatelyAndCountsTowardSeasonDeposited() {
-        // Р-53: unlike requestDeposit/confirmDeposit's two-step (above), a real on-chain deposit
+        // D-53: unlike requestDeposit/confirmDeposit's two-step (above), a real on-chain deposit
         // is already confirmed by the time it reaches the ledger — one call, immediate credit.
         LedgerBook ledger = new LedgerBook();
         ledger.ensureSeasonPack("alice", APRIL);

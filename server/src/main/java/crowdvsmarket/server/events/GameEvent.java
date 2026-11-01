@@ -22,7 +22,7 @@ import java.util.List;
  * outside the journal on purpose: the API keys of API bots, the referral and source columns of a player, the withdrawal and deposit
  * bookkeeping tables. An event of schema version 1 (everything written before F4) has none of the new fields and replays as it always did.
  *
- * <p><b>Markets (Р-69, docs/research/markets_architecture.md §6, Т-13):</b> the four round events
+ * <p><b>Markets (D-69, docs/research/markets_architecture.md §6, Т-13):</b> the four round events
  * ({@link BetPlaced}, {@link BetCancelled}, {@link RoundResolved}, {@link RoundCancelled}) carry an
  * optional trailing {@code market} (a {@code MarketSpec} id). A row written before markets existed
  * has no such key, Jackson hands the component {@code null}, and the compact constructor turns it
@@ -31,7 +31,7 @@ import java.util.List;
  * constructor (BTC) for callers and fixtures that predate the field; production code names the
  * market explicitly.
  *
- * <p><b>Venues (Р-76):</b> {@link RoundResolved} has one more optional trailing field, {@code venue}, the exchange a
+ * <p><b>Venues (D-76):</b> {@link RoundResolved} has one more optional trailing field, {@code venue}, the exchange a
  * round of a market with a backup exchange ran on and was settled from. It is written only when there is one
  * ({@code @JsonInclude(NON_NULL)}): the event of any other round is the same bytes it always was, and a row without the
  * key reads as {@code null}. The engine does not use it — it is the record of where the prices of the event came from, next
@@ -44,7 +44,7 @@ public sealed interface GameEvent {
         return market == null ? MarketSpec.BTC_ID : market;
     }
 
-    /** Grants a first-activity-in-season starter pack immediately at sign-in (Р-2), rather than
+    /** Grants a first-activity-in-season starter pack immediately at sign-in (D-2), rather than
      *  waiting for the player's first bet — {@code LedgerBook.ensureSeasonPack} is idempotent
      *  per season, so this is safe to also happen implicitly again later via a bet/withdrawal, and
      *  tolerates being applied twice for the same season without granting a second starter pack
@@ -108,7 +108,7 @@ public sealed interface GameEvent {
     }
 
     /**
-     * {@code feeHerdMojos} / {@code feeNetMojos} (economy stage A, Р-92, plan A4) are the fees charged with the stake, written
+     * {@code feeHerdMojos} / {@code feeNetMojos} (economy stage A, D-92, plan A4) are the fees charged with the stake, written
      * only for a bet placed under the new rules ({@code @JsonInclude(NON_NULL)}: an event of the old shape is the same bytes
      * it always was). A row written before the change has neither key, Jackson hands the components {@code null}, and
      * {@code EventApplier} then places a <b>legacy</b> bet: no fees, the original settlement rules — so an old log replays to
@@ -172,7 +172,7 @@ public sealed interface GameEvent {
                     feeHerdMojos, feeNetMojos, liqCap, liqKappa, mode, id);
         }
 
-        /** The shape before the fixed-payout mode (Р-106): a percentage-mode bet, the {@code mode} key absent. */
+        /** The shape before the fixed-payout mode (D-106): a percentage-mode bet, the {@code mode} key absent. */
         public BetPlaced(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
                            int leverage, long stakeMojos, long atMs, String market, Long feeHerdMojos, Long feeNetMojos,
                            Integer liqCap, String liqKappa) {
@@ -181,7 +181,7 @@ public sealed interface GameEvent {
         }
 
         /**
-         * A fixed-payout bet (Р-106, docs/product/fixed_payout_rules.md): no leverage (the lowest value is written as a placeholder),
+         * A fixed-payout bet (D-106, docs/product/fixed_payout_rules.md): no leverage (the lowest value is written as a placeholder),
          * fees, no liquidation parameters, {@code "mode":"FIXED"}.
          */
         public static BetPlaced fixed(String playerId, Interval interval, long windowStart, long windowEnd, Direction direction,
@@ -277,7 +277,7 @@ public sealed interface GameEvent {
         }
     }
 
-    /** Operator/automatic cancellation (Р-23, Р-32): refunds every bet still pending for the
+    /** Operator/automatic cancellation (D-23, D-32): refunds every bet still pending for the
      *  round. */
     record RoundCancelled(Interval interval, long windowStart, long windowEnd, String reason, long atMs,
                             String market) implements GameEvent {
@@ -339,7 +339,7 @@ public sealed interface GameEvent {
     record DepositFailed(String requestId, long atMs) implements GameEvent {
     }
 
-    /** Wave-2 security fix (Р-32/Р-43 pattern): an operator correction that reverses the balance/
+    /** Wave-2 security fix (D-32/D-43 pattern): an operator correction that reverses the balance/
      *  season effect a withdrawal request originally applied (e.g. the {@code
      *  requestWithdrawal("-5000.000")} exploit) — {@code GameService#reverseWithdrawal}. Fully
      *  self-contained on purpose: {@code originalAmountMojos}/{@code originalSeasonId} are captured
@@ -351,19 +351,19 @@ public sealed interface GameEvent {
                                 String relatedWithdrawalRequestId, long atMs) implements GameEvent {
     }
 
-    /** Task item 1 (wave-3 security fix, Р-6 deposit-verification gap): an operator correction
+    /** Task item 1 (wave-3 security fix, D-6 deposit-verification gap): an operator correction
      *  that reverses the balance/season effect a deposit request originally applied — e.g. the
      *  fake self-reported deposits {@code d-2}/{@code d-4}/{@code d-7}/{@code d-10} accepted before
      *  {@code GameService#requestDeposit} started rejecting new deposits with
      *  {@code DEPOSIT_VERIFICATION_UNAVAILABLE} (no real on-chain CAT-deposit verifier exists yet,
-     *  Р-6 decision pending with Alex). Exactly {@link WithdrawalReversed}'s shape/reasoning,
+     *  D-6 decision pending with Alex). Exactly {@link WithdrawalReversed}'s shape/reasoning,
      *  mirrored for deposits — see {@code crowdvsmarket.engine.ledger.LedgerBook
      *  #reverseDepositEffect}'s javadoc. */
     record DepositReversed(String playerId, long originalAmountMojos, String originalSeasonId, String reason,
                              String relatedDepositRequestId, long atMs) implements GameEvent {
     }
 
-    /** Р-53: a real, chain-confirmed PLAY CAT deposit detected by {@code DepositPollerService}
+    /** D-53: a real, chain-confirmed PLAY CAT deposit detected by {@code DepositPollerService}
      *  ({@code GET /v1/play/deposits}) — unlike {@link DepositRequested}/{@link DepositConfirmed}
      *  (the self-report two-step, permanently retired at the RPC level but kept here only so
      *  already-persisted historical rows keep replaying), there is no separate request: the coin's
@@ -380,8 +380,8 @@ public sealed interface GameEvent {
                                      long atMs) implements GameEvent {
     }
 
-    /** Р-53: the real on-chain counterpart of {@link WithdrawalConfirmed} (kept only for replaying
-     *  pre-Р-53 auto-confirmed rows) — carries the CAT coin's own {@code coinId}/{@code height},
+    /** D-53: the real on-chain counterpart of {@link WithdrawalConfirmed} (kept only for replaying
+     *  pre-D-53 auto-confirmed rows) — carries the CAT coin's own {@code coinId}/{@code height},
      *  which the task requires be "public in the player's ledger" once confirmed. The engine-side
      *  effect is identical to {@code WithdrawalConfirmed} (the escrow debit already happened at
      *  {@link WithdrawalRequested} time; confirming just closes out the request) — {@code coinId}/

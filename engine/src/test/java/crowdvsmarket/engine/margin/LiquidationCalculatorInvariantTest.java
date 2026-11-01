@@ -70,7 +70,7 @@ class LiquidationCalculatorInvariantTest {
      * which is the entry-price-based {@code Q*P0*l} used in the spec's derivation of
      * {@code liquidation_price} and in {@link LiquidationCalculator#marginRatio} (doc section
      * 2.2) — the two coincide only when {@code liq_price == P0}. ({@code payout_on_liquidation}
-     * itself is a flat 0 under product decision Р-7, {@code the decision log}, and does
+     * itself is a flat 0 under product decision D-7, {@code the decision log}, and does
      * not use either figure.) Comparing equity against the wrong (entry-based) figure here
      * previously produced a spurious failure; this test compares against the dynamic,
      * liq-price-based figure the derivation actually establishes.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests of the fixed-payout (Р-106) checks of settlement_audit.py: payout 2S / 0 / S by the open and the close, the fee
+"""Offline tests of the fixed-payout (D-106) checks of settlement_audit.py: payout 2S / 0 / S by the open and the close, the fee
 (3 % of the stake rounded up to 0.001 PLAY + 0.1), and the findings for a position that was paid or charged wrongly.
 
 Run: python3 -m unittest tools/audit/test_settlement_audit.py   (no network, no database)

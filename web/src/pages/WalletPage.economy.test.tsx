@@ -6,7 +6,7 @@ import { TEST_PLAYER, apiWrapper, fakeApi } from "../api/apiTestUtils";
 import type { Api, LedgerEntryDto, LedgerEntryType } from "../api/contract";
 import { WalletPage } from "./WalletPage";
 
-/** Economy stage C (C6, Р-92): "withdrawable", the starter pack's line, and the four fee rows of the history. */
+/** Economy stage C (C6, D-92): "withdrawable", the starter pack's line, and the four fee rows of the history. */
 
 const entry = (sequence: number, type: LedgerEntryType, delta: string): LedgerEntryDto => ({ sequence, type, delta, roundId: null, atMs: 1000 * sequence });
 

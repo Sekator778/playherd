@@ -273,7 +273,7 @@ describe("backupPriceOf — the shown price is the backup exchange's (MarketPric
   });
 });
 
-describe("backupRoundOf — a round that runs on its market's backup exchange (RoundBase.source, Р-76)", () => {
+describe("backupRoundOf — a round that runs on its market's backup exchange (RoundBase.source, D-76)", () => {
   const [btc, , , hype] = spotCatalogue();
 
   it("a round on the backup says which exchange, and which main exchange could not price its start", () => {

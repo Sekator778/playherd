@@ -22,7 +22,7 @@ import java.util.Objects;
  * (doc section 2.2).
  *
  * <p>The record's components do not depend on the market: only {@code liquidationPrice} does, and
- * it is derived once, at open, from the market's maintenance margin rate ({@link MarketSpec}, Р-69).
+ * it is derived once, at open, from the market's maintenance margin rate ({@link MarketSpec}, D-69).
  * The factories without a {@code MarketSpec} open a BTC position, as before.
  */
 public record Position(
@@ -93,7 +93,7 @@ public record Position(
         return openFromMargin(userId, roundId, direction, leverage, margin, entryPrice, MarketSpec.BTC);
     }
 
-    /** {@link #openFromMargin(String, String, Direction, Leverage, BigDecimal, BigDecimal)} in {@code spec}'s market (Р-69). */
+    /** {@link #openFromMargin(String, String, Direction, Leverage, BigDecimal, BigDecimal)} in {@code spec}'s market (D-69). */
     public static Position openFromMargin(
             String userId,
             String roundId,

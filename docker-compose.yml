@@ -1,11 +1,11 @@
-# Local test stand (Р-44): 2–4 browser windows/phone = 2–4 players in one shared game.
+# Local test stand (D-44): 2–4 browser windows/phone = 2–4 players in one shared game.
 # Separate compose project "herd" — never touches other containers on this machine.
 # Run via tools/stand.sh (up|down|logs|status|reset), not `docker compose` directly, so the
 # "don't touch other herd-*-looking or unrelated containers" checks in that script always run
 # first.
 #
 # Only `web` is published to the host (0.0.0.0:${HERD_WEB_PORT:-8480}) so a phone on the same
-# Wi-Fi can open it (Р-48). `db` is internal-only, reached by `server` over the compose network
+# Wi-Fi can open it (D-48). `db` is internal-only, reached by `server` over the compose network
 # by service name.
 #
 # chainsvc is the one exception to "everything talks over the compose network by service name":
@@ -15,7 +15,7 @@
 # instead reaches it via `herd_default`'s own gateway IP, fixed below at 172.28.77.1 precisely so
 # that address is known at compose-file-write time (see HERD_CHAINSVC_URL on `server`).
 #
-# Live prices (Р-70, docs/research/markets_architecture.md §10): `server` follows the real
+# Live prices (D-70, docs/research/markets_architecture.md §10): `server` follows the real
 # Hyperliquid / Polymarket prices by default, so it needs outbound internet too — see the
 # `herd_default` network below. Every HERD_* of `server` can be overridden from `.env`.
 
@@ -27,7 +27,7 @@ networks:
     # `server` fetches live prices from api.hyperliquid.xyz, Coinbase Exchange, Kraken and Polymarket
     # (HERD_PRICES_SOURCE=live, the default below; HERD_PRICES_DISABLED_VENUES switches any of them off), and, in the
     # background, the DB-IP country database (a few MB, at start and when a new month's file is out) from
-    # download.db-ip.com (Р-81: the country of a feedback message; HERD_GEOIP_ENABLED=false switches it off).
+    # download.db-ip.com (D-81: the country of a feedback message; HERD_GEOIP_ENABLED=false switches it off).
     # This Mac's Docker daemon turns IP masquerading off for every bridge
     # network (`ip-masq: false` in ~/.orbstack/config/docker.json — see the chainsvc fix note
     # below), which leaves containers on a bridge with no route to the internet. Re-enabling it for
@@ -103,7 +103,7 @@ services:
     # 443` from a bridge-network container times out). `network_mode: host` is the only network
     # mode on this machine that actually reaches the internet (verified: real testnet11
     # `GET /v1/oracle/status` succeeds under it) — required for chainsvc's real testnet11 pushes
-    # (Р-47). Compose forbids `networks:` together with `network_mode`, so this service is NOT on
+    # (D-47). Compose forbids `networks:` together with `network_mode`, so this service is NOT on
     # `herd_default`; `server` reaches it via the gateway IP instead (see `server.environment`).
     network_mode: host
     environment:
@@ -151,8 +151,8 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # FIXED INTERFACE (1)/(2): the Quarkus game server. The stand plays on live prices (Р-70,
-  # docs/research/markets_architecture.md §10) with Р-46's short test rounds. Every HERD_* below is
+  # FIXED INTERFACE (1)/(2): the Quarkus game server. The stand plays on live prices (D-70,
+  # docs/research/markets_architecture.md §10) with D-46's short test rounds. Every HERD_* below is
   # explicit anyway so the stand's actual configuration is visible here rather than implied by a
   # default someone could change; the market/price ones take their value from `.env` when it sets
   # one (the defaults here are §10's table).
@@ -177,10 +177,10 @@ services:
       # live = Hyperliquid + Coinbase + Polymarket; synthetic = deterministic random walk, no network (what
       # docker-compose.ci.yml uses). Ignored when HERD_MODE=replay.
       HERD_PRICES_SOURCE: ${HERD_PRICES_SOURCE:-live}
-      HERD_ROUND_HOURLY_SEC: ${HERD_ROUND_HOURLY_SEC:-180} # Р-46: test-mode "hourly" round = 3 min
-      HERD_ROUND_DAILY_SEC: ${HERD_ROUND_DAILY_SEC:-900} # Р-46: test-mode "daily" round = 15 min
+      HERD_ROUND_HOURLY_SEC: ${HERD_ROUND_HOURLY_SEC:-180} # D-46: test-mode "hourly" round = 3 min
+      HERD_ROUND_DAILY_SEC: ${HERD_ROUND_DAILY_SEC:-900} # D-46: test-mode "daily" round = 15 min
       HERD_REPLAY_SPEEDUP: ${HERD_REPLAY_SPEEDUP:-20} # HERD_MODE=replay only
-      HERD_BOTS_COUNT: ${HERD_BOTS_COUNT:-21} # Р-46: labelled bots (21 = the bots module's catalog)
+      HERD_BOTS_COUNT: ${HERD_BOTS_COUNT:-21} # D-46: labelled bots (21 = the bots module's catalog)
       HERD_BOTS_ENGINE: ${HERD_BOTS_ENGINE:-catalog} # catalog = the bots module; legacy = the five old strategies (roll-back, restart only)
       HERD_BOTS_MARKETS_PER_ROUND: ${HERD_BOTS_MARKETS_PER_ROUND:-3} # Т-8: pairs each bot plays per round
       # Market lists by category (Т-1/Т-10, §10); names are the source's own (`xyz:` = Hyperliquid's
@@ -189,7 +189,7 @@ services:
       # each with the leverage cap of the pair; HERD_MARKETS_CRYPTO lists Hyperliquid *perpetuals* (empty: none).
       # HERD_MARKETS_SPOT_BACKUP names the exchange behind each of them (Kraken for the Coinbase coins, Coinbase for
       # HYPE; `none` for a coin without one): a round opens on the main exchange when it has a live price at the start,
-      # on the backup otherwise, and runs and settles there to its end (Р-76). It is fixed when a market is listed.
+      # on the backup otherwise, and runs and settles there to its end (D-76). It is fixed when a market is listed.
       # HERD_PRICES_DISABLED_VENUES (hyperliquid, coinbase, kraken; comma-separated) switches an exchange off entirely:
       # no stream and no request to it, the rounds of its markets open on the backup.
       HERD_MARKETS_CRYPTO: "${HERD_MARKETS_CRYPTO:-}"
@@ -202,14 +202,14 @@ services:
       # HERD_PRICES_VENUE_RELEASE_AFTER_MS after the end of such a round of a crypto market — or after the start of the
       # server, if that is later: a restart, or the wake of a host that slept, gives the round its minutes again — while the
       # market's other exchange is alive, the round is cancelled with a refund and the series goes on; 0 turns that off —
-      # the round then waits for its exchange and is refunded an hour after its end (Р-77).
+      # the round then waits for its exchange and is refunded an hour after its end (D-77).
       HERD_PRICES_VENUE_RELEASE_AFTER_MS: "${HERD_PRICES_VENUE_RELEASE_AFTER_MS:-120000}"
       # On every market, not only on one with a backup: a round that cannot be priced is cancelled with a refund this many
       # milliseconds after its end — or after the start of the server, if that is later: a restart, or the wake of a host that
       # slept, gives the rounds that were running their minutes to heal from the candles — and its series goes on. One wait
       # per price source: Hyperliquid's perpetuals (both dexes), Hyperliquid spot, Coinbase, Kraken, Polymarket, the synthetic
-      # walk. 0 turns it off for a source — its rounds then wait for the hour of Р-23, which stays the upper bound. A round
-      # nobody bet on that cannot be priced is skipped at once (Р-79).
+      # walk. 0 turns it off for a source — its rounds then wait for the hour of D-23, which stays the upper bound. A round
+      # nobody bet on that cannot be priced is skipped at once (D-79).
       HERD_PRICES_HYPERLIQUID_RELEASE_AFTER_MS: "${HERD_PRICES_HYPERLIQUID_RELEASE_AFTER_MS:-300000}"
       HERD_PRICES_HYPERLIQUID_SPOT_RELEASE_AFTER_MS: "${HERD_PRICES_HYPERLIQUID_SPOT_RELEASE_AFTER_MS:-300000}"
       HERD_PRICES_COINBASE_RELEASE_AFTER_MS: "${HERD_PRICES_COINBASE_RELEASE_AFTER_MS:-300000}"
@@ -232,20 +232,20 @@ services:
       # The session cookie carries the Secure flag behind HTTPS (the VPS kit sets it in .env; the Mac stand is plain http).
       HERD_COOKIE_SECURE: ${HERD_COOKIE_SECURE:-false}
       # What serverInfo tells the web: whether the sign-in sheet offers the browser test wallet
-      # (Р-45), and the PLAY asset id of this deployment (empty → the server's default, the
+      # (D-45), and the PLAY asset id of this deployment (empty → the server's default, the
       # testnet11 issuance).
       HERD_TEST_WALLET_ENABLED: ${HERD_TEST_WALLET_ENABLED:-true}
       HERD_PLAY_ASSET_ID: ${HERD_PLAY_ASSET_ID:-0x4b88ce9712e97e73ad3759541fc23d38704e31d27d6586c28be14ee716080b70}
-      # Р-81: the server derives the country of a feedback message from the visitor's address with the DB-IP "IP to Country
+      # D-81: the server derives the country of a feedback message from the visitor's address with the DB-IP "IP to Country
       # Lite" database, which it downloads from download.db-ip.com in the background (CC BY 4.0; the address is not stored).
       # false: no download, feedback is stored without a country.
       HERD_GEOIP_ENABLED: ${HERD_GEOIP_ENABLED:-true}
-      # Р-81: how much feedback the server takes (docs/research/server_design.md §22.4): per client address a burst of
+      # D-81: how much feedback the server takes (docs/research/server_design.md §22.4): per client address a burst of
       # CAPACITY messages and REFILL_PER_HOUR tokens back every hour; MAX_PER_DAY from everyone together in any 24 hours.
       HERD_FEEDBACK_RATE_LIMIT_CAPACITY: ${HERD_FEEDBACK_RATE_LIMIT_CAPACITY:-5}
       HERD_FEEDBACK_RATE_LIMIT_REFILL_PER_HOUR: ${HERD_FEEDBACK_RATE_LIMIT_REFILL_PER_HOUR:-6}
       HERD_FEEDBACK_MAX_PER_DAY: ${HERD_FEEDBACK_MAX_PER_DAY:-1000}
-      # Р-107: the event journal, a Chronicle Queue, is the truth of the game; Postgres holds a copy filled after it. The directory is the
+      # D-107: the event journal, a Chronicle Queue, is the truth of the game; Postgres holds a copy filled after it. The directory is the
       # named volume herd_journal_live (below), which belongs to this database: tools/stand.sh reset removes both.
       HERD_JOURNAL_DIR: /var/lib/herd/journal
       HERD_DB_USER: herd
@@ -263,7 +263,7 @@ services:
       # FIXED INTERFACE (a): same value as chainsvc's own C2_SVC_TOKEN above.
       HERD_CHAINSVC_TOKEN: ${HERD_CHAINSVC_TOKEN:?set in .env — run tools/stand.sh up, which generates one}
       HERD_OPERATOR_TOKEN: ${HERD_OPERATOR_TOKEN:?set in .env — run tools/stand.sh up, which generates one}
-      # Р-53 live verification (2026-09-26): turns on the real on-chain withdraw/deposit path
+      # D-53 live verification (2026-09-26): turns on the real on-chain withdraw/deposit path
       # (WithdrawalPollerService/DepositPollerService both no-op while these are false) — off by
       # default (application.properties) until this stand actually needed to exercise it end to
       # end on testnet11.
@@ -308,8 +308,8 @@ services:
       # here for the same reason (this Mac's Docker default bridge network, not the sandbox).
       network: ${HERD_BUILD_NETWORK:-host} # the VPS: default (see chainsvc above)
       args:
-        # Р-55: WalletConnect/Reown projectId for Sage sign-in (public, not a secret —
-        # it ships in the web bundle). Value lives in .env (Р-55, Alex, 2026-09-26).
+        # D-55: WalletConnect/Reown projectId for Sage sign-in (public, not a secret —
+        # it ships in the web bundle). Value lives in .env (D-55, Alex, 2026-09-26).
         VITE_WALLETCONNECT_PROJECT_ID: ${VITE_WALLETCONNECT_PROJECT_ID:-}
     ports:
       - "${HERD_WEB_PORT:-8480}:80"
@@ -332,11 +332,11 @@ services:
     restart: unless-stopped
 
 volumes:
-  # The event journal (Р-107): the Chronicle Queue files of the server. Same life as herd_pg_live - the database is a copy of it and the
+  # The event journal (D-107): the Chronicle Queue files of the server. Same life as herd_pg_live - the database is a copy of it and the
   # journal is the truth, so neither is ever reset without the other (tools/stand.sh reset removes both by name).
   herd_journal_live:
     name: herd_journal_live
-  # Live-price epoch database (Р-70/Р-71): a NEW volume on purpose. The replay-epoch volume `herd_pg`
+  # Live-price epoch database (D-70/D-71): a NEW volume on purpose. The replay-epoch volume `herd_pg`
   # (BTC only, accelerated history, rounds anchored to the first server start) is no longer
   # declared here — it stays on the machine untouched as an archive of that game. A new database
   # also gets the round calendar of markets_architecture.md Т-11 (boundaries on multiples of the

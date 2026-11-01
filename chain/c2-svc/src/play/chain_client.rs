@@ -1,6 +1,6 @@
 //! Extends the oracle publisher's `ChainClient` (`oracle/chain_client.rs`)
-//! with the two chain reads the PLAY withdraw/deposit endpoints need (Р-6,
-//! decision Р-53 2026-09-26) that it doesn't already provide: a batched
+//! with the two chain reads the PLAY withdraw/deposit endpoints need (D-6,
+//! decision D-53 2026-09-26) that it doesn't already provide: a batched
 //! puzzle-hash coin scan (deposit detection across every issued deposit
 //! address) and the current chain tip height (`GET /v1/play/deposits`'s
 //! `tipHeight`).

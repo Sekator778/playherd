@@ -175,7 +175,7 @@ public class ServerMetaRepository {
         return after;
     }
 
-    /** Р-53: the next stable {@code playerIndex} a brand-new player row draws (chainsvc CAT
+    /** D-53: the next stable {@code playerIndex} a brand-new player row draws (chainsvc CAT
      *  deposit-address derivation, see {@code V4__player_index.sql}) — same atomic
      *  reserve-and-advance shape as {@link #reserveOracleSeqRange}, seeded by that migration to
      *  continue right after every already-backfilled index. {@code registerOrTouchPlayer}/{@code
@@ -254,7 +254,7 @@ public class ServerMetaRepository {
         return decided;
     }
 
-    /** Р-53: the deposit poller's {@code sinceHeight} cursor (FIXED INTERFACE:
+    /** D-53: the deposit poller's {@code sinceHeight} cursor (FIXED INTERFACE:
      *  {@code GET /v1/play/deposits?sinceHeight=N}) — 0 on a server that has never polled, exactly
      *  {@link #originMsOrInit}'s "insert once, read back unchanged" shape. {@code
      *  DepositPollerService} advances it to chainsvc's own reported {@code tipHeight} after a fully

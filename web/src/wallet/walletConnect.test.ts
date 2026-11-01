@@ -2,7 +2,7 @@
  * `wallet/walletConnect.ts` against a mocked `@walletconnect/sign-client` (task item 2 — "unit
  * tests with a mocked SignClient") — no real relay/network/Sage instance is reachable from this
  * environment (`docs/research/week1_wallet_auth.md`'s own research note), so every assertion here
- * is about THIS module's own orchestration (namespace/method names, address identity per Р-57,
+ * is about THIS module's own orchestration (namespace/method names, address identity per D-57,
  * session reuse, disconnect handling), not about round-tripping with a live Sage.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,7 +120,7 @@ describe("connectAndSignWithSage", () => {
     expect(result).toEqual({ address: "txch1newaddr", publicKey: "0xpub", signature: "0xsig" });
   });
 
-  it("returning player (Р-57): skips pairing and chia_getAddress, signs with the persisted address", async () => {
+  it("returning player (D-57): skips pairing and chia_getAddress, signs with the persisted address", async () => {
     localStorage.setItem(LAST_ADDRESS_KEY, "txch1knownaddr");
     sessionGetAllMock.mockReturnValue([CHIA_SESSION]);
     requestMock.mockResolvedValueOnce({ publicKey: "0xpub2", signature: "0xsig2" });

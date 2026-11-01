@@ -142,7 +142,7 @@ class OpenBetsTest {
     void aBetOnTheSameRoundIsReplacedNotAdded() {
         RoundWindow betting = RoundClock.next(progress.next("ETH", Interval.HOURLY));
         bet("p1", eth, betting, Direction.UP, 2, 100);
-        bet("p1", eth, betting, Direction.DOWN, 4, 250); // Р-13: a second bet on the round replaces the first
+        bet("p1", eth, betting, Direction.DOWN, 4, 250); // D-13: a second bet on the round replaces the first
 
         assertThat(openBets.of("p1")).hasSize(1);
         assertThat(openBets.stake("p1")).isEqualTo(PlayAmount.ofWholePlay(250));

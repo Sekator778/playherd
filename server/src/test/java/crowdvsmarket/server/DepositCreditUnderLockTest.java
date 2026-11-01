@@ -119,7 +119,7 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
         }
 
         assertThat(rebuild.isReady()).isFalse();
-        // Р-107: the coin is reserved before the command (the writer's turn touches no database). A call that reserved and was then refused
+        // D-107: the coin is reserved before the command (the writer's turn touches no database). A call that reserved and was then refused
         // either took its reservation back (its event was not in the journal) or, when the failing recovery appended the event from the
         // reservation first, left the coin to be credited - once - by the rebuild that succeeds
         long reserved = reservations("coin-queued");
@@ -141,7 +141,7 @@ class DepositCreditUnderLockTest extends LiveGameTestBase {
     }
 
     /**
-     * Р-107: the coin is reserved in the database (committed) and then its event is appended to the journal. An append that fails leaves
+     * D-107: the coin is reserved in the database (committed) and then its event is appended to the journal. An append that fails leaves
      * a reserved coin without its event - the poller's next offer would find the coin "already credited" - so the rebuild that follows the
      * failure appends the event from the reservation (SidecarReconciler), and the credit happens once, then.
      */

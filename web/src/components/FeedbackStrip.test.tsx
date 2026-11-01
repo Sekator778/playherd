@@ -1,5 +1,5 @@
 /**
- * The feedback strip (Р-81): shown to everyone until a message is sent or the strip is closed; gone for good then; and
+ * The feedback strip (D-81): shown to everyone until a message is sent or the strip is closed; gone for good then; and
  * never in the way of the game — it steps aside rather than sit on UP, DOWN, the bet slip or a keyboard.
  */
 import { act, render, screen } from "@testing-library/react";

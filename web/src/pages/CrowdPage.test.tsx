@@ -127,7 +127,7 @@ describe("Stats → Crowd — the market selector (S4)", () => {
     expect(await screen.findByText(/Odds from Polymarket, published by our team's key/)).toBeInTheDocument();
   });
 
-  it("a crypto market names its exchange and its backup in the oracle line (Р-76) — a perp or odds market names no backup", async () => {
+  it("a crypto market names its exchange and its backup in the oracle line (D-76) — a perp or odds market names no backup", async () => {
     const user = userEvent.setup();
     const spot = [...spotCatalogue(), ...MARKETS.filter((m) => m.id === "PM900104")];
     const api = fakeApi({
@@ -149,7 +149,7 @@ describe("Stats → Crowd — the market selector (S4)", () => {
   });
 });
 
-describe("Stats → Crowd — the default market once BTC's price moved to its own exchange (Р-76)", () => {
+describe("Stats → Crowd — the default market once BTC's price moved to its own exchange (D-76)", () => {
   // the server's list since then: spot_BTC (open), spot_ETH, spot_DOGE, spot_HYPE, and the legacy BTC perpetual — closed
   const LEGACY_ROW = row("BTC", "BTC", 0.034, 20, { status: "CLOSED", title: "Bitcoin" });
   const SPOT_OVERVIEW: CrowdOverviewDto = {

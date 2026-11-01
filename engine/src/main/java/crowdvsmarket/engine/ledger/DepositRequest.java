@@ -1,7 +1,7 @@
 package crowdvsmarket.engine.ledger;
 
 /**
- * A request to move {@code amount} PLAY from an on-chain CAT back into the in-game ledger (Р-6).
+ * A request to move {@code amount} PLAY from an on-chain CAT back into the in-game ledger (D-6).
  * Unlike a withdrawal, nothing is credited until {@link DepositState#CONFIRMED} — the PLAY has
  * not arrived until the on-chain transaction is confirmed. Driving a request to
  * {@code CONFIRMED}/{@code FAILED} is the job of an {@link OnChainWalletPort} implementation —

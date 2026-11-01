@@ -4,8 +4,8 @@ import crowdvsmarket.engine.season.Season;
 
 /**
  * One player's bookkeeping for one {@link Season}: the balance baseline recorded just before that
- * season's starter pack was granted (Р-16), money moved on/off chain during the season, and the
- * round counters the two ratings (Р-18) are built from. Immutable — {@code LedgerBook} replaces it
+ * season's starter pack was granted (D-16), money moved on/off chain during the season, and the
+ * round counters the two ratings (D-18) are built from. Immutable — {@code LedgerBook} replaces it
  * wholesale on every update, like every other aggregate in this engine.
  *
  * <p>{@code baselineBalance} is, in other words, the player's balance at the end of the previous
@@ -62,7 +62,7 @@ public record SeasonRecord(
 
     /**
      * Records one more resolved round. {@code directionCorrect} is {@code null} for a flat round
-     * (close == open), excluded from the "пророки" denominator (Р-18); otherwise it marks whether
+     * (close == open), excluded from the "пророки" denominator (D-18); otherwise it marks whether
      * the player's chosen direction matched the round's actual move, independent of liquidation.
      */
     SeasonRecord withRoundPlayed(Boolean directionCorrect) {

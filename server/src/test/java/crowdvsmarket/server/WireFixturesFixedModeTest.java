@@ -29,7 +29,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * The wire of the fixed-payout mode (Р-106): what the server answers for rounds and positions that hold fixed-payout bets, held against
+ * The wire of the fixed-payout mode (D-106): what the server answers for rounds and positions that hold fixed-payout bets, held against
  * {@code web/src/api/wire/*.fixed.json} by shape, like {@link WireFixturesTest} (same rules, same {@code -Dherd.wire.write=true}).
  * The answers about percentage-mode bets are the files of that test and did not change: the {@code mode} key is left out for them.
  */

@@ -17,7 +17,7 @@ import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-40 and the review's rule for a Hyperliquid-like source whose history is candles — the real
+ * D-40 and the review's rule for a Hyperliquid-like source whose history is candles — the real
  * {@link HyperliquidPriceSource} over a scripted {@link CandleTape}, with the bridge on. Four windows that meet
  * at boundaries (A = [S, S+W], B = [S+W, S+2W], D = [S−W, S+2W], E = [S, S+3W]), random outages of the feed
  * of 5 to 200 s, candles that traded in every minute or in most of them (one in ten missing), candles that sit 1%

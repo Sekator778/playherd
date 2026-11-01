@@ -11,7 +11,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * Task item 1 (live-verification finding, Р-53 follow-up, 2026-09-26): {@code game_events} showed
+ * Task item 1 (live-verification finding, D-53 follow-up, 2026-09-26): {@code game_events} showed
  * two {@code PlayerRegistered} rows for the same {@code playerId}/wallet address (ids 8985/9048 on
  * the live stand) after nothing more than an ordinary second sign-in — {@code
  * GameService#registerOrTouchPlayer} used to append a fresh event on EVERY sign-in, by design (see

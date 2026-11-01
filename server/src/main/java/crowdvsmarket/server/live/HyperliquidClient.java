@@ -10,7 +10,7 @@ import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 
 /**
  * Public, read-only Hyperliquid {@code /info} endpoint (docs/research/hl_liquidation_math.md §1,
- * §4/§8) — live {@code markPx} polling (mode=live) and the Р-23 candle fallback both go through
+ * §4/§8) — live {@code markPx} polling (mode=live) and the D-23 candle fallback both go through
  * this one generic passthrough (the request/response shape varies by {@code "type"}, so a plain
  * {@link JsonNode} in, {@link JsonNode} out is simpler than one typed method per request kind).
  */

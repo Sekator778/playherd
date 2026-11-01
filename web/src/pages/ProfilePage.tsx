@@ -119,7 +119,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
   }, [load, mine, player, engineEpoch]);
 
   if (mine && !player) {
-    // Signing in works from any device now (Р-48 replaces Р-31's desktop-only Sage
+    // Signing in works from any device now (D-48 replaces D-31's desktop-only Sage
     // restriction — Sage itself ships Android/iOS builds, and the browser test wallet used on
     // the local stand runs the same flow on a phone too).
     return (
@@ -143,7 +143,7 @@ export function ProfilePage({ mine = false }: { mine?: boolean }) {
     );
   }
 
-  // Р-90: another player's profile shows their wins only - never a lost or liquidated round, and no balance
+  // D-90: another player's profile shows their wins only - never a lost or liquidated round, and no balance
   // change (it would be computed from the wins alone). The player's own profile is complete. The server filters
   // the same way; this keeps an older server or the mock from showing more.
   const isOwn = mine || profile.player.playerId === player?.playerId;

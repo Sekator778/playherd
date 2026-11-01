@@ -191,7 +191,7 @@ class PinsAreNotTicksTest {
         RoundPriceData hourB = prices.resolve(btc, hour(X));
 
         assertThat(hourA.close()).isEqualByComparingTo("100.00");
-        assertThat(hourB.open()).isEqualByComparingTo(hourA.close()); // Р-40
+        assertThat(hourB.open()).isEqualByComparingTo(hourA.close()); // D-40
         assertThat(day.close()).isEqualByComparingTo(hourB.close());
         // the hour that closed at X before the merge still reads 100
         assertThat(prices.resolve(btc, hour(X - 180_000L)).close()).isEqualByComparingTo("100.00");

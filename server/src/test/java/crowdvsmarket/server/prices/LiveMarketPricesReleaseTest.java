@@ -14,7 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The price half of letting a round go (Р-77): {@link LiveMarketPrices#otherVenueLive} says whether the exchange a round of a
+ * The price half of letting a round go (D-77): {@link LiveMarketPrices#otherVenueLive} says whether the exchange a round of a
  * market with a backup was <i>not</i> decided on has a live tick that is fresh at the instant asked about. Real tick rings,
  * the real holder of the decisions over an in-memory table, scripted sources (only their feeds' limits matter: 15 s of
  * staleness): nothing here touches a network or a database.

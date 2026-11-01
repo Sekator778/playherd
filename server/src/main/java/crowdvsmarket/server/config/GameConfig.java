@@ -82,7 +82,7 @@ public class GameConfig {
     @ConfigProperty(name = "herd.play.asset-id", defaultValue = TESTNET11_PLAY_ASSET_ID)
     String playAssetId;
 
-    /** Whether the browser test wallet (Р-45) is offered on the sign-in sheet ({@code
+    /** Whether the browser test wallet (D-45) is offered on the sign-in sheet ({@code
      *  serverInfo().testWallet}); a public deployment with real wallets only turns it off. */
     @ConfigProperty(name = "herd.test-wallet.enabled", defaultValue = "true")
     boolean testWalletEnabled;
@@ -111,7 +111,7 @@ public class GameConfig {
     @ConfigProperty(name = "herd.ratelimit.refill-per-sec")
     double rateLimitRefillPerSecond;
 
-    /** Р-106: the token bucket of ONE API key (a bot), separate from the per-address one above: capacity is the burst a bot may make,
+    /** D-106: the token bucket of ONE API key (a bot), separate from the per-address one above: capacity is the burst a bot may make,
      *  the refill is what flows back every second. Every call a key makes takes one token, reads included. */
     @ConfigProperty(name = "herd.ratelimit.bot.capacity", defaultValue = "60")
     int botRateLimitCapacity;
@@ -119,23 +119,23 @@ public class GameConfig {
     @ConfigProperty(name = "herd.ratelimit.bot.refill-per-sec", defaultValue = "5")
     double botRateLimitRefillPerSecond;
 
-    /** Р-81: the per-IP token bucket of {@code submitFeedback} — its own budget, far stricter than the shared one above
+    /** D-81: the per-IP token bucket of {@code submitFeedback} — its own budget, far stricter than the shared one above
      *  (a feedback message is written to the database and read by a person). Capacity: how many messages one address
      *  may send in a burst. */
     @ConfigProperty(name = "herd.feedback.rate-limit.capacity", defaultValue = "5")
     int feedbackRateLimitCapacity;
 
-    /** Р-81: tokens that flow back into a feedback bucket per HOUR (not per second, unlike the shared bucket: the
+    /** D-81: tokens that flow back into a feedback bucket per HOUR (not per second, unlike the shared bucket: the
      *  numbers are small and an hour is the unit an operator thinks in). */
     @ConfigProperty(name = "herd.feedback.rate-limit.refill-per-hour", defaultValue = "6")
     double feedbackRateLimitRefillPerHour;
 
-    /** Р-81: how many feedback messages the server takes in any 24 hours, from everyone together; with that many in the
+    /** D-81: how many feedback messages the server takes in any 24 hours, from everyone together; with that many in the
      *  last 24 hours {@code submitFeedback} answers {@code 429 RATE_LIMITED} until older ones drop out of the count. */
     @ConfigProperty(name = "herd.feedback.max-per-day", defaultValue = "1000")
     int feedbackMaxPerDay;
 
-    /** Р-53 update: now gates the REAL on-chain deposit path — {@code myDepositAddress()} and
+    /** D-53 update: now gates the REAL on-chain deposit path — {@code myDepositAddress()} and
      *  {@code DepositPollerService} — set {@code true} once chainsvc is deployed with the FIXED
      *  INTERFACE's {@code /v1/play/*} endpoints. Does NOT gate {@code requestDeposit} any more:
      *  that self-report RPC (task item 1, BLOCKER, an internal security review
@@ -147,25 +147,25 @@ public class GameConfig {
     @ConfigProperty(name = "herd.deposit.enabled", defaultValue = "false")
     boolean depositEnabled;
 
-    /** Р-53 update: now gates the REAL on-chain withdrawal path — once {@code true}, {@code
+    /** D-53 update: now gates the REAL on-chain withdrawal path — once {@code true}, {@code
      *  requestWithdrawal} escrows the amount and actually submits it to chainsvc ({@code
      *  POST /v1/play/withdrawals}), polled to completion by {@code WithdrawalPollerService}, rather
-     *  than the pre-Р-53 stub this flag originally guarded (task item 1: {@code requestWithdrawal}
+     *  than the pre-D-53 stub this flag originally guarded (task item 1: {@code requestWithdrawal}
      *  used to auto-confirm with no chain call at all, falsely claiming a CAT left the game).
      *  Default {@code false} until chainsvc is configured. */
     @ConfigProperty(name = "herd.withdrawal.enabled", defaultValue = "false")
     boolean withdrawalEnabled;
 
     /** Task item 3 (security minor): the {@code herd_session} cookie's {@code Secure} attribute —
-     *  {@code false} for the local http-only Docker stand (Р-44), must be {@code true} once this
-     *  is ever deployed behind TLS (Р-38 VPS) — see docs/research/server_design.md "Session cookie". */
+     *  {@code false} for the local http-only Docker stand (D-44), must be {@code true} once this
+     *  is ever deployed behind TLS (D-38 VPS) — see docs/research/server_design.md "Session cookie". */
     @ConfigProperty(name = "herd.cookie.secure", defaultValue = "false")
     boolean cookieSecure;
 
     /** Task item 7 (the project plan §3, README's Hyperliquid-adapter claim): {@code
      *  crowdvsmarket.server.execution.HyperliquidAdapter} refuses to build or send a real order
      *  unless this is {@code true} AND a wallet address is configured — default {@code false},
-     *  same "opt-in, never touched by the local stand/demo" posture as Р-38's own execution
+     *  same "opt-in, never touched by the local stand/demo" posture as D-38's own execution
      *  scope note. See docs/research/server_design.md "Execution adapter". */
     @ConfigProperty(name = "herd.execution.hyperliquid.enabled", defaultValue = "false")
     boolean hyperliquidExecutionEnabled;

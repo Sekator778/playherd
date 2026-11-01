@@ -2,7 +2,7 @@ package crowdvsmarket.server.dto;
 
 import java.util.List;
 
-/** contract.ts §"Home aggregate" (Р-34). */
+/** contract.ts §"Home aggregate" (D-34). */
 public final class Home {
     private Home() {
     }

@@ -50,7 +50,7 @@ The ports contract test is published as `bots-tests.jar` (classifier `tests`): e
 
 `server/.../bots/ServerBotPorts` is the adapter of the three ports (it passes `PortsContractTest` from the `bots-tests.jar`, `ServerBotPortsContractTest`); `BotService` runs `BotBrain` through `BotRunner`. Spec of what was built: [`bots_module_design.md`](../docs/research/bots_module_design.md) section 7. Switch: `herd.bots.engine=catalog|legacy` (env `HERD_BOTS_ENGINE`, default `catalog`).
 
-## Payout mode (Р-106)
+## Payout mode (D-106)
 
 Each catalog bot has a stable payout-mode preference, part of its strategy: `BotProfile.preferredMode()` is `FIXED` ("Win or lose": 2 x stake or 0, no leverage) or `PERCENTAGE`. `PayoutModes.preferredMode(catalogId, share)` draws it from the catalog id (FNV-1a via `Seeds`, then a `SplittableRandom`), so a restart or a replaced player keeps the bot in the same mode, and a bigger share only adds bots to the fixed side. The share is one setting: env `HERD_BOTS_FIXED_SHARE` (0..1), default 0.5 (`PayoutModes.DEFAULT_FIXED_SHARE`); `CatalogEntry.profile(botId, share)` takes it explicitly. A fixed bot falls back to `PERCENTAGE` on a market whose `MarketSnapshot.odds()` is true (the game refuses the mode on `ODDS` markets). Sizing, timing and direction are the same in both modes; a fixed bet's `BetRequest` carries `mode = FIXED` and the lowest valid leverage (the game ignores it), a percentage bet carries no mode. The balance check of a multi-market pass uses `EconomyRules.fixedFees` for fixed bets. The adapter that fills `MarketSnapshot.odds` and forwards `BetRequest.mode` is in the server (`ServerBotPorts`); the backtest and the population simulation settle every bet in the percentage mode.
 

@@ -221,7 +221,7 @@ class SpotCatalogTest {
         assertThat(market("spot_ETH").maxLeverage()).as("not in the table").isEqualTo(10);
     }
 
-    // ------------------------------------------------------------------------ the backup exchange (Р-76)
+    // ------------------------------------------------------------------------ the backup exchange (D-76)
 
     private CatalogConfig configWith(String backup, java.util.Set<String> disabledVenues) {
         CatalogConfig d = CatalogConfig.defaults();

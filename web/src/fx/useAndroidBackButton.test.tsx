@@ -113,7 +113,7 @@ describe("useAndroidBackButton (player review fix item 4: hardware Back from /pl
   });
 });
 
-describe("useAndroidBackButton — an open sheet takes Back first (Р-81, the feedback form)", () => {
+describe("useAndroidBackButton — an open sheet takes Back first (D-81, the feedback form)", () => {
   it("closes the sheet instead of navigating back", async () => {
     const closeSheet = vi.fn();
     render(

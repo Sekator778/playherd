@@ -19,7 +19,7 @@ import java.util.function.BooleanSupplier;
 import org.jboss.logging.Logger;
 
 /**
- * Р-40/41/47 best-effort chainsvc publisher — drains {@code oracle_records} rows that have not
+ * D-40/41/47 best-effort chainsvc publisher — drains {@code oracle_records} rows that have not
  * been queued yet, at most 20 at a time (FIXED INTERFACE 3: "several pending records go into ONE
  * singleton spend (max 20)"). Never throws to its caller ({@code RoundSchedulerService}'s tick) —
  * an unreachable chainsvc just leaves rows pending for the next tick (task: "never block the game

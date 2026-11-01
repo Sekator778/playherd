@@ -22,7 +22,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-106 on the replay path, the twin of {@link AggregatesReplayTest}: a random journal that mixes fixed-payout bets, percentage bets with
+ * D-106 on the replay path, the twin of {@link AggregatesReplayTest}: a random journal that mixes fixed-payout bets, percentage bets with
  * and without fees, replacements across the modes, cancels, resolved and cancelled rounds is applied once as a live run and once into a
  * fresh hub, as a rebuild does. After every event the aggregates of the book (notional of the percentage bets, stake of the fixed ones)
  * equal the brute force, and the replay ends with the same aggregates and the same balances as the live run.

@@ -92,7 +92,7 @@ describe("ResultMomentHost — a queue of moments", () => {
     expect(balanceLine()).toContain("9,998.29 PLAY");
   });
 
-  it("says what came back of the stake next to the signed result — and the headline stays the net result (Р-98)", async () => {
+  it("says what came back of the stake next to the signed result — and the headline stays the net result (D-98)", async () => {
     renderHost();
     act(() => {
       publish(event({ id: "a:p", roundId: "a", kind: "LOSS", netPlay: -19.85, stakePlay: 100, balanceBefore: 10_000, balanceAfter: 9_980.15 }));
@@ -134,7 +134,7 @@ describe("ResultMomentHost — a queue of moments", () => {
     expect(document.querySelector(".result-overlay")).toBeNull();
   });
 
-  // BTC of the default (mock) catalogue is priced by Coinbase with Kraken behind it (Р-76).
+  // BTC of the default (mock) catalogue is priced by Coinbase with Kraken behind it (D-76).
   it("a round that settled on the market's backup exchange says so, under the figures", async () => {
     renderHost();
     act(() => {

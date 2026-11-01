@@ -14,7 +14,7 @@ export const hi: Dict = {
     off: "बंद",
     loadMore: "और लोड करें",
     botBadge: "बॉट",
-    botBadgeTitle: "टेस्ट मोड के बॉट ने खेला (Р-46)",
+    botBadgeTitle: "टेस्ट मोड के बॉट ने खेला (D-46)",
     liqShort: "लिक्विड.",
     demoBanner: "PLAY, Chia testnet11 पर जारी किया गया एक असली टोकन (Chia CAT) है।",
     replay: "रीप्ले: {from}–{to} की BTC कीमतें, {speedup}× स्पीड",

@@ -5,7 +5,7 @@ import jakarta.inject.Inject;
 import java.util.List;
 import java.util.Optional;
 
-/** Р-53: {@code deposit_confirmations} — the deposit poller's exactly-once guard AND the public
+/** D-53: {@code deposit_confirmations} — the deposit poller's exactly-once guard AND the public
  *  read model of every real on-chain PLAY CAT deposit ever credited (see
  *  {@code DepositPollerService}'s javadoc for the crash-window trade-off {@link #tryReserve}'s
  *  ordering relies on). Never replayed — a coin either already has a row here (already credited,

@@ -183,7 +183,7 @@ function DirectionPicker({
 }
 
 /**
- * «With the herd» / «Against the herd» (Р-71, Herd's own): one tap sets the direction to the side with
+ * «With the herd» / «Against the herd» (D-71, Herd's own): one tap sets the direction to the side with
  * more PLAY on it right now, or to the opposite one. Both are always offered with equal weight and say
  * which side they will pick — they are shortcuts, not advice (nothing here claims the herd is right or
  * wrong). With no majority yet (an empty round, or an exact tie) both are off and a line says why.
@@ -342,7 +342,7 @@ function LiquidationPreviewHead({ open, onToggle }: { open: boolean; onToggle: (
 }
 
 /**
- * What the bet costs, before it is confirmed (economy stage C, C1; Р-92): the Herd fee and the network fee, each in PLAY and as a share
+ * What the bet costs, before it is confirmed (economy stage C, C1; D-92): the Herd fee and the network fee, each in PLAY and as a share
  * of the stake, the total that leaves the balance (stake + both fees), and the highest leverage the stake allows. Shown only when the
  * server's preview names them (it does once the preview was asked for the round's length); a cancelled bet gives both fees back.
  */
@@ -902,7 +902,7 @@ function BetSlipForm({
         }}
       >
         {!existing && fixedModeAvailable(market?.kind) && (
-          // Р-106: the Pro slip pays in the percentage mode; "Win or lose" lives in the bet sheet, so this switch hands the bet over to it
+          // D-106: the Pro slip pays in the percentage mode; "Win or lose" lives in the bet sheet, so this switch hands the bet over to it
           <div className="bet-sheet__chips bet-slip__mode" role="group" aria-label={t("mode.aria")}>
             <button
               type="button"

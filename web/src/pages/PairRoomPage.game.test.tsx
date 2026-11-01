@@ -1,5 +1,5 @@
 /**
- * The room's default view (Р-98, "game first"): the price, the chart, two big buttons — and nothing of the terminal. UP and DOWN open the bet
+ * The room's default view (D-98, "game first"): the price, the chart, two big buttons — and nothing of the terminal. UP and DOWN open the bet
  * sheet; the oracle paragraph is behind an "i"; the crowd account is on the Stats page; the chart draws the player's own lines and the herd's
  * only in Pro. (`PairRoomPage.test.tsx` runs the same room in the Pro view.)
  */

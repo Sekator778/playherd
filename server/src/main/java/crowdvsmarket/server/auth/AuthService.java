@@ -14,10 +14,10 @@ import java.util.Base64;
 import org.jboss.logging.Logger;
 
 /**
- * Р-4/Р-45 sign-in: challenge/verify flow per docs/research/week1_wallet_auth.md §4, verified
+ * D-4/D-45 sign-in: challenge/verify flow per docs/research/week1_wallet_auth.md §4, verified
  * against chainsvc (FIXED INTERFACE 3, {@code /v1/auth/verify}) — this server never implements the
  * BLS/Chia crypto itself. Works identically for a real Sage signature and for the local stand's
- * in-browser test wallet (Р-45: "та же схема и проверка подписи, что для Sage").
+ * in-browser test wallet (D-45: "та же схема и проверка подписи, что для Sage").
  */
 @ApplicationScoped
 public class AuthService {

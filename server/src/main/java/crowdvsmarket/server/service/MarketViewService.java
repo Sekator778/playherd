@@ -130,7 +130,7 @@ public class MarketViewService {
         return new Markets.MarketsDto(nowMs, categories, List.copyOf(shown), economyRules());
     }
 
-    /** The rules every market shares, read from {@code EconomyRules} (Р-102): the clients show them, they hold no copy. */
+    /** The rules every market shares, read from {@code EconomyRules} (D-102): the clients show them, they hold no copy. */
     static Markets.EconomyRulesDto economyRules() {
         return new Markets.EconomyRulesDto(
                 crowdvsmarket.engine.economy.EconomyRules.NETWORK_FEE.toMoney().stripTrailingZeros().toPlainString(),
@@ -245,7 +245,7 @@ public class MarketViewService {
         if (running) {
             Optional<RoundPriceData> prices = gameService.soFar(market, window, nowMs);
             if (prices.isPresent() && entry.bet().isFixed()) {
-                entryPrice = market.rawString(prices.get().open()); // Р-106: no position, no liquidation price, no size
+                entryPrice = market.rawString(prices.get().open()); // D-106: no position, no liquidation price, no size
             } else if (prices.isPresent()) {
                 BigDecimal open = prices.get().open();
                 List<Candle> path = prices.get().path().isEmpty()

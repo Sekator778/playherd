@@ -14,7 +14,7 @@ import java.util.Random;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-106 (rules point 5) under random sequences: bets - fixed and percentage, new and replacing - are offered to one {@link BetBook} per
+ * D-106 (rules point 5) under random sequences: bets - fixed and percentage, new and replacing - are offered to one {@link BetBook} per
  * market, three of them crypto, and the decision {@link EconomyLimits#checkFixedExposure} gives, fed by the book's O(1) aggregate, equals the
  * brute-force decision over the bets (sum of the other players' fixed stakes on the side, and over the crypto markets for the bucket). An
  * accepted bet is placed; so no side of any market ever holds more than 0.1% of the treasury, nor the crypto markets together more than 0.4%.

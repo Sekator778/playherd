@@ -1,4 +1,4 @@
-# Task item 5 — multi-stage build for the local Docker stand (Р-44, compose project "herd"):
+# Task item 5 — multi-stage build for the local Docker stand (D-44, compose project "herd"):
 # Node build against the real backend (VITE_API_MODE=real, apiMode.ts) → static nginx serving,
 # proxying /api to the Quarkus server (compose service name "server" — chainsvc from the task's
 # FIXED INTERFACE (3) sits behind that server, this container never talks to it directly).
@@ -20,7 +20,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Р-55: build-time WalletConnect projectId (`wallet/walletConnect.ts`'s
+# D-55: build-time WalletConnect projectId (`wallet/walletConnect.ts`'s
 # `getWalletConnectProjectId`) — optional, empty until Alex registers one with Reown Cloud
 # (outbound registrations are only ever made with his own go-ahead, `the project notes`). Passed in by
 # `docker-compose.yml`'s `web.build.args` and by ci.yml/release.yml from the repository variable of

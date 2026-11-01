@@ -13,7 +13,7 @@ import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.Optional;
 
-/** {@code herd_session} httpOnly cookie backing — an opaque, DB-backed session id (Р-4 §4.g). A lookup is answered from
+/** {@code herd_session} httpOnly cookie backing — an opaque, DB-backed session id (D-4 §4.g). A lookup is answered from
  *  {@link SessionCache} (a short-lived read-through of the table) and goes to the database only on a miss. */
 @ApplicationScoped
 public class SessionService {

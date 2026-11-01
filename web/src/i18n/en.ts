@@ -17,7 +17,7 @@ export const en = {
     off: "Off",
     loadMore: "Load more",
     botBadge: "BOT",
-    botBadgeTitle: "Played by a test-mode bot (Р-46)",
+    botBadgeTitle: "Played by a test-mode bot (D-46)",
     liqShort: "liq",
     demoBanner: "PLAY is a real token (a Chia CAT) minted on Chia testnet11.",
     replay: "Replay: BTC prices from {from}–{to}, {speedup}× speed",

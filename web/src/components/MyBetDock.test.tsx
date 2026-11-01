@@ -1,5 +1,5 @@
 /**
- * The pinned "My bet" card (Р-98): the newest open bet, its three facts (the price now, side + stake + boost, the distance to the wipeout line),
+ * The pinned "My bet" card (D-98): the newest open bet, its three facts (the price now, side + stake + boost, the distance to the wipeout line),
  * Winning / Losing with a signed P&L, the free-cancel promise before the round starts, and the way to the other bets. Not in the Pro view.
  */
 import { render, screen, within } from "@testing-library/react";

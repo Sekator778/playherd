@@ -62,7 +62,7 @@ POST /get_block_record_by_height  {"height":<высота>}
 - **Предложение (эмиссия, решить/пересмотреть при необходимости):** 100 000 000 PLAY = 1×10¹¹ mojo
   (1 PLAY = 1000 CAT-mojo, стандарт CAT2), обеспечено 0.1 TXCH (мохо CAT-монеты — те же мохо, просто
   «покрашенные» TAIL'ом, см. `docs/research/week1_testnet_cli.md` §7). Это on-chain казна для вывода
-  PLAY игроками (решение Р-6, `the decision log`): каждый выведенный в кошелёк PLAY должен
+  PLAY игроками (решение D-6, `the decision log`): каждый выведенный в кошелёк PLAY должен
   быть обеспечен ровно таким же количеством застейканных мохо на момент выпуска.
 - **Проторговано через Offer:** 1 000 PLAY (1 000 000 CAT-mojo) отдано `operator` → `counterparty` за
   0.01 TXCH (10 000 000 000 mojo). См. строку 3 таблицы §2.
@@ -81,7 +81,7 @@ POST /get_coin_records_by_puzzle_hash
 
 ---
 
-## 4. Оракул (Р-11)
+## 4. Оракул (D-11)
 
 - **Launcher id:** `0xc5cb79a5ea20fb66a29c63867806dec4d1120fa002b386c6033fec09b9cdeb20`
 - **Singleton puzzle hash** (не меняется между поколениями, manager-ключ = `operator`):

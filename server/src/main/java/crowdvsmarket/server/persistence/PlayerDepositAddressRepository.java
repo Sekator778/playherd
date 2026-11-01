@@ -5,7 +5,7 @@ import jakarta.inject.Inject;
 import java.sql.SQLException;
 import java.util.Optional;
 
-/** Р-53: the chainsvc-derived PLAY CAT deposit address cached per player
+/** D-53: the chainsvc-derived PLAY CAT deposit address cached per player
  *  ({@code GameService#myDepositAddress}) — {@code player_deposit_addresses}, one row per player,
  *  fetched from chainsvc ({@code POST /v1/play/deposit-address}) and written once (the address
  *  is deterministic given the player's {@code playerIndex}, so there is nothing to refresh; two first

@@ -18,7 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-81: the cap on everyone together — {@code herd.feedback.max-per-day}, here 3 — over the last 24 hours. A cap of the day
+ * D-81: the cap on everyone together — {@code herd.feedback.max-per-day}, here 3 — over the last 24 hours. A cap of the day
  * is a count of rows, so a message older than a day is not in it; a refusal is {@code 429 RATE_LIMITED} like the one for a
  * single address, and it stores nothing. Every request comes from an address of its own, so no per-address bucket gets in
  * the way (that is {@code FeedbackRpcTest}).

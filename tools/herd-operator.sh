@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Р-43 operator CLI — a thin curl wrapper over server/'s admin endpoints
+# D-43 operator CLI — a thin curl wrapper over server/'s admin endpoints
 # (crowdvsmarket.server.api.AdminResource). "CLI с подписью ключом оператора" is not
 # implemented yet: today this posts a bearer token (HERD_OPERATOR_TOKEN, same value the server
 # reads from its own env — see server/src/main/resources/application.properties
 # "herd.operator.token") as a stand-in until real operator-key signing exists — see
-# docs/research/server_design.md, section "Operator (Р-43)".
+# docs/research/server_design.md, section "Operator (D-43)".
 #
 # Usage:
 #   tools/herd-operator.sh [--token-file <path>] status
@@ -13,7 +13,7 @@
 #   tools/herd-operator.sh [--token-file <path>] reverse-deposit <requestId> "reason"
 #   tools/herd-operator.sh [--token-file <path>] feedback [--since YYYY-MM-DD] [--limit N] [--json]
 #
-# `feedback` (Р-81) reads what visitors left through the in-app form, newest first: a table with the UTC time, the country (derived by the
+# `feedback` (D-81) reads what visitors left through the in-app form, newest first: a table with the UTC time, the country (derived by the
 # server from the IP address, which is not stored), the browser's time zone and language, the client, the page, the sender's nickname
 # and the number of rounds they have played (a dash: the sender was not signed in), and the message; then a count by country.
 # --since is a date in UTC (00:00 of that day), --limit at most 1000 (the server's default is 200), --json prints the server's answer
@@ -280,7 +280,7 @@ case "$cmd" in
     api POST "/api/admin/rounds/${round_id}/cancel" "{\"reason\":\"${escaped_reason}\"}"
     ;;
   reverse-withdrawal)
-    # Wave-2 security fix (Р-32/Р-43 pattern): reverses a withdrawal request's already-recorded
+    # Wave-2 security fix (D-32/D-43 pattern): reverses a withdrawal request's already-recorded
     # balance/season effect (e.g. the requestWithdrawal("-5000.000") exploit) without altering or
     # deleting the original event — see crowdvsmarket.engine.ledger.LedgerBook#reverseWithdrawalEffect
     # and GameService#reverseWithdrawal. Listed publicly afterwards via the "ledgerCorrections" RPC
@@ -310,7 +310,7 @@ case "$cmd" in
     api POST "/api/admin/deposits/${request_id}/reverse" "{\"reason\":\"${escaped_reason}\"}"
     ;;
   feedback)
-    # Р-81: the in-app feedback, newest first (GET /api/admin/feedback).
+    # D-81: the in-app feedback, newest first (GET /api/admin/feedback).
     shift
     run_feedback "$@"
     ;;

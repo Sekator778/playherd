@@ -1,4 +1,4 @@
-/** Calendar-month UTC season math (Р-10/Р-16, `round_engine_design.md` §4.4) — pure date
+/** Calendar-month UTC season math (D-10/D-16, `round_engine_design.md` §4.4) — pure date
  *  arithmetic, shared by the mock data generators and by UI code that needs to slice a player's
  *  full round history down to one season's worth (`SeasonRecordDto` itself has no "growth"
  *  field; the UI derives it from `ProfileRoundEntryDto[]` the same way the ratings mock does). */

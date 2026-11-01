@@ -27,18 +27,18 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Orchestrates one round series (HOURLY or DAILY, Р-19 — construct one {@code GameEngine} per
- * series) end to end: accepting/modifying/cancelling bets before a round starts (Р-13), then, once
+ * Orchestrates one round series (HOURLY or DAILY, D-19 — construct one {@code GameEngine} per
+ * series) end to end: accepting/modifying/cancelling bets before a round starts (D-13), then, once
  * its window has elapsed, opening every bet as a position at the round's open price, monitoring
- * liquidation across the round's price path (Р-7, Р-8, via {@code PositionSimulator}), settling
- * every position (Р-3), and updating the crowd account (Р-5) — all in one call to
+ * liquidation across the round's price path (D-7, D-8, via {@code PositionSimulator}), settling
+ * every position (D-3), and updating the crowd account (D-5) — all in one call to
  * {@link #runRound}, since a historical/simulated round's whole price path is known up front.
  *
- * <p>This is the API the future Quarkus service (Р-20) wraps; this module owns none of the
+ * <p>This is the API the future Quarkus service (D-20) wraps; this module owns none of the
  * clock/scheduling side (when to call {@link #runRound} for which {@link RoundWindow}) — that is
  * {@code RoundClock}'s job, driven by whatever polls real time or replays a fixture.
  *
- * <p><b>One engine per market and series (Р-69):</b> the market is the one of the
+ * <p><b>One engine per market and series (D-69):</b> the market is the one of the
  * {@link CrowdAccount} the engine is built with ({@link #spec()}). It accepts bets and resolves
  * rounds only for windows of that market, and rejects a bet above that market's leverage cap;
  * several engines — one per market — can share a single {@link LedgerBook}, so one player's PLAY
@@ -81,7 +81,7 @@ public final class GameEngine {
     }
 
     /**
-     * Places (or replaces) {@code playerId}'s bet on {@code bettingWindow} (Р-13). Any earlier bet
+     * Places (or replaces) {@code playerId}'s bet on {@code bettingWindow} (D-13). Any earlier bet
      * by the same player on the same round is refunded first — refunding before reserving the new
      * stake, so growing a bet up to the full pre-modification balance never spuriously fails.
      *
@@ -105,7 +105,7 @@ public final class GameEngine {
     }
 
     /**
-     * Economy stage A (Р-92, plan A2-A4): places (or replaces) {@code playerId}'s bet under the new rules. The leverage must
+     * Economy stage A (D-92, plan A2-A4): places (or replaces) {@code playerId}'s bet under the new rules. The leverage must
      * be within the market's cap for this round's length <b>and</b> the tier of the stake
      * ({@link EconomyRules#requireLeverageAllowed}); the balance is debited {@code stake + fees.herd + fees.network}, and
      * a replaced bet is refunded with its fees. The bet is settled by the new rules ({@link #runRound}). {@code fees} is
@@ -154,7 +154,7 @@ public final class GameEngine {
     }
 
     /**
-     * Р-106: places (or replaces) {@code playerId}'s fixed-payout bet (docs/product/fixed_payout_rules.md): no leverage, no liquidation;
+     * D-106: places (or replaces) {@code playerId}'s fixed-payout bet (docs/product/fixed_payout_rules.md): no leverage, no liquidation;
      * the balance is debited {@code stake + fees.herd + fees.network}, a replaced bet (of either mode) is refunded with its fees; the bet
      * pays 2 x stake, nothing or the stake back ({@link #runRound}). {@code fees} is what {@link EconomyRules#fixedFees} computed.
      */
@@ -179,7 +179,7 @@ public final class GameEngine {
         return bet;
     }
 
-    /** Cancels {@code playerId}'s bet on {@code bettingWindow}, if any, refunding its stake (Р-13) and its fees (plan A4). */
+    /** Cancels {@code playerId}'s bet on {@code bettingWindow}, if any, refunding its stake (D-13) and its fees (plan A4). */
     public void cancelBet(String playerId, RoundWindow bettingWindow, Instant now) {
         refundPrevious(playerId, bettingWindow.roundId(), now);
     }
@@ -202,8 +202,8 @@ public final class GameEngine {
 
     /**
      * Resolves {@code window}: opens every pending bet as a position at the round's open price,
-     * replays each through {@code prices.path(window)} for liquidation (Р-7, Р-8), settles every
-     * player via the ledger (Р-3), updates the crowd account (Р-5), and clears the round's bets.
+     * replays each through {@code prices.path(window)} for liquidation (D-7, D-8), settles every
+     * player via the ledger (D-3), updates the crowd account (D-5), and clears the round's bets.
      * Settlement is recorded at {@code window.endMs() - 1}, the round's own last millisecond —
      * {@code window.endMs()} itself is the half-open boundary shared with the next window (and,
      * for the last round of a month, is the next month's very first instant), so using it directly
@@ -223,7 +223,7 @@ public final class GameEngine {
         List<PlayerRoundOutcome> outcomes = new ArrayList<>();
         for (Bet bet : bets) {
             if (bet.isFixed()) {
-                // Р-106: no position, no liquidation - 2 x stake / 0 / stake back by the close against the open; the fees stay with the game
+                // D-106: no position, no liquidation - 2 x stake / 0 / stake back by the close against the open; the fees stay with the game
                 int closeVsOpen = closePrice.compareTo(openPrice);
                 PlayAmount fixedPayout = EconomyRules.fixedPayout(bet.stake(), bet.direction() == Direction.UP, closeVsOpen);
                 ledger.settleRound(bet.playerId(), roundId, bet.stake(), fixedPayout,
@@ -242,7 +242,7 @@ public final class GameEngine {
 
             BigDecimal payout;
             if (liquidated && legacy) {
-                payout = ZERO_MONEY; // Р-7: full stake lost
+                payout = ZERO_MONEY; // D-7: full stake lost
             } else if (liquidated) {
                 // plan A1: the remainder at the extreme of the candle that triggered the liquidation, 0 on a gap through the margin
                 BigDecimal extreme = ((PositionSimulator.Outcome.Liquidated) outcome).extremePrice();
@@ -280,7 +280,7 @@ public final class GameEngine {
         }
     }
 
-    /** {@code Optional.empty()} for a flat round (close == open, excluded from the "пророки" ratio, Р-18). */
+    /** {@code Optional.empty()} for a flat round (close == open, excluded from the "пророки" ratio, D-18). */
     private static Optional<Boolean> directionCorrect(Direction direction, BigDecimal openPrice, BigDecimal closePrice) {
         int cmp = closePrice.compareTo(openPrice);
         if (cmp == 0) {

@@ -26,7 +26,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Letting a round go after the minutes of its source (Р-79) over the real database: a round that cannot be priced holds its series
+ * Letting a round go after the minutes of its source (D-79) over the real database: a round that cannot be priced holds its series
  * (the rounds of a series are settled in order), on every market, so five minutes after its end — fifteen for Polymarket, and
  * counted from the start of the server when that is later — it is cancelled with a refund, with the words "No price from the
  * source; stakes returned", and the series goes on. What is written is what any cancellation writes: the refund, the {@code
@@ -278,7 +278,7 @@ class SourceReleaseTest extends LiveGameTestBase {
         long end = f.stuck().endMs();
         scheduler.tick(end);
 
-        scheduler.tick(end + 2 * MINUTE); // the other exchange is silent too: the two minutes of Р-77 do not apply
+        scheduler.tick(end + 2 * MINUTE); // the other exchange is silent too: the two minutes of D-77 do not apply
         scheduler.tick(end + 5 * MINUTE - 1);
         assertThat(roundResults.exists(f.stuck().roundId())).isFalse();
         scheduler.tick(end + 5 * MINUTE);

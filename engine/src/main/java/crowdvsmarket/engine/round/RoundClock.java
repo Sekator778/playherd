@@ -4,26 +4,26 @@ import crowdvsmarket.engine.market.Interval;
 import crowdvsmarket.engine.market.MarketSpec;
 
 /**
- * Pure UTC round-boundary arithmetic (Р-19: hourly rounds on UTC hour boundaries, daily on
+ * Pure UTC round-boundary arithmetic (D-19: hourly rounds on UTC hour boundaries, daily on
  * 00:00 UTC — предложение: aligned with Hyperliquid candle boundaries, see
  * docs/research/round_engine_design.md). Epoch milliseconds are already UTC, and both step sizes
  * (3 600 000 ms, 86 400 000 ms) divide evenly into a UTC day — flooring is exact, with no
  * calendar/DST handling needed.
  *
- * <p>Р-19 also fixes the scheduling invariant this class encodes: "always one running + one open
+ * <p>D-19 also fixes the scheduling invariant this class encodes: "always one running + one open
  * [for betting] round per series" — the round open for betting is always exactly the one
  * immediately after the currently running one ({@link #next}), matching "betting window for round
  * N = the whole duration of round N-1".
  *
  * <p><b>Предложение (additive):</b> {@link #stepMs(Interval, RoundDurations)} and
  * {@link #windowContaining(Interval, long, RoundDurations, long)} let a caller supply a
- * non-default {@link RoundDurations} (e.g. the Quarkus server's Р-46 test-mode durations) and an
+ * non-default {@link RoundDurations} (e.g. the Quarkus server's D-46 test-mode durations) and an
  * {@code originMs} the floor arithmetic is relative to (e.g. the server's own start time, rather
  * than the Unix epoch) — see the server's design doc for why. The original no-arg-config methods
  * below are unchanged and are exactly {@code stepMs(interval, RoundDurations.DEFAULT)} /
  * {@code windowContaining(interval, epochMs, RoundDurations.DEFAULT, 0L)}.
  *
- * <p><b>Markets (Р-69):</b> the boundaries do not depend on the market — every market runs on the
+ * <p><b>Markets (D-69):</b> the boundaries do not depend on the market — every market runs on the
  * same clock — but a window belongs to one. Every overload without a {@code market} argument
  * returns a {@link MarketSpec#BTC_ID BTC} window, as before;
  * {@link #windowContaining(String, Interval, long, RoundDurations, long)} is the one that names the
@@ -68,7 +68,7 @@ public final class RoundClock {
     }
 
     /** The window immediately after {@code window}, of the same market — the one open for betting
-     * for {@code window}'s whole duration (Р-19). */
+     * for {@code window}'s whole duration (D-19). */
     public static RoundWindow next(RoundWindow window) {
         long step = window.endMs() - window.startMs();
         return new RoundWindow(window.market(), window.interval(), window.endMs(), window.endMs() + step);

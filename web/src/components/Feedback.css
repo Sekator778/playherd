@@ -1,4 +1,4 @@
-/* Feedback (Р-81): the strip at the bottom of the screen (`FeedbackStrip.tsx`) and the form's sheet (`FeedbackModal.tsx`).
+/* Feedback (D-81): the strip at the bottom of the screen (`FeedbackStrip.tsx`) and the form's sheet (`FeedbackModal.tsx`).
    Colours, radii, shadows, durations and easings are the app's tokens (index.css), none made up here; the strip's own three layout
    tokens (`--feedback-strip-*`) are defined first thing below.
 
@@ -91,7 +91,7 @@
   pointer-events: none;
 }
 
-/* The bet sheet is open: the strip is gone for the eye and the thumb, so it can never sit on the sheet's BET button (Р-98). */
+/* The bet sheet is open: the strip is gone for the eye and the thumb, so it can never sit on the sheet's BET button (D-98). */
 .page:has(.bet-sheet) .feedback-strip {
   opacity: 0;
   visibility: hidden;

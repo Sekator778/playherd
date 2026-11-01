@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test;
  * {@code requestWithdrawal("-5000.000")}) via {@code POST /api/admin/withdrawals/{id}/reverse},
  * without altering or deleting the original event, and lists it publicly (with reason) via the
  * unauthenticated {@code ledgerCorrections} RPC method — the same "public log" pattern
- * {@code cancellations} already uses for round cancellations (Р-32/Р-43).
+ * {@code cancellations} already uses for round cancellations (D-32/D-43).
  *
  * <p>Task item 1 (BLOCKER security fix): {@code gameService.requestWithdrawal} is disabled by
  * default (see {@code RpcValidationTest.WithdrawalDepositEnabledProfile}) — needs the same
@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
  * request to then reverse) keeps working; the reversal mechanism under test here is independent
  * of whether new withdrawals are currently allowed.
  *
- * <p>Р-53 update: {@code requestWithdrawal} now escrows and submits to chainsvc for real, so a
+ * <p>D-53 update: {@code requestWithdrawal} now escrows and submits to chainsvc for real, so a
  * fixture request created here lands {@code REQUESTED} (not immediately {@code CONFIRMED} the way
  * the old auto-confirm stub left it) — chainsvc is mocked ({@code @InjectMock}) but never stubbed
  * to report a submission or a status, since the reversal mechanism under test is independent of

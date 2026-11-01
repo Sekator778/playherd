@@ -160,7 +160,7 @@ public final class ServerBotPorts implements MarketDataPort, BettingPort, BotSta
             if (gameService.openBetRoundIds(request.botId()).contains(request.roundId())) {
                 return BetResult.refused("the bot already has a bet in " + request.roundId()); // placeBet would replace it
             }
-            // Р-106: a bot that plays win-or-lose sends the mode on (absent = the percentage mode, as before)
+            // D-106: a bot that plays win-or-lose sends the mode on (absent = the percentage mode, as before)
             Betting.PlaceBetRequest req = new Betting.PlaceBetRequest(request.roundId(),
                     Enums.Direction.valueOf(request.direction().name()), request.leverage(),
                     request.stake().toMoney().toPlainString(),
@@ -220,7 +220,7 @@ public final class ServerBotPorts implements MarketDataPort, BettingPort, BotSta
         if (config.mode() != GameMode.LIVE) {
             return true;
         }
-        // the primary exchange's price while it is fresh, else the backup's (Р-76): a market whose primary is down still bets
+        // the primary exchange's price while it is fresh, else the backup's (D-76): a market whose primary is down still bets
         return marketPrices.latest(market).map(quote -> !quote.stale()).orElse(false);
     }
 }

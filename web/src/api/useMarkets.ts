@@ -1,5 +1,5 @@
 /**
- * The market list (`Api.markets()`) as a shared, polled React state (Р-69): the lobby, the room
+ * The market list (`Api.markets()`) as a shared, polled React state (D-69): the lobby, the room
  * header, the bet slip's leverage cap and the "my positions" strip all read it through here, and
  * however many of them are mounted, one `markets()` call goes out every 2 s per `Api` instance
  * (`polledStore.ts`; the response is built from memory server-side, no source round-trip).

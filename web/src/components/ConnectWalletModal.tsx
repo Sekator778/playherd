@@ -26,8 +26,8 @@ export const SAGE_CONNECT_WAIT_MS = 15_000;
 /**
  * The first-time sign-in flow (`ux_spec.md` §10), one modal shared by every "CONNECT WALLET"
  * entry point in the app (header, Home/Round/Profile/Wallet "not signed in" cards). Copy is
- * quoted verbatim from the spec. Two connect routes as of Р-55: the always-available browser test
- * wallet (Р-45, `wallet/testWallet.ts`) and real Sage over WalletConnect (`wallet/walletConnect.ts`)
+ * quoted verbatim from the spec. Two connect routes as of D-55: the always-available browser test
+ * wallet (D-45, `wallet/testWallet.ts`) and real Sage over WalletConnect (`wallet/walletConnect.ts`)
  * — the latter's button is disabled with "Coming soon" until a Reown `projectId` is configured
  * (build-time `VITE_WALLETCONNECT_PROJECT_ID` or `ServerInfoDto.walletConnectProjectId` at
  * runtime), which as of this task is not yet the case (Alex's registration is in progress).
@@ -225,13 +225,13 @@ export function ConnectWalletModal() {
     setSignInVia("test wallet");
     setStep("waiting");
     try {
-      // Browser test wallet (Р-45): a real Chia key generated in this browser, persisted in
+      // Browser test wallet (D-45): a real Chia key generated in this browser, persisted in
       // localStorage — every browser profile/incognito window/phone is a different player. Signs
       // the exact scheme a real Sage-backed login uses (docs/research/week1_wallet_auth.md §2).
       // Dynamically imported — its WASM crypto module (~2 MB gzipped, the whole
       // chia-wallet-sdk-wasm surface, not just the signing slice this app uses) has no reason to
       // sit in the initial bundle every visitor downloads, especially on the mobile connections
-      // Р-48 targets; it only loads once someone actually opens this modal.
+      // D-48 targets; it only loads once someone actually opens this modal.
       const { getTestWallet, signTestWalletMessage } = await import("../wallet/testWallet");
       const wallet = getTestWallet();
       const challenge = await api.authChallenge({ address: wallet.address });
@@ -248,7 +248,7 @@ export function ConnectWalletModal() {
     }
   };
 
-  /** Real Sage sign-in (Р-55). `wallet/walletConnect.ts` owns the WalletConnect
+  /** Real Sage sign-in (D-55). `wallet/walletConnect.ts` owns the WalletConnect
    *  pairing/session/signing; this only wires its callbacks to `Api.authChallenge`/`authVerify`,
    *  the same two calls `startConnect` makes for the test wallet — `nonce` is threaded through a
    *  closure variable because `connectAndSignWithSage`'s `getMessage` callback only returns the
@@ -551,7 +551,7 @@ function isBettingScreen(pathname: string): boolean {
 
 /**
  * The "connect" step: which ways in this server offers. Both depend on its `serverInfo()` — whether the browser test
- * wallet is on (`testWallet`, Р-45: `false` → no test-wallet button at all, not a disabled one) and whether Sage has a
+ * wallet is on (`testWallet`, D-45: `false` → no test-wallet button at all, not a disabled one) and whether Sage has a
  * Reown `projectId` (`walletConnectProjectId` or the build's own) — so until the server has answered NOTHING is offered
  * (a placeholder), and a server that cannot be reached says so with a retry instead of guessing; a later answer applies
  * by itself (the shared store, `api/useServerInfo.ts`). A build with no `serverInfo()` at all (the mock) offers the
@@ -565,7 +565,7 @@ function ConnectStep({ onTestWallet, onSage, onCancel }: { onTestWallet: () => v
   const wcProjectId = known ? getWalletConnectProjectId(info) : null;
 
   // Opened by the bet sheet's "Continue with test wallet": that road is taken at once, as soon as the server has said it is on offer —
-  // the player has already chosen it, and asking again would be a second tap for the same choice (Р-98).
+  // the player has already chosen it, and asking again would be a second tap for the same choice (D-98).
   const [autoStart] = useState(peekAutoTestWallet);
   useEffect(() => {
     if (!autoStart || !known || !testWalletOffered) return;

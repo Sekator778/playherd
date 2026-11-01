@@ -1,6 +1,6 @@
 package crowdvsmarket.server.dto;
 
-/** Economy stage B (Р-92): the operator's view of the house accounts. Not part of contract.ts. */
+/** Economy stage B (D-92): the operator's view of the house accounts. Not part of contract.ts. */
 public final class Economy {
     private Economy() {
     }
@@ -29,7 +29,7 @@ public final class Economy {
     }
 
     /**
-     * Economy stage C (C5, Р-90): the public cut of the reconciliation. It shows the supply and where it sits, never HERD (the platform's
+     * Economy stage C (C5, D-90): the public cut of the reconciliation. It shows the supply and where it sits, never HERD (the platform's
      * revenue): {@code platformReserve} is TREASURY and HERD together. All amounts in PLAY as exact decimal strings.
      *
      * <ul>

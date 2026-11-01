@@ -20,7 +20,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * {@link MarketSpec}: the per-market maintenance margin rate {@code l = 1/(2*maxLeverage)}
- * (docs/research/hl_liquidation_math.md section 1.4, Р-69), its validation, and the leverage
+ * (docs/research/hl_liquidation_math.md section 1.4, D-69), its validation, and the leverage
  * helpers the server and {@code GameEngine} build on.
  */
 class MarketSpecTest {

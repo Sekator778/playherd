@@ -4,7 +4,7 @@ import crowdvsmarket.bots.brain.Seeds;
 import crowdvsmarket.engine.round.BetMode;
 
 /**
- * Which bots play the win-or-lose mode (Р-106). The mode is a trait of the strategy, not a per-bet coin: a bot's preference is
+ * Which bots play the win-or-lose mode (D-106). The mode is a trait of the strategy, not a per-bet coin: a bot's preference is
  * a function of its catalog id (the identity that survives a retired player being replaced) and of one setting, the share of
  * the catalog on {@link BetMode#FIXED}. The same id and share give the same mode on every machine and after every restart; a
  * bigger share only adds bots to the fixed side (the draw of a bot does not depend on the share).

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests of bot_stats.py: the split by payout mode (Р-106) and the Wilson / Newcombe columns inside each mode.
+"""Offline tests of bot_stats.py: the split by payout mode (D-106) and the Wilson / Newcombe columns inside each mode.
 
 Run: python3 -m unittest tools/audit/test_bot_stats.py   (no network, no database)
 """

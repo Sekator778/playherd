@@ -31,7 +31,7 @@ beforeEach(() => {
   }
 });
 
-describe("browser test wallet (Р-45)", () => {
+describe("browser test wallet (D-45)", () => {
   it("derives a stable txch address across repeated calls in the same profile", () => {
     const first = getTestWallet();
     const second = getTestWallet();

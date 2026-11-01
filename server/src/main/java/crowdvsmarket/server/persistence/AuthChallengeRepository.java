@@ -6,7 +6,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Optional;
 
-/** Single-use sign-in nonces (Р-4; docs/research/week1_wallet_auth.md §4) — not part of the
+/** Single-use sign-in nonces (D-4; docs/research/week1_wallet_auth.md §4) — not part of the
  *  engine's replay log (auth is orthogonal to game state), but still DB-backed so a challenge
  *  issued just before a restart is not silently forgotten while still within its TTL. */
 @ApplicationScoped

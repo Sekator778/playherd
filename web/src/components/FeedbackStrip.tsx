@@ -7,7 +7,7 @@ import "./Feedback.css";
 
 /** What the strip says. One short line; the word on the right names where a tap goes. */
 
-/** What the strip never sits on: the room's arena (the big UP and DOWN), the bet sheet, the pinned "My bet" card (Р-98) and the bet slip — the stake, the leverage, PLACE BET
+/** What the strip never sits on: the room's arena (the big UP and DOWN), the bet sheet, the pinned "My bet" card (D-98) and the bet slip — the stake, the leverage, PLACE BET
  *  (and, once there is a bet, its edit and cancel). The lobby's cards are not on the list: their small UP and DOWN lead to the
  *  room, the place a bet is made, and a strip that stepped aside for every card would not stay on the lobby for a moment. */
 const KEEP_CLEAR_OF = ".room-arena, .bet-slip, .my-bet-dock, .bet-sheet";
@@ -94,7 +94,7 @@ function useControlsUnderStrip(strip: RefObject<HTMLElement | null>, enabled: bo
 }
 
 /**
- * The invitation to leave feedback (Р-81, Alex: "может нам сделать какой-то баннер, оставить отзыв"): a closable strip at
+ * The invitation to leave feedback (D-81, Alex: "может нам сделать какой-то баннер, оставить отзыв"): a closable strip at
  * the bottom of the screen, above the tab bar, shown to everyone — signed in or not — until the person sends a message or
  * closes it. Then it is gone for good on this browser (`api/feedback.ts` remembers it); the entry point stays in the footer
  * and the profile menu.

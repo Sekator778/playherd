@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Automated end-to-end test of the local stand (Р-44 task item 3), no global installs — the only
+// Automated end-to-end test of the local stand (D-44 task item 3), no global installs — the only
 // dependency (`chia-wallet-sdk-wasm`) is reused straight from `web/node_modules` (see
 // testWallet.mjs). Run with:
 //
@@ -8,11 +8,11 @@
 // (Node 22's plain `import` of a `.wasm` file is still an experimental feature — the flag is
 // required or the process exits immediately with an ExperimentalWarning-turned-error.)
 //
-// What it does (task item 3, verbatim, checks updated 2026-09-26 for Р-62): 4 simulated players,
+// What it does (task item 3, verbatim, checks updated 2026-09-26 for D-62): 4 simulated players,
 // each with its own real key signing like the browser test wallet; sign in via the RPC; set
 // nicknames; place bets in the open betting window (mixed directions/leverages incl. one 40x);
-// verify the crowd split and bet feed are visible live during betting (Р-62, "показывать всё
-// вживую" — replaces Р-22's "sides hidden before start") and that positions are visible once the
+// verify the crowd split and bet feed are visible live during betting (D-62, "показывать всё
+// вживую" — replaces D-22's "sides hidden before start") and that positions are visible once the
 // round starts running; wait through one full HOURLY (3-min) round to settlement; check balances
 // vs engine rules; fetch /api/rounds/{id}/results.json and check sha256 == resultsHash; check that
 // chainsvc queued/published the boundary record(s) to testnet11.
@@ -34,7 +34,7 @@ import { feesOfBet } from "./markets.mjs";
 const args = process.argv.slice(2);
 const CI_MODE = args.includes("--ci") || process.env.HERD_E2E_CI === "1";
 const BASE_URL = args.find((a) => !a.startsWith("--")) || process.env.HERD_E2E_BASE_URL || "http://localhost:8480";
-const HOURLY_DURATION_MS = 180_000; // Р-46 test mode
+const HOURLY_DURATION_MS = 180_000; // D-46 test mode
 const POLL_MS = 4_000;
 
 const { check, fail, summarize } = createChecks();
@@ -96,7 +96,7 @@ async function main() {
     return summarize();
   }
   const roundId = roundsPair.betting.roundId;
-  // Betting closes where the round that is bet on starts: its window's startMs, which is the running round's endMs (Р-19) —
+  // Betting closes where the round that is bet on starts: its window's startMs, which is the running round's endMs (D-19) —
   // not the window's endMs, the end of the round itself (MarketSeriesDto.bettingClosesAtMs is the same instant).
   const bettingEndMs = roundsPair.betting.window.startMs;
 
@@ -129,10 +129,10 @@ async function main() {
     }
   }
 
-  // --- 5. live crowd split + bet feed during betting (Р-62, 2026-09-26 — REPLACES Р-22's
+  // --- 5. live crowd split + bet feed during betting (D-62, 2026-09-26 — REPLACES D-22's
   //     "sides hidden before start"): Alex saw the three prototypes and picked "показывать всё
   //     вживую" (crowd split and bet feed visible live during the betting window, like Twitch
-  //     Predictions), superseding Р-22's "no positions/crowd fields until the round starts". The
+  //     Predictions), superseding D-22's "no positions/crowd fields until the round starts". The
   //     BETTING-phase DTO now DELIBERATELY carries the live aggregate (upStake/downStake/
   //     upCount/downCount/majorityDirection/majorityLeverage) and a capped, newest-first bet feed
   //     (recentBets) — verify that shape directly, that the aggregate reflects the bets just
@@ -143,7 +143,7 @@ async function main() {
     const hasLiveAggregate =
       "upStake" in betting && "downStake" in betting && "upCount" in betting && "downCount" in betting;
     check(
-      "live split pre-start: BETTING DTO carries upStake/downStake/upCount/downCount (Р-62)",
+      "live split pre-start: BETTING DTO carries upStake/downStake/upCount/downCount (D-62)",
       hasLiveAggregate,
       JSON.stringify(Object.keys(betting)),
     );
@@ -161,25 +161,25 @@ async function main() {
       Array.isArray(betting.recentBets) &&
       players.some((p) => betting.recentBets.some((b) => b.player.playerId === p.playerId));
     check(
-      "live feed pre-start: recentBets includes at least one of this run's bets (Р-62, was hidden under Р-22)",
+      "live feed pre-start: recentBets includes at least one of this run's bets (D-62, was hidden under D-22)",
       feedHasOtherPlayersBets,
       `recentBets.length=${betting.recentBets?.length}`,
     );
   } catch (e) {
     fail("live split/feed pre-start", e);
   }
-  // publicProfile itself is untouched by Р-62 (it's still only ever past, settled rounds, Р-29) —
+  // publicProfile itself is untouched by D-62 (it's still only ever past, settled rounds, D-29) —
   // the still-open round's own live feed is a separate surface (recentBets/betFeed above), so this
   // assertion keeps its original meaning and still holds.
   try {
     const otherView = await players[1].rpc("publicProfile", players[0].playerId);
     const leaksCurrentRound = otherView.history.some((h) => h.roundId === roundId);
-    check("publicProfile still never lists the still-open round (Р-29, unaffected by Р-62)", !leaksCurrentRound);
+    check("publicProfile still never lists the still-open round (D-29, unaffected by D-62)", !leaksCurrentRound);
   } catch (e) {
     fail("publicProfile cross-check", e);
   }
 
-  // --- 6. wait for the round to start running, then settle (Р-19 + Р-46's 3-min HOURLY) ---
+  // --- 6. wait for the round to start running, then settle (D-19 + D-46's 3-min HOURLY) ---
   const now0 = Date.now();
   log(`waiting for round ${roundId} to start running (server-side boundary at endMs=${bettingEndMs})…`);
   let phase = "BETTING";
@@ -200,7 +200,7 @@ async function main() {
   }
   check("round transitioned BETTING -> RUNNING", phase === "RUNNING", `after ${Math.round((Date.now() - now0) / 1000)}s`);
 
-  // Revealed at round start (Р-22): positions[] and crowd should now be visible.
+  // Revealed at round start (D-22): positions[] and crowd should now be visible.
   let runningView;
   try {
     runningView = await players[0].rpc("round", roundId);
@@ -260,7 +260,7 @@ async function main() {
     }
   }
 
-  // --- 8. results.json hash (Р-41/FIXED INTERFACE (2)) — poll a little: resultsHash is attached
+  // --- 8. results.json hash (D-41/FIXED INTERFACE (2)) — poll a little: resultsHash is attached
   //     only once the oracle spend carrying it is queued server-side, which can lag settlement
   //     by a tick or two. ---
   let resultsHash = settled.resultsHash ?? null;

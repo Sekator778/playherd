@@ -3,8 +3,8 @@
  * round page. Pure parts only - the model (what the card says), the drawing (onto a 2D context handed in) and the sharing steps (the browser's
  * share sheet when it takes the picture, otherwise a download and a copied link) - so each is tested without a browser.
  *
- * Rules the card keeps: a loss is shared as easily as a win and is worded as plainly (Р-51, Р-90 is about OTHER players' pages: this is the
- * player's own result, sent by the player); the money is PLAY; no prizes, income or prices (Р-89, Р-103); nothing is sent anywhere by the app
+ * Rules the card keeps: a loss is shared as easily as a win and is worded as plainly (D-51, D-90 is about OTHER players' pages: this is the
+ * player's own result, sent by the player); the money is PLAY; no prizes, income or prices (D-89, D-103); nothing is sent anywhere by the app
  * itself - the player presses "Share" and picks the place. No server-side og:image (decision D-11).
  */
 import type { BetMode, Direction } from "../api/contract";

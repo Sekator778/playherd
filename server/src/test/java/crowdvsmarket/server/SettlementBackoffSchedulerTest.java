@@ -243,7 +243,7 @@ class SettlementBackoffSchedulerTest extends LiveGameTestBase {
     }
 
     /**
-     * Р-107: the settlement is the event in the journal; a database that is down does not stop it. The round is settled for the game (the
+     * D-107: the settlement is the event in the journal; a database that is down does not stop it. The round is settled for the game (the
      * balances are the engine's); its result rows follow when the database answers again (the background retry), and nothing is rebuilt.
      */
     @Test

@@ -1,5 +1,5 @@
 /**
- * The "All fees" table (Р-102, `docs/research/fee_display_venues_2026-10-18.md` §4): for each market and round length, the herd fee as a share
+ * The "All fees" table (D-102, `docs/research/fee_display_venues_2026-10-18.md` §4): for each market and round length, the herd fee as a share
  * of the stake at x3, x10, x25 and the market's own highest leverage for a stake up to 250 PLAY.
  *
  * Nothing here is a fee of its own: `r_m` (`MarketSeriesDto.herdFeeBp`), `k` (`feeFactor`), the cap (`maxLeverage`) and the shared rules (the network fee, the guard,

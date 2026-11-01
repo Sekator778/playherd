@@ -21,7 +21,7 @@ import java.util.Objects;
 /**
  * Предложение (contract.ts explicitly flags {@code holdCapital}/{@code antiCrowdCapital} as
  * such — "no HoldAccount/AntiCrowdAccount class exists in engine/ yet"): the two comparison
- * lines on a market's crowd chart (Р-26), computed alongside that market's {@link CrowdAccount}
+ * lines on a market's crowd chart (D-26), computed alongside that market's {@link CrowdAccount}
  * rather than inside it, one point appended per resolved round (any interval), same order and
  * same count as {@code crowdAccount.history()} — both are driven from the exact same
  * {@code RoundResolved} event stream (live or replayed), so index {@code i} here always lines up
@@ -39,9 +39,9 @@ import java.util.Objects;
  *       never re-trades.
  *   <li><b>"анти-толпа"</b>: "тот же счёт, всегда против большинства" — same starting capital,
  *       same 10%-of-capital margin sizing and same leverage as the real crowd trade that round
- *       (Р-14), but the opposite direction; simulated exactly like {@link CrowdAccount} itself
+ *       (D-14), but the opposite direction; simulated exactly like {@link CrowdAccount} itself
  *       (through {@link ExecutionAdapter}, opened with the market's {@link MarketSpec}). No trade
- *       on a round the real crowd account also did not trade (tie/no bets, Р-5).
+ *       on a round the real crowd account also did not trade (tie/no bets, D-5).
  * </ul>
  */
 public final class ComparisonAccounts {

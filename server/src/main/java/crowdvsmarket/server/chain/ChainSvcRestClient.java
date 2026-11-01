@@ -91,7 +91,7 @@ public interface ChainSvcRestClient {
     @Produces(MediaType.APPLICATION_JSON)
     OracleStatusResponse oracleStatus(@HeaderParam("Authorization") String authorization);
 
-    // --- Р-53: real on-chain PLAY withdraw/deposit (FIXED INTERFACE, /v1/play/*) ---
+    // --- D-53: real on-chain PLAY withdraw/deposit (FIXED INTERFACE, /v1/play/*) ---
 
     record PlayWithdrawalRequest(String requestId, String toAddress, long amountMojos) {
     }

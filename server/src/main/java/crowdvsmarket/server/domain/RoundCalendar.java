@@ -23,7 +23,7 @@ import jakarta.inject.Inject;
  * is the first-ever-boot instant, which is also what anchors {@code ReplayRoundPrices}' virtual
  * clock. {@link #firstWindow} is the window starting exactly at the origin.
  *
- * <p>Р-19's "always one running + one open [for betting] round per series" is <b>not</b>
+ * <p>D-19's "always one running + one open [for betting] round per series" is <b>not</b>
  * recomputed here from wall-clock {@code now} on every read (naive
  * {@code RoundClock.windowContaining(interval, now, ...)} would, right at a boundary, race
  * against the scheduler that has not resolved the elapsed round yet) — see {@link RoundProgress},

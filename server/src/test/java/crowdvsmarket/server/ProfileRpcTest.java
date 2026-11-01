@@ -23,7 +23,7 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 
 /**
- * Profiles (Р-71): {@code PublicProfileDto.streak} — wins in a row over ALL of a player's settled rounds,
+ * Profiles (D-71): {@code PublicProfileDto.streak} — wins in a row over ALL of a player's settled rounds,
  * newest first, a flat round transparent, a cancelled round not a round — and {@code
  * ProfileRoundEntryDto.durationSec}, the real length of the round, on the profile history and on {@code
  * unseenResults}. Rounds are really played through {@code scheduler.tick(now)} with scripted prices; the

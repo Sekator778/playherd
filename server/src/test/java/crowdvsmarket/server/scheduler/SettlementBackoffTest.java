@@ -89,7 +89,7 @@ class SettlementBackoffTest {
         assertThat(backoff.waiting(SERIES, W1, 10_500L + SettlementBackoff.delayMs(2), true)).isFalse();
     }
 
-    // ------------------------------------------------------------------ the instant a round is let go from a silent exchange (Р-77)
+    // ------------------------------------------------------------------ the instant a round is let go from a silent exchange (D-77)
 
     @Test
     void theBackoffNeverWaitsPastTheInstantAWindowIsLetGoAt() {

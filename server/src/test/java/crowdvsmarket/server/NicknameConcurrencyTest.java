@@ -62,7 +62,7 @@ class NicknameConcurrencyTest extends LiveGameTestBase {
                 rs -> rs.getString("nickname"), playerId));
     }
 
-    // Р-107: a nickname is an event of the journal and a row the projector writes afterwards; the old test here held the command between its
+    // D-107: a nickname is an event of the journal and a row the projector writes afterwards; the old test here held the command between its
     // UPDATE and its commit, which no longer exist. The rebuild that meets a nickname the projector has not written yet is
     // JournalCrashTest#aRebuildSeesANicknameTheProjectorHasNotWrittenYet.
 

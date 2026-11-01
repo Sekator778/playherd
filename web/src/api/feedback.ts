@@ -1,5 +1,5 @@
 /**
- * In-app feedback (Р-81, `docs/product/ux_spec.md` §2 "Feedback strip and form"): everything about it that is not
+ * In-app feedback (D-81, `docs/product/ux_spec.md` §2 "Feedback strip and form"): everything about it that is not
  * drawing — what is sent, how a failure is worded, and what this browser remembers. One message in one box: no
  * email, no name; the server adds the country (from the request's IP address, which it does not keep) and the player
  * id when someone is signed in, the browser adds what only it knows (time zone, language, which screen, which build).

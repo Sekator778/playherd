@@ -47,7 +47,7 @@ class FabricatedJournalRebuildTest extends LiveGameTestBase {
                 throw new IllegalStateException(e);
             }
         });
-        journal.reimportFromTableForTests(); // Р-107: the fabricator fills the table, as an old server's; the first start imports it into the journal
+        journal.reimportFromTableForTests(); // D-107: the fabricator fills the table, as an old server's; the first start imports it into the journal
         return result;
     }
 

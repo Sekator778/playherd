@@ -20,12 +20,12 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The public "счёт толпы" (crowd account, Р-5, Р-14, Р-17): one paper-USD position per round,
+ * The public "счёт толпы" (crowd account, D-5, D-14, D-17): one paper-USD position per round,
  * opened on the majority side of that round's player bets and sized as 10% of the account's own
- * running capital — entirely independent of player balances (Р-5: "на балансы игроков не
+ * running capital — entirely independent of player balances (D-5: "на балансы игроков не
  * влияет", it is a display/scoreboard account, not something players pay into or out of).
  *
- * <p>One account per market (Р-69): it trades its {@link MarketSpec}'s market, with that market's
+ * <p>One account per market (D-69): it trades its {@link MarketSpec}'s market, with that market's
  * maintenance margin rate and leverage cap. The constructors without a spec are the BTC account,
  * as before.
  *
@@ -34,16 +34,16 @@ import java.util.Objects;
  */
 public final class CrowdAccount {
 
-    /** Starting paper capital (Р-17). */
+    /** Starting paper capital (D-17). */
     public static final BigDecimal STARTING_CAPITAL = new BigDecimal("100000.00");
-    /** Share of current capital risked as margin each round (Р-17). */
+    /** Share of current capital risked as margin each round (D-17). */
     public static final BigDecimal MARGIN_SHARE_OF_CAPITAL = new BigDecimal("0.10");
 
     private static final String CROWD_USER_ID = "crowd";
     private static final BigDecimal ZERO_MONEY = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
     /** One round's crowd-account outcome. {@code traded=false} (all other fields {@code null}) for
-     * a tie or no positions (Р-5). */
+     * a tie or no positions (D-5). */
     public record RoundResult(
             String roundId,
             boolean traded,
@@ -72,7 +72,7 @@ public final class CrowdAccount {
     /**
      * Task item 7: same account, executed through an explicit {@link ExecutionAdapter} instead of
      * always the default {@link PaperTradingAdapter} — e.g. a future caller that wants the crowd
-     * account's majority-side trade actually placed on a real exchange (Р-38+, out of scope for
+     * account's majority-side trade actually placed on a real exchange (D-38+, out of scope for
      * this task) constructs one with {@code new CrowdAccount(startingCapital, hyperliquidAdapter)}
      * instead. {@link #CrowdAccount(BigDecimal)}/{@link #CrowdAccount()} are unchanged and still
      * default to paper trading, so every existing caller keeps its exact prior behavior.
@@ -82,7 +82,7 @@ public final class CrowdAccount {
     }
 
     /**
-     * The crowd account of {@code spec}'s market (Р-69): positions open through
+     * The crowd account of {@code spec}'s market (D-69): positions open through
      * {@code executionAdapter.openPosition(spec, …)} and the stake-weighted leverage is clamped to
      * the market's own cap, so a 25x market never produces a 40x crowd position. The shorter
      * constructors are this one with {@link MarketSpec#BTC}.
@@ -102,7 +102,7 @@ public final class CrowdAccount {
         return capital;
     }
 
-    /** Capital after every round processed so far, oldest first — the source for the "толпа против рынка" chart (Р-17). */
+    /** Capital after every round processed so far, oldest first — the source for the "толпа против рынка" chart (D-17). */
     /** Puts a saved state into a fresh account (architecture plan F5: a snapshot): its capital and its rounds so far. */
     public void restore(BigDecimal savedCapital, List<RoundResult> savedHistory) {
         if (!history.isEmpty()) {
@@ -118,10 +118,10 @@ public final class CrowdAccount {
 
     /**
      * Computes and applies this round's crowd trade from the round's player bets: majority side
-     * by SUM OF STAKES (Р-5), leverage = stake-weighted average of the majority side, rounded
-     * HALF_UP and clamped to [2, the market's cap] — [2,40] for BTC (Р-14), margin = 10% of
+     * by SUM OF STAKES (D-5), leverage = stake-weighted average of the majority side, rounded
+     * HALF_UP and clamped to [2, the market's cap] — [2,40] for BTC (D-14), margin = 10% of
      * current capital, entered at {@code openPrice} and monitored for liquidation across
-     * {@code path} exactly like a player position (Р-8, reusing {@code PositionSimulator}). A tie
+     * {@code path} exactly like a player position (D-8, reusing {@code PositionSimulator}). A tie
      * (including zero bets on both sides) makes no trade.
      */
     public RoundResult processRound(String roundId, Collection<Bet> bets, BigDecimal openPrice, List<Candle> path) {
@@ -195,13 +195,13 @@ public final class CrowdAccount {
         }
         int cmp = upStake.compareTo(downStake);
         if (cmp == 0) {
-            return null; // tie, including 0 vs 0 (no bets) -> no trade, Р-5
+            return null; // tie, including 0 vs 0 (no bets) -> no trade, D-5
         }
         return cmp > 0 ? new Majority(Direction.UP, upBets) : new Majority(Direction.DOWN, downBets);
     }
 
     /** Stake-weighted average leverage of the majority side, HALF_UP to the nearest integer, clamped
-     * to [2, the market's cap] — [2,40] for BTC (Р-14). */
+     * to [2, the market's cap] — [2,40] for BTC (D-14). */
     private static int weightedLeverage(List<Bet> sideBets, MarketSpec spec) {
         BigDecimal weightedSum = BigDecimal.ZERO;
         BigDecimal totalStake = BigDecimal.ZERO;

@@ -2,7 +2,7 @@
  * The demo's simulated clock, the mock's round-window math, and the ONE place a round id is built
  * or taken apart.
  *
- * `the decision log` Р-35: "фронт разрабатывается параллельно с бэкендом, сначала на
+ * `the decision log` D-35: "фронт разрабатывается параллельно с бэкендом, сначала на
  * тестовых данных". Round windows here mirror `RoundClock`/`RoundWindow`
  * (`engine/src/main/java/crowdvsmarket/engine/round/`) — UTC-aligned, no calendar/DST
  * (`round_engine_design.md` §4.3) — hourly rounds on the hour, daily rounds at 00:00 UTC.

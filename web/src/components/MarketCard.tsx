@@ -14,7 +14,7 @@ import { formatAgo, formatStartsIn, formatTimeLeft, trend, TREND_GLYPH } from ".
 import { backupPriceNote, backupPriceOf, crowdSplitOf, herdSideOf, isOpenMarket, kickoffOf, leadSeries, oddsMarketPhrase, subtitleParts } from "./marketModel";
 import "./MarketCard.css";
 
-/** The live crowd split (Р-62) as a slim UP/DOWN bar with its percentages and the player count — the
+/** The live crowd split (D-62) as a slim UP/DOWN bar with its percentages and the player count — the
  *  lobby card's answer to "where is the herd going?" without opening the room. Stake-weighted, like the
  *  arena; an empty round says so instead of showing an invented 50/50. */
 export function CrowdSplitBar({
@@ -65,7 +65,7 @@ export function CrowdSplitBar({
   );
 }
 
-/** The herd badge — the market's own crowd account (Р-5, Т-6) in one chip, signed and arrowed so the
+/** The herd badge — the market's own crowd account (D-5, Т-6) in one chip, signed and arrowed so the
  *  colour is never the only signal. A market where the crowd has not traded yet says so instead of a "0.0%". */
 export function HerdBadge({ market }: { market: MarketDto }) {
   const t = useT();
@@ -124,7 +124,7 @@ interface MarketCardProps {
 }
 
 /**
- * A lobby market card (Р-69) — what the Polymarket-style list needs and then some (Р-71): icon, ticker,
+ * A lobby market card (D-69) — what the Polymarket-style list needs and then some (D-71): icon, ticker,
  * title (for `ODDS` the question and the outcome), the live price (`ODDS` as a percentage) with its 24 h
  * change, the live UP/DOWN split with the player count, the countdown to the close of betting of the
  * shortest series, the herd badge and a favourite star, plus two big buttons that open the room with a
@@ -136,12 +136,12 @@ interface MarketCardProps {
  *
  * Designed states: stale price (kept, dimmed, with its age), no price yet (buttons off — such a round
  * could not settle), closed market (no buttons; the server's own reason when it gave one — `closeReason`,
- * `closedAtMs` — else "Closed — open bets refunded"), and a price that is the BACKUP exchange's (Р-76: the market's
+ * `closedAtMs` — else "Closed — open bets refunded"), and a price that is the BACKUP exchange's (D-76: the market's
  * main exchange has no fresh price): "Kraken price" under the number, with the reason on hover and for a screen reader.
  */
 export function MarketCard({ market, nowMs, favorite, onToggleFavorite, hot = false }: MarketCardProps) {
   const t = useT();
-  // The default view opens the bet sheet over the lobby (Р-98); the Pro view keeps the links into the room and its full slip.
+  // The default view opens the bet sheet over the lobby (D-98); the Pro view keeps the links into the room and its full slip.
   const pro = useProMode();
   const meta = symbolMeta(market.symbol);
   const series = leadSeries(market);

@@ -32,16 +32,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Letting a round go (Р-77) on the scheduler alone, with plain objects around it: the rounds of a series are settled in
+ * Letting a round go (D-77) on the scheduler alone, with plain objects around it: the rounds of a series are settled in
  * order, so a round whose exchange stopped sending prices holds the series — and, when the market's other exchange is alive,
  * it is cancelled with a refund {@code herd.prices.venue-release-after-ms} (two minutes) after its end — or after the start of
- * the server, if that is later: a restart gives the round its two minutes again — instead of an hour after it (Р-23). What this
+ * the server, if that is later: a restart gives the round its two minutes again — instead of an hour after it (D-23). What this
  * class pins is the timing and the conditions; what the cancellation writes (the reason, the exchange kept in the result, the
  * refund) is {@code VenueReleaseTest}, over a database, and what "alive" means is {@code LiveMarketPricesReleaseTest}.
  *
  * <p>Time is the test's: {@code resolveOverdueRounds(market, interval, now)} is called with chosen instants, a tick a
  * second where the second matters. The market's exchange is silent while {@code silent} holds: a settlement of any round of it
- * throws {@link PriceUnavailableException}. The release after the minutes of the source (Р-79) is switched off here, so that
+ * throws {@link PriceUnavailableException}. The release after the minutes of the source (D-79) is switched off here, so that
  * what is pinned is this one rule alone — {@code SourceReleaseSchedulerTest} has the other, and how the two meet.
  */
 class VenueReleaseSchedulerTest {
@@ -94,7 +94,7 @@ class VenueReleaseSchedulerTest {
         when(config.roundDurations()).thenReturn(new RoundDurations(HOUR, DAY));
         when(gate.open()).thenReturn(true);
         when(gameService.firstWindowToResolve(any(), anyLong())).thenAnswer(inv -> inv.getArgument(0));
-        when(gameService.hasPendingBets(any())).thenReturn(true); // a round with a bet: one nobody bet on is skipped at once (Р-79)
+        when(gameService.hasPendingBets(any())).thenReturn(true); // a round with a bet: one nobody bet on is skipped at once (D-79)
         when(gameService.instrumentOf(any(), any())).thenAnswer(inv -> inv.getArgument(0));
         when(gameService.resolveRound(any(), anyLong())).thenAnswer(inv -> {
             RoundWindow window = inv.getArgument(0);
@@ -118,7 +118,7 @@ class VenueReleaseSchedulerTest {
         });
     }
 
-    /** The defaults, with the release after the minutes of the source (Р-79) switched off for every source. */
+    /** The defaults, with the release after the minutes of the source (D-79) switched off for every source. */
     private static PricesConfig venueReleaseOnly() {
         return PricesConfig.defaults().withReleaseAfter(PricesConfig.ReleaseAfter.off());
     }

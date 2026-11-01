@@ -6,8 +6,8 @@ public final class Ledger {
     }
 
     /** {@code inPlay}: additive (bug fix) — the player's total stake currently sitting in bets
-     *  that have not settled yet (the BETTING and RUNNING rounds of both series, Р-19: at most one
-     *  bet per player per round, Р-13) — money already debited from {@code balance} but not yet
+     *  that have not settled yet (the BETTING and RUNNING rounds of both series, D-19: at most one
+     *  bet per player per round, D-13) — money already debited from {@code balance} but not yet
      *  won or lost. */
     public record PlayerAccountDto(String playerId, String balance, String currentSeason, String inPlay,
                                  String withdrawable) {
@@ -21,10 +21,10 @@ public final class Ledger {
                                    long atMs) {
     }
 
-    /** Р-53: {@code toAddress}/{@code chainState}/{@code coinId}/{@code height}/{@code
+    /** D-53: {@code toAddress}/{@code chainState}/{@code coinId}/{@code height}/{@code
      *  failureReason} are additive (not in contract.ts, same "additive" situation documented
      *  elsewhere in this file/{@code Enums}) — real on-chain fields, {@code null} for the
-     *  pre-Р-53 rows this server auto-confirmed before real chain tracking existed. {@code
+     *  pre-D-53 rows this server auto-confirmed before real chain tracking existed. {@code
      *  chainState} is chainsvc's own vocabulary ({@code "submitted"} — this server's own "the
      *  POST was accepted, not yet polled" placeholder — {@code "queued"|"in_flight"|"confirmed"|
      *  "failed"} once actually polled); {@code coinId}/{@code height} are only ever non-null once
@@ -32,7 +32,7 @@ public final class Ledger {
      *  player's ledger" — surfaced here since {@code GameService#withdrawal} is the player's own
      *  ledger view of their withdrawal request).
      *
-     * <p><b>Task item 3 (Р-53 live-verification follow-up, 2026-09-26):</b> {@code coinId} is meant
+     * <p><b>Task item 3 (D-53 live-verification follow-up, 2026-09-26):</b> {@code coinId} is meant
      * to be THIS request's own payout coin (the one actually sent to {@code toAddress}), not
      * chainsvc's internal bookkeeping coin — this server passes through whatever chainsvc reports
      * as-is and does not itself compute or validate it. A direct read of the chain side found
@@ -71,7 +71,7 @@ public final class Ledger {
                                       long requestedAtMs) {
     }
 
-    /** Wave-2 security fix (Р-32/Р-43 pattern; extended wave-3, task item 1, to deposits) —
+    /** Wave-2 security fix (D-32/D-43 pattern; extended wave-3, task item 1, to deposits) —
      *  additive, not in contract.ts: one public, reasoned operator ledger correction (see
      *  {@code GameService#reverseWithdrawal}/{@code #reverseDeposit} / {@code AdminResource}),
      *  listed the same way {@code CancellationDto} lists a round cancellation. {@code delta}

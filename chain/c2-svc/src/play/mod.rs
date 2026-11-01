@@ -1,4 +1,4 @@
-//! PLAY on-chain withdraw/deposit (Р-6, decision Р-53 2026-09-26): real
+//! PLAY on-chain withdraw/deposit (D-6, decision D-53 2026-09-26): real
 //! testnet11 CAT withdrawals (batched treasury spends) and deposits
 //! (confirmed-coin scanning at derived per-player deposit addresses). See
 //! `docs/research/chain_service.md` §13 for the full write-up.

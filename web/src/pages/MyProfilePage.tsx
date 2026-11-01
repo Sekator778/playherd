@@ -4,7 +4,7 @@
  * "Profile" got you a balance and a deposit form, never the player's own nickname/rounds/
  * accuracy/history that the label promised. This page is what the tab now opens: the player's own
  * profile overview (identical content to `ProfilePage mine`, reused as-is, not duplicated) with
- * Wallet moved inside it as a plain in-page sub-tab (`the decision log` Р-59/Р-61's
+ * Wallet moved inside it as a plain in-page sub-tab (`the decision log` D-59/D-61's
  * "не финансовый терминал" — the wallet becomes one section of the player's profile, not the
  * whole tab). `/wallet` itself is untouched and still works as a standalone deep link (header
  * balance pill, profile-menu "Wallet" link, old bookmarks) — this page embeds the exact same
@@ -25,7 +25,7 @@ export function MyProfilePage() {
   const [segment, setSegment] = useState<ProfileSegment>("overview");
 
   if (!player) {
-    // Same copy/pattern as `ProfilePage`'s own `mine && !player` branch (Р-48 — signing in works
+    // Same copy/pattern as `ProfilePage`'s own `mine && !player` branch (D-48 — signing in works
     // from any device, no desktop-only fallback here either).
     return (
       <div className="state-card">
@@ -52,7 +52,7 @@ export function MyProfilePage() {
         <ProfilePage mine />
       ) : (
         <div className="stack" style={{ gap: 16 }}>
-          {/* Р-63: same fact as `WalletPage.tsx`'s standalone copy — plain text, not a sticky
+          {/* D-63: same fact as `WalletPage.tsx`'s standalone copy — plain text, not a sticky
            *  banner, kept here too since this is the same "wallet" section, just reached through
            *  a different tab. */}
           <p className="disclaimer-line">{t("wallet.disclaimer")}</p>

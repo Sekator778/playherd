@@ -35,7 +35,7 @@ function renderRatings(botRatings: (season?: string) => Promise<RatingsDto>) {
   );
 }
 
-describe("Ratings - the tab of the API bots (Р-106)", () => {
+describe("Ratings - the tab of the API bots (D-106)", () => {
   // The page asks for the current month; only Date is faked, so the timers of the page and of userEvent run as usual.
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });

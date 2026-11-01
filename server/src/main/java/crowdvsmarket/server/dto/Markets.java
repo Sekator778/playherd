@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
 
 /**
- * contract.ts §"Markets and categories" (Р-69, Р-70, Р-71; docs/research/markets_architecture.md §8):
+ * contract.ts §"Markets and categories" (D-69, D-70, D-71; docs/research/markets_architecture.md §8):
  * the DTOs of the RPCs {@code markets}, {@code priceSeries}, {@code myPositions} and {@code
  * crowdOverview}, field for field under the names and in the order contract.ts declares them. A field
  * contract.ts types {@code T | null} (or {@code ?: T | null}) is always sent here — as JSON {@code null}
@@ -26,7 +26,7 @@ public final class Markets {
      *  {@code null} when the source gives none. {@code stale}: the last tick is older than the source's
      *  staleness limit (betting stays open). {@code venue}: the exchange the shown price is from when it is not the
      *  market's primary one — {@code "kraken"} for a market whose primary has no fresh tick and whose backup has
-     *  (Р-76) — {@code null} for the primary's price and for a market that has no backup. */
+     *  (D-76) — {@code null} for the primary's price and for a market that has no backup. */
     public record MarketPriceDto(String price, long asOfMs, Double change24h, boolean stale, String venue) {
 
         /** The price of the market's primary exchange. */
@@ -35,7 +35,7 @@ public final class Markets {
         }
     }
 
-    /** One round series of a market. {@code maxLeverage}: the market's leverage cap for this round length (economy stage A, Р-92;
+    /** One round series of a market. {@code maxLeverage}: the market's leverage cap for this round length (economy stage A, D-92;
      *  a bigger stake lowers it, see {@code BetDto.maxLeverageForStake}); {@code herdFeeBp}: {@code r_m}, the herd fee in basis
      *  points of the stake per unit of leverage; {@code feeFactor}: {@code k} of this round length (1 in the 3-minute round, 2.2 in the 15-minute
      *  one, 3.0 in the 15-minute round of an odds market): {@code fee = stake * min(20%, k * r_m * leverage)}. {@code upStake}/{@code downStake}: PLAY staked on each side of the
@@ -68,7 +68,7 @@ public final class Markets {
      * CLOSED}; {@code price}: null until the first tick; {@code series}: one entry per series, shortest
      * first — empty for a market whose rounds are not running (closed, or not yet seeded). {@code source}: the
      * market's primary exchange (or source); {@code backupSource}: the exchange a round moves to when the primary cannot
-     * price its start (Р-76), {@code null} for a market that has none — and the {@code source} of each round
+     * price its start (D-76), {@code null} for a market that has none — and the {@code source} of each round
      * says which of the two it runs on.
      */
     public record MarketDto(String id, Enums.MarketKind kind, String category, String symbol, String title,
@@ -83,9 +83,9 @@ public final class Markets {
     public record StakeTierDto(Long upToPlay, int divisor) {
     }
 
-    /** The economy rules that are the same for every market (Р-102, {@code EconomyRules}): {@code networkFeePlay}: the flat network fee
+    /** The economy rules that are the same for every market (D-102, {@code EconomyRules}): {@code networkFeePlay}: the flat network fee
      *  per bet, PLAY; {@code herdFeeGuardPercent}: the herd fee never takes more than this percent of the stake; {@code stakeTiers}:
-     *  smallest stake first; {@code fixedPlatformFeePercent} (Р-106): the platform fee of a fixed-payout bet, percent of the stake, rounded up to
+     *  smallest stake first; {@code fixedPlatformFeePercent} (D-106): the platform fee of a fixed-payout bet, percent of the stake, rounded up to
      *  0.001 PLAY, on top of {@code networkFeePlay}. The per-market part ({@code herdFeeBp}, {@code feeFactor}, {@code maxLeverage}) is on each series. */
     public record EconomyRulesDto(String networkFeePlay, String herdFeeGuardPercent, List<StakeTierDto> stakeTiers,
                                   String fixedPlatformFeePercent) {
@@ -117,7 +117,7 @@ public final class Markets {
      * {@code entryPrice}, {@code liquidationPrice} and {@code size} are {@code null} in {@code BETTING} and
      * while the opening price of a running round is not known yet; {@code size}: lots, 8 decimals.
      * {@code untilMs}: when the round starts ({@code BETTING}) or ends ({@code RUNNING}). {@code phase}
-     * is only ever {@code BETTING} or {@code RUNNING}. {@code mode} (Р-106): a {@code FIXED} bet has a placeholder {@code leverage},
+     * is only ever {@code BETTING} or {@code RUNNING}. {@code mode} (D-106): a {@code FIXED} bet has a placeholder {@code leverage},
      * and no {@code liquidationPrice} or {@code size}.
      */
     public record MyPositionDto(String marketId, String symbol, String roundId, Enums.Interval interval,

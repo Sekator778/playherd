@@ -53,7 +53,7 @@ beforeEach(() => {
   reloadFavoritesFromStorage();
 });
 
-describe("Lobby — the ribbon of categories (Р-69)", () => {
+describe("Lobby — the ribbon of categories (D-69)", () => {
   it("shows skeletons while the first response is on its way, then a card for every market", async () => {
     renderLobby();
     expect(screen.queryAllByRole("article")).toHaveLength(0);
@@ -272,7 +272,7 @@ describe("Lobby — the card", () => {
     expect(cardOf("ETH")).toHaveTextContent("-1.41%");
   });
 
-  it("UP and DOWN open the bet sheet over the lobby (Р-98); the crowd's side is marked in words", async () => {
+  it("UP and DOWN open the bet sheet over the lobby (D-98); the crowd's side is marked in words", async () => {
     renderLobby();
     await screen.findAllByRole("article");
     const btc = within(cardOf("BTC"));
@@ -472,7 +472,7 @@ describe("Lobby — the card: a sports game, the odds' 24 h change, a closed mar
   });
 });
 
-describe("Lobby — the card: which exchange the price is from (Р-76)", () => {
+describe("Lobby — the card: which exchange the price is from (D-76)", () => {
   /** The card of a market by its id: the new `spot_BTC` and the legacy `BTC` it replaced share a ticker. */
   const cardById = (id: string) => within(document.querySelector<HTMLElement>(`[data-market-id="${id}"]`)!);
 
@@ -644,7 +644,7 @@ describe("Lobby — a poll that fails after a good load", () => {
   });
 });
 
-describe("Lobby — the intro line is off: Р-63 took such lines away on Alex's word, so it is his decision to bring one back (first tester pass, D10)", () => {
+describe("Lobby — the intro line is off: D-63 took such lines away on Alex's word, so it is his decision to bring one back (first tester pass, D10)", () => {
   it("a visitor who has not signed in sees the lobby as it was: no line above the ribbon, while the cards load and after", async () => {
     renderLobbyAs({});
     expect(screen.queryByText(/Call real prices UP or DOWN/i)).not.toBeInTheDocument();

@@ -7,7 +7,7 @@
 //! Written because `operator.play.json` was stale (last written by `issue-play`'s genesis mint)
 //! after a later `c2 send-play --name operator` funded the counterparty wallet, and neither
 //! `cmd_send_play` nor `chain/c2-svc`'s withdrawal publisher itself noticed or fixed that at the
-//! time. Both gaps are closed now (decision Р-53 follow-up, `docs/research/chain_service.md` §13):
+//! time. Both gaps are closed now (decision D-53 follow-up, `docs/research/chain_service.md` §13):
 //! `cmd_send_play` refreshes `<name>.play.json` itself after a successful push, and
 //! `WithdrawalPublisher` self-heals a stale/spent cached coin from the chain at startup and on
 //! every tick (adopting the largest unspent PLAY CAT coin it finds for the treasury key). This

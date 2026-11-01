@@ -1,5 +1,5 @@
 /**
- * The bet sheet's pure rules (Р-98): the stake chips, the three risk levels clamped to what the market and the stake allow, and the plain-words
+ * The bet sheet's pure rules (D-98): the stake chips, the three risk levels clamped to what the market and the stake allow, and the plain-words
  * example ("BTC -1% -> you win +10 ..."). The numbers come from the same liquidation preview the full slip uses; nothing is computed here that the
  * server would not agree with — the payout is stake x boost x the price move (`wave1-log.md`, 2026-10-16), and the wipeout price is the preview's.
  */

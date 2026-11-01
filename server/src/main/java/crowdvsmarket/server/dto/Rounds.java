@@ -25,10 +25,10 @@ public final class Rounds {
     }
 
     /**
-     * {@code feeHerd}, {@code feeNetwork}, {@code maxLeverageForStake}: economy stage A (Р-92) — the two fees charged on top
+     * {@code feeHerd}, {@code feeNetwork}, {@code maxLeverageForStake}: economy stage A (D-92) — the two fees charged on top
      * of {@code stake} when the bet was placed (PLAY, scale 3) and the highest leverage the market allows for this stake in
      * this round length (cap, lowered by the stake tier). All {@code null} for a bet placed before the economy change.
-     * {@code mode} (Р-106): {@code FIXED} for a fixed-payout bet - its {@code leverage} is a placeholder, {@code maxLeverageForStake}
+     * {@code mode} (D-106): {@code FIXED} for a fixed-payout bet - its {@code leverage} is a placeholder, {@code maxLeverageForStake}
      * {@code null}, {@code feeHerd} the platform fee (3% of the stake, rounded up to 0.001), {@code feeNetwork} 0.1 PLAY.
      */
     public record BetDto(String playerId, String roundId, Enums.Direction direction, int leverage, String stake,
@@ -82,7 +82,7 @@ public final class Rounds {
                                     int refundedBetCount) {
     }
 
-    /** Additive (Р-62, web-side counterpart already in contract.ts): one row of
+    /** Additive (D-62, web-side counterpart already in contract.ts): one row of
      *  {@code RoundBetting.recentBets} — a small, capped, newest-first convenience embed of the
      *  live bet feed (see {@code BetFeedEntryDto}/{@code betFeed} RPC below for the full,
      *  cursor-paginated version of the same underlying {@code BetFeed} data). Same identity/
@@ -92,12 +92,12 @@ public final class Rounds {
                                long atMs, @JsonInclude(JsonInclude.Include.NON_NULL) Enums.BetMode mode) {
     }
 
-    /** Additive (Р-62): one row of the public, paginated "who bet what" live feed
+    /** Additive (D-62): one row of the public, paginated "who bet what" live feed
      *  ({@code betFeed} RPC) — a new entry is appended every time a player places OR edits a bet
-     *  (Р-13's "modify before start" shows as a new feed row too, same as a Twitch Predictions
+     *  (D-13's "modify before start" shows as a new feed row too, same as a Twitch Predictions
      *  viewer changing their vote never erases the earlier row). {@code playerDisplayName}/
      *  {@code isBot} are flattened out of {@code PlayerSummaryDto} on purpose — nicknames are
-     *  already public per Р-15/Р-29, and a feed row has no other use for the rest of that DTO
+     *  already public per D-15/D-29, and a feed row has no other use for the rest of that DTO
      *  (wallet address, playerId). {@code seq} is this feed's own monotonic counter (distinct from
      *  {@code oracle_records.seq}), used for {@code betFeed(roundId, sinceSeq)} pagination — unlike
      *  {@link LiveBetDto}'s small newest-first embed, this is the full, cursor-paginated history. */
@@ -105,7 +105,7 @@ public final class Rounds {
                                     Enums.Direction direction, String stake, int leverage, @JsonInclude(JsonInclude.Include.NON_NULL) Enums.BetMode mode) {
     }
 
-    /** Additive (Р-62). {@code entries}: oldest-first among those with {@code seq > sinceSeq},
+    /** Additive (D-62). {@code entries}: oldest-first among those with {@code seq > sinceSeq},
      *  capped at {@code BetFeed.PAGE_SIZE} per call. {@code hasMore=true} means more already-placed
      *  entries exist beyond this page — call again immediately with this page's last entry's
      *  {@code seq} rather than waiting for the next poll tick. */
@@ -114,7 +114,7 @@ public final class Rounds {
     }
 
     /** Additive (task item 1c, FIXED INTERFACE b/c): optional per-round anchor into chainsvc's own
-     *  oracle publication (Р-40/41/47) — {@code state} one of
+     *  oracle publication (D-40/41/47) — {@code state} one of
      *  {@code "queued"|"in_flight"|"confirmed"|"unknown"} (chainsvc's FIXED INTERFACE (b) vocabulary,
      *  see {@code ChainSvcClient.OracleRecordState}); {@code height} only non-null once
      *  {@code state} is {@code "confirmed"}. Web will pick this up later (not edited here). */
@@ -128,14 +128,14 @@ public final class Rounds {
     }
 
     /** {@code upStake}/{@code downStake}/{@code recentBets} match the shape already added to
-     *  contract.ts by the web side (Р-62, "Расклад толпы... видны вживую... как в Twitch
-     *  Predictions", replacing Р-22's "count only" during BETTING) — {@code upCount}/
+     *  contract.ts by the web side (D-62, "Расклад толпы... видны вживую... как в Twitch
+     *  Predictions", replacing D-22's "count only" during BETTING) — {@code upCount}/
      *  {@code downCount}/{@code majorityDirection}/{@code majorityLeverage} are this server's
      *  additive extension of the same live aggregate (the task's full spec: "upStake, downStake,
      *  upCount, downCount, participants [= participantCount], and the crowd's current majority/
      *  leverage preview"). {@code majorityDirection}/{@code majorityLeverage} are both {@code null}
      *  only for a tie (including 0 vs 0) — same tie rule and same stake-weighted-average leverage
-     *  calc (Р-14) as {@link CrowdRoundPositionDto}/{@code CrowdAccount}'s own majority-side
+     *  calc (D-14) as {@link CrowdRoundPositionDto}/{@code CrowdAccount}'s own majority-side
      *  computation, just previewed one phase earlier, before the round has actually opened a
      *  position. */
     public record RoundBetting(String roundId, RoundWindowDto window, String marketId, String asset,

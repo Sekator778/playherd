@@ -327,7 +327,7 @@ const overviewRow = obj<CrowdOverviewDto["markets"][number]>({
 });
 export const crowdOverview = obj<CrowdOverviewDto>({ totalCapital: usd, totalStartingCapital: usd, returnPct: num, markets: arr(overviewRow) });
 
-/** Р-106: an API bot as its owner sees it; `keyHint` is `herd_...` and four characters, `null` once the key is revoked. */
+/** D-106: an API bot as its owner sees it; `keyHint` is `herd_...` and four characters, `null` once the key is revoked. */
 export const apiBot = obj<ApiBotDto>({ playerId: nonEmptyStr, nickname: nonEmptyStr, keyHint: nullable(nonEmptyStr), keyActive: bool, createdAtMs: int });
 /** The key is sent in full here and nowhere else: `herd_` and 43 characters of the URL-safe alphabet. */
 export const apiBotKey = obj<ApiBotKeyDto>({

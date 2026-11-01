@@ -27,7 +27,7 @@ import type { ShareResultInput } from "../components/shareCard";
 import { TrophyIcon, CrackIcon, MinusDiscIcon, EqualsDiscIcon, SpeakerOnIcon, SpeakerMuteIcon } from "../components/icons";
 
 // Tier tables — result-moment.md §2. Durations in ms.
-// T1 raised 2026-09-26 (Р-59 follow-up, Alex: full-stake WIN/LOSS on Android "не заметил
+// T1 raised 2026-09-26 (D-59 follow-up, Alex: full-stake WIN/LOSS on Android "не заметил
 // вообще") — T1's own coins/sparks/duration were still each individually less than T2's (kept
 // that way below), but a ~1s total on-screen time made even a full-attention viewer likely to
 // miss it; see result-moment.md §2 changelog for the reasoning and the full before/after table.
@@ -71,7 +71,7 @@ function useIsOdds(event: Pick<ResultEvent, "marketId" | "marketKind">): boolean
   return (event.marketKind ?? byId.get(event.marketId)?.kind) === "ODDS";
 }
 
-/** The round settled on its market's BACKUP exchange (Р-76: a round runs entirely on one exchange, chosen when it starts):
+/** The round settled on its market's BACKUP exchange (D-76: a round runs entirely on one exchange, chosen when it starts):
  *  the event carries the exchange the round ran on (a live settlement does; a history row does not), the market list says
  *  which exchange is the main one. `null` otherwise — a result on the main exchange says nothing of any. */
 function useBackupRound(event: Pick<ResultEvent, "marketId" | "venue">, t: TFn): BackupRound | null {
@@ -289,7 +289,7 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             {seriesLabel ? ` · ${tr("results.lengthRound", { length: seriesLabel })}` : ""}
           </p>
         )}
-        {/* What came back, next to the signed result (Р-98): a loss at x100 reads as a small difference in the balance otherwise. The headline
+        {/* What came back, next to the signed result (D-98): a loss at x100 reads as a small difference in the balance otherwise. The headline
             stays the net result; this is the stake and what is returned of it (the payout), never a replacement for the sign. */}
         {event.stakePlay > 0 && !event.midRound && (
           <p className="result-card__returned mono">
@@ -297,15 +297,15 @@ function SingleResultCard({ event, onDismiss }: { event: ResultEvent; onDismiss:
             {event.feesPlay != null && event.feesPlay > 0 && <span className="faint result-card__fees"> · {tr("results.fees", { fees: formatPlayAmount(event.feesPlay) })}</span>}
           </p>
         )}
-        {/* Р-76: a round that ran on the backup exchange says whose prices settled it — one quiet line, under the figures. */}
+        {/* D-76: a round that ran on the backup exchange says whose prices settled it — one quiet line, under the figures. */}
         {backupRound && event.kind !== "LIQUIDATION" && (
           <p className="result-card__venue">
             {tr("results.venue", { name: backupRound.name, primary: backupRound.primaryName })}
           </p>
         )}
-        {/* Р-50 / Р-7, said plainly while it is true: liquidated NOW, not at the end of the round. And the one rule
+        {/* D-50 / D-7, said plainly while it is true: liquidated NOW, not at the end of the round. And the one rule
             that can still change it, said just as plainly: a round that gets cancelled refunds every bet in it,
-            liquidated ones too (Р-23) — so "lost" is what happens when the round settles, which it has not yet. */}
+            liquidated ones too (D-23) — so "lost" is what happens when the round settles, which it has not yet. */}
         {event.kind === "LIQUIDATION" && event.midRound && (
           <p className="result-card__note">
             <Rich text={tr("results.midRound")} />

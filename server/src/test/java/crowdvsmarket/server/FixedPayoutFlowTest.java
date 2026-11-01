@@ -28,7 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-106, docs/product/fixed_payout_rules.md through the service, with the economy on ({@link EconomyProfile}: TREASURY about 1 000 000
+ * D-106, docs/product/fixed_payout_rules.md through the service, with the economy on ({@link EconomyProfile}: TREASURY about 1 000 000
  * PLAY, so the fixed-mode limits - 0.1% of it per side, 0.4% for the crypto bucket - are a thousand and four thousand PLAY): the bet, the
  * journal event, the settlement by the open and the close, the history row, the limits and their message, the refusal on odds markets, a
  * round that mixes both modes, and the replay of the journal.

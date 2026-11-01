@@ -78,7 +78,7 @@ class ResultsHasherTest {
         assertThat(result.json()).contains("\"positions\":[]");
     }
 
-    // --- Markets (Р-69, docs/research/markets_architecture.md §6): BTC stays byte for byte what it was,
+    // --- Markets (D-69, docs/research/markets_architecture.md §6): BTC stays byte for byte what it was,
     // every other market adds the root key "market". The literals below were produced by the
     // PRE-markets ResultsHasher (git show 2d3e4e9:server/.../ResultsHasher.java, compiled on its own;
     // the file is unchanged since 0bc30ee), so they pin "published hashes stay verifiable", not just "the new code agrees with itself". ---
@@ -160,7 +160,7 @@ class ResultsHasherTest {
                 + "\"status\":\"CANCELLED\"}");
     }
 
-    // --- Venues (Р-76): a round of a market that has a backup exchange names the exchange it ran on in the root key
+    // --- Venues (D-76): a round of a market that has a backup exchange names the exchange it ran on in the root key
     // "venue", which sorts after "status"; a round without one is byte for byte what it was. The two literals below are
     // also pinned in tools/verify-oracle/test_verify_oracle.py (GOLDEN_VENUE_*), which hashes them the way the chain's
     // resultsHash is checked: one byte string for the Java hasher and the Python verifier. ---

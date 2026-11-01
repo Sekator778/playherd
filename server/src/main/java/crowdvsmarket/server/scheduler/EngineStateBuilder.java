@@ -115,7 +115,7 @@ public class EngineStateBuilder {
         final EventApplier applier = EventApplier.over(hub, betFeed);
         final List<GameEvent.RoundResolved> unwrittenEvents = new ArrayList<>();
         final List<RoundReport> unwrittenReports = new ArrayList<>();
-        /** Cancelled rounds whose result row the table lacks (Р-107), with the bets each held when it was cancelled. */
+        /** Cancelled rounds whose result row the table lacks (D-107), with the bets each held when it was cancelled. */
         final List<GameEvent.RoundCancelled> unwrittenCancelled = new ArrayList<>();
         final List<Integer> unwrittenCancelledBets = new ArrayList<>();
         long snapshotSeq;
@@ -215,7 +215,7 @@ public class EngineStateBuilder {
                 cancellations.repairRow(market, cancelled, state.unwrittenCancelledBets.get(i));
             }
         }
-        // Р-107: the rows of withdrawal requests are written after their events are durable; what a stop left out is written from the engine
+        // D-107: the rows of withdrawal requests are written after their events are durable; what a stop left out is written from the engine
         reconciler.withdrawalRows(hub.ledger().exportState().withdrawals(), players);
         cancelRoundsOfClosedMarkets(applier, hub, markets, nowMs);
         hub.ledgerOutbox().endReplay();

@@ -45,7 +45,7 @@ const NOTE_KEY: Record<Exclude<ShareEnd, "cancelled">, "share.shared" | "share.s
 
 /**
  * "Share" on a settled result of the player's own: draws the card on the client, then hands the picture and the link to the browser's share
- * sheet, or downloads the picture and copies the link. A loss has the same button as a win (Р-51). Nothing happens until the player presses it.
+ * sheet, or downloads the picture and copies the link. A loss has the same button as a win (D-51). Nothing happens until the player presses it.
  */
 export function ShareResultButton({
   result,

@@ -1,5 +1,5 @@
 /**
- * Real Sage sign-in over WalletConnect v2 (Р-4/Р-55, `docs/research/week1_wallet_auth.md`
+ * Real Sage sign-in over WalletConnect v2 (D-4/D-55, `docs/research/week1_wallet_auth.md`
  * §1.1–§1.2 and its "Реализация" appendix below for the parts that proposal left open).
  *
  * Needs a Reown Cloud `projectId` — Alex's registration is in progress but not usable by this
@@ -14,10 +14,10 @@
  *   file is Reown's own **"WalletConnect Community License Agreement"**
  *   (`github.com/WalletConnect/walletconnect-monorepo`, `packages/sign-client/LICENSE.md`,
  *   "Release Date: 20 August 2025", read via `gh api` at HEAD `f2ec89dd` today) — **not**
- *   Apache-2.0/MIT like this project's own code (Р-36) or every other dependency here. That's
+ *   Apache-2.0/MIT like this project's own code (D-36) or every other dependency here. That's
  *   fine: it's a dependency used under its own terms, not code of ours. Terms that actually bind
  *   us: (1) royalty-free below **2,500,000 RPCs/month or 500 MAU/month** (§3) — the closed alpha
- *   (Р-42: "5–10 человек по ссылке") is nowhere near either, revisit before any wider opening;
+ *   (D-42: "5–10 человек по ссылке") is nowhere near either, revisit before any wider opening;
  *   (2) must connect to Reown's own relay, never a self-hosted one (§2.b) — exactly what
  *   `RELAY_URL` below does, the same default Sage itself uses (`week1_wallet_auth.md` §1.1); (3)
  *   requires the notice **"Portions © 2025 Reown, Inc. All Rights Reserved"** wherever the
@@ -151,7 +151,7 @@ async function getClient(projectId: string): Promise<MinimalSignClient> {
     // Disconnect/expiry handling (task item 2): Sage disconnecting from its own side (or the
     // session simply expiring) fires this event without us ever calling `disconnect` — if that
     // was the last remaining chia session, the persisted "sign in with this address" hint
-    // (Р-57) is stale and must not silently keep being offered on the next connect attempt.
+    // (D-57) is stale and must not silently keep being offered on the next connect attempt.
     client.on("session_delete", () => {
       if (!client.session.getAll().some(hasChiaChain)) clearLastAddress();
     });
@@ -186,7 +186,7 @@ async function ensureSession(client: MinimalSignClient, onPairingUri: (uri: stri
  * `wallet/testWallet.ts`'s `signTestWalletMessage`'s "caller supplies the exact challenge text"
  * shape, since both feed the same `Api.authVerify` call in `ConnectWalletModal.tsx`.
  *
- * Address identity (Р-57): a RETURNING player (this browser has a `lastAddress` persisted from a
+ * Address identity (D-57): a RETURNING player (this browser has a `lastAddress` persisted from a
  * previous successful sign-in, `rememberSageAddress`) always signs with THAT SAME address —
  * passed straight to `chia_signMessageByAddress`, never re-derived — even if Sage's current
  * receive address has since rotated (Sage addresses rotate; the player's identity must not). A

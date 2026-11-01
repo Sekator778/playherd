@@ -32,7 +32,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Р-81: {@code submitFeedback} over real HTTP — the contract the web client codes against
+ * D-81: {@code submitFeedback} over real HTTP — the contract the web client codes against
  * (docs/research/server_design.md §22) — and the operator's {@code GET /api/admin/feedback}.
  *
  * <p>The application runs as it does behind nginx: {@code X-Forwarded-For} is honoured from the loopback peer a test

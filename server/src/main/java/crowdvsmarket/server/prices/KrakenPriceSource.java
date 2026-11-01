@@ -29,7 +29,7 @@ import org.jboss.logging.Logger;
 
 /**
  * Kraken spot, USD pairs ({@code BTC/USD} …): the mid of the best bid and ask, straight from the exchange — the
- * <b>backup venue</b> of BTC, ETH, SOL, XRP and DOGE (Р-76: a round runs entirely on one exchange; Coinbase is their
+ * <b>backup venue</b> of BTC, ETH, SOL, XRP and DOGE (D-76: a round runs entirely on one exchange; Coinbase is their
  * primary, Kraken answers when Coinbase cannot). The formats below were read live 2026-10-03
  * (docs/research/primary_sources.md §2.3).
  *

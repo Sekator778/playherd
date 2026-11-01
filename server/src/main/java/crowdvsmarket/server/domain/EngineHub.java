@@ -15,12 +15,12 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Holds the live, in-memory engine state: ONE shared {@link LedgerBook} — a player has one PLAY
  * balance behind a bet on any market (Т-5: "Один баланс PLAY на игрока") and the ratings/seasons
- * are common to every market and series (Т-7, Р-30) — and, per market (docs/research/
+ * are common to every market and series (Т-7, D-30) — and, per market (docs/research/
  * markets_architecture.md §4 п.1, Т-6): one {@link CrowdAccount} (its own $100 000 and chart,
- * Р-17/Р-25), the market's two {@link GameEngine}s (HOURLY and DAILY, each with its own private
+ * D-17/D-25), the market's two {@link GameEngine}s (HOURLY and DAILY, each with its own private
  * {@code BetBook}, per round_engine_design.md §1: "construct one GameEngine per series" — both
  * share that crowd account and the ledger) and the market's {@link ComparisonAccounts} (the
- * "hold the asset" and "anti-crowd" lines, Р-26).
+ * "hold the asset" and "anti-crowd" lines, D-26).
  *
  * <p>A market gets its engines through {@link #ensureMarket}: for every market in the registry
  * (closed ones too — their history replays) at a rebuild, and for a newly listed one at listing

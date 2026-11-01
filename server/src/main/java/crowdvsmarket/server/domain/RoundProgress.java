@@ -11,7 +11,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * The authoritative "next window to resolve" per series (Р-19) — deliberately not recomputed from
+ * The authoritative "next window to resolve" per series (D-19) — deliberately not recomputed from
  * wall-clock {@code now} on every read (see {@link RoundCalendar}'s javadoc for the boundary race
  * that would cause). A series is a market plus an interval (docs/research/markets_architecture.md
  * §4 п.1): the key is {@code (marketId, Interval)}. {@code RoundSchedulerService} is the only

@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
-  it("loads the Lobby: a ribbon of categories and a card for every market (Р-69), each with its own live numbers", async () => {
+  it("loads the Lobby: a ribbon of categories and a card for every market (D-69), each with its own live numbers", async () => {
     renderApp("/");
     expect(await screen.findByRole("heading", { level: 1, name: "Markets" })).toBeInTheDocument();
     // 19 markets in the mock, one of which (the closing ODDS market) is still open at load.
@@ -61,7 +61,7 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     expect(screen.getAllByRole("article")).toHaveLength(4);
   });
 
-  it("a card's DOWN button opens the bet sheet for that market and side, over the lobby (Р-98)", async () => {
+  it("a card's DOWN button opens the bet sheet for that market and side, over the lobby (D-98)", async () => {
     const user = userEvent.setup();
     renderApp("/");
     const eth = await screen.findByRole("article", { name: /^ETH/ });
@@ -164,7 +164,7 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     renderApp("/stats");
     expect(await screen.findByRole("heading", { name: "Crowd account vs the market" })).toBeInTheDocument();
     expect(await screen.findByLabelText("Market")).toHaveValue("BTC");
-    // BTC is priced by Coinbase now, with Kraken behind it (Р-76) — the mock's catalogue says what the server's does
+    // BTC is priced by Coinbase now, with Kraken behind it (D-76) — the mock's catalogue says what the server's does
     const line = await screen.findByText(/Price from Coinbase/);
     expect(line).toHaveTextContent(/Backup: Kraken/);
     expect(line).not.toHaveTextContent(/Hyperliquid/);
@@ -215,7 +215,7 @@ describe("App routing — Lobby / Pair room / bottom tabs IA", () => {
     expect(screen.getAllByText("Page not found.")).toHaveLength(2);
   });
 
-  it("Р-63: the Lobby and Pair room carry no top DEMO/replay banner", async () => {
+  it("D-63: the Lobby and Pair room carry no top DEMO/replay banner", async () => {
     renderApp("/");
     await screen.findAllByRole("article");
     expect(screen.queryByText(/PLAY is a real token \(a Chia CAT\) minted on Chia testnet11/)).not.toBeInTheDocument();

@@ -24,16 +24,16 @@
  *   RoundAlignmentCheck: at start-up, refuses round boundaries that are not on a whole minute
  * </pre>
  *
- * <p><b>Instruments</b> ({@link crowdvsmarket.server.prices.Instruments}, Р-76): a market that has a backup exchange is
+ * <p><b>Instruments</b> ({@link crowdvsmarket.server.prices.Instruments}, D-76): a market that has a backup exchange is
  * priced on two venues, each with a ring of its own — the market's id is the primary's key, {@code <id>~<backup>} the
  * backup's ({@code spot_BTC~kraken}); polling, snapshot rows, seeding, pins, healing and staleness work per instrument.
  * Which venue a round runs on is decided once, at its open ({@code RoundVenues}), and it settles only from that venue's ring.
  * A round that cannot be priced there waits — and holds its series — until the scheduler lets it go: cancelled with a refund
  * {@code herd.prices.venue-release-after-ms} after its end (or after the start of the server, if that is later: a restart, or the
  * wake of a host that slept) when the market's other venue has a live tick fresh now
- * ({@link crowdvsmarket.server.prices.MarketPrices#otherVenueLive}, Р-77), else when the minutes of its source are over
- * ({@code herd.prices.<feed>.release-after-ms}, {@link crowdvsmarket.server.prices.PricesConfig.ReleaseAfter}, Р-79 — on every
- * market, not only on one with a backup), and at the latest an hour after its end (Р-23).
+ * ({@link crowdvsmarket.server.prices.MarketPrices#otherVenueLive}, D-77), else when the minutes of its source are over
+ * ({@code herd.prices.<feed>.release-after-ms}, {@link crowdvsmarket.server.prices.PricesConfig.ReleaseAfter}, D-79 — on every
+ * market, not only on one with a backup), and at the latest an hour after its end (D-23).
  *
  * <p>The fixed contract is {@link crowdvsmarket.server.prices.MarketPrices} and its four records;
  * everything else here is replaceable. Nothing in this package runs with {@code herd.mode=replay}.

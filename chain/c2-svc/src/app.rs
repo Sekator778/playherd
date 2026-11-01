@@ -32,7 +32,7 @@ use crate::play::withdrawal_publisher::WithdrawalPublisher;
 use crate::service_auth::{SvcTokenState, require_bearer_token};
 
 /// Everything the PLAY withdraw/deposit routes need, bundled behind one
-/// `axum::extract::State` (Р-6, decision Р-53 2026-09-26) -- the oracle
+/// `axum::extract::State` (D-6, decision D-53 2026-09-26) -- the oracle
 /// routes above keep taking `Arc<Publisher<C>>` directly (unchanged), this
 /// only adds a second, independent piece of router state alongside it (see
 /// `router`'s own doc comment for why `/health` still gets its own separate,
@@ -51,7 +51,7 @@ impl<C: PlayChainClient> Clone for PlayState<C> {
     }
 }
 
-/// `GET /health`'s state (task requirement, decision Р-53 follow-up:
+/// `GET /health`'s state (task requirement, decision D-53 follow-up:
 /// "surface stuck state in status/health like the oracle") -- bundles both
 /// publishers' `health_check` behind one route, rather than only the
 /// oracle's own as before: a wedged PLAY treasury (self-heal found the
@@ -101,7 +101,7 @@ where
         .merge(play_routes)
         .layer(axum::middleware::from_fn_with_state(svc_token_state, require_bearer_token));
 
-    // Task fix (`docs/research/chain_service.md` §12, extended by the Р-53
+    // Task fix (`docs/research/chain_service.md` §12, extended by the D-53
     // follow-up "treasury self-heal", §13): `/health` reads both `Publisher::
     // health_check` (oracle) and `WithdrawalPublisher::health_check` (PLAY
     // treasury) -- local-only reads, never a network call (see either
@@ -214,7 +214,7 @@ async fn oracle_status<C: ChainClient>(
     Ok(Json(publisher.status().await?))
 }
 
-// --- PLAY withdraw/deposit (Р-6, decision Р-53 2026-09-26) ------------------
+// --- PLAY withdraw/deposit (D-6, decision D-53 2026-09-26) ------------------
 
 /// What `POST /v1/play/withdrawals` can refuse with: the plain `{"error": ...}` of every other
 /// route, or -- a `requestId` this service already holds with a different recipient or amount --

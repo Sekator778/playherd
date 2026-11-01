@@ -155,7 +155,7 @@ describe("Lobby — a card for every market, each price in its own scale", () =>
 });
 
 describe("Pair room — in every phase of its pair of rounds", () => {
-  // The full room — oracle lines, the slip, the crowd account — is the Pro view since Р-98.
+  // The full room — oracle lines, the slip, the crowd account — is the Pro view since D-98.
   beforeEach(() => setProMode(true));
   afterEach(() => setProMode(false));
 
@@ -380,8 +380,8 @@ describe("Status — what the server says about itself", () => {
   });
 });
 
-describe("The exchange behind a price and a round (Р-76), on the server's own answers", () => {
-  // The full room — oracle lines, the slip, the crowd account — is the Pro view since Р-98.
+describe("The exchange behind a price and a round (D-76), on the server's own answers", () => {
+  // The full room — oracle lines, the slip, the crowd account — is the Pro view since D-98.
   beforeEach(() => setProMode(true));
   afterEach(() => setProMode(false));
 
@@ -493,7 +493,7 @@ describe("Profile — a player's round history", () => {
     expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(profile.player.displayName);
     await settle(300);
     const tiles = document.querySelectorAll<HTMLElement>(".result-tile");
-    // the fixture is the player's own, complete view; a visitor sees the wins only (Р-90)
+    // the fixture is the player's own, complete view; a visitor sees the wins only (D-90)
     const shown = profile.history.filter((h) => !h.liquidated && Number(h.payout) > Number(h.stake));
     expect(tiles).toHaveLength(shown.length);
     expect(shown.length).toBeLessThan(profile.history.length);
@@ -512,7 +512,7 @@ describe("Profile — a player's round history", () => {
   });
 });
 
-describe("API bots (Р-106), on the server's own answers", () => {
+describe("API bots (D-106), on the server's own answers", () => {
   it("the own profile lists the bots the server recorded, each with its key hint and nothing broken", async () => {
     const bots = wireResponse<Array<{ nickname: string; keyHint: string }>>("myBots");
     renderApp("/profile/me");

@@ -2,7 +2,7 @@ import { useT } from "../i18n";
 import { setProMode, useProMode } from "./proMode";
 import "./ProView.css";
 
-/** The Pro view switch (Р-98): off by default, remembered per browser. A pressed-state button with a word — never colour alone. */
+/** The Pro view switch (D-98): off by default, remembered per browser. A pressed-state button with a word — never colour alone. */
 export function ProToggle({ className = "" }: { className?: string }) {
   const t = useT();
   const pro = useProMode();

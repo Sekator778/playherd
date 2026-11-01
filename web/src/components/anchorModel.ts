@@ -1,5 +1,5 @@
 /**
- * How a settled round's oracle record is worded (Р-40, Р-41, S6): `RoundSettled.oracleAnchor` is
+ * How a settled round's oracle record is worded (D-40, D-41, S6): `RoundSettled.oracleAnchor` is
  * `{ seq, state, height }` with `state` the way chainsvc reports it (`docs/research/chain_service.md`):
  * `unknown` until the record is queued, then `queued`, `in_flight`, `confirmed` — or `conflict` when the
  * chain already holds a DIFFERENT record at that `seq` (the record is then held back and flagged, never

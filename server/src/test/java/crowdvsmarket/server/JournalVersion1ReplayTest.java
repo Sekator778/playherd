@@ -68,7 +68,7 @@ class JournalVersion1ReplayTest extends LiveGameTestBase {
         load("markets", "markets.json");
         load("players", "players.json");
         load("game_events", "game_events.json");
-        journal.reimportFromTableForTests(); // Р-107: the fixture is the table of an old server; the first start imports it into the journal
+        journal.reimportFromTableForTests(); // D-107: the fixture is the table of an old server; the first start imports it into the journal
         load("round_results", "round_results.json");
         load("player_round_history", "player_round_history.json");
         load("oracle_records", "oracle_records.json");

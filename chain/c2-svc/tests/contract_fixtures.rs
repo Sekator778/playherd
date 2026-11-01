@@ -158,7 +158,7 @@ fn write_contract_fixtures() {
     write_fixture("OracleStatusResponse", &status);
 
     // --- POST /v1/play/withdrawals, GET /v1/play/withdrawals/{requestId} ---
-    // (Р-6, decision Р-53 2026-09-26, docs/research/chain_service.md §13). A
+    // (D-6, decision D-53 2026-09-26, docs/research/chain_service.md §13). A
     // genuine txch1... address (not a hand-typed string), same "real
     // production code path" preference the auth fixtures above follow.
     // Fixed, public, test-only seed (never a real wallet): a random key made every `cargo test`

@@ -52,7 +52,7 @@ export function totalInPlayStake(playerId: string, hourly: RoundsPairDto, daily:
  * The stake of the player's positions that a liquidation has ALREADY taken while their round is still running
  * (`MyPositionDto.liquidated`). The server counts it as "in play" until the round settles — nothing is paid
  * back, it just has not been booked yet — but the player has been told it is lost (the mid-round LIQUIDATION
- * moment, Р-7/Р-50), so a header that went on saying "+300 in play" would suggest it could still come back.
+ * moment, D-7/D-50), so a header that went on saying "+300 in play" would suggest it could still come back.
  */
 export function liquidatedStake(positions: readonly MyPositionDto[]): number {
   return positions.filter((p) => p.phase === "RUNNING" && p.liquidated).reduce((sum, p) => sum + Number(p.stake), 0);

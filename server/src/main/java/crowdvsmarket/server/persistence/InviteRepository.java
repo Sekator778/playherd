@@ -9,7 +9,7 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
- * Personal invite codes and the acquisition record ({@code players.invite_code / referred_by / source}, migration V15; since Р-107 the truth is {@code player_sidecar}, V21).
+ * Personal invite codes and the acquisition record ({@code players.invite_code / referred_by / source}, migration V15; since D-107 the truth is {@code player_sidecar}, V21).
  *
  * <p><b>The code is stored, random, and public.</b> 8 lowercase hex characters from a {@link SecureRandom}: it reveals neither
  * the wallet address nor the player id, cannot be derived from either, and is the same shape the migration's backfill gives
@@ -87,7 +87,7 @@ public class InviteRepository {
     }
 
     /**
-     * At registration, BEFORE the command that registers the player (Р-107: the columns are not in the journal, so they are written first,
+     * At registration, BEFORE the command that registers the player (D-107: the columns are not in the journal, so they are written first,
      * and a registration that then does not happen leaves a row nothing refers to): gives the player a code and writes {@code referred_by} /
      * {@code source} into {@code player_sidecar}. {@code referrerId} null (unknown code, none sent) or equal to {@code playerId}
      * (self-referral) records no referrer; an unusable {@code source} records none. A second call for the same player is a no-op.

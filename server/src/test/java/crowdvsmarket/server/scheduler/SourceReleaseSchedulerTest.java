@@ -38,11 +38,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Letting a round go after the minutes of its source (Р-79), on the scheduler alone, with plain objects around it. A round that
+ * Letting a round go after the minutes of its source (D-79), on the scheduler alone, with plain objects around it. A round that
  * cannot be priced holds its series — the rounds of a series are settled in order — on every market, not only on one with a backup
  * exchange; so a round whose settlement fails for want of a price ({@link PriceUnavailableException}) is cancelled with a refund as
  * soon as the minutes of the source that prices it (five, fifteen for Polymarket) have passed since the end of the round or the
- * start of the server, whichever is later. Р-77 comes first, the hour of Р-23 is the upper bound, and a round nobody bet on that
+ * start of the server, whichever is later. D-77 comes first, the hour of D-23 is the upper bound, and a round nobody bet on that
  * cannot be priced does not wait at all. What the cancellation writes is {@code SourceReleaseTest}, over a database; the
  * timing and the conditions are pinned here, and the settings in {@code PricesConfigTest}.
  *
@@ -410,7 +410,7 @@ class SourceReleaseSchedulerTest {
         assertThat(cancellations).extracting(Cancellation::reason).containsExactly(NO_PRICE_REASON);
     }
 
-    // ------------------------------------------------------------------ a market with a backup exchange: Р-77 first
+    // ------------------------------------------------------------------ a market with a backup exchange: D-77 first
 
     @Test
     void withTheOtherExchangeAliveTheVenueReleaseComesFirstAtTwoMinutes() {
@@ -422,7 +422,7 @@ class SourceReleaseSchedulerTest {
         everySecond(spotBtc, w0.endMs(), w0.endMs() + 2 * MIN);
 
         assertThat(cancellations).singleElement().satisfies(c -> {
-            assertThat(c.reason()).as("the words of Р-77, not of Р-79").isEqualTo(VENUE_REASON);
+            assertThat(c.reason()).as("the words of D-77, not of D-79").isEqualTo(VENUE_REASON);
             assertThat(c.atMs()).isEqualTo(w0.endMs() + 2 * MIN);
         });
     }
@@ -819,7 +819,7 @@ class SourceReleaseSchedulerTest {
         tick(xyzNvda, w0.endMs() + 2 * HOUR - 1); // a daily round, say, that nobody tried: its price is still not there
 
         assertThat(cancellations).as("nothing to give back, so no cancellation for the public log").isEmpty();
-        assertThat(progress.findNext(xyzNvda.id(), Interval.HOURLY)).as("the hour of Р-23 is for the rounds that hold stakes: "
+        assertThat(progress.findNext(xyzNvda.id(), Interval.HOURLY)).as("the hour of D-23 is for the rounds that hold stakes: "
                 + "both rounds that ended an hour or more ago are stepped over").contains(RoundClock.next(RoundClock.next(w0)));
     }
 
@@ -850,7 +850,7 @@ class SourceReleaseSchedulerTest {
         tick(spotBtc, w0.endMs());
 
         assertThat(progress.findNext(spotBtc.id(), Interval.HOURLY)).contains(RoundClock.next(w0));
-        assertThat(cancellations).as("no release of Р-77 either: there is nothing to give back").isEmpty();
+        assertThat(cancellations).as("no release of D-77 either: there is nothing to give back").isEmpty();
         verify(gameService, never()).otherVenueLive(any(), any(), anyLong());
     }
 }

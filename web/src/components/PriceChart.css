@@ -282,7 +282,7 @@
   color: var(--warning);
   font-weight: 700;
 }
-/* The last point is the backup exchange's (Р-76): said in plain muted words, not as a warning. */
+/* The last point is the backup exchange's (D-76): said in plain muted words, not as a warning. */
 .pchart__venue {
   font-weight: 700;
 }

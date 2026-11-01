@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Р-46 test-mode price source: replays {@code replay/btc_1m.csv} at a fixed {@code speedup}× real
+ * D-46 test-mode price source: replays {@code replay/btc_1m.csv} at a fixed {@code speedup}× real
  * time, looping back to the first candle once exhausted. A {@link RoundWindow}'s wall-clock
  * {@code [startMs, endMs)} maps to a slice of the source series by <b>array index</b>, not by
  * matching absolute source timestamps — see {@code replay/PROVENANCE.md} "How the server uses

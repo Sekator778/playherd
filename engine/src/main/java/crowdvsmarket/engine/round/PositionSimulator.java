@@ -32,7 +32,7 @@ public final class PositionSimulator {
 
         /**
          * The position was liquidated inside {@code candle.openTimeMs()}; {@code loss} is USD lost (>= 0) under the
-         * original rule (the whole margin, Р-7). {@code extremePrice} is the low (long) or high (short) of that candle:
+         * original rule (the whole margin, D-7). {@code extremePrice} is the low (long) or high (short) of that candle:
          * the price the economy-stage-A remainder is computed at (plan A1,
          * {@code LiquidationCalculator#payoutAtCandleExtreme}); {@code null} only for an outcome built by hand.
          */

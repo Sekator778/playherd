@@ -94,7 +94,7 @@ abstract class AbstractPersona implements Persona {
                 return Optional.of(new Sizing(stake, leverage));
             }
             if (stake.compareTo(market.minStake()) <= 0) {
-                // the herd fee is no longer capped at 1% of the stake (Р-102): at the smallest stake a high leverage can cost more
+                // the herd fee is no longer capped at 1% of the stake (D-102): at the smallest stake a high leverage can cost more
                 // than the balance leaves, so lower the leverage to the highest one that fits before giving up
                 PlayAmount atMin = stake;
                 return fittingLeverage(market, atMin, account, leverage).map(l -> new Sizing(atMin, l));

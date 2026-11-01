@@ -11,7 +11,7 @@ export const FOLLOW_UP_RETRY_MS = 10_000;
 const MAX_FOLLOW_UP_ATTEMPTS = 6;
 
 /**
- * The mid-round LIQUIDATION moment, back (Р-50). It was lost when result moments moved to
+ * The mid-round LIQUIDATION moment, back (D-50). It was lost when result moments moved to
  * `unseenResults()` (`useSettlementWatcher.ts`): that source lists SETTLED positions, so a liquidated one was
  * only announced when its whole round ended — minutes later on a 15-minute series, a day later on a long one.
  * `myPositions()` already says it at once (`MyPositionDto.liquidated`, which the "Your bets" strip shows), so
@@ -20,7 +20,7 @@ const MAX_FOLLOW_UP_ATTEMPTS = 6;
  * (`liquidationMoment.ts`: remembered across reloads and tabs). When the round settles, its settlement is a
  * quiet summary (`unseenResults.ts`).
  *
- * And when the round is CANCELLED instead, the stake comes back (Р-23) — which the moment said might happen, but a
+ * And when the round is CANCELLED instead, the stake comes back (D-23) — which the moment said might happen, but a
  * cancelled round leaves no history row and no other trace on screen: once an announced liquidation's position has
  * left `myPositions()`, the round is asked what became of it, and a cancellation gets one quiet note
  * (`liquidationFollowUp.ts`) — also for a player who was away when it happened (the claim outlives the page).

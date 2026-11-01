@@ -128,7 +128,7 @@ public interface ChainSvcClient {
         }
     }
 
-    // --- Р-53: real on-chain PLAY withdraw/deposit (chainsvc FIXED INTERFACE, /v1/play/*) ---
+    // --- D-53: real on-chain PLAY withdraw/deposit (chainsvc FIXED INTERFACE, /v1/play/*) ---
 
     /** {@code POST /v1/play/withdrawals}'s answer. {@code 202 {accepted:true}} — idempotent by
      *  {@code requestId} and content per the FIXED INTERFACE, so {@code WithdrawalPollerService} retries a

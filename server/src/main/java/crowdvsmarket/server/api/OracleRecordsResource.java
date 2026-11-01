@@ -35,7 +35,7 @@ import java.util.List;
  *   <li>{@code asset} is the market's registry index ({@code GET /api/markets/registry.json}),
  *       {@code priceCents} the close price of the lot, times 100 (docs/research/markets_architecture.md
  *       §6), {@code resultsHash} the {@code 0x…} sha256 of that round's {@code results.json}.
- *   <li>{@code venue} (Р-76): the exchange the round ran on — {@code coinbase}, {@code kraken}, {@code hyperliquid} —
+ *   <li>{@code venue} (D-76): the exchange the round ran on — {@code coinbase}, {@code kraken}, {@code hyperliquid} —
  *       and so the exchange {@code priceCents} is the close on, for a market that has a backup exchange ({@code
  *       results.json} then carries the same {@code "venue"} key, inside the hash); {@code null} for any other round.
  * </ul>

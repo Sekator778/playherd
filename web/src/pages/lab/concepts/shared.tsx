@@ -1,6 +1,6 @@
 /**
- * Small pieces of the /lab/concepts/a prototype (concept A, the one that became the product, Р-61). They
- * were shared with prototypes B and C until those two were removed with the Р-69 screen rebuild
+ * Small pieces of the /lab/concepts/a prototype (concept A, the one that became the product, D-61). They
+ * were shared with prototypes B and C until those two were removed with the D-69 screen rebuild
  * (`docs/product/design/concepts.md`); concept A writes its own lobby/room/stats layout and CSS
  * (`ConceptA.tsx` + `ConceptA.css`).
  */
@@ -78,8 +78,8 @@ export function useFireFromQuery(roundId: string): void {
   }, [code]);
 }
 
-/** The one honest line every concept's room repeats verbatim next to the price (Р-33/`ux_spec.md`
- *  §2) — the room's own line for the prototype's BTC market (priced by Coinbase now, Р-76), not a new disclosure. */
+/** The one honest line every concept's room repeats verbatim next to the price (D-33/`ux_spec.md`
+ *  §2) — the room's own line for the prototype's BTC market (priced by Coinbase now, D-76), not a new disclosure. */
 export function OracleLine() {
   return <p className="concept-oracle-line">{originPhrase("coinbase")}, published by our team's key — not a decentralized oracle.</p>;
 }

@@ -1,12 +1,12 @@
 /**
  * Pair room (`/play/:marketId` — a market id such as `BTC`, `xyz_NVDA`, `PM900104`, matched ignoring case so
- * an old `/play/btc` link still lands) — concept A's arena (Р-61, `docs/product/design/concepts.md`) for any
- * of the markets (Р-69), with what Herd adds on top of the reference (Р-71,
+ * an old `/play/btc` link still lands) — concept A's arena (D-61, `docs/product/design/concepts.md`) for any
+ * of the markets (D-69), with what Herd adds on top of the reference (D-71,
  * `docs/product/design/markets-lobby.md`):
  *
  * - the live price (rolling digits) with its 24 h change, a favourite star, and a live price chart with the
  *   round's open price and — over a position — entry and liquidation lines, the herd's as a fainter pair;
- *   a crypto market says which exchange its price is from when that is its BACKUP ("Kraken price", Р-76: the main
+ *   a crypto market says which exchange its price is from when that is its BACKUP ("Kraken price", D-76: the main
  *   exchange has no fresh price), names the backup in the oracle line, and a running round that runs on the backup
  *   says so (a round runs entirely on one exchange, chosen when it starts);
  * - the two series of rounds as chips named by their real length, a dot on the one where the player has bets;
@@ -20,7 +20,7 @@
  * - an `ODDS` market's 24 h change in percentage points; a sports game's "Starts in 2h 05m" / LIVE mark.
  *
  * `?side=up|down` (from a lobby card's UP/DOWN) preselects the direction, `?series=daily` the longer series.
- * Two round contexts, as before (Р-19: "всегда один идущий и один открытый для ставок раунд"): `betting`
+ * Two round contexts, as before (D-19: "всегда один идущий и один открытый для ставок раунд"): `betting`
  * (the arena and slip act on this one) and `running` (revealed positions, the crowd's live position).
  * `result-moment.md`'s fx are wired globally in `Layout.tsx` (`ResultMomentHost`), not here.
  */
@@ -84,9 +84,9 @@ import "./PairRoomPage.css";
 
 const POLL_MS = 2000;
 
-/** The live crowd split (Р-62) of a round, by stake — from the BETTING round's `upStake`/`downStake`, or,
+/** The live crowd split (D-62) of a round, by stake — from the BETTING round's `upStake`/`downStake`, or,
  *  once revealed, from the RUNNING round's own positions (the same fact, later in the round's life).
- *  `null` when there is no stake yet or the optional fields are absent (a server that predates Р-62):
+ *  `null` when there is no stake yet or the optional fields are absent (a server that predates D-62):
  *  the arena then draws an even split without percentages — never a fabricated lean. */
 function roundSplit(round: RoundDto): CrowdSplit | null {
   if (round.phase === "BETTING") return crowdSplitOf(round);
@@ -317,8 +317,8 @@ function Room({ market }: { market: MarketDto }) {
   const series = usePriceSeries(marketId);
   const { positions: myPositions } = useMyPositions();
 
-  // Fix (player review item 3, `the decision log` Р-59/Р-62): the round a player bet on
-  // doesn't vanish when its betting window closes — per Р-19's conveyor ("всегда один идущий и
+  // Fix (player review item 3, `the decision log` D-59/D-62): the round a player bet on
+  // doesn't vanish when its betting window closes — per D-19's conveyor ("всегда один идущий и
   // один открытый для ставок раунд"), `RoundsPairDto.betting` simply rolls over to the NEXT round
   // the instant the one the player bet on starts running. The arena, bound to `betting` so it can
   // double as the bet slip's direction picker for that next round, used to just silently start
@@ -382,7 +382,7 @@ function Room({ market }: { market: MarketDto }) {
   const running = pairData?.running;
   const betting = pairData?.betting;
 
-  // The chart's horizontal lines: the running round's open price (every bet's entry, Р-8), the player's
+  // The chart's horizontal lines: the running round's open price (every bet's entry, D-8), the player's
   // own position and the crowd's — liquidation levels included. Only what the chosen series has.
   const runningRound = running?.phase === "RUNNING" ? running : null;
   const ownPosition = runningRound && player ? runningRound.positions.find((p) => p.playerId === player.playerId) : undefined;
@@ -391,7 +391,7 @@ function Room({ market }: { market: MarketDto }) {
   const waitingOpen = runningRound !== null && runningRound.openPrice === null;
   // The player's bet in such a round is known to `myPositions()` only — the round's own list is empty.
   const ownWaiting = waitingOpen && player ? myPositions.find((p) => p.roundId === runningRound.roundId) : undefined;
-  // The default view draws the price and — once you bet — YOUR entry and wipeout lines; the herd's liquidation line is Pro's (Р-98).
+  // The default view draws the price and — once you bet — YOUR entry and wipeout lines; the herd's liquidation line is Pro's (D-98).
   const lines = useMemo(
     () =>
       open && runningRound
@@ -421,7 +421,7 @@ function Room({ market }: { market: MarketDto }) {
   const changeTrend = trend(move.value);
   const kickoff = kickoffOf(market, nowMs);
   const stale = open && market.price?.stale === true;
-  // The shown price is the backup exchange's while the main one has no fresh price (`MarketPriceDto.venue`, Р-76).
+  // The shown price is the backup exchange's while the main one has no fresh price (`MarketPriceDto.venue`, D-76).
   const backupPrice = open ? backupPriceOf(market, t) : null;
   const symbolText = market.kind === "PERP" ? `${market.symbol}/USD` : market.symbol;
 
@@ -477,7 +477,7 @@ function Room({ market }: { market: MarketDto }) {
             </span>
           )}
           {!open && <span className="room-stale">{t("card.lastPrice")}</span>}
-          {/* The default view keeps the price and the bet; where the price comes from is one tap away behind an "i" (Р-98). */}
+          {/* The default view keeps the price and the bet; where the price comes from is one tap away behind an "i" (D-98). */}
           {!pro && open && (
             <button type="button" className="room-info" aria-expanded={sourcesOpen} aria-label={t("gameRoom.info")} onClick={() => setSourcesOpen((v) => !v)}>
               <span aria-hidden="true">i</span>
@@ -693,7 +693,7 @@ function Room({ market }: { market: MarketDto }) {
 
       <div className="room-col room-col--side">
         {betting.phase === "BETTING" ? (
-          // The full slip is the Pro view's; the default view bets through the sheet (Р-98).
+          // The full slip is the Pro view's; the default view bets through the sheet (D-98).
           pro && (
             <div className="room-bet room-o3">
               <BetSlip
@@ -738,7 +738,7 @@ function Room({ market }: { market: MarketDto }) {
                     <CrowdPositionCard phase="RUNNING" crowd={running.crowd} referencePrice={referencePrice} market={market} />
                   </>
                 ) : (
-                  // The crowd's paper account is on the Stats page (Р-98), one tap away.
+                  // The crowd's paper account is on the Stats page (D-98), one tap away.
                   <p className="muted room-crowd-moved">
                     <Link to={`/stats?m=${encodeURIComponent(market.id)}`}>{t("gameRoom.crowdAccountStats")}</Link>
                   </p>

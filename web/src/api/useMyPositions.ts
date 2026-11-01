@@ -1,5 +1,5 @@
 /**
- * The signed-in player's open bets and positions in EVERY market (`Api.myPositions`, Р-71's "one
+ * The signed-in player's open bets and positions in EVERY market (`Api.myPositions`, D-71's "one
  * strip of open positions with live P&L"): polled every 2 s while a component reads it and a player
  * is signed in, shared per `Api` instance and player (`polledStore.ts`). Signed out, nothing is
  * fetched and the list is empty. Live P&L is not in the DTO — compute it from the market's current

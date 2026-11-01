@@ -9,7 +9,7 @@ import java.util.Optional;
 
 /**
  * Pending bets, keyed by round id then player id — enforces "one position per player per round"
- * (Р-13) at the data-structure level: {@link #place} always replaces any prior bet for the same
+ * (D-13) at the data-structure level: {@link #place} always replaces any prior bet for the same
  * (round, player), returning the replaced one (if any) so the caller can refund its stake.
  *
  * <p><b>O(1) aggregates (architecture plan F2):</b> next to each round's bets the book keeps the open notional
@@ -17,7 +17,7 @@ import java.util.Optional;
  * {@link #cancel}, {@link #clear}), so {@link #openNotional} and {@link #find} cost the same with one bet in the round as
  * with ten thousand. The sums are whole mojos ({@code long}), exact like the {@code BigDecimal} sum they replace: the
  * state is a function of the bets alone, so a live run and a replay of its journal end with the same numbers.
- * The same holds for the stake of each side's fixed-payout bets (Р-106), which count for the fixed-mode treasury limits and not
+ * The same holds for the stake of each side's fixed-payout bets (D-106), which count for the fixed-mode treasury limits and not
  * for the notional. The aggregates live here, not in a separate class, because the book is the single owner of the bets and every mutation
  * of them (live, replay, a state built aside) already goes through these methods.
  */
@@ -149,7 +149,7 @@ public final class BetBook {
     }
 
     /**
-     * The stake (PLAY, scale 3) of the fixed-payout bets (Р-106) open on {@code direction}'s side of the round, without
+     * The stake (PLAY, scale 3) of the fixed-payout bets (D-106) open on {@code direction}'s side of the round, without
      * {@code exceptPlayer}'s bet ({@code null} for none) - O(1), like {@link #openNotional}.
      */
     public BigDecimal openFixedStake(String roundId, Direction direction, String exceptPlayer) {
@@ -168,7 +168,7 @@ public final class BetBook {
     }
 
     /** Drops the round entirely, once its bets have been opened into positions at round start —
-     * bets no longer accept modification after that (Р-8). */
+     * bets no longer accept modification after that (D-8). */
     public void clear(String roundId) {
         byRound.remove(roundId);
     }

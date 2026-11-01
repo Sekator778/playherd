@@ -1,6 +1,6 @@
 /**
- * Stats → Crowd (`/stats`) — Р-5/Р-14/Р-17/Р-25/Р-26: the crowd account against the market, now one account PER
- * MARKET (Т-6) and the whole herd at a glance (Р-71):
+ * Stats → Crowd (`/stats`) — D-5/D-14/D-17/D-25/D-26: the crowd account against the market, now one account PER
+ * MARKET (Т-6) and the whole herd at a glance (D-71):
  *
  * - an overview of every market's crowd account (`crowdOverview()`): total herd capital and return, the
  *   best and the worst market — the worst as visible as the best — and a ranked list that opens a market;

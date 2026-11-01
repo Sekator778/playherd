@@ -11,7 +11,7 @@ name: CI
 #   ci-ok    -> the one job branch protection should require: succeeds iff every job above either
 #     passed or was skipped by the path filter (see its own comment for why this pattern exists)
 #   publish-develop -> after ci-ok, ghcr.io images tagged :sha-<short> (+ :develop when run on
-#     develop). Off by default (Р-67: Actions minutes are limited, nothing builds images on every
+#     develop). Off by default (D-67: Actions minutes are limited, nothing builds images on every
 #     push): runs on a push to develop only when the repository variable HERD_PUBLISH_DEVELOP is
 #     'true', or on demand through a manual run with publish=true (release tags are release.yml's
 #     job). Setup: CONTRIBUTING.md §2 and §7.

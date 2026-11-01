@@ -2,13 +2,13 @@ package crowdvsmarket.server.dto;
 
 import java.util.List;
 
-/** contract.ts §"Crowd account" (Р-5, Р-14, Р-17, Р-25, Р-26) — one account per market (Т-6). */
+/** contract.ts §"Crowd account" (D-5, D-14, D-17, D-25, D-26) — one account per market (Т-6). */
 public final class Crowd {
     private Crowd() {
     }
 
     /** {@code holdCapital}: "just hold the asset" on the same starting capital, bought at the market's
-     *  first resolved round (Р-26, per market) — was {@code btcHoldCapital} while there was only BTC. */
+     *  first resolved round (D-26, per market) — was {@code btcHoldCapital} while there was only BTC. */
     public record CrowdHistoryPointDto(String roundId, long atMs, String seasonBoundary, String crowdCapital,
                                          String holdCapital, String antiCrowdCapital) {
     }

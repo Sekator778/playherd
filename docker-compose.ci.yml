@@ -18,7 +18,7 @@
 #    flag documented in chain/c2-svc/src/config.rs) makes chainsvc build and sign oracle/withdrawal
 #    spends without ever calling push_tx.
 # 2. CI must not depend on any external service. The local stand plays on live Hyperliquid/
-#    Polymarket prices (Р-70); here `server` runs on the synthetic price source (a deterministic
+#    Polymarket prices (D-70); here `server` runs on the synthetic price source (a deterministic
 #    random walk, docs/research/markets_architecture.md §2 Т-12) with Polymarket off. The oracle
 #    seq floor is off too: it asks chainsvc for the highest seq of the on-chain singleton, and this
 #    job has no singleton (no `oracle-launch`) and a throwaway database, so there is nothing to
@@ -32,5 +32,5 @@ services:
       HERD_PRICES_SOURCE: synthetic
       HERD_MARKETS_POLYMARKET_ENABLED: "false"
       HERD_ORACLE_REQUIRE_SEQ_FLOOR: "false"
-      # no download of the DB-IP country database (Р-81) either: the job reaches nothing outside the runner
+      # no download of the DB-IP country database (D-81) either: the job reaches nothing outside the runner
       HERD_GEOIP_ENABLED: "false"

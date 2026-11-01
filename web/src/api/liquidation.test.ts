@@ -28,7 +28,7 @@ import {
  * expected to reproduce too — TS and Java are proven never to diverge by both matching this table.
  *
  * Size scale: the port now rounds a position size to 8 dp like `PositionSizing.SIZE_SCALE` (it
- * used 5 before markets, Р-69). No row of this table depended on that: every row hands its size
+ * used 5 before markets, D-69). No row of this table depended on that: every row hands its size
  * in as the literal `0.10000`, so nothing here needed a recomputed expected value; the 8 dp are
  * exercised by the per-market vectors further down.
  */
@@ -83,7 +83,7 @@ describe("liquidation math golden vectors (hl_liquidation_math.md §3)", () => {
     expect(maintenanceMarginRequired(row.sizeBtc, row.entryPrice).toFixed(2)).toBe(row.maintenanceMarginUsd);
   });
 
-  it.each(GOLDEN_VECTORS)("$side entry=$entryPrice lev=$leverage: payout on liquidation is always 0 (Р-7)", (row) => {
+  it.each(GOLDEN_VECTORS)("$side entry=$entryPrice lev=$leverage: payout on liquidation is always 0 (D-7)", (row) => {
     expect(payoutOnLiquidation().toFixed(2)).toBe(row.payoutOnLiquidationUsd);
   });
 
@@ -147,7 +147,7 @@ describe("isLiquidatedInRange against historical scenarios (hl_liquidation_math.
 });
 
 /**
- * Per-market vectors (Р-69, `docs/research/markets_architecture.md` §8): the same formulas on the
+ * Per-market vectors (D-69, `docs/research/markets_architecture.md` §8): the same formulas on the
  * lot price (`price × 10^(priceDecimals − 2)`), size rounded to 8 dp, `l = 1/(2·maxLeverage)`,
  * liquidation price converted back to the market's raw price. Markets: BTC 40x/2 dp (the stake-
  * derived 8 dp sizes), 25x/2 dp (price 2694.40), 20x/3 dp (150.123), 10x/6 dp (an `ODDS` market,

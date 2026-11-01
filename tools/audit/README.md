@@ -24,7 +24,7 @@ key is checked against `~/.ssh/known_hosts.herd-vps` (`HERD_KNOWN_HOSTS` overrid
 | `liquidation-flag` | the stored RoundResolved path against the stored liquidation price (long: `low <= liq`, short: `high >= liq`) |
 | `payout` | not liquidated: `max(0, M + s*Q*(close - P0))`; liquidated: the remainder at the extreme of the triggering candle (a legacy bet: 0); capped at `min(20*S, 0.1 % of the treasury)` (not for legacy bets). The treasury is `--treasury` (default the engine constant 99 998 100 PLAY): a payout above 99 998 PLAY needs the real balance |
 | `fee` | herd fee `ceil3(S*min(guard, k*r_m*L))`, at least 0.001, network fee 0.1; k = 1 / 2.2 (price) / 3.0 (odds) for the short / long round; before the switch of 2026-10-18 ~07:53 UTC k = 1 and guard 1 % and r_m = 1.0 bp for ETH SOL DOGE XRP HYPE and the odds markets (V13). A bet inside the gap 07:53:00-07:53:27 may carry either set |
-| `payout`, `fee`, `fixed-*` (fixed-payout bets, Р-106) | a position whose `BetPlaced` event says `"mode":"FIXED"` has no size, no liquidation price and no tier. Checked: payout = 2 x stake when the close is on the bet's side of the open, 0 when it is on the other side, the stake when close = open (the stored round open / close); platform fee = `ceil3(3 % x stake)` and network fee 0.1 PLAY (`fee`); the position and the event agree on the mode (`fixed-mode`), the leverage is the placeholder 2 (`fixed-leverage`), the bet stores no `liqCap`/`liqKappa` (`fixed-liquidation-params`), the position is not liquidated (`fixed-liquidated`), the event carries its fees (`fixed-fees-missing`). The summary has a table of its own for them |
+| `payout`, `fee`, `fixed-*` (fixed-payout bets, D-106) | a position whose `BetPlaced` event says `"mode":"FIXED"` has no size, no liquidation price and no tier. Checked: payout = 2 x stake when the close is on the bet's side of the open, 0 when it is on the other side, the stake when close = open (the stored round open / close); platform fee = `ceil3(3 % x stake)` and network fee 0.1 PLAY (`fee`); the position and the event agree on the mode (`fixed-mode`), the leverage is the placeholder 2 (`fixed-leverage`), the bet stores no `liqCap`/`liqKappa` (`fixed-liquidation-params`), the position is not liquidated (`fixed-liquidated`), the event carries its fees (`fixed-fees-missing`). The summary has a table of its own for them |
 | `leverage-tier` | leverage inside the stake tier (`cap`, `cap/2`, `cap/5`, `cap/10`) |
 | `bet-vs-position`, `bet-after-start`, `no-bet-event` | the BetPlaced event agrees with the position and was placed before the round started |
 | `entry-vs-open`, `path-vs-round`, `candle-shape`, `no-path` | entry price = round open; path first open / last close = round open / close; candles are well-formed; every round with bets has a path |
@@ -53,9 +53,9 @@ tools/audit/funnel.py --exclude <player_id>,<player_id> --detail      # cohort: 
 `coin` control (Newcombe interval), liquidation share, average leverage, PnL before / after fees, return on stake, verdict. Fees come from
 the `BetPlaced` events (`player_round_history.fees_mojos`, V14, is not on the stand at the time of writing).
 
-Since Р-106 the tables are split by payout mode (`player_round_history.mode`, V18): one block `FIXED` ("Win or lose") and one block `PERCENTAGE`, each with the
+Since D-106 the tables are split by payout mode (`player_round_history.mode`, V18): one block `FIXED` ("Win or lose") and one block `PERCENTAGE`, each with the
 same columns, the same Wilson / Newcombe intervals and its own `coin` control of the same round length and mode (CSV: first column `mode`). In `FIXED` there is no
-leverage and no liquidation, so those two columns are blank. The split is internal (Р-105 п. 3). Tests: `python3 -m unittest tools/audit/test_bot_stats.py` (part of
+leverage and no liquidation, so those two columns are blank. The split is internal (D-105 п. 3). Tests: `python3 -m unittest tools/audit/test_bot_stats.py` (part of
 `make test-tools`).
 
 `funnel.py` — humans only: entered, bet >= 1, >= 3 and >= 5 rounds (old metric), played (new: bets of settled rounds in >= 5 different

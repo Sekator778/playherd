@@ -51,7 +51,7 @@ class RoundClockTest {
         assertThat(hourly.roundId()).isEqualTo(RoundClock.windowContaining(Interval.HOURLY, 0L).roundId());
     }
 
-    // --- предложение additive overloads (RoundDurations/originMs), Р-46 test-mode durations ---
+    // --- предложение additive overloads (RoundDurations/originMs), D-46 test-mode durations ---
 
     @Test
     void configurableDurationsDefaultToTheOriginalFixedOnes() {
@@ -71,7 +71,7 @@ class RoundClockTest {
 
     @Test
     void testModeDurationsAlignToServerStartOrigin() {
-        RoundDurations testMode = new RoundDurations(180_000L, 900_000L); // Р-46: 3 min / 15 min
+        RoundDurations testMode = new RoundDurations(180_000L, 900_000L); // D-46: 3 min / 15 min
         long origin = Instant.parse("2026-04-05T13:47:22.500Z").toEpochMilli(); // arbitrary server start, not epoch-aligned
 
         RoundWindow atOrigin = RoundClock.windowContaining(Interval.HOURLY, origin, testMode, origin);

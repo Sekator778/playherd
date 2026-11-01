@@ -42,7 +42,7 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Result-moment haptics (Р-50, result-moment.md §2's per-tier `vibrate(...)` column).
+    <!-- Result-moment haptics (D-50, result-moment.md §2's per-tier `vibrate(...)` column).
          `navigator.vibrate()` under a genuine user gesture already returns `true` on this
          emulator/WebView build (Android 15, WebView 124) even without this permission, and
          `logcat`/`dumpsys package` show no SecurityException either way (verified live,

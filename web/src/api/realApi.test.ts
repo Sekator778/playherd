@@ -196,7 +196,7 @@ describe("RealApi — HTTP 429", () => {
   });
 });
 
-describe("RealApi — submitFeedback (Р-81)", () => {
+describe("RealApi — submitFeedback (D-81)", () => {
   const request = { message: "Nice game", timeZone: "Europe/Berlin", language: "de-DE", page: "/play/BTC", client: "web" as const };
 
   it("POSTs /api/rpc/submitFeedback with the request as the one argument — exactly its five fields", async () => {

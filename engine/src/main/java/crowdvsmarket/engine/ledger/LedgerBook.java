@@ -18,14 +18,14 @@ import java.util.function.UnaryOperator;
 
 /**
  * The in-game PLAY ledger: balances, starter packs, stakes, settlements and withdraw/deposit
- * requests (Р-2, Р-3, Р-6, Р-7, Р-12, Р-16). Single-threaded, functional-core-mutable-shell: every
+ * requests (D-2, D-3, D-6, D-7, D-12, D-16). Single-threaded, functional-core-mutable-shell: every
  * {@link PlayerAccount}/{@link SeasonRecord} is an immutable snapshot, replaced wholesale on each
  * mutation; every mutation also produces one {@link LedgerEntry}, handed to the {@link LedgerListener}s
  * ({@link #addListener}) and, when the book retains them ({@link #LedgerBook()}), kept in an append-only audit log
  * ({@link #entries()}). {@code MonthLongHourlySimulationTest} replays the entries to check the
  * engine's conservation invariant: <b>the only PLAY the house mints is starter packs and
  * net settlement gains; the only PLAY it burns is net settlement losses — including a full loss of
- * the stake on liquidation (Р-7)</b>. Deposits/withdrawals move PLAY across the on/off-chain
+ * the stake on liquidation (D-7)</b>. Deposits/withdrawals move PLAY across the on/off-chain
  * boundary rather than creating or destroying it in-game.
  *
  * <p>Balance never goes negative (enforced on every debit): a stake or withdrawal above the
@@ -33,9 +33,9 @@ import java.util.function.UnaryOperator;
  */
 public final class LedgerBook {
 
-    /** Starter pack granted on a player's first activity in a season (Р-2, Р-12, Р-16). */
+    /** Starter pack granted on a player's first activity in a season (D-2, D-12, D-16). */
     public static final PlayAmount STARTER_PACK = PlayAmount.ofWholePlay(10_000);
-    /** Minimum stake per bet (Р-12). */
+    /** Minimum stake per bet (D-12). */
     public static final PlayAmount MIN_STAKE = PlayAmount.ofWholePlay(100);
 
     private final Map<String, PlayerAccount> accounts = new LinkedHashMap<>();
@@ -51,7 +51,7 @@ public final class LedgerBook {
     private long requestCounter = 0;
     private long correctionCounter = 0;
 
-    // --- economy stage B (Р-92, docs/product/economy_implementation_plan.md B1-B6) ---
+    // --- economy stage B (D-92, docs/product/economy_implementation_plan.md B1-B6) ---
     // The house accounts. Before the cutover ({@link #activateEconomy}) none of them moves except the always-tracked
     // open stakes and the per-player counters: packs and wins are minted and lost stakes are burned, exactly as before.
     private boolean economyActive;
@@ -184,7 +184,7 @@ public final class LedgerBook {
 
     /**
      * The player's balance at the end of {@code season} — what the "богачи" archive of a past
-     * season (Р-10, Р-18) must be computed from, instead of the balance now. A {@link SeasonRecord}
+     * season (D-10, D-18) must be computed from, instead of the balance now. A {@link SeasonRecord}
      * does not store its own end balance, but the next one does: {@link #ensureSeasonPack} records
      * "the balance just before the new season's pack" as the new record's
      * {@code baselineBalance}. So this is the {@code baselineBalance} of the player's earliest
@@ -263,12 +263,12 @@ public final class LedgerBook {
         return acc;
     }
 
-    // --- onboarding / seasons (Р-16) ---
+    // --- onboarding / seasons (D-16) ---
 
     /**
-     * Lazily grants a starter pack on the player's first activity in {@code now}'s season (Р-2,
-     * Р-12): a brand-new player, or an existing one whose current season has rolled over. Records
-     * the pre-pack balance as the new season's baseline (Р-16, used by the "богачи" rating, Р-18).
+     * Lazily grants a starter pack on the player's first activity in {@code now}'s season (D-2,
+     * D-12): a brand-new player, or an existing one whose current season has rolled over. Records
+     * the pre-pack balance as the new season's baseline (D-16, used by the "богачи" rating, D-18).
      * A no-op if the player is already on {@code now}'s season. Every mutating operation below
      * calls this first, so callers rarely need to call it directly.
      */
@@ -334,9 +334,9 @@ public final class LedgerBook {
         return acc == null || season.compareTo(acc.currentSeason()) > 0;
     }
 
-    // --- stakes (Р-8, Р-13) ---
+    // --- stakes (D-8, D-13) ---
 
-    /** Reserves {@code stake} for a bet: validates the Р-12 minimum and that it does not exceed
+    /** Reserves {@code stake} for a bet: validates the D-12 minimum and that it does not exceed
      * the current balance, then debits it. */
     public void reserveStake(String playerId, String roundId, PlayAmount stake, Instant now) {
         stake.requirePositive("stake"); // wave-2 fix: below-minimum already implies positive (MIN_STAKE
@@ -408,7 +408,7 @@ public final class LedgerBook {
         }
     }
 
-    /** Returns a reserved stake because the bet was cancelled or replaced before round start (Р-13). */
+    /** Returns a reserved stake because the bet was cancelled or replaced before round start (D-13). */
     public void refundStake(String playerId, String roundId, PlayAmount stake, Instant now) {
         credit(playerId, stake, LedgerEntryType.STAKE_REFUND, roundId, now);
         openStakes = openStakes.minus(stake);
@@ -416,8 +416,8 @@ public final class LedgerBook {
 
     /**
      * Settles a resolved (non-cancelled) position: credits {@code payout} — 0 on liquidation, per
-     * Р-7 — and counts the round toward the Р-9/Р-18 rounds-played threshold and, when
-     * {@code directionCorrect} is present, toward the "пророки" ratio (Р-18); {@code
+     * D-7 — and counts the round toward the D-9/D-18 rounds-played threshold and, when
+     * {@code directionCorrect} is present, toward the "пророки" ratio (D-18); {@code
      * Optional.empty()} for a flat round (close == open price), excluded from that ratio's
      * denominator.
      *
@@ -456,7 +456,7 @@ public final class LedgerBook {
         restateLaterBaselines(playerId, counted, payout);
     }
 
-    // --- withdraw / deposit (Р-6), behind OnChainWalletPort ---
+    // --- withdraw / deposit (D-6), behind OnChainWalletPort ---
 
     /** Reserves {@code amount} pending the on-chain withdrawal (see {@link OnChainWalletPort}). */
     public WithdrawalRequest requestWithdrawal(String playerId, PlayAmount amount, Instant now) {
@@ -522,7 +522,7 @@ public final class LedgerBook {
     }
 
     /**
-     * Wave-2 security fix (Р-32/Р-43 pattern): an operator correction that reverses the balance/
+     * Wave-2 security fix (D-32/D-43 pattern): an operator correction that reverses the balance/
      * season effect a withdrawal request originally applied. Deliberately does <b>not</b> look up
      * {@code relatedWithdrawalRequestId} in {@link #withdrawal} — the caller (see
      * {@code GameService#reverseWithdrawal}) reads the request's own {@code originalAmount}/
@@ -581,7 +581,7 @@ public final class LedgerBook {
     }
 
     /**
-     * Wave-3 security fix (task item 1, Р-6 deposit-verification gap): an operator correction that
+     * Wave-3 security fix (task item 1, D-6 deposit-verification gap): an operator correction that
      * reverses the balance/season effect a deposit request originally applied — e.g. a
      * self-reported "I sent it" deposit that was auto-confirmed before any real on-chain
      * CAT-deposit verifier existed (see {@code GameService#requestDeposit}'s
@@ -643,7 +643,7 @@ public final class LedgerBook {
      * {@code season}. A record's baseline is the previous season's end balance
      * ({@link #seasonEndBalance}), so this puts the movement into the end balance of the season it
      * belongs to and — because it is then in both the live balance and the baseline — out of the
-     * growth of every later season (Р-18: balance at season end + withdrawn - deposited - baseline -
+     * growth of every later season (D-18: balance at season end + withdrawn - deposited - baseline -
      * starter pack), however late it was booked. Booking such a movement before or after the player
      * rolls on therefore leaves the same records behind.
      *
@@ -691,7 +691,7 @@ public final class LedgerBook {
     }
 
     /**
-     * Credits PLAY that a real, chain-confirmed CAT deposit already delivered (Р-53): unlike
+     * Credits PLAY that a real, chain-confirmed CAT deposit already delivered (D-53): unlike
      * {@link #requestDeposit}/{@link #confirmDeposit} (a two-step player-initiated
      * request-then-confirm, kept only so already-persisted historical self-report rows keep
      * replaying — see {@code GameService}'s javadoc on why the self-report RPC is permanently
@@ -749,7 +749,7 @@ public final class LedgerBook {
         return updated;
     }
 
-    // --- economy stage B: the house accounts (Р-92, plan B1-B6) ---
+    // --- economy stage B: the house accounts (D-92, plan B1-B6) ---
 
     /**
      * The cutover (plan B1): from here on starter packs, refunds of fees and payouts come from TREASURY, lost stakes go to it,

@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@link RateLimiter}'s token bucket without the application: the shared budget of {@code herd.ratelimit.*} is what it
- * was, and a caller may bring a budget of its own (Р-81: {@code submitFeedback}).
+ * was, and a caller may bring a budget of its own (D-81: {@code submitFeedback}).
  */
 class RateLimiterTest {
 

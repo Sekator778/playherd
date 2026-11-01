@@ -11,7 +11,7 @@ import crowdvsmarket.engine.round.Direction;
  *
  * @param confidence the signal's confidence (0 for a coin or a fallback)
  * @param fallback   the strategy was silent and the persona chose a fallback signal
- * @param mode       how the bet is paid (Р-106); {@link BetMode#FIXED} only where the market allows it. The leverage of a fixed
+ * @param mode       how the bet is paid (D-106); {@link BetMode#FIXED} only where the market allows it. The leverage of a fixed
  *                   bet is the persona's sizing (it keeps the persona's state moving as before) but is not sent as such
  */
 public record BetIntent(String botId, String marketId, String roundId, Direction direction, PlayAmount stake, int leverage,

@@ -13,7 +13,7 @@ public final class Identity {
     }
 
     /** {@code streak}: the win streak over ALL the player's settled rounds, not only the {@code history} page
-     *  (Р-71; {@code domain.WinStreak} has the rule). */
+     *  (D-71; {@code domain.WinStreak} has the rule). */
     public record PublicProfileDto(PlayerSummaryDto player, Ledger.SeasonRecordDto seasonRecord,
                                      List<ProfileRoundEntryDto> history, StreakDto streak, PlayDaysDto playDays) {
     }
@@ -31,7 +31,7 @@ public final class Identity {
     /** {@code asset}: the market's symbol ("BTC", "NVDA"), {@code marketId}: its id; {@code durationSec}: the
      *  real length of the round (its window in {@code round_results}), so a row can be labelled "3 MIN" even
      *  after its market has left {@code markets()}; {@code kind}: the market's kind, for the same reason (a
-     *  row of an {@code ODDS} market is worded as odds) — all contract.ts. {@code mode} (Р-106): how the bet was paid; for a
+     *  row of an {@code ODDS} market is worded as odds) — all contract.ts. {@code mode} (D-106): how the bet was paid; for a
      *  {@code FIXED} one {@code leverage} is a placeholder and {@code liquidated} false. */
     public record ProfileRoundEntryDto(String roundId, Enums.Interval interval, String marketId, String asset,
                                          Long durationSec, Enums.MarketKind kind, long settledAtMs,

@@ -1,11 +1,11 @@
 /**
- * The mock's market catalog (Р-69): 6 categories, 19 markets — the six crypto markets, two stocks,
+ * The mock's market catalog (D-69): 6 categories, 19 markets — the six crypto markets, two stocks,
  * two indices, two commodities (the `herd.markets.*` defaults of `docs/research/markets_architecture.md`
  * §10) and four politics + three sports `ODDS` markets (Т-10), one of them listed "moments ago" so the
  * no-opening-price state exists (`MOCK_NEW_LISTING_ID`). Static data only; the price paths
  * are `mockPrices.ts`, the round/crowd builders `mockRounds.ts`/`mockCrowdHistory.ts`.
  *
- * The sources are the ones the server names (Р-74, Р-76, `the decision log`): crypto is priced by the
+ * The sources are the ones the server names (D-74, D-76, `the decision log`): crypto is priced by the
  * exchange of the asset itself with a backup exchange behind it — BTC, ETH, SOL, XRP and DOGE on Coinbase with Kraken
  * behind them, HYPE on Hyperliquid's spot market with Coinbase behind it — stocks, indices and commodities by
  * Hyperliquid, `ODDS` by Polymarket. The mock never switches to a backup (no `MarketPriceDto.venue`, every round on its
@@ -34,7 +34,7 @@ export interface MockMarketSpec {
   subtitle: string | null;
   iconUrl: string | null;
   source: MarketDto["source"];
-  /** The exchange behind `source` for a crypto market (`MarketDto.backupSource`, Р-76); null for every other. */
+  /** The exchange behind `source` for a crypto market (`MarketDto.backupSource`, D-76); null for every other. */
   backupSource: MarketDto["backupSource"];
   maxLeverage: number;
   priceDecimals: number;
@@ -53,7 +53,7 @@ export interface MockMarketSpec {
   closesAtMs: EpochMs | null;
   /** Mock only: why it closes, in the words a source would use (`MarketDto.closeReason`). */
   closeReason: string | null;
-  /** First day of this market's crowd account (Р-25, Т-6). */
+  /** First day of this market's crowd account (D-25, Т-6). */
   listedAtMs: EpochMs;
   /** Mock only: the first instant the mock has a price for this market (null = from the start of time).
    *  A round that STARTED before it has no opening price (`RoundRunning.openPrice === null`) — the state of
@@ -81,7 +81,7 @@ const DAY_ONE = Date.UTC(2026, 0, 1);
 
 type MockMarketBase = Omit<MockMarketSpec, "oracleIndex">;
 
-/** Who prices a `PERP` market and who stands behind it (Р-76): stocks, indices and commodities are Hyperliquid's own
+/** Who prices a `PERP` market and who stands behind it (D-76): stocks, indices and commodities are Hyperliquid's own
  *  perpetuals with no backup; the crypto markets are spot markets with a backup exchange. */
 type Venues = Pick<MockMarketBase, "source" | "backupSource">;
 const HYPERLIQUID_PERP: Venues = { source: "hyperliquid", backupSource: null };
@@ -187,7 +187,7 @@ const NEW_LISTING_PRICE_FROM = SIM_BASE_MS - 2 * 60_000;
 
 /** Listing order = the order `markets()` returns them in; the oracle index follows it (BTC is 0, Т-9). */
 const CATALOG: readonly MockMarketBase[] = [
-  // crypto (`herd.markets.crypto` default): spot markets with a backup exchange (Р-76)
+  // crypto (`herd.markets.crypto` default): spot markets with a backup exchange (D-76)
   perp("BTC", "crypto", "BTC", "Bitcoin", 83_451, 40, 0.0045, DAY_ONE, [12, 32], 2, COINBASE_KRAKEN),
   perp("ETH", "crypto", "ETH", "Ethereum", 2_696.8, 25, 0.007, DAY_ONE, [10, 28], undefined, COINBASE_KRAKEN),
   perp("SOL", "crypto", "SOL", "Solana", 117.84, 20, 0.01, DAY_ONE, [8, 22], undefined, COINBASE_KRAKEN),

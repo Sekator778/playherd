@@ -28,9 +28,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link GameService#openRounds} on plain objects (Р-76): every tick the scheduler asks the prices to open the running
+ * {@link GameService#openRounds} on plain objects (D-76): every tick the scheduler asks the prices to open the running
  * round of each series of each market that has a backup exchange, once that round has started — and only those. A market's
- * failure never stops the others, and nothing is asked in replay mode. And {@link GameService#otherVenueLive} (Р-77), the
+ * failure never stops the others, and nothing is asked in replay mode. And {@link GameService#otherVenueLive} (D-77), the
  * scheduler's question whether a round may be let go, which reaches the prices only for a market that has another exchange
  * to ask about.
  */
@@ -151,7 +151,7 @@ class GameServiceOpenRoundsTest {
         verifyNoInteractions(marketPrices);
     }
 
-    // ------------------------------------------------------------------ the other exchange of a market (Р-77)
+    // ------------------------------------------------------------------ the other exchange of a market (D-77)
 
     @Test
     void theOtherExchangeIsAskedAboutOnlyForAMarketThatHasOne() {
@@ -188,7 +188,7 @@ class GameServiceOpenRoundsTest {
         verifyNoInteractions(marketPrices);
     }
 
-    // ------------------------------------------------------------------ the instrument a round is priced on (Р-79)
+    // ------------------------------------------------------------------ the instrument a round is priced on (D-79)
 
     @Test
     void aRoundIsPricedOnTheExchangeItWasDecidedOnAndOnTheMarketItselfWhenNothingSaysOtherwise() {

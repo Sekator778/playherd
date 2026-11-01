@@ -12,7 +12,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * Economy stage B (Р-92, docs/product/economy_implementation_plan.md B1, B2, B4, B6) on the ledger alone: the TREASURY and HERD accounts, the
+ * Economy stage B (D-92, docs/product/economy_implementation_plan.md B1, B2, B4, B6) on the ledger alone: the TREASURY and HERD accounts, the
  * cutover, the pack top-up and the packs that cannot be withdrawn, the retirement of a bot, the sweep of HERD, the circuit breaker.
  */
 class LedgerBookEconomyTest {

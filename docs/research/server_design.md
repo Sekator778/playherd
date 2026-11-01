@@ -1,7 +1,7 @@
 # Дизайн Quarkus-бэкенда (`server/`)
 
 Дата: 2026-09-25. Реализует FIXED INTERFACE (1)/(2)/(3) из постановки задачи «поднять Quarkus
-backend» поверх домена `engine/` (Р-20) и подключается к отдельному `chainsvc` (порт 8090,
+backend» поверх домена `engine/` (D-20) и подключается к отдельному `chainsvc` (порт 8090,
 FIXED INTERFACE 3) для подписи/оракула. Что помечено «предложение» — решение этой сессии,
 не зафиксировано в `the decision log`, подлежит пересмотру. Все Р-N — из
 `the decision log`.
@@ -33,7 +33,7 @@ Java 21, `mvn -s ~/.m2/settings-oss.xml …` (правило the project notes).
 | Пакет | Роль |
 |---|---|
 | `dto` | Java-записи 1:1 из `web/src/api/contract.ts` (Rounds/Ledger/Crowd/Ratings/Home/Auth/Identity/Betting/ServerInfo/Paging/Enums, а с волны 7 ещё `Markets` — DTO лобби, цен, позиций и сводки толпы; в `Enums` с волны 8 ещё `WithdrawalChainState` — слова `chain_state` вывода) — сгруппированы во вложенные `record` внутри нескольких файлов, а не по файлу на тип, ради скорости; на JSON это не влияет (Jackson сериализует по именам компонентов записи, не по имени Java-класса) |
-| `domain` | Живое состояние процесса: `EngineHub` (**один** общий `LedgerBook`; на каждый рынок — `CrowdAccount`, два `GameEngine` HOURLY/DAILY и `ComparisonAccounts` — линии «держать актив»/«анти-толпа», Р-26, Т-6), `RoundProgress` (курсор «следующее окно к резолву» на серию = пара (рынок, интервал)), `RoundCalendar` (origin-эпоха, Т-11), `PlayerDirectory` (кэш игроков), `BetFeed` (лента ставок, Р-62), `WinStreak` (правило серии побед профиля, Р-71), `BetWindows` (указатель окон, в которых лежит ставка без итога, — по нему закрытие рынка и посев серии находят каждое такое окно; `markets_architecture.md` §4 п.15) |
+| `domain` | Живое состояние процесса: `EngineHub` (**один** общий `LedgerBook`; на каждый рынок — `CrowdAccount`, два `GameEngine` HOURLY/DAILY и `ComparisonAccounts` — линии «держать актив»/«анти-толпа», D-26, Т-6), `RoundProgress` (курсор «следующее окно к резолву» на серию = пара (рынок, интервал)), `RoundCalendar` (origin-эпоха, Т-11), `PlayerDirectory` (кэш игроков), `BetFeed` (лента ставок, D-62), `WinStreak` (правило серии побед профиля, D-71), `BetWindows` (указатель окон, в которых лежит ставка без итога, — по нему закрытие рынка и посев серии находят каждое такое окно; `markets_architecture.md` §4 п.15) |
 | `markets` | Рынки (Т-1…Т-4, Т-10): `Market`, `NewMarket`, `Category`, `MarketKind`, `MarketStatus`, `MarketRegistry` (интерфейс; реализации `DbMarketRegistry` над таблицей `markets` и запасная `InMemoryMarketRegistry`), `MarketListener` (`GameService` — его слушатель: листинг даёт движки и серию, закрытие отменяет раунды с возвратом) |
 | `markets.catalog` | Каталоги — какие рынки листить: `HyperliquidCatalog` (перпы из `herd.markets.*`), `PolymarketCatalog` (шансы политики и спорта), `SyntheticCatalog` (офлайн-набор для `herd.prices.source=synthetic`) |
 | `prices` | Живой ценовой конвейер (Т-12, §4.2): интерфейс `MarketPrices` и его реализация `LiveMarketPrices`, `PriceFeedService` (опрос по расписанию), `TickStore`/`TickRing` (буфер тиков), источники `HyperliquidPriceSource`/`PolymarketPriceSource`/`SyntheticPriceSource`, `RoundPath` (свёртка в ≤30 свечей) |
@@ -43,12 +43,12 @@ Java 21, `mvn -s ~/.m2/settings-oss.xml …` (правило the project notes).
 | `live` | Осталась одна `HyperliquidClient` (generic `/info` REST-клиент) — ею пользуется только адаптер исполнения (§15.7, выключен по умолчанию). `LivePriceSampler` и `LiveRoundPrices` (старый поллер `markPx` и построитель путей) удалены: их заменил пакет `prices` |
 | `price` | `PriceService` — только режим `replay`: replay-серия BTC и «референсная» цена `replayReference` |
 | `chain` | `ChainSvcClient` (мокируемый CDI-интерфейс) + `ChainSvcRestClient` (сырой MP REST Client, FIXED INTERFACE 3 дословно) + `ChainSvcClientImpl`; `OracleSeqGate` (нижняя граница `seq` оракула: пока она не получена, планировщик не рассчитывает раунды — всё, что `seq` не резервирует, идёт, §5), `OracleStatusCache` (фоновое обновление статуса оракула), `ChainRequestIds` (id вывода в chainsvc = id движка + тег БД, §16.4) |
-| `auth` | `AuthService` (challenge/verify, Р-4/Р-45; домен в тексте подписи — `herd.public-domain`), `SessionService` (`herd_session`) |
-| `bots` | `BotStrategy` (5 стратегий), `BotService` (Р-46, Т-8: ставки на несколько рынков за раунд) |
-| `scheduler` | `RoundSchedulerService` (главный тик, §5), `SettlementBackoff` (отсрочка повтора расчёта окна), `OraclePublisherService` (Р-40/41/47), `OracleReconciliationService`, `EngineRebuildService` + `EngineStateBuilder` (рестарт и восстановление после сбоя расчёта: состояние строится рядом и подменяется целиком, fail-stop), поллеры вывода/ввода PLAY |
-| `service` | `GameService` — оркестратор всех мутирующих операций Api и большинства чтений, замок движка и его узкое API чтения (`readEngine`, `requireEngineReady`); вокруг него: `SeriesSeeder` (откуда стартует серия), `RoundCancellations`, `RoundPriceChecks`, `BoundaryPrices` (закрытие раунда — открытие следующего, из памяти ядра, Р-40), `WithdrawalSubmitter` (единственное место, откуда вывод уходит в chainsvc); **модель чтения рынков** (волна 7, §20): `MarketViewService` (`markets`, `myPositions`, `crowdOverview`), `OpenBets`, `CrowdStatsMemo`, `MarketMapper`, `PriceSeriesService` + `PriceThinning` (`priceSeries`), `ServerInfoService` (`serverInfo`); `FeedbackService` (`submitFeedback`, список оператора, §22) |
-| `api` | `RpcResource` (`POST /api/rpc/{method}`), `AdminResource` (Р-43), `ResultsJsonResource` (`GET /api/rounds/{id}/results.json`), `ApiExceptionMapper`, `RateLimiter` |
-| `geoip` | Страна по IP для отзыва (Р-81, §22): `CountryLookup` (интерфейс), `DbIpCountryLookup` (бин: фоновая нить загрузки + ответы), `GeoIpUpdater` (когда и что грузить), `DbIpDownloader` (скачать и распаковать файл месяца), `CountryDatabase` (MMDB в памяти поверх `com.maxmind.db.Reader`), `IpAddresses` (разбор адреса без DNS) |
+| `auth` | `AuthService` (challenge/verify, D-4/D-45; домен в тексте подписи — `herd.public-domain`), `SessionService` (`herd_session`) |
+| `bots` | `BotStrategy` (5 стратегий), `BotService` (D-46, Т-8: ставки на несколько рынков за раунд) |
+| `scheduler` | `RoundSchedulerService` (главный тик, §5), `SettlementBackoff` (отсрочка повтора расчёта окна), `OraclePublisherService` (D-40/41/47), `OracleReconciliationService`, `EngineRebuildService` + `EngineStateBuilder` (рестарт и восстановление после сбоя расчёта: состояние строится рядом и подменяется целиком, fail-stop), поллеры вывода/ввода PLAY |
+| `service` | `GameService` — оркестратор всех мутирующих операций Api и большинства чтений, замок движка и его узкое API чтения (`readEngine`, `requireEngineReady`); вокруг него: `SeriesSeeder` (откуда стартует серия), `RoundCancellations`, `RoundPriceChecks`, `BoundaryPrices` (закрытие раунда — открытие следующего, из памяти ядра, D-40), `WithdrawalSubmitter` (единственное место, откуда вывод уходит в chainsvc); **модель чтения рынков** (волна 7, §20): `MarketViewService` (`markets`, `myPositions`, `crowdOverview`), `OpenBets`, `CrowdStatsMemo`, `MarketMapper`, `PriceSeriesService` + `PriceThinning` (`priceSeries`), `ServerInfoService` (`serverInfo`); `FeedbackService` (`submitFeedback`, список оператора, §22) |
+| `api` | `RpcResource` (`POST /api/rpc/{method}`), `AdminResource` (D-43), `ResultsJsonResource` (`GET /api/rounds/{id}/results.json`), `ApiExceptionMapper`, `RateLimiter` |
+| `geoip` | Страна по IP для отзыва (D-81, §22): `CountryLookup` (интерфейс), `DbIpCountryLookup` (бин: фоновая нить загрузки + ответы), `GeoIpUpdater` (когда и что грузить), `DbIpDownloader` (скачать и распаковать файл месяца), `CountryDatabase` (MMDB в памяти поверх `com.maxmind.db.Reader`), `IpAddresses` (разбор адреса без DNS) |
 | `util` | `ResultsHasher` (канонический JSON итогов и его хеш; для BTC байт-в-байт прежний, Т-13), `LogThrottle`, `FailureLog` (первый сбой со стеком, дальше одна строка за период), `ConstantTimeTokens` |
 | `config` | `GameConfig`, `GameMode`, `JacksonConfig` |
 
@@ -90,15 +90,15 @@ history()` восстанавливается «бесплатно» при ре
 детерминированно —读-модельная таблица просто хранит то, что вернул движок, а не решает
 самостоятельно.
 
-**Вывод/ввод PLAY (Р-6) — предложение, заглушка `OnChainWalletPort`:** реального моста в
+**Вывод/ввод PLAY (D-6) — предложение, заглушка `OnChainWalletPort`:** реального моста в
 testnet11-CAT нет (в FIXED INTERFACE (3) для этого нет эндпоинта у `chainsvc` — только auth и
 oracle) — `requestWithdrawal`/`requestDeposit` сразу же переводятся в `CONFIRMED` тем же кодом,
 что обработал бы настоящее подтверждение. Честно задокументировано здесь и в самом коде
 (`GameService`, комментарий у секции withdraw/deposit) — это не то же самое, что «реальные
-деньги» (речь по-прежнему только о PLAY, toy-currency, Р-2/Р-6), но реальный ончейн-мост —
+деньги» (речь по-прежнему только о PLAY, toy-currency, D-2/D-6), но реальный ончейн-мост —
 отдельная будущая задача.
 
-**С волны 7 (рынки, Р-69…Р-71; `docs/research/markets_architecture.md` §6, §20 ниже):** миграция
+**С волны 7 (рынки, D-69…D-71; `docs/research/markets_architecture.md` §6, §20 ниже):** миграция
 `V7__markets.sql` добавила таблицы `markets` (реестр рынков; строку BTC создаёт сама миграция) и
 `price_snapshots` (по строке на опрос источника цен — восстанавливает буфер тиков после рестарта), а
 `round_results`, `player_round_history` и `oracle_records` получили колонку `market` (по умолчанию
@@ -107,7 +107,7 @@ oracle) — `requestWithdrawal`/`requestDeposit` сразу же перевод�
 повышался (Т-13): старый журнал воспроизводится как есть. Где в тексте выше сказано «BTC» про
 `ComparisonAccounts`, «счёт толпы» и `EngineHub` — теперь это по одному комплекту на рынок.
 
-## 4. Режимы (Р-46) — replay (по умолчанию) и live
+## 4. Режимы (D-46) — replay (по умолчанию) и live
 
 ### 4.1 Replay
 
@@ -120,11 +120,11 @@ oracle) — `requestWithdrawal`/`requestDeposit` сразу же перевод�
 парсером, без завязки на engine-класс, который для этого не предназначен.
 
 `ReplayRoundPrices` — предложение: скорость `speedup=20` (config `herd.replay.speedup`), т.е.
-**одна историческая минута = 3 реальных секунды** — подобрано так, что Р-46'овский тестовый
+**одна историческая минута = 3 реальных секунды** — подобрано так, что D-46'овский тестовый
 HOURLY-раунд (180 с) проигрывает ровно 60 исторических минут (= 1 час, отсюда и название).
 DAILY-раунд (900 с) при этом проигрывает 300 минут (5 часов), не буквально «день» — реальное
 соотношение 24× не сохранено намеренно (иначе DAILY в тесте занимал бы 72 минуты), это
-осознанное упрощение, не противоречащее ни одному Р-N (Р-46 фиксирует только длительности и то,
+осознанное упрощение, не противоречащее ни одному Р-N (D-46 фиксирует только длительности и то,
 что цена — «ускоренный повтор реальных исторических цен», не точный коэффициент 24).
 Отображение «окно → индекс свечи» — **по индексу массива**, не по абсолютному timestamp
 (`ReplayRoundPrices.indexAt`), с зацикливанием по модулю на конце файла — задокументированный
@@ -140,7 +140,7 @@ start epoch»): `RoundCalendar`/`ServerMetaRepository.originMsOrInit` фикси
 (эквивалент вызову с `RoundDurations.DEFAULT`/`originMs=0`), с юнит-тестами в
 `RoundClockTest` (5 новых кейсов).
 
-### 4.2 Live (Р-70, Т-12)
+### 4.2 Live (D-70, Т-12)
 
 В `herd.mode=live` играются **все активные рынки** реестра (`GameService.runs`/`runningMarkets`),
 а цены — живые: раунд рассчитывается по ценам источника на его границах, а не по повтору истории.
@@ -158,11 +158,11 @@ start epoch»): `RoundCalendar`/`ServerMetaRepository.originMsOrInit` фикси
   раз в 10 минут обрезается.
 - **Цена на границе, путь, дыра.** `LiveMarketPrices` (реализация `MarketPrices`): `open(N) =
   P(start)`, `close(N) = P(end)` — последний тик не позже границы и не старше `staleMs` ленты, поэтому
-  `close(N) = open(N+1)` (Р-40); путь раунда — тики окна, свёрнутые не более чем в 30 свечей
+  `close(N) = open(N+1)` (D-40); путь раунда — тики окна, свёрнутые не более чем в 30 свечей
   (`RoundPath`); дыру больше `maxGapMs` добирает история источника (не чаще раза в
   `herd.prices.backfill-cooldown-ms` на рынок). Нет цены даже после добора —
   `PriceUnavailableException`: планировщик повторяет, через час после конца окна раунд отменяется с
-  возвратом ставок (Р-23, §5). `resolve` может ходить в сеть и поэтому зовётся **до** блокировки
+  возвратом ставок (D-23, §5). `resolve` может ходить в сеть и поэтому зовётся **до** блокировки
   движка; `latest`, `series`, `soFar` — только память.
 - **Каталоги** (`markets/catalog`): `HyperliquidCatalog` листит перпы из `herd.markets.crypto|stocks|
   indices|commodities`, `PolymarketCatalog` — шансы политики и спорта (топ по объёму с фильтрами,
@@ -177,7 +177,7 @@ start epoch»): `RoundCalendar`/`ServerMetaRepository.originMsOrInit` фикси
 на синтетическом источнике (`LiveServerEndToEndTest`, §20.6), реальные ответы — только записанными
 образцами 2026-10-01 (`server/src/test/resources/fixtures/`, фикстуры конвейера).
 
-## 5. Планировщик и «текущий раунд» (Р-19)
+## 5. Планировщик и «текущий раунд» (D-19)
 
 `RoundProgress` хранит явный курсор «следующее окно к резолву» на серию — серия это пара **(рынок,
 интервал)** (`docs/research/markets_architecture.md` §4 п.1) — и **не** пересчитывается наивным
@@ -223,7 +223,7 @@ resolveOverdueRounds(рынок, интервал, now):
 §4 п.5, п.8). Источник — `scheduler/RoundSchedulerService.java`, `service/GameService.java`
 (`resolveRound`, `firstWindowToResolve`), `service/SeriesSeeder.java`.
 
-**Оператор** (Р-32/Р-43) может отменить **текущий running ИЛИ текущий betting** раунд серии;
+**Оператор** (D-32/D-43) может отменить **текущий running ИЛИ текущий betting** раунд серии;
 `GameService.cancelRound` не трогает `RoundProgress` сам — если это был `next(…)`, планировщик на
 следующем тике увидит уже существующую запись в `round_results` и просто шагнёт дальше (ветка
 «уже отменён» выше) — так что отмена заранее открытого-для-ставок раунда и отмена уже идущего
@@ -240,7 +240,7 @@ runRound` резолвит атомарно, отдельного состоян
 сбой источника через границу), `RoundRunning.openPrice` — `null`, позиций и позиции толпы нет: ни
 нуля, ни последней цены вместо неё не показывается (contract.ts).
 
-## 6. Боты (Р-46, Т-8)
+## 6. Боты (D-46, Т-8)
 
 `BotService` держит 20 (config `herd.bots.count`) серверных игроков (`is_bot=true`),
 по 4 на 5 стратегий (`BotStrategy` — предложение, конкретные названия/параметры не из
@@ -259,7 +259,7 @@ runRound` резолвит атомарно, отдельного состоян
 момент ставки. Окна ставок рынков, закрывающиеся одновременно, планируются вместе (`BotService.
 planBettingWindows`); источник — `bots/BotService.java`.
 
-## 7. Auth (Р-4/Р-45)
+## 7. Auth (D-4/D-45)
 
 `AuthService.challenge` — nonce (24 случайных байта, base64url), сообщение начинается с
 нехексового префикса `"Herd sign-in\n"` (ловушка hex-парсинга Sage,
@@ -267,20 +267,20 @@ planBettingWindows`); источник — `bots/BotService.java`.
 (`auth_challenges.used`, атомарный `UPDATE … WHERE used=false`). `verify` пересобирает и
 проверяет nonce **на сервере**, зовёт `chainsvc POST /v1/auth/verify` (реальная BLS-криптография —
 целиком забота `chainsvc`, этот сервер её не реализует) и только по `valid:true` заводит/трогает
-игрока. Локальный тестовый кошелёк в браузере (Р-45) подписывает то же сообщение той же схемой —
+игрока. Локальный тестовый кошелёк в браузере (D-45) подписывает то же сообщение той же схемой —
 для этого сервера разницы нет вообще, он просто шлёт `(address, publicKey, message, signature)`
 в `chainsvc`.
 
-Идентичность игрока — `walletAddress` (первый подписавший адрес, Р-1/Р-4); повторный вход тем же
+Идентичность игрока — `walletAddress` (первый подписавший адрес, D-1/D-4); повторный вход тем же
 адресом находит того же `playerId`. Каждый *успешный* `authVerify` (не только первый) заново
 дёргает `ensureSeasonPack` через `PlayerRegistered`-событие — это то, что держит видимый
 `myAccount().currentSeason` точным без отдельного публичного геттера в `LedgerBook`
 (см. javadoc `GameService.account`/`registerOrTouchPlayer`).
 
-## 8. Оракул (Р-40/41/47)
+## 8. Оракул (D-40/41/47)
 
 Каждый резолв раунда (в т.ч. тестовый режим — **на каждой границе раунда**, не только раз в час,
-Р-47) кладёт одну строку в `oracle_records` (свой монотонный `seq`, `server_meta`), помеченную
+D-47) кладёт одну строку в `oracle_records` (свой монотонный `seq`, `server_meta`), помеченную
 `source="replay"`/`"live"` и с `sourceTs` — реальным историческим моментом цены при реплее (не
 сжатым временем раунда). `OraclePublisherService` на каждом тике планировщика забирает ещё не
 отправленные записи (`chainsvc_queued=false`) пачками по 20 (max singleton-спенд, по FIXED
@@ -298,13 +298,13 @@ canonicalization, а не иллюстративному списку. Пред�
 раунда была проверяемая страница `results.json`, не только у settled. С волны 8 этот хеш отдаёт и RPC:
 `RoundCancelled.resultsHash` (§21.1).
 
-## 9. Оператор (Р-43)
+## 9. Оператор (D-43)
 
 `/api/admin/*` — bearer-токен из `HERD_OPERATOR_TOKEN` (config `herd.operator.token`),
-сравнение constant-time. **Это временная заглушка**, не подпись ключом оператора — Р-43 говорит
+сравнение constant-time. **Это временная заглушка**, не подпись ключом оператора — D-43 говорит
 про «CLI с подписью ключом оператора», которого пока нет; токен — то же самое признание
 ограничения, что и у `OnChainWalletPort` (§3). `tools/herd-operator.sh` — curl-обёртка
-(`status`/`cancel <roundId> [reason]`, с Р-81 ещё `feedback`, §22.6). Веб-админки нет (Р-43).
+(`status`/`cancel <roundId> [reason]`, с D-81 ещё `feedback`, §22.6). Веб-админки нет (D-43).
 
 ## 10. Docker
 
@@ -328,7 +328,7 @@ canonicalization, а не иллюстративному списку. Пред�
 `docker build` без флага падал на `Unknown host repo.maven.apache.org`), хотя прямой доступ в
 интернет с хоста (`curl`, `mvn` вне Docker) работает. Сборка образа в этом проходе делалась с
 `docker build --network host …` только чтобы обойти это ограничение конкретно здесь — обычный
-докер-хост (например, Alex'ов Mac, Р-44) такого ограничения иметь не должен, и `docker-compose`-
+докер-хост (например, Alex'ов Mac, D-44) такого ограничения иметь не должен, и `docker-compose`-
 стенд проекта `herd` эту проблему видеть не будет; если всё-таки увидит — решение то же самое
 (host-сеть на этапе сборки, не в готовом Dockerfile).
 
@@ -348,7 +348,7 @@ canonicalization, а не иллюстративному списку. Пред�
     (HOURLY)/6с (DAILY), два игрока входят локальной тестовой подписью (chainsvc замокан —
     настоящая криптография не участвует), ставят противоположные позиции на текущий
     betting-раунд; проверено: (a) во время BETTING виден только `participantCount`, структурно
-    невозможно увидеть направление/сумму чужой ставки (Р-22); (b) после SETTLED обе позиции
+    невозможно увидеть направление/сумму чужой ставки (D-22); (b) после SETTLED обе позиции
     видны всем, с верным направлением/плечом; (c) баланс игрока меняется (ставка списана,
     выплата начислена); (d) `GET results.json` даёт байты, чей sha256 **точно** равен
     `resultsHash`, и текст содержит `roundId`/оба `playerId`, без пробелов; (e) ожидаются ещё 2
@@ -449,7 +449,7 @@ height|null}`, отдельный lookup в `RoundResultRepository.findAnchorByR
   `MessageDigest.isEqual`) — старое сравнение уходило с ранним `return false` при несовпадении
   *длины*, до входа в константно-временный цикл, что само по себе давало через тайминг узнать
   длину токена.
-- Rate limit (Р-38, заглушка до VPS) — `RateLimiter`: token bucket в памяти, ключ
+- Rate limit (D-38, заглушка до VPS) — `RateLimiter`: token bucket в памяти, ключ
   `"<ip>:<method>"`, на `authChallenge`/`authVerify`/`placeBet` (`RpcResource` проверяет до
   диспетчеризации, отдельный бакет на каждый метод — иначе шумный вызов одного метода съедал бы
   бюджет другого). Предложение-дефолты (не из источника): capacity 30, refill 0.5/сек
@@ -513,11 +513,11 @@ javadoc про «~1% на бота на раунд») и (б) выявленна
 именно испорченное `WithdrawalRequested(amountMojos=-5000000)` уже лежит в `game_events` этого
 стенда и трогать/удалять его нельзя).
 
-### 14.2 Честная коррекция испорченного баланса (Р-32/Р-43 pattern)
+### 14.2 Честная коррекция испорченного баланса (D-32/D-43 pattern)
 
 Из evidence волны 2 (`scratchpad/wave2b/step1_output.log`, `step1_setup_and_edges.mjs`): игрок
 `3e93a5a8-b5f0-47fa-adaa-d1c103c6ae1d` (ник `W2C wave2c edge negwith`, локальный тестовый кошелёк
-Р-45), заявка на вывод `requestId="w-5"`, `amount="-5000.000"`, `state=CONFIRMED` — баланс вырос с
+D-45), заявка на вывод `requestId="w-5"`, `amount="-5000.000"`, `state=CONFIRMED` — баланс вырос с
 `10000.000` до `15000.000`.
 
 Новый эндпоинт `POST /api/admin/withdrawals/{requestId}/reverse` (`{"reason": "..."}`, operator
@@ -612,7 +612,7 @@ invalid-amount/positive-still-works, `placeBet` с отрицательным st
 ## 15. Волна 3 (независимая критика 2026-09-26) — фиксы без решения Алекса
 
 Правит 7 находок `an internal security review`, ограниченных задачей как «не
-требующие решения Алекса» (открытые вопросы — Sage-логин, VPS, чистка git-истории, Р-6-в-полном-
+требующие решения Алекса» (открытые вопросы — Sage-логин, VPS, чистка git-истории, D-6-в-полном-
 объёме — не в этой волне). Затронуты `server/`, `engine/` (аддитивно), `chain/c2-svc` (только
 контрактные фикстуры), `docker-compose.yml`, `tools/stand.sh`, `tools/herd-operator.sh`,
 `.github/workflows/`, `README.md` (один абзац, явно разрешено формулировкой задачи item 7).
@@ -698,9 +698,9 @@ invalid-amount/positive-still-works, `placeBet` с отрицательным st
   «game-designer»-сессия оставила там же с явной пометкой «whoever lands that should overwrite this
   line»).
 - **`herd_session`-cookie получает `Secure`, когда сервер за TLS** — новый флаг
-  `herd.cookie.secure` (`GameConfig`, default `false` — верно для локального http-стенда Р-44),
+  `herd.cookie.secure` (`GameConfig`, default `false` — верно для локального http-стенда D-44),
   `RpcResource`'s `sessionCookie()`/`clearSessionCookie()` оба зовут `.secure(config
-  .cookieSecure())`. Для VPS-деплоя (Р-38, отдельное решение) выставить `HERD_COOKIE_SECURE=true`
+  .cookieSecure())`. Для VPS-деплоя (D-38, отдельное решение) выставить `HERD_COOKIE_SECURE=true`
   **только после** реальной TLS-терминации перед сервером — иначе cookie с `Secure` без HTTPS
   браузер вообще не отправит.
 
@@ -797,7 +797,7 @@ invalid-amount/positive-still-works, `placeBet` с отрицательным st
   (`herd.execution.hyperliquid.wallet-address`, пусто по умолчанию — нигде в репозитории/`.env` не
   задан). Ничто в кодовой базе не создаёт этот адаптер с реальными ключами и не подключает его к
   игровому пути — `CrowdAccount`/`ComparisonAccounts` используют исключительно
-  `PaperTradingAdapter` (Р-38: активация реальными деньгами — решение того, кто разворачивает).
+  `PaperTradingAdapter` (D-38: активация реальными деньгами — решение того, кто разворачивает).
   `getPosition` — единственный метод, который реально может выполниться уже сегодня: `POST /info`
   `clearinghouseState` — публичный, без подписи (сверено с `hyperliquid.gitbook.io/hyperliquid-
   docs/for-developers/api/info-endpoint/perpetuals`, зафетчено 2026-09-26) — но его ответ
@@ -851,9 +851,9 @@ invalid-amount/positive-still-works, `placeBet` с отрицательным st
 `DepositReversed`) без единой ошибки, все 4 фиктивных депозита (`d-2`/`d-4`/`d-7`/`d-10`) реально
 реверснуты на живых данных (не только в тесте) — команды и результат см. §15.1.
 
-## 16. Волна 4 (Р-53: настоящий on-chain вывод/ввод PLAY) — 2026-09-26
+## 16. Волна 4 (D-53: настоящий on-chain вывод/ввод PLAY) — 2026-09-26
 
-Реализует Р-53 (Алекс, 2026-09-26, `the decision log`: «сделать до альфы») поверх FIXED
+Реализует D-53 (Алекс, 2026-09-26, `the decision log`: «сделать до альфы») поверх FIXED
 INTERFACE постановки задачи (`server ⇄ chainsvc`, `/v1/play/*`) — `POST /v1/play/withdrawals`,
 `GET /v1/play/withdrawals/{requestId}`, `POST /v1/play/deposit-address`,
 `GET /v1/play/deposits?sinceHeight=N`. Затронуты только `server/`, `engine/` (аддитивно) — задача
@@ -861,7 +861,7 @@ INTERFACE постановки задачи (`server ⇄ chainsvc`, `/v1/play/*`
 Rust-сторона (`chain/c2-svc/src/play/{types,mod,deposit,chain_client,withdrawal_*}.rs`) уже
 частично написана другой сессией — имена полей (`camelCase` через `#[serde(rename_all =
 "camelCase")]`) сверены с ней напрямую и **совпадают** с тем, что описывает FIXED INTERFACE (см.
-`ChainSvcClientImplTest`'s Р-53-кейсы); контрактных JSON-фикстур (`chain/c2-svc/tests/contract/
+`ChainSvcClientImplTest`'s D-53-кейсы); контрактных JSON-фикстур (`chain/c2-svc/tests/contract/
 *Play*.json`) на момент этого прохода ещё нет — `chain/c2-svc/tests/contract_fixtures.rs` их не
 генерирует, поэтому `ChainSvcContractFixturesTest` не расширен новыми (упавшими бы) кейсами, только
 задокументирован (её же javadoc) как «добавить, когда фикстуры появятся».
@@ -928,7 +928,7 @@ NOTHING` (свою же транзакцию) и только если это **
 `<= balance`) — как и раньше — эскроу-дебетует баланс тем же `WithdrawalRequested`-событием, но
 вместо мгновенного фейкового `CONFIRMED` синхронно (вне `engineLock`) шлёт `POST
 /v1/play/withdrawals {requestId, toAddress, amountMojos}`. **`toAddress` всегда — собственный
-зарегистрированный адрес игрока** (`players.wallet_address`, Р-57: identity = адрес входа) —
+зарегистрированный адрес игрока** (`players.wallet_address`, D-57: identity = адрес входа) —
 предложение: `contract.ts`'s `requestWithdrawal(amount)` не несёт параметра адреса, а получение его
 из уже-подписанной сессии (а не из недоверенного клиентского ввода) закрывает по конструкции риск
 «увести вывод на чужой адрес через скомпрометированную сессию»; поле «вывести на другой адрес» — вне
@@ -962,7 +962,7 @@ read-model; `queued`/`in_flight` — просто обновление read-mode
 ### 16.5 `requestDeposit` (self-report) — ПОЛНОСТЬЮ и НАВСЕГДА отключён, независимо от флага
 
 Важное решение этого прохода, не буквально продиктованное текстом задачи, но необходимое по
-безопасности: до Р-53 `herd.deposit.enabled=true` включал и (а) старый self-report `requestDeposit`
+безопасности: до D-53 `herd.deposit.enabled=true` включал и (а) старый self-report `requestDeposit`
 (вводишь любую сумму — сразу кредит, ровно тот баг, что волна 3 уже нашла CRITICAL/BLOCKER) и не
 имел отдельного пути (б) для реального ончейн-ввода, потому что реального пути не существовало.
 Теперь путь (б) реализован — но если бы `herd.deposit.enabled=true` по-прежнему **тоже** включал
@@ -1003,7 +1003,7 @@ CRITICAL-находкой в этом проекте. Поэтому `GameServic
 `playerIndex` не роняет поллер, депозит виден в `myLedger`, подтверждение/отказ вывода с
 рефандом, ретрай отправки после сбоя, реплей после `EngineRebuildService.rebuild()`, параллельные
 запросы на вывод никогда не уводят баланс в минус, параллельные кредиты одного и того же `coinId`
-применяются ровно один раз), `chain.ChainSvcClientImplTest` вырос на 8 (Р-53-методы, включая
+применяются ровно один раз), `chain.ChainSvcClientImplTest` вырос на 8 (D-53-методы, включая
 graceful-degradation на недоступность), `events.EventStoreGoldenFixturesTest` вырос на 2,
 `RpcValidationTest` — минус 3 старых депозитных amount-теста (self-report теперь безусловно
 недоступен, валидировать больше нечего), плюс `requestWithdrawalRejectsBelowMinimum` и
@@ -1033,7 +1033,7 @@ verify`, никакого пересобранного образа/рестар
   `chain/c2-svc/tests/contract_fixtures.rs` их напишет; `ChainSvcContractFixturesTest` явно
   задокументирован как место, куда их добавить.
 
-## 17. Волна 5 (Р-53 live-verification follow-up, 2026-09-26) — три находки живой проверки
+## 17. Волна 5 (D-53 live-verification follow-up, 2026-09-26) — три находки живой проверки
 
 Три пункта задания по итогам живой проверки стенда `herd` после волны 4 (§16): дубликат
 `PlayerRegistered` в `game_events`, ожидание контрактных фикстур `/v1/play/*` для
@@ -1054,7 +1054,7 @@ even for a returning player»). Значит два ряда для одного
 читаем (без мутации) `LedgerBook.seasonRecord(playerId, Season.of(now))`: если запись уже есть,
 `ensureSeasonPack` всё равно был бы no-op (см. его же javadoc), значит новый вход в ТОМ ЖЕ сезоне
 теперь тоже no-op в логе — ничего не дописывается. Если сезон в самом деле сменился с последнего
-касания — событие пишется, как и раньше (это то, что держит рабочим Р-2 «стартовый пакет сразу при
+касания — событие пишется, как и раньше (это то, что держит рабочим D-2 «стартовый пакет сразу при
 входе», см. `GameService.account`'s javadoc). Общий код записи вынесен в приватный
 `GameService.appendPlayerRegistered`, которым теперь пользуются и `registerOrTouchPlayer`, и
 `createBotPlayer` (было — дублирующийся `persist`+`apply`).
@@ -1129,20 +1129,20 @@ Ryuk от `mvn verify` убраны Ryuk'ом автоматически): `engi
 - Сезонный touch без входа (например, скорректировать читающие пути, чтобы не зависеть от логина
   для видимости нового стартового пакета) — не запрошено, вне объёма фикса дубликата.
 
-## 18. Волна 6 (Р-62: живой расклад толпы, лента ставок, «пока вас не было») — 2026-09-26
+## 18. Волна 6 (D-62: живой расклад толпы, лента ставок, «пока вас не было») — 2026-09-26
 
-Задание по итогам Р-61/Р-62/Р-63 (`the decision log`): концепция «Аркада», раскрытие
-расклада толпы и ленты ставок вживую во время окна ставок (заменяет Р-22), и отдельно — фикс
+Задание по итогам D-61/D-62/D-63 (`the decision log`): концепция «Аркада», раскрытие
+расклада толпы и ленты ставок вживую во время окна ставок (заменяет D-22), и отдельно — фикс
 основной сессии «игрок, не заходивший к моменту закрытия раунда, никогда не видит момент итога».
 Assigned paths — `server/`, `engine/` (аддитивно — не тронут, см. §18.4), `web/src/api/contract.ts`
 (только аддитивно) и этот файл.
 
-### 18.1 Живой расклад толпы во время `BETTING` (Р-62, пункт 1)
+### 18.1 Живой расклад толпы во время `BETTING` (D-62, пункт 1)
 
 `GameService.buildBettingDto` (вызывается из `rounds()`/`round()` для ещё не начавшегося раунда)
 теперь дополнительно считает `upStake`/`downStake`/`upCount`/`downCount`/`majorityDirection`/
 `majorityLeverage` из ставок, всё ещё лежащих в `BetBook` этого раунда — та же математика
-большинства по сумме ставок и то же средневзвешенное плечо (Р-14), что уже использует
+большинства по сумме ставок и то же средневзвешенное плечо (D-14), что уже использует
 `buildRunningDto`'s `crowdPreview` и `CrowdAccount.processRound` при реальном расчёте, просто
 на фазу раньше (позиция ещё не открыта, поэтому margin/entryPrice/liquidationPrice здесь не
 считаются — их и не было в задании, только сам расклад и превью направления/плеча толпы).
@@ -1152,7 +1152,7 @@ Assigned paths — `server/`, `engine/` (аддитивно — не трону�
 **Согласование формы с `web/`-агентом.** К моменту, когда этот проход дошёл до
 `contract.ts`, там уже лежали `RoundBetting.upStake?`/`downStake?`/`recentBets?`/`LiveBetDto` и
 `Api.unseenResults?`/`acknowledgeResults?` — тот же агент параллельно проектировал фронт на
-mock-данных (Р-35) и написал свою версию контракта первым. Не переписано заново: реальный бэкенд
+mock-данных (D-35) и написал свою версию контракта первым. Не переписано заново: реальный бэкенд
 подстроен под уже написанную (и уже используемую `MockApi`/`fx/useAwayReplay.ts`/
 `useSettlementWatcher`) форму, а не наоборот — `upStake`/`downStake` остались плоскими полями
 `RoundBetting` (не завёрнуты в отдельный DTO), RPC названы `unseenResults`/`acknowledgeResults`
@@ -1162,16 +1162,16 @@ mock-данных (Р-35) и написал свою версию контрак
 `majorityLeverage` на `RoundBetting`, плюс отдельный `betFeed` RPC (§18.2) — `web/`-агенту ничего
 менять не нужно, чтобы получить настоящие данные вместо мока под уже написанными полями.
 
-### 18.2 Живая лента ставок — `betFeed` RPC + `RoundBetting.recentBets` (Р-62, пункт 2)
+### 18.2 Живая лента ставок — `betFeed` RPC + `RoundBetting.recentBets` (D-62, пункт 2)
 
 Новый класс `server/domain/BetFeed.java` — in-memory, append-only, по одной записи на каждый
-`BetPlaced` (включая правку ставки, Р-13 — правка не переписывает старую запись, добавляет новую,
+`BetPlaced` (включая правку ставки, D-13 — правка не переписывает старую запись, добавляет новую,
 как и не удаляет предыдущий голос зрителя в Twitch Predictions). Единственный писатель —
 `EventApplier`'s `BetPlaced`-ветка (тот же паттерн, что уже даёт `ComparisonAccounts`: и живой
 трафик, и полный реплей при рестарте проходят одним кодом, `EngineRebuildService.rebuild()` зовёт
 `betFeed.reset()` перед реплеем ровно как `comparisonAccounts.reset()`). Два независимых предела:
 `MAX_ENTRIES_PER_ROUND=120` записей на раунд (старые вытесняются), `MAX_ROUNDS_TRACKED=500` раундов
-всего (предложение — числа нигде не зафиксированы, выбраны с запасом для локального стенда, Р-46:
+всего (предложение — числа нигде не зафиксированы, выбраны с запасом для локального стенда, D-46:
 20 ботов).
 
 Два способа читать одни и те же данные, под разные задачи:
@@ -1181,7 +1181,7 @@ mock-данных (Р-35) и написал свою версию контрак
   `seq > sinceSeq`, не больше `BetFeed.PAGE_SIZE=50` за вызов; `hasMore=true` — сразу звать ещё раз
   с `seq` последней записи, не дожидаясь следующего тика поллинга. Ряд — `BetFeedEntryDto{seq, atMs,
   playerDisplayName, isBot, direction, stake, leverage}` (без `playerId`/адреса — только то, что уже
-  публично по Р-15/Р-29).
+  публично по D-15/D-29).
 - **`RoundBetting.recentBets`** — маленький, всегда присутствующий срез той же ленты (новые
   первыми, не больше `RECENT_BETS_LIMIT=14`, то самое число, что уже было в mock-версии
   `web/`-агента), встроенный прямо в ответ `rounds()`/`round()` — не нужен отдельный вызов, если
@@ -1194,7 +1194,7 @@ mock-данных (Р-35) и написал свою версию контрак
 «should not happen, но на всякий случай» fallback, что уже есть в `storeSettledResult`) —
 `BetFeedEntryDto` сам этот `playerId` наружу не отдаёт.
 
-### 18.3 «Пока вас не было» — `unseenResults`/`acknowledgeResults` (Р-62, пункт 3)
+### 18.3 «Пока вас не было» — `unseenResults`/`acknowledgeResults` (D-62, пункт 3)
 
 Фикс находки основной сессии: игрок, чья вкладка/приложение были закрыты в момент расчёта раунда,
 никогда не видел «момент итога» (`docs/product/design/result-moment.md`) — `useSettlementWatcher`
@@ -1224,7 +1224,7 @@ mock-данных (Р-35) и написал свою версию контрак
 `engine/` — не тронут вообще: вся математика для §18.1 (majority-by-stake, stake-weighted leverage,
 клэмп 2..40) уже существовала на уровне `server/` (`GameService.weightedLeverage`,
 скопирован из уже отревьюженного `buildRunningDto`), новый код не добавляет доменной логики,
-только читает уже посчитанное. `oracle_records`/`results.json`/хеш итогов (Р-41) — семантика
+только читает уже посчитанное. `oracle_records`/`results.json`/хеш итогов (D-41) — семантика
 не менялась: живая лента и «пока вас не было» — обе read-model-надстройки поверх уже
 опубликованных/захешированных результатов, не влияют на то, что подписывается оракулом. Асимметрия
 по активам (§0 задания, `asset` уже `"BTC"`-литерал на `RoundBetting`/`RoundRunning`/
@@ -1241,8 +1241,8 @@ mock-данных (Р-35) и написал свою версию контрак
 вызовы `GameService`, `herd.bots.count=0` для детерминированного счёта), `UnseenResultsTest`
 (появление после расчёта → исчезновение после ack → идемпотентность повторного ack → переживает
 `EngineRebuildService.rebuild()`; изоляция по игроку — ack одного не трогает другого).
-`GameFlowIntegrationTest` обновлён: секция «reveal rules» (была — Р-22, «во время ставок раунд
-показывает 0 голосующих и никаких направлений/сумм») переписана под Р-62 — расклад
+`GameFlowIntegrationTest` обновлён: секция «reveal rules» (была — D-22, «во время ставок раунд
+показывает 0 голосующих и никаких направлений/сумм») переписана под D-62 — расклад
 (`upStake`/`downStake`/`upCount`/`downCount`, согласованность с `participantCount`,
 `majorityDirection`/`majorityLeverage` присутствуют парой или оба `null`) и лента (`betFeed`,
 порядок по `seq`, `sinceSeq`) видны вживую уже во время `BETTING`, полный список позиций
@@ -1373,7 +1373,7 @@ unknown withdrawal request: w-golden-1`, что и в описании зада�
 
 ## 20. Волна 7 (рынки: модель чтения, новые RPC, сквозной тест live) — 2026-10-02
 
-Основание: Р-68…Р-71 (`the decision log`); архитектура и зафиксированные интерфейсы —
+Основание: D-68…D-71 (`the decision log`); архитектура и зафиксированные интерфейсы —
 `docs/research/markets_architecture.md` (Т-1…Т-13, §8 «API»); источник правды по именам полей —
 `web/src/api/contract.ts`. Этот срез — «API-поверхность рынков на сервере»: чтение из памяти (новый
 `MarketViewService` и соседи), четыре новых RPC, дополнения `serverInfo` и профиля, мелкие правки и
@@ -1430,7 +1430,7 @@ unknown withdrawal request: w-golden-1`, что и в описании зада�
 - **Серии.** По одной на интервал, **короткая первой** (сортировка по реальной длине, а не по имени
   `HOURLY`/`DAILY`): `durationSec`, раунд ставок и когда он закрывается, идущий раунд и когда он кончается,
   живой расклад раунда ставок (`participantCount`, `upStake`, `downStake`, `majorityDirection` — `null` при
-  ничьей, включая 0 против 0, Р-5/Р-62). У рынка без идущих раундов (закрыт, ещё не получил серию) `series`
+  ничьей, включая 0 против 0, D-5/D-62). У рынка без идущих раундов (закрыт, ещё не получил серию) `series`
   пуст.
 - **Толпа.** `capital`, `returnPct = capital/100000 − 1`, `roundsTraded`, `roundsWon`, `lastOutcome`.
   «Выиграно» — торговый раунд, закончившийся **бо́льшим** капиталом, чем начался; ликвидация — `LIQUIDATED`;
@@ -1504,7 +1504,7 @@ unknown withdrawal request: w-golden-1`, что и в описании зада�
 печатала «NaN SEC» (ревью паритета веба, находка 1; `@JsonProperty` на компонентах `ServerInfo.RoundDurationsDto`,
 тесты `ServerInfoRpcTest`, `ReplayModeApiTest`, `WireFixturesTest`).
 
-### 20.8 Профили: серия побед и длина раунда (Р-71)
+### 20.8 Профили: серия побед и длина раунда (D-71)
 
 `PublicProfileDto.streak {current, best}` — по **всем** рассчитанным раундам игрока, не по странице `history` (она
 обрезана `PROFILE_HISTORY_LIMIT=100`, и лучшая серия старше страницы иначе потерялась бы). Правило
@@ -1792,9 +1792,9 @@ Dev Services Postgres):
 - **`walletConnectProjectId`** в `serverInfo` по-прежнему не отдаётся (§20.11).
 - **Чтение итогов под замком** — §21.5.
 
-## 22. Feedback (Р-81) — отзыв из приложения — 2026-10-11
+## 22. Feedback (D-81) — отзыв из приложения — 2026-10-11
 
-Решение — `the decision log` Р-81 (Алекс, 2026-10-11): в приложении закрываемая полоска «оставьте отзыв — что
+Решение — `the decision log` D-81 (Алекс, 2026-10-11): в приложении закрываемая полоска «оставьте отзыв — что
 понравилось, что нет»; одно поле, без почты и имени. Вместе с текстом сохраняем то, что нужно для статистики по регионам:
 страну (сервер определяет её по IP, сам IP не хранится), часовой пояс и язык браузера, а если человек вошёл — id игрока (по
 нему видно, сколько раундов он сыграл). Это серверная часть; веб — `web/src/components/Feedback*.tsx`, `web/src/api/feedback.ts`.
@@ -1811,7 +1811,7 @@ Dev Services Postgres):
 базе и в логе сервера адреса нет; в памяти процесса он остаётся ключом ведра лимита (`"<ip>:submitFeedback"`, §22.4) до рестарта —
 так же, как у остальных ограниченных методов.
 
-Что здесь **не** относится к серверу: прокси перед ним ведут свои журналы запросов, как вели до Р-81. nginx контейнера `web` —
+Что здесь **не** относится к серверу: прокси перед ним ведут свои журналы запросов, как вели до D-81. nginx контейнера `web` —
 `access_log` образа по умолчанию, формат `main` с `$remote_addr`, пишется в stdout (проверено на локальном образе `herd-web`,
 2026-10-11); на VPS ещё Caddy (`log { output stdout }` в `tools/vps/edge/Caddyfile.tmpl`). Какие именно поля адреса попадают в
 строки Caddy, не проверялось — **UNVERIFIED**.
@@ -1915,7 +1915,7 @@ Apache-2.0; в POM только тестовые зависимости, сво�
 
 ### 22.6 Оператор: `GET /api/admin/feedback` и `tools/herd-operator.sh feedback`
 
-`GET /api/admin/feedback?sinceMs=&limit=` — тот же bearer-токен (`AdminResource`, без токена `401`); веб-админки нет (Р-43).
+`GET /api/admin/feedback?sinceMs=&limit=` — тот же bearer-токен (`AdminResource`, без токена `401`); веб-админки нет (D-43).
 `sinceMs` — epoch-мс, включительно (нет или отрицательное — всё); `limit` — по умолчанию 200, не больше 1000 (меньше 1 — 200,
 больше 1000 — 1000); не число — `400`. Ответ — массив, новые первыми (при равном времени — больший `id`):
 `id, receivedAtMs, message, country, timeZone, language, page, client, playerId, nickname, roundsPlayed`. `nickname` — из

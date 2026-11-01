@@ -15,15 +15,15 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The two season leaderboards (Р-9, Р-18), computed read-only from a {@link LedgerBook} snapshot —
+ * The two season leaderboards (D-9, D-18), computed read-only from a {@link LedgerBook} snapshot —
  * this class holds no state of its own.
  */
 public final class RatingBook {
 
-    /** Предложение — Р-9/Р-18 fix that a threshold N exists, not its value. */
+    /** Предложение — D-9/D-18 fix that a threshold N exists, not its value. */
     public static final int DEFAULT_ROUNDS_THRESHOLD = 10;
 
-    /** "богачи": {@code growth} is Р-18's exact season-growth formula. */
+    /** "богачи": {@code growth} is D-18's exact season-growth formula. */
     public record RichEntry(String playerId, String displayName, PlayAmount growth, int roundsPlayed) {
     }
 
@@ -44,13 +44,13 @@ public final class RatingBook {
     }
 
     /**
-     * "богачи" (Р-18): {@code growth = (balance_at_season_end + withdrawn_in_season -
+     * "богачи" (D-18): {@code growth = (balance_at_season_end + withdrawn_in_season -
      * deposited_in_season) - (balance_at_season_baseline + starter_pack)}, sorted descending.
-     * Players below the Р-9 rounds-played threshold are excluded.
+     * Players below the D-9 rounds-played threshold are excluded.
      *
      * <p>{@code balance_at_season_end} is {@link LedgerBook#seasonEndBalance}: the current balance
-     * for the season the player is still in (Р-18's "balance now"), but for an archived season
-     * (Р-10) the balance as it stood when the player rolled into the next one — otherwise the next
+     * for the season the player is still in (D-18's "balance now"), but for an archived season
+     * (D-10) the balance as it stood when the player rolled into the next one — otherwise the next
      * season's starter pack, results, deposits and withdrawals would leak into the past season's
      * growth for every player who has already moved on.
      */
@@ -83,8 +83,8 @@ public final class RatingBook {
     }
 
     /**
-     * "пророки" (Р-18): share of rounds where the player's chosen direction matched
-     * {@code sign(close - open)}, regardless of liquidation (предложение — Р-18 leaves the exact
+     * "пророки" (D-18): share of rounds where the player's chosen direction matched
+     * {@code sign(close - open)}, regardless of liquidation (предложение — D-18 leaves the exact
      * rule open, see the design doc). Flat rounds (close == open) are excluded from both the
      * numerator and the denominator; a player whose every played round was flat has no defined
      * ratio and is excluded even past the rounds-played threshold.

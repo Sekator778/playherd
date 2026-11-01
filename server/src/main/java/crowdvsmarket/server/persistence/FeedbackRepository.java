@@ -8,7 +8,7 @@ import java.sql.SQLException;
 import java.util.List;
 
 /**
- * Р-81: {@code feedback} — the messages visitors leave in the app (V10). A plain table: not an event, never replayed.
+ * D-81: {@code feedback} — the messages visitors leave in the app (V10). A plain table: not an event, never replayed.
  * The IP address a message came from is not here and never reaches this class; the country derived from it is.
  */
 @ApplicationScoped
